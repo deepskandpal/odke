@@ -1,0 +1,94 @@
+[project]
+name = "odke"
+version = "0.0.1"
+description = "Ontology-guided knowledge extraction: text in, a grounded knowledge graph out, ready for Neo4j or any graph store."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.11,<3.14"
+authors = [{ name = "Deepak Kandpal" }]
+keywords = [
+  "knowledge-graph", "ontology", "information-extraction", "neo4j",
+  "rdf", "llm", "entity-extraction", "relation-extraction", "graphrag",
+]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Text Processing :: Linguistic",
+  "Typing :: Typed",
+]
+
+# The base install is the data model, the ontology compiler and the pattern
+# extractor. All of that is deterministic and runs with no model provider, no
+# database driver and no network. Everything that talks to something else is an
+# extra, so `pip install odke` never drags in a stack the caller did not ask for.
+dependencies = [
+  "pydantic>=2.7,<3",
+  "typer>=0.15,<1.0",
+]
+
+[project.optional-dependencies]
+# One shim, one dependency: providers are litellm's problem, not ours.
+llm = ["litellm>=1.55,<2"]
+neo4j = ["neo4j>=5.20,<7"]
+rdf = ["rdflib>=7.0,<8"]
+networkx = ["networkx>=3.2,<4"]
+# Readers for the "whatever form possible" half of the promise.
+docs = ["beautifulsoup4>=4.12,<5", "pypdf>=5.0,<7", "lxml>=5.0,<7"]
+all = ["odke[llm,neo4j,rdf,networkx,docs]"]
+
+[project.urls]
+Homepage = "https://github.com/deepskandpal/odke"
+Source = "https://github.com/deepskandpal/odke"
+Issues = "https://github.com/deepskandpal/odke/issues"
+Changelog = "https://github.com/deepskandpal/odke/blob/main/CHANGELOG.md"
+
+[project.scripts]
+odke = "odke.cli.main:app"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "pytest-cov>=5.0",
+  "ruff>=0.8",
+  "mypy>=1.11",
+  # Installed for the suite and not for users, so the provider and sink code
+  # paths are executed in CI rather than skipped. No network is touched: the
+  # tests replay recorded responses through a stub transport.
+  "odke[all]",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/odke"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# typer's entire API is "call in the argument default". B008 is a true positive
+# for most code and a false one for every typer command ever written.
+"src/odke/cli/*.py" = ["B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.mypy]
+files = ["src/odke"]
+python_version = "3.11"
+strict = false
+warn_unused_ignores = true
+disallow_untyped_defs = true

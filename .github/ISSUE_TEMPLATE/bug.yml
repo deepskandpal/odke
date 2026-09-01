@@ -1,0 +1,29 @@
+name: Bug report
+description: Something behaves differently from what it says it does.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations: {required: true}
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: The smallest snippet that shows it. An ontology fragment helps more than a description of one.
+      render: python
+    validations: {required: true}
+  - type: input
+    id: version
+    attributes:
+      label: odke version
+      placeholder: "0.0.1"
+    validations: {required: true}
+  - type: input
+    id: model
+    attributes:
+      label: Model configuration
+      description: The ModelRoles or model string, if the failure involves a model call.
+      placeholder: "ollama/llama3.1"

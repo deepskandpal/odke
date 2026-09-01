@@ -1,0 +1,26 @@
+odke
+Copyright 2026 Deepak Kandpal
+
+This product includes software developed by Deepak Kandpal and contributors,
+licensed under the Apache License, Version 2.0.
+
+--------------------------------------------------------------------------------
+Relationship to the ODKE+ paper
+--------------------------------------------------------------------------------
+
+This project is an independent, clean-room implementation of the architecture
+described in:
+
+    Khorshidi, S., Nikfarjam, A., Shankar, S., Sang, Y., Govind, Y., Jang, H.,
+    Kasgari, A., McClimans, A., Soliman, M., Konda, V., Fakhry, A., & Qi, X.
+    (2025). ODKE+: Ontology-Guided Open-Domain Knowledge Extraction with LLMs.
+    arXiv:2509.04696.
+
+It is NOT affiliated with, endorsed by, or derived from any source code of
+Apple Inc. No Apple code, data, model, or internal artifact was used. The paper
+describes a system; this repository is an independent reading of that published
+description, generalised from a single production knowledge graph to an
+open SDK.
+
+"ODKE" is used here as the name of the published architecture this project
+implements. All credit for the architecture belongs to the paper's authors.

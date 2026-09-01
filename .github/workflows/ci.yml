@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: verify (python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      # Both legs always report. A break on one version should not hide the
+      # result on another, which is the whole reason for testing three.
+      fail-fast: false
+      matrix:
+        # The range pyproject declares: requires-python = ">=3.11,<3.14".
+        # Advertising support for a version nothing runs is a claim, not a fact.
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # Every check lives in scripts/verify.sh so that what runs here and what a
+      # contributor runs locally cannot drift apart. See that file for the list.
+      - name: Verify
+        run: ./scripts/verify.sh
+        env:
+          UV_PYTHON: ${{ matrix.python }}

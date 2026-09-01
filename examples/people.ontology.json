@@ -1,0 +1,74 @@
+{
+  "name": "people-and-companies",
+  "version": "1",
+  "types": {
+    "Person": {
+      "name": "Person",
+      "description": "An individual human being.",
+      "keys": ["full_name", "birth_date"]
+    },
+    "Scientist": {
+      "name": "Scientist",
+      "description": "A person whose occupation is scientific research.",
+      "parents": ["Person"]
+    },
+    "Company": {
+      "name": "Company",
+      "description": "An incorporated organisation.",
+      "keys": ["legal_name"]
+    }
+  },
+  "predicates": {
+    "full_name": {
+      "name": "full_name",
+      "description": "The person's full name as written in the source.",
+      "domain": ["Person"],
+      "range": "string",
+      "importance": 1.0
+    },
+    "birth_date": {
+      "name": "birth_date",
+      "description": "Date of birth, ISO-8601.",
+      "domain": ["Person"],
+      "range": "date",
+      "importance": 0.9,
+      "examples": ["1815-12-10"]
+    },
+    "employer": {
+      "name": "employer",
+      "description": "An organisation the person works or worked for.",
+      "domain": ["Person"],
+      "range": "Company",
+      "cardinality": "multi",
+      "qualifiers": ["start_date", "end_date", "role"],
+      "importance": 0.85
+    },
+    "field": {
+      "name": "field",
+      "description": "Primary field of research.",
+      "domain": ["Scientist"],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.6
+    },
+    "legal_name": {
+      "name": "legal_name",
+      "domain": ["Company"],
+      "range": "string",
+      "importance": 1.0
+    },
+    "founded": {
+      "name": "founded",
+      "description": "Date the company was incorporated.",
+      "domain": ["Company"],
+      "range": "date",
+      "importance": 0.7
+    },
+    "headquarters": {
+      "name": "headquarters",
+      "domain": ["Company"],
+      "range": "string",
+      "importance": 0.5
+    }
+  }
+}

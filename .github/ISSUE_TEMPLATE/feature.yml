@@ -1,0 +1,19 @@
+name: Feature request
+description: Something the library should be able to do and cannot.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do? Describe the situation, not the solution you have in mind.
+    validations: {required: true}
+  - type: textarea
+    id: shape
+    attributes:
+      label: What the API might look like
+      render: python
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you are doing instead today
