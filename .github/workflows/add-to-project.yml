@@ -28,5 +28,5 @@ jobs:
         if: env.PROJECT_TOKEN != ''
         uses: actions/add-to-project@v1.0.2
         with:
-          project-url: https://github.com/users/deepskandpal/projects/PROJECT_NUMBER
+          project-url: https://github.com/users/deepskandpal/projects/6
           github-token: ${{ env.PROJECT_TOKEN }}
