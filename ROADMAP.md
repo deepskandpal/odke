@@ -1,5 +1,11 @@
 # Roadmap
 
+**Board:** [odke — roadmap to v0.1.0](https://github.com/users/deepskandpal/projects/6) ·
+**Issues:** [by milestone](https://github.com/deepskandpal/odke/milestones)
+
+Every item below is a ticket on that board, with an estimate and an area. New
+issues are added to it automatically.
+
 Eight milestones. Each one ends at a state where the package still installs,
 `./scripts/verify.sh` is green, and something new is usable from Python — no
 milestone leaves the tree half-wired.

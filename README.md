@@ -189,6 +189,7 @@ The same is true of every stage. Swap the grounder, keep the rest.
 ## Documentation
 
 - [ROADMAP.md](ROADMAP.md) — milestones, what each one delivers, and the estimate
+- [The board](https://github.com/users/deepskandpal/projects/6) — every ticket, with estimates
 - [DECISIONS.md](DECISIONS.md) — the design calls and why they went that way
 - [CONTRIBUTING.md](CONTRIBUTING.md) — `./scripts/verify.sh` is the whole check
 - [NOTICE](NOTICE) — the relationship to the ODKE+ paper
