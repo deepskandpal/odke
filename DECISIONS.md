@@ -120,3 +120,17 @@ exactly the failure corroboration exists to prevent.
 
 `scripts/verify.sh` is what CI runs and what a contributor runs. There is no
 second list of steps to drift out of sync with the first.
+
+### 13. The board is linked to the repo, not auto-populated
+
+Projects v2 boards are owned by a user or an org — `createProjectV2` takes an
+`ownerId`, and Repository is not a valid owner. Repo-owned boards were Projects
+(classic), retired in 2024. So the board is account-owned and *linked* to the
+repo, which is why it appears under the Projects tab.
+
+The consequence is that `GITHUB_TOKEN` cannot write to it, and auto-adding new
+issues would need a PAT stored as a repo secret. For a project this size that
+trades a rotating credential for a keystroke, so there is no add-to-project
+workflow. New issues go on the board with:
+
+    gh project item-add 6 --owner deepskandpal --url <issue-url>
