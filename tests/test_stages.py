@@ -7,6 +7,7 @@ from odke import (
     Chunker,
     Constrainer,
     Corroborator,
+    Delegated,
     Document,
     Entity,
     Extractor,
@@ -14,9 +15,12 @@ from odke import (
     Grounder,
     GroundingVerdict,
     Inferrer,
+    KnowledgeGraph,
     Loader,
     Normalizer,
     Ontology,
+    PlatformProfile,
+    Resolution,
     Resolver,
     Router,
     Scorer,
@@ -114,3 +118,54 @@ def test_the_inferrer_default_proposes_nothing() -> None:
     proposed = stages.PassThroughInferrer().infer([DOC])
     assert proposed.types == {} and proposed.predicates == {}
     assert not proposed.inferred
+
+
+def test_delegated_satisfies_every_stage_protocol() -> None:
+    """One marker slots in wherever the platform already does the work."""
+    marker = Delegated(to="neo4j-graphrag:FuzzyMatchResolver")
+    for protocol in THIRTEEN:
+        assert isinstance(marker, protocol), protocol.__name__
+    assert repr(marker) == "Delegated(to='neo4j-graphrag:FuzzyMatchResolver')"
+
+
+def test_delegated_is_a_pass_through_everywhere() -> None:
+    marker = Delegated(to="platform")
+    chunk = Chunk(doc_id="d1", start=0, end=4, text="Ada.", index=0)
+    assert list(marker.load(DOC)) == [DOC]
+    assert list(marker.chunk(DOC)) == list(stages.PassThroughChunker().chunk(DOC))
+    assert marker.route(chunk).action == "extract"
+    assert list(marker.extract(chunk, ONTOLOGY)) == []
+    assert marker.ground(FACT, DOC) is FACT
+    assert marker.normalize(FACT) is FACT
+    assert list(marker.corroborate([FACT])) == [FACT]
+    assert marker.score(FACT) is FACT
+    assert marker.validate(FACT, ONTOLOGY).action == "accept"
+    assert marker.write(KnowledgeGraph()) is None
+    assert list(marker.constrain(ONTOLOGY)) == []
+    assert marker.infer([DOC]).predicates == {}
+
+
+def test_a_delegated_resolver_stamps_who_decided_the_key() -> None:
+    """The stamp is what lets a platform's merge be read back and scored like ours."""
+    to = "neo4j-graphrag:FuzzyMatchResolver"
+    already = Entity(key="Q95", type="Company", resolution=Resolution(method="external_id"))
+    fact = Fact(subject=Entity(key="acme", type="Company"), predicate="owns", object_entity=already)
+    (resolved,), links = Delegated(to=to).resolve([fact], {})
+    assert resolved.subject.resolution == Resolution(method="linker", linker=to)
+    # An identity settled upstream keeps its own provenance.
+    assert resolved.object_entity is not None
+    assert resolved.object_entity.resolution == Resolution(method="external_id")
+    assert list(links) == []
+
+
+def test_delegated_verdicts_name_the_platform() -> None:
+    marker = Delegated(to="platform")
+    chunk = Chunk(doc_id="d1", start=0, end=4, text="Ada.", index=0)
+    assert marker.route(chunk).reason == "delegated to platform"
+    assert marker.validate(FACT, ONTOLOGY).reason == "delegated to platform"
+
+
+def test_a_platform_profile_covers_nothing_unless_told() -> None:
+    profile = PlatformProfile(name="neo4j-graphrag")
+    assert (profile.resolves, profile.constrains, profile.prunes) == (False, False, False)
+    assert PlatformProfile(name="x", resolves=True).resolves

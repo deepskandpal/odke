@@ -3,22 +3,29 @@
 from __future__ import annotations
 
 import json
+import warnings
 from collections.abc import Iterable
 from typing import Literal
 
+import pytest
+
 from odke import (
     Chunk,
+    Delegated,
     Document,
+    DoubleStageWarning,
     Entity,
     Fact,
     GroundingVerdict,
     KnowledgeGraph,
     Ontology,
     Pipeline,
+    PlatformProfile,
     RouteVerdict,
     ValidationVerdict,
 )
 from odke.sinks import JsonlSink
+from odke.stages import DDL, EntityIndex, EntityLink
 
 
 class _StubExtractor:
@@ -78,6 +85,29 @@ class _AdRouter:
         if chunk.text.startswith("AD:"):
             return RouteVerdict(action="skip", label="marketing", scope=self.scope)
         return RouteVerdict(action="extract")
+
+
+class _PlatformSink:
+    """A sink whose store does some stages itself, after the write."""
+
+    def __init__(self, **covers: bool) -> None:
+        self.profile = PlatformProfile(name="neo4j-graphrag", **covers)
+        self.written: list[KnowledgeGraph] = []
+
+    def write(self, kg: KnowledgeGraph) -> None:
+        self.written.append(kg)
+
+
+class _KeyResolver:
+    def resolve(
+        self, facts: Iterable[Fact], index: EntityIndex
+    ) -> tuple[Iterable[Fact], Iterable[EntityLink]]:
+        return facts, ()
+
+
+class _NoConstrainer:
+    def constrain(self, ontology: Ontology) -> DDL:
+        return ()
 
 
 def test_pipeline_runs_with_only_an_extractor() -> None:
@@ -160,6 +190,58 @@ def test_explicit_defaults_and_none_are_the_same_pipeline() -> None:
     assert [f.signature for f in implicit.facts] == [f.signature for f in explicit.facts]
     assert implicit.stats == explicit.stats
     assert Pipeline(Ontology(), _StubExtractor()).constraints() == ()
+
+
+@pytest.mark.parametrize(
+    ("kwarg", "stage", "flag"),
+    [
+        ("resolver", _KeyResolver(), "resolves"),
+        ("validator", _RefusingValidator(), "prunes"),
+        ("constrainer", _NoConstrainer(), "constrains"),
+    ],
+)
+def test_a_stage_the_platform_also_does_warns_once_and_is_not_refused(
+    kwarg: str, stage: object, flag: str
+) -> None:
+    """Warn, never forbid: the caller may want both passes, and the evaluator decides."""
+    sink = _PlatformSink(**{flag: True})
+    with pytest.warns(DoubleStageWarning) as record:
+        pipeline = Pipeline(Ontology(), _StubExtractor(), sinks=[sink], **{kwarg: stage})
+    assert len(record) == 1
+    assert "neo4j-graphrag" in str(record[0].message)
+    assert kwarg in str(record[0].message)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        kg = pipeline.run([Document(id="d1", text="Ada.")])
+    assert sink.written == [kg]
+
+
+def test_delegating_the_stage_is_silent_and_stamps_provenance() -> None:
+    """The intended configuration: the platform resolves, odke says so on every entity."""
+    sink = _PlatformSink(resolves=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        kg = Pipeline(
+            Ontology(),
+            _StubExtractor(),
+            resolver=Delegated(to="neo4j-graphrag:FuzzyMatchResolver"),
+            sinks=[sink],
+        ).run([Document(id="d1", text="Ada.")])
+    assert len(kg) == 2
+    assert all(
+        e.resolution is not None and e.resolution.linker == "neo4j-graphrag:FuzzyMatchResolver"
+        for e in kg.entities
+    )
+
+
+def test_a_profile_with_no_stage_configured_here_is_silent() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        Pipeline(
+            Ontology(),
+            _StubExtractor(),
+            sinks=[_PlatformSink(resolves=True, prunes=True, constrains=True)],
+        ).run([Document(id="d1", text="Ada.")])
 
 
 def test_jsonl_sink_round_trips_a_graph(tmp_path) -> None:

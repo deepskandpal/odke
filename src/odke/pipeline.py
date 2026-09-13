@@ -23,6 +23,7 @@ in here.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 
 from odke.ontology import Ontology
@@ -31,6 +32,7 @@ from odke.stages import (
     Chunker,
     Constrainer,
     Corroborator,
+    Delegated,
     Extractor,
     Grounder,
     Initiator,
@@ -44,6 +46,7 @@ from odke.stages import (
     PassThroughRouter,
     PassThroughScorer,
     PassThroughValidator,
+    PlatformProfile,
     Resolver,
     Retriever,
     Router,
@@ -52,6 +55,16 @@ from odke.stages import (
     Validator,
 )
 from odke.types import Document, Entity, Fact, KnowledgeGraph
+
+
+class DoubleStageWarning(UserWarning):
+    """A stage is configured here and the sink's platform does it too.
+
+    Warned, never refused. The caller may want both — odke's exact pass on
+    strong identifiers before the write and the platform's fuzzy pass after —
+    and the evaluators, not the pipeline, are what say whether the second one
+    earned its keep.
+    """
 
 
 class Pipeline:
@@ -96,6 +109,36 @@ class Pipeline:
             PassThroughConstrainer() if constrainer is None else constrainer
         )
         self.sinks = tuple(sinks)
+
+        # Once, at configuration, so a long-running pipeline says it one time
+        # rather than once per run. Nothing here changes what runs.
+        for sink in self.sinks:
+            profile = getattr(sink, "profile", None)
+            if not isinstance(profile, PlatformProfile):
+                continue
+            # A platform that prunes is doing what a Validator refuses here.
+            overlaps = (
+                ("resolver", resolver, PassThroughResolver, profile.resolves, "resolves"),
+                ("validator", validator, PassThroughValidator, profile.prunes, "prunes"),
+                (
+                    "constrainer",
+                    constrainer,
+                    PassThroughConstrainer,
+                    profile.constrains,
+                    "constrains",
+                ),
+            )
+            for stage, configured, default, covered, verb in overlaps:
+                if covered and _is_odkes_own(configured, default):
+                    warnings.warn(
+                        DoubleStageWarning(
+                            f"{profile.name} {verb} after the write and a {stage} is "
+                            f"configured in odke too, so that stage will run twice. Pass "
+                            f"Delegated(to=...) as the {stage} to hand it to the platform, "
+                            f"or keep both on purpose and let the evaluator say which earned it."
+                        ),
+                        stacklevel=2,
+                    )
 
     def run(self, docs: Sequence[Document]) -> KnowledgeGraph:
         # Counts, not a log: enough to see that routing or validation did
@@ -146,6 +189,12 @@ class Pipeline:
         return self.constrainer.constrain(self.ontology)
 
 
+def _is_odkes_own(stage: object, default: type) -> bool:
+    """True when the caller configured a real stage — not the pass-through,
+    not a `Delegated` marker, not nothing."""
+    return stage is not None and not isinstance(stage, Delegated | default)
+
+
 def _entities_of(facts: Sequence[Fact]) -> dict[str, Entity]:
     """Every distinct entity mentioned as a subject or an edge's object, by key."""
     seen: dict[str, Entity] = {}
@@ -162,6 +211,7 @@ __all__ = [
     "Chunker",
     "Constrainer",
     "Corroborator",
+    "DoubleStageWarning",
     "Extractor",
     "Grounder",
     "Initiator",

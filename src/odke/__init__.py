@@ -8,16 +8,18 @@ NOTICE for the relationship to that paper.
 """
 
 from odke.ontology import EntityType, Ontology, OntologySnippet, Predicate, Qualifier
-from odke.pipeline import Pipeline
+from odke.pipeline import DoubleStageWarning, Pipeline
 from odke.stages import (
     Chunker,
     Constrainer,
     Corroborator,
+    Delegated,
     Extractor,
     Grounder,
     Inferrer,
     Loader,
     Normalizer,
+    PlatformProfile,
     Resolver,
     Router,
     Scorer,
@@ -49,7 +51,9 @@ __all__ = [
     "Chunker",
     "Constrainer",
     "Corroborator",
+    "Delegated",
     "Document",
+    "DoubleStageWarning",
     "Entity",
     "EntityLink",
     "EntityType",
@@ -66,6 +70,7 @@ __all__ = [
     "Ontology",
     "OntologySnippet",
     "Pipeline",
+    "PlatformProfile",
     "Polarity",
     "Predicate",
     "Qualifier",

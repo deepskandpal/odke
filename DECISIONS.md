@@ -270,3 +270,29 @@ ablation can count what would have gone; the `Validator` is the gate.
 *Cost:* the four original Protocols changed shape — per chunk and per fact
 rather than per batch — before anything implemented them. Later would have
 been a migration for every caller.
+
+### 21. A stage the platform also does is warned about, never forbidden
+
+The package sits on top of any platform, and some platforms already do a
+stage: neo4j-graphrag resolves after the write, GraphPruner prunes, an RDF
+store refuses what breaks SHACL. Doing those twice is waste at best and a
+second opinion nobody asked for at worst — but forbidding it would be wrong,
+because the two passes are not the same pass. odke's exact match on strong
+identifiers before the write is free and never wrong; the platform's fuzzy
+pass on names after the write is neither. A caller may want both.
+
+So the mechanism is small. A sink may declare a `PlatformProfile` saying what
+its store covers (`resolves`, `constrains`, `prunes`). `Delegated(to=...)`
+satisfies every stage Protocol as a pass-through and stamps `to` wherever the
+model has a provenance slot — `Entity.resolution.linker` for a resolver, the
+verdict's `reason` for a router or validator — so the platform's work can be
+read back and scored like ours. And when a real stage is configured on both
+sides, `Pipeline` emits one `DoubleStageWarning` at construction and runs
+what it was given.
+
+The documentation says plainly that *replace* loses the evidence a pre-write
+link would have kept. That is a fact about the platform, not a reason to
+refuse it.
+
+*Cost:* a user who ignores the warning gets two resolutions. The evaluator,
+not the pipeline, is where that shows up as a number.

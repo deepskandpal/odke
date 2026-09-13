@@ -31,7 +31,9 @@ from odke.types import (
     Entity,
     EntityLink,
     Fact,
+    Frozen,
     KnowledgeGraph,
+    Resolution,
     RouteVerdict,
     ValidationVerdict,
 )
@@ -176,6 +178,25 @@ class Validator(Protocol):
     def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict: ...
 
 
+class PlatformProfile(Frozen):
+    """What the store does itself, after the write.
+
+    The package sits on top of any platform, and some platforms already do a
+    stage: neo4j-graphrag resolves post-write, GraphPruner prunes, an RDF store
+    refuses writes that break SHACL. odke must not do those twice, and must
+    still be able to measure them. A sink declares its platform here; the
+    pipeline warns when a stage is configured on both sides.
+    """
+
+    name: str
+    # Merges entities after the write — the fuzzy pass, on names.
+    resolves: bool = False
+    # Enforces the schema itself — uniqueness, cardinality, SHACL.
+    constrains: bool = False
+    # Removes what the schema does not allow — what a Validator refuses here.
+    prunes: bool = False
+
+
 @runtime_checkable
 class Sink(Protocol):
     """Where a finished graph goes. Neo4j, RDF, NetworkX, JSONL, or yours.
@@ -302,12 +323,99 @@ class PassThroughInferrer:
         return Ontology()
 
 
+# --------------------------------------------------------------------------- #
+# Delegation
+# --------------------------------------------------------------------------- #
+
+
+class Delegated:
+    """A stage the platform does, marked as such.
+
+    `Delegated(to="neo4j-graphrag:FuzzyMatchResolver")` satisfies every stage
+    Protocol as a pass-through, so it slots in wherever the platform already
+    covers the work — and it stamps who did it wherever the data model has a
+    place for that. A delegated resolver sets `Entity.resolution` to
+    `Resolution(method="linker", linker=to)` on every entity that arrives
+    unresolved, so a merge the store makes can be read back and scored the same
+    way as one made here. A delegated router or validator names `to` in the
+    verdict's `reason`. The fact-to-fact stages have no provenance slot and
+    pass through unstamped; no surveyed platform grounds, normalises or scores,
+    and the field can be added the day one does.
+    """
+
+    def __init__(self, to: str) -> None:
+        self.to = to
+
+    def __repr__(self) -> str:
+        return f"Delegated(to={self.to!r})"
+
+    @property
+    def _reason(self) -> str:
+        return f"delegated to {self.to}"
+
+    def load(self, source: Source) -> Iterable[Document]:
+        return _as_documents(source)
+
+    def chunk(self, doc: Document) -> Iterable[Chunk]:
+        return (_whole(doc),)
+
+    def route(self, chunk: Chunk) -> RouteVerdict:
+        return RouteVerdict(action="extract", reason=self._reason)
+
+    def extract(self, chunk: Chunk, ontology: Ontology) -> Iterable[Fact]:
+        return ()
+
+    def ground(self, fact: Fact, doc: Document) -> Fact:
+        return fact
+
+    def normalize(self, fact: Fact) -> Fact:
+        return fact
+
+    def resolve(
+        self, facts: Iterable[Fact], index: EntityIndex
+    ) -> tuple[Iterable[Fact], Iterable[EntityLink]]:
+        stamp = Resolution(method="linker", linker=self.to)
+        return [_stamped(f, stamp) for f in facts], ()
+
+    def corroborate(self, facts: Iterable[Fact]) -> Iterable[Fact]:
+        return facts
+
+    def score(self, fact: Fact) -> Fact:
+        return fact
+
+    def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
+        return ValidationVerdict(action="accept", reason=self._reason)
+
+    def write(self, kg: KnowledgeGraph) -> None:
+        return None
+
+    def constrain(self, ontology: Ontology) -> DDL:
+        return ()
+
+    def infer(self, corpus: Corpus) -> Ontology:
+        return Ontology()
+
+
+def _stamped(fact: Fact, stamp: Resolution) -> Fact:
+    # An identity already decided upstream — by the caller, or by an external
+    # id — keeps its provenance; the platform's pass is only claimed for the
+    # entities it will actually decide.
+    def mark(entity: Entity) -> Entity:
+        if entity.resolution is not None:
+            return entity
+        return entity.model_copy(update={"resolution": stamp})
+
+    obj = mark(fact.object_entity) if fact.object_entity is not None else None
+    return fact.model_copy(update={"subject": mark(fact.subject), "object_entity": obj})
+
+
 __all__ = [
     "DDL",
     "Chunker",
     "Constrainer",
     "Corpus",
     "Corroborator",
+    "Delegated",
     "EntityIndex",
     "Extractor",
     "Grounder",
@@ -326,6 +434,7 @@ __all__ = [
     "PassThroughRouter",
     "PassThroughScorer",
     "PassThroughValidator",
+    "PlatformProfile",
     "Resolver",
     "Retriever",
     "Router",
