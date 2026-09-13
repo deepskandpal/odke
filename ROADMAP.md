@@ -4,47 +4,67 @@
 **Issues:** [by milestone](https://github.com/deepskandpal/odke/milestones)
 
 Every item below is a ticket on that board, with an estimate and an area. New
-issues are added to it automatically.
+issues go on the board with `gh project item-add` (DECISIONS #13).
 
-Eight milestones. Each one ends at a state where the package still installs,
-`./scripts/verify.sh` is green, and something new is usable from Python — no
-milestone leaves the tree half-wired.
+Milestones, not dates. Each one ends at a state where the package still
+installs, `./scripts/verify.sh` is green, and something new is usable from
+Python — no milestone leaves the tree half-wired. Estimates are in **focused
+working days** (a day of real, uninterrupted work); a milestone lands when its
+days have been spent, and not on a calendar.
 
-Estimates are in **focused working days** (a day of real, uninterrupted work).
-The calendar column assumes ~12 hours a week, which is what this actually gets.
-
-| # | Milestone | Delivers | Days | Calendar |
-|---|---|---|---|---|
-| M0 | Scaffold & release plumbing | ✅ done | 1 | — |
-| M1 | Ontology I/O & validation | Load, validate, diff schemas | 3 | ~1.5 wk |
-| M2 | Loaders & extraction | Any input → candidate facts | 9 | ~4.5 wk |
-| M3 | Grounding & corroboration | The precision stages | 8 | ~4 wk |
-| M4 | Sinks & the `run` command | End-to-end into Neo4j | 5 | ~2.5 wk |
-| M5 | Ontology inference | No schema required | 5 | ~2.5 wk |
-| M6 | Evaluation harness | Numbers you can defend | 5 | ~2.5 wk |
-| M7 | v0.1.0 release | On PyPI, documented | 3 | ~1.5 wk |
-|  | **Total** | | **39** | **~19 wk** |
-
-**The useful shortcut:** M0→M4 is the first genuinely installable product — text
-in, a grounded graph in Neo4j out, with an ontology you supply. That is **26 days
-(~13 weeks at this pace, or ~5 weeks full-time)**. M5–M6 make it better; M7 makes
-it public. If the goal is "something people can use", ship 0.1.0 at the end of M4
-and treat M5–M6 as 0.2.
+The scaffold — repository, packaging, the first data model, the ontology
+compiler and snippet generator, the CLI skeleton, the JSONL sink, the ten-step
+verification gate, CI on three interpreters and the PyPI release workflow —
+shipped as 0.0.1.
 
 ---
 
-## M0 — Scaffold & release plumbing ✅
+## v0.1 — the grounded graph
 
-Repository, packaging, the core data model, the ontology compiler and snippet
-generator, the CLI skeleton, the JSONL sink, 24 tests, a 10-step verification
-gate, CI on three interpreters, and a PyPI release workflow using Trusted
-Publishing.
+*"The only pipeline that asks a second model whether the cited span supports
+the claim — and lets you measure every stage against your own labelled data."*
 
-The data model and snippet generator are real, not stubs: they are the contract
-every later milestone is written against, so they had to exist before the tickets
-could be written honestly.
+| # | Milestone | Delivers | Days |
+|---|---|---|---|
+| M0 | Data model | The types that cannot change later | 3 |
+| M1 | Ontology I/O & validation | Load, validate, diff schemas | 3 |
+| M2 | Loaders & extraction | Text and structured input → candidate facts | 4 |
+| M3 | Grounding & corroboration | The precision stages, and the ablation | 9 |
+| M4 | Sinks & the `run` command | End-to-end into Neo4j | 3 |
+| M6 | Evaluation (BYOLD) | An evaluator per stage, for your own labels | 5 |
+| M7 | v0.1.0 release | On PyPI, documented | 3 |
+|  | **Total** | | **30** |
 
-## M1 — Ontology I/O & validation
+M0 blocks M1–M4: every issue in it changes a frozen type, and each would be a
+migration once a fact is serialised. After M0 the milestones touch different
+packages and can proceed in parallel. M5 is in v0.5, below; the number is the
+board's.
+
+### M0 — Data model
+
+The type work that cannot be deferred. `Fact`, `Entity` and `KnowledgeGraph`
+are frozen pydantic with `extra="forbid"`; every field added after people have
+serialised facts is a breaking change and a migration. Two of these were live
+correctness bugs, not gaps.
+
+- `Fact.polarity` — asserted / denied / partial, **in `signature`**. A denial
+  and its own contradiction were merging and raising each other's support (#47)
+- Qualifier identity semantics — the ontology declares which keys bear identity
+  (`percentile`, `tier`) and which reconcile (`start_time`); `signature`
+  includes only the former, and DECISIONS #11 holds for the rest (#48)
+- `EntityLink` with `SAME_AS | SIMILAR | DIFFERENT` and a `reason`, carried on
+  `KnowledgeGraph.links`, so resolution is never destructive (#49)
+- `valid_from` / `valid_to` on `Fact` — the valid clock, next to
+  `retrieved_at`'s transaction clock (#50)
+- `Entity.resolution` — how the key was decided, and by what (#51)
+- `Chunk`, `RouteVerdict`, and a `Router` protocol that defaults to
+  pass-everything (#52)
+- The thirteen-Protocol surface in `odke.stages`, each with a pass-through
+  default, so a caller takes the subset they need (#53)
+- `PlatformProfile` on a sink and `Delegated(to=...)`, so a stage the platform
+  already does is warned about, never silently done twice (#59)
+
+### M1 — Ontology I/O & validation
 
 Getting a schema *in* is the first thing every user does, and the error messages
 here determine whether they get to a second run.
@@ -57,72 +77,114 @@ here determine whether they get to a second run.
   operational problem once a graph is live
 - Round-trip property test: ontology → JSON → ontology is the identity
 
-## M2 — Loaders & extraction
+### M2 — Loaders & extraction
 
-The largest milestone, and the one the whole promise rests on: *"pass text,
-structured or unstructured, in whatever form possible."*
+The milestone the promise rests on — *"pass text, structured or unstructured,
+in whatever form possible"* — cut to what the pitch depends on. HTML, PDF and
+DOCX readers are v0.2: a caller with a PDF can hand over text, and nobody
+adopts a graph tool for its reader.
 
-- `Loader` protocol; readers for text, Markdown, HTML, PDF, DOCX, JSON, JSONL,
-  CSV/TSV, Parquet
+- `Loader` protocol; readers for text, Markdown, JSON, JSONL, CSV/TSV, Parquet
 - **Span-preserving chunking.** Chunks must carry offsets back into the original
   document, or the grounder has nothing to check and provenance is decorative.
-  This is the subtle part of the milestone and it is worth doing first.
-- `PatternExtractor` — tables, key/value blocks, infobox-shaped HTML, JSON paths.
-  Exact, free, deterministic, and it handles the structured half of the corpus
-  without a single model call.
+  This is the subtle part of the milestone and it is worth doing first — and
+  worth wrapping LangExtract for rather than hand-rolling
+- `PatternExtractor` — tables, key/value blocks, JSON paths. Exact, free,
+  deterministic, and it handles the structured half of the corpus without a
+  single model call
 - `LLMExtractor` — snippet → structured-output call → facts with evidence spans
 - `HybridExtractor` — routes each document by modality and merges the results
-- The litellm shim, and a recorded-response harness so CI exercises the model path
-  without a key or a network
+- A recorded-response harness so CI exercises the model path without a key or a
+  network
 
-## M3 — Grounding & corroboration
+### M3 — Grounding & corroboration
 
-Where precision comes from. The paper's headline number is 98.8%, and it is these
-two stages that produce it.
+Where precision comes from. The paper's headline number is 98.8%, and it is
+these two stages that produce it.
 
+- Span verification before the model is even asked: an offset that does not
+  resolve to the claimed quote is rejected for free. The first thing built
+  after M0 — it is the cheapest possible demonstration of the differentiator
 - `LLMGrounder` — per fact, one cheap model call against its own evidence span;
   `SUPPORTED` / `CONTRADICTED` / `NOT_FOUND`; batching and concurrency
-- Span verification before the model is even asked: an offset that does not
-  resolve to the claimed quote is rejected for free
 - Normalisation — dates, numbers, units, person and organisation name forms
-- Entity resolution with blocking, so it does not go quadratic on a real corpus
+- Entity resolution — wrap splink for blocking and scoring; odke's own part is
+  `EntityLink` and the disagreement rule, on top
 - Conflict resolution on freshness × source tier × agreement count
 - Confidence calibration, and `support` counts on every merged fact
+- **The ablation** — extraction alone vs. + grounding vs. + corroboration. It
+  is the evidence for the release's sentence; if grounding does not move
+  precision, the paper's central claim does not reproduce and the README says so
 
-## M4 — Sinks & the `run` command
+### M4 — Sinks & the `run` command
 
-- `Neo4jSink` — batched, idempotent `MERGE`, provenance written onto every edge,
-  and a schema-constraint bootstrap
-- `CypherFileSink` and `Neo4jAdminCsvSink` for bulk loads that are too big for
-  the driver
-- `RdfSink` (Turtle / N-Triples / JSON-LD), `NetworkXSink`
-- `Ontology.from_owl` and `Ontology.from_neo4j` — reflect a schema you already have
+One sink, not five. The bulk, RDF and NetworkX sinks and the OWL and Neo4j
+ontology importers are v0.2.
+
+- `Neo4jSink` — batched, idempotent `MERGE`, provenance written onto every edge
+- The constraint bootstrap — the ontology compiled into uniqueness and scoped
+  cardinality constraints, which is what makes the `MERGE` safe
 - `odke run` — the whole pipeline from a config file
 - A worked end-to-end example against a Neo4j container
 
-## M5 — Ontology inference
+### M6 — Evaluation (BYOLD)
+
+*Bring your own labelled dataset.* Precision and recall claims need a harness
+or they are marketing — but a number computed against the pipeline's own output
+measures nothing, and the package cannot label a corpus for you. So `odke.eval`
+ships, for every stage, a documented **dataset format** (what to label), an
+**evaluator** (labelled set in, `StageReport` out) and a tiny **fixture** for our
+own tests. It never ships a corpus, and the README says plainly that the
+fixtures are not a benchmark. No extra dependencies: Brier and P/R/F1 are
+arithmetic.
+
+| Stage | Evaluator | Labels it needs | |
+|---|---|---|---|
+| — | dataset formats, `StageReport`, fixtures, `odke eval <stage>` | — | #36 |
+| route | P/R/F1 per label, plus the skip/extract confusion — a router that skips facts is the expensive failure | chunk → action, label | #54 |
+| extract | per-predicate P/R/F1, and the confusion: wrong value, wrong entity, missing, spurious | gold facts per document | #37 |
+| ground | verdict accuracy and confusion; the ablation is one call to this with grounding on and off | fact + span → verdict | #55 |
+| resolve | pairwise P/R and B-cubed over `EntityLink`s — including links read back from a platform's resolver, so a delegated stage is measured the same way | pairs → same / different | #56 |
+| score | Brier, reliability curve, ECE — *of facts scored 0.9, X% were true* | fact → true / false | #57 |
+| validate, sink | agreement with labelled verdicts; write a graph twice and count once | fact → verdict; none | #58 |
+| cost | tokens, USD and latency per stage, per 1k documents; hybrid vs. model-only, cheap grounder vs. same-model | none | #39 |
+
+### M7 — v0.1.0 release
+
+Documentation site, examples, TestPyPI rehearsal, PyPI publish, announcement.
+
+---
+
+## v0.2 — breadth
+
+Deferred out of v0.1 because breadth is where this loses and depth after
+extraction is where it wins. All additive; none touches a type.
+
+- HTML loader with offset preservation (#8)
+- PDF and DOCX loaders (#9)
+- Bulk sinks: `CypherFileSink` and `Neo4jAdminCsvSink` (#24)
+- `RdfSink` — Turtle, N-Triples, JSON-LD (#25)
+- `NetworkXSink` (#26)
+- `Ontology.from_owl` — OWL, RDFS, SKOS (#27)
+- `Ontology.from_neo4j` — reflect a live graph's schema (#28)
+
+Between v0.2 and v0.5 sit the store's half (v0.3: constraints in both halves,
+SHACL export, structure-based resolution proposals) and time (v0.4: the valid
+clock in use, a staleness queue, per-predicate refresh). Neither has tickets
+yet; the types they need landed in M0.
+
+## v0.5 — no schema
+
+### M5 — Ontology inference
 
 The "I don't have a schema" path. Sample the corpus, propose types and predicates,
 cluster and merge near-duplicates, set `importance` from corpus support, hand back
-a reviewable `Ontology` marked `inferred=True`.
+a reviewable `Ontology` marked `inferred=True`. Deterministic routes first —
+emergent schema, Hearst patterns, axiom mining — with the model naming and
+ranking what those find rather than discovering.
 
 Framed as a bootstrap: infer once, review, freeze, then run guided. An inferred
 schema that silently drifts between runs produces a graph nobody can query.
-
-## M6 — Evaluation harness
-
-Precision and recall claims need a harness or they are marketing.
-
-- A gold-standard slice with per-predicate precision / recall / F1
-- Ablations that justify the architecture: extraction alone vs. + grounding vs.
-  + corroboration. If grounding does not move precision, the paper's central
-  claim does not reproduce and the README should say so.
-- Cost and latency per thousand documents
-- Runs in CI on recorded responses; runs live on demand
-
-## M7 — v0.1.0 release
-
-Documentation site, examples, TestPyPI rehearsal, PyPI publish, announcement.
 
 ---
 
@@ -134,4 +196,6 @@ Documentation site, examples, TestPyPI rehearsal, PyPI publish, announcement.
 - **Reproducing the paper's benchmark numbers.** Those came from Apple's internal
   KG against private evaluation sets. Neither is available, and claiming to match
   a number nobody can check would be dishonest.
+- **A labelled corpus.** `odke.eval` scores yours; shipping one would be a
+  benchmark nobody asked for and a claim nobody could check.
 - **A UI.** The graph goes into a store that already has one.
