@@ -174,3 +174,23 @@ corroborator must never need the schema in hand to merge two facts.
 
 *Cost:* an extractor that forgets to stamp `identity_keys` silently gets #11's
 old behaviour. That is the safe direction to fail in.
+
+### 16. Resolution proposes links; it never replaces nodes
+
+`EntityLink(source_key, target_key, kind, score, evidence, reason)` with `kind`
+one of `SAME_AS`, `SIMILAR`, `DIFFERENT`. neo4j-graphrag's three resolvers
+*replace* the nodes they match, and once merged you cannot lower the threshold
+and re-run to see what moved, because there is nothing left to move. A link is
+reversible; a merge is not.
+
+`DIFFERENT` is the kind nobody else records. It is where the disagreement rule
+lives — a strong identifier that disagrees kills a match however similar the
+names — and `reason` names the identifier that disagreed, so the rejection is a
+query rather than a mystery. A string, not a second structure.
+
+Links ride on the output object as `KnowledgeGraph.links`, default empty. One
+output object is what "any sink" means; an empty tuple costs nothing, and a
+sink with no use for links ignores them.
+
+*Cost:* the store holds duplicates until something acts on the links. That is
+the point — acting on them is a choice a caller can revisit.

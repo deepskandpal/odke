@@ -14,7 +14,7 @@ from odke.types import KnowledgeGraph
 
 
 class JsonlSink:
-    """Writes entities and facts as two JSONL streams under one directory."""
+    """Writes entities, facts and links as three JSONL streams under one directory."""
 
     def __init__(self, directory: str | Path) -> None:
         self.directory = Path(directory)
@@ -27,6 +27,9 @@ class JsonlSink:
         with (self.directory / "facts.jsonl").open("w", encoding="utf-8") as fh:
             for fact in kg.facts:
                 fh.write(fact.model_dump_json() + "\n")
+        with (self.directory / "links.jsonl").open("w", encoding="utf-8") as fh:
+            for link in kg.links:
+                fh.write(link.model_dump_json() + "\n")
         (self.directory / "manifest.json").write_text(
             json.dumps(
                 {
@@ -36,6 +39,7 @@ class JsonlSink:
                     "facts": len(kg.facts),
                     "edges": len(kg.edges),
                     "properties": len(kg.properties),
+                    "links": len(kg.links),
                     "stats": kg.stats,
                 },
                 indent=2,

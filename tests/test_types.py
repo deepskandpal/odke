@@ -5,7 +5,18 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from odke import Document, Entity, Fact, KnowledgeGraph, Polarity, SourceTier, Span
+from odke import (
+    Document,
+    Entity,
+    EntityLink,
+    Evidence,
+    Fact,
+    KnowledgeGraph,
+    LinkKind,
+    Polarity,
+    SourceTier,
+    Span,
+)
 
 
 def test_facts_are_immutable() -> None:
@@ -84,6 +95,32 @@ def test_edges_and_properties_split_on_the_object_kind() -> None:
     assert kg.edges == (edge,)
     assert kg.properties == (prop,)
     assert len(kg) == 2
+
+
+def test_links_record_a_rejected_merge_with_its_reason() -> None:
+    """DIFFERENT is the disagreement rule made auditable: it says which identifier disagreed."""
+    same = EntityLink(source_key="a", target_key="b", kind=LinkKind.SAME_AS, score=1.0)
+    similar = EntityLink(source_key="a", target_key="c", kind=LinkKind.SIMILAR, score=0.94)
+    different = EntityLink(
+        source_key="a",
+        target_key="d",
+        kind=LinkKind.DIFFERENT,
+        score=0.94,
+        reason="external_id mismatch: DE-114322 vs GB-889401",
+        evidence=(Evidence(doc_id="d1"),),
+    )
+    assert {same.kind, similar.kind, different.kind} == set(LinkKind)
+    assert different.reason is not None and "DE-114322" in different.reason
+    assert same.reason is None
+
+
+def test_links_ride_on_the_graph_and_default_to_none() -> None:
+    """One output object is what 'any sink' means; a sink that wants no links ignores them."""
+    assert KnowledgeGraph().links == ()
+    link = EntityLink(source_key="a", target_key="b", kind=LinkKind.SAME_AS)
+    kg = KnowledgeGraph(links=(link,))
+    round_tripped = KnowledgeGraph.model_validate_json(kg.model_dump_json())
+    assert round_tripped.links[0].kind is LinkKind.SAME_AS
 
 
 def test_trust_tiers_are_ordered_so_conflicts_can_be_resolved() -> None:

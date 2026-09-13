@@ -67,6 +67,8 @@ def test_jsonl_sink_round_trips_a_graph(tmp_path) -> None:
     assert len(facts) == 2
     assert manifest["edges"] == 1
     assert manifest["properties"] == 1
+    assert manifest["links"] == 0
+    assert (out / "links.jsonl").exists()
     assert manifest["ontology"] == "demo"
 
 

@@ -213,6 +213,42 @@ class Fact(Frozen):
 
 
 # --------------------------------------------------------------------------- #
+# Identity
+# --------------------------------------------------------------------------- #
+
+
+class LinkKind(StrEnum):
+    """What a resolver concluded about two entity keys."""
+
+    SAME_AS = "same_as"
+    SIMILAR = "similar"
+    # The one nobody else records. A strong identifier that disagrees kills a
+    # match no matter how alike the names are, and writing that down is what
+    # makes a threshold retunable rather than a one-way door.
+    DIFFERENT = "different"
+
+
+class EntityLink(Frozen):
+    """A resolver's opinion about two entities, kept next to the graph.
+
+    Resolution here proposes links; it never replaces nodes. A merge that
+    destroys one of two entities cannot be undone when the threshold turns out
+    to be wrong — and it is wrong on the first try, every time. A link can be
+    lowered, raised or ignored, and the evidence it was made on is still there.
+    """
+
+    source_key: str
+    target_key: str
+    kind: LinkKind
+    score: float | None = None
+    evidence: tuple[Evidence, ...] = ()
+    # For DIFFERENT: name the disagreeing identifier, so the rejection is
+    # auditable — "external_id mismatch: DE-114322 vs GB-889401".
+    reason: str | None = None
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+# --------------------------------------------------------------------------- #
 # The output
 # --------------------------------------------------------------------------- #
 
@@ -220,13 +256,15 @@ class Fact(Frozen):
 class KnowledgeGraph(Frozen):
     """The pipeline's output, and the only thing a sink has to understand.
 
-    Kept storage-neutral: entities, facts, and the ontology they were extracted
-    against. A Neo4j sink, a Turtle serialiser and a NetworkX exporter all read
-    the same object, which is what "or any graph DB" has to mean in practice.
+    Kept storage-neutral: entities, facts, the links between entities, and the
+    ontology they were extracted against. A Neo4j sink, a Turtle serialiser and
+    a NetworkX exporter all read the same object, which is what "or any graph
+    DB" has to mean in practice. A sink that has no use for links ignores them.
     """
 
     entities: tuple[Entity, ...] = ()
     facts: tuple[Fact, ...] = ()
+    links: tuple[EntityLink, ...] = ()
     ontology_name: str | None = None
     created_at: datetime = Field(default_factory=_utcnow)
     stats: dict[str, Any] = Field(default_factory=dict)
