@@ -72,6 +72,19 @@ def test_jsonl_sink_round_trips_a_graph(tmp_path) -> None:
     assert manifest["ontology"] == "demo"
 
 
+def test_the_default_router_passes_everything() -> None:
+    """Routing is opt-in: a caller who never asked for it sees no chunk skipped."""
+    from odke import Chunk
+    from odke.pipeline import PassThroughRouter, Router
+
+    router = PassThroughRouter()
+    assert isinstance(router, Router)
+    verdict = router.route(Chunk(doc_id="d1", start=0, end=4, text="Ada.", index=0))
+    assert verdict.action == "extract"
+    assert verdict.scope == "chunk"
+    assert verdict.label is None
+
+
 def test_stub_stages_satisfy_the_declared_protocols() -> None:
     """If a stub stops matching, callers' own implementations would break too."""
     from odke.pipeline import Extractor, Grounder, Sink

@@ -98,6 +98,40 @@ class Span(Frozen):
         return self.resolve(doc) == self.quote
 
 
+class Chunk(Frozen):
+    """A materialised span of `Document.text`: the unit every stage works in.
+
+    `text` is exactly `doc.text[start:end]`, so an evidence span an extractor
+    finds at a local offset is `start + offset` in the document, and provenance
+    survives chunking without a lookup. One row in every metric is one chunk.
+    """
+
+    doc_id: str
+    start: int
+    end: int
+    text: str
+    # Position among the document's chunks, so "skip the rest of this
+    # document" and a per-chunk metric both have something to key on.
+    index: int
+
+
+class RouteVerdict(Frozen):
+    """Whether a chunk is worth extracting from, and what the caller calls it.
+
+    Marketing prose, policy and brand voice lose their meaning as triples, and
+    extracting from them is the named cause of over-extraction. But the
+    categories are the caller's — fact / policy / narrative is one corpus's
+    split, not a taxonomy this package ships — so `label` is a free string.
+    """
+
+    action: Literal["extract", "skip", "defer"]
+    label: str | None = None
+    # "document": a router that recognises a marketing page from its first
+    # chunk can skip the rest of that document without a second method.
+    scope: Literal["chunk", "document"] = "chunk"
+    reason: str | None = None
+
+
 class Evidence(Frozen):
     """Why we believe a fact: a document, and where in it."""
 

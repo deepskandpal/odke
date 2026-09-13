@@ -10,6 +10,7 @@ NOTICE for the relationship to that paper.
 from odke.ontology import EntityType, Ontology, OntologySnippet, Predicate, Qualifier
 from odke.pipeline import Pipeline
 from odke.types import (
+    Chunk,
     Document,
     Entity,
     EntityLink,
@@ -20,6 +21,7 @@ from odke.types import (
     LinkKind,
     Polarity,
     Resolution,
+    RouteVerdict,
     SourceTier,
     Span,
 )
@@ -27,6 +29,7 @@ from odke.types import (
 __version__ = "0.0.1"
 
 __all__ = [
+    "Chunk",
     "Document",
     "Entity",
     "EntityLink",
@@ -43,6 +46,7 @@ __all__ = [
     "Predicate",
     "Qualifier",
     "Resolution",
+    "RouteVerdict",
     "SourceTier",
     "Span",
     "__version__",

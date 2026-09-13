@@ -19,7 +19,7 @@ from collections.abc import Iterable, Sequence
 from typing import Protocol, runtime_checkable
 
 from odke.ontology import Ontology
-from odke.types import Document, Fact, KnowledgeGraph
+from odke.types import Chunk, Document, Fact, KnowledgeGraph, RouteVerdict
 
 
 @runtime_checkable
@@ -34,6 +34,27 @@ class Retriever(Protocol):
     """Stage 2 — turns targets into documents. Optional; default is the caller's list."""
 
     def retrieve(self, targets: Iterable[str]) -> Iterable[Document]: ...
+
+
+@runtime_checkable
+class Router(Protocol):
+    """Before extraction — is this chunk a fact at all, or narrative?
+
+    Takes a `Chunk`, not a document: a document is a chunk *source*, and
+    document-level routing is a chunker configured not to split. The chunker
+    never splits mid-sentence, because a router asked "fact or narrative?"
+    about half a sentence is asked nothing.
+    """
+
+    def route(self, chunk: Chunk) -> RouteVerdict: ...
+
+
+class PassThroughRouter:
+    """The default: everything is worth extracting from. Changes nothing for a
+    caller who never asked for routing."""
+
+    def route(self, chunk: Chunk) -> RouteVerdict:
+        return RouteVerdict(action="extract", scope="chunk")
 
 
 @runtime_checkable
@@ -132,7 +153,9 @@ __all__ = [
     "Extractor",
     "Grounder",
     "Initiator",
+    "PassThroughRouter",
     "Pipeline",
     "Retriever",
+    "Router",
     "Sink",
 ]

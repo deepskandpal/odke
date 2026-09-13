@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from odke import (
+    Chunk,
     Document,
     Entity,
     EntityLink,
@@ -17,6 +18,7 @@ from odke import (
     LinkKind,
     Polarity,
     Resolution,
+    RouteVerdict,
     SourceTier,
     Span,
 )
@@ -37,6 +39,24 @@ def test_span_faithfulness_catches_a_paraphrased_quote() -> None:
     assert honest.is_faithful(doc)
     assert not invented.is_faithful(doc)
     assert honest.resolve(doc) == "Ada Lovelace"
+
+
+def test_a_chunk_is_a_materialised_span_so_local_offsets_map_back() -> None:
+    """Provenance has to survive chunking, or the grounder has nothing to check."""
+    doc = Document(id="d1", text="Ada Lovelace wrote the first algorithm. It ran on paper.")
+    chunk = Chunk(doc_id="d1", start=40, end=56, text=doc.text[40:56], index=1)
+    local = chunk.text.index("paper")
+    span = Span(doc_id="d1", start=chunk.start + local, end=chunk.start + local + 5)
+    assert span.resolve(doc) == "paper"
+
+
+def test_a_route_verdict_defaults_to_chunk_scope_and_carries_no_taxonomy() -> None:
+    """`label` is the caller's word; the package ships no fact/policy/narrative enum."""
+    verdict = RouteVerdict(action="skip", label="marketing", reason="brand voice")
+    assert verdict.scope == "chunk"
+    assert RouteVerdict(action="extract").label is None
+    with pytest.raises(ValidationError):
+        RouteVerdict(action="maybe")  # type: ignore[arg-type]
 
 
 def test_signature_ignores_qualifiers_so_the_same_claim_merges() -> None:

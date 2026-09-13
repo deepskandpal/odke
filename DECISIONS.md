@@ -228,3 +228,24 @@ read back and scored the same way as one made here.
 
 *Cost:* one nullable field. Left `None` by anything that did not resolve, which
 is itself the answer to "who decided this?".
+
+### 19. The chunk is the unit of the pipeline, and the router sees chunks
+
+`Router.route` takes a `Chunk`, not a `Document` and not a union of the two.
+A document is a chunk *source*; document-level routing is a chunker configured
+not to split, which is exactly what the default chunker does. `RouteVerdict`
+carries `scope: chunk | document` so a router that recognises a marketing page
+from its first chunk can skip the rest of that document — the one real reason
+to route at document level, without a second method.
+
+This fixes the unit of every metric: one row is one chunk, and the chunker's
+configuration is what defines it. The chunker's user-facing size is a word cap
+and it never splits mid-sentence, because a router asked "fact or narrative?"
+about half a sentence is asked nothing.
+
+The package ships no taxonomy. `RouteVerdict.label` is a free string; one
+corpus's fact / policy / narrative split is an argument to a router, not an
+enum in this code.
+
+*Cost:* a `Chunk` carries `doc_id`, offsets, text and an index, and nothing
+else. An extractor that needs the document's modality or tier looks it up.
