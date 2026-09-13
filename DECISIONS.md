@@ -134,3 +134,18 @@ trades a rotating credential for a keystroke, so there is no add-to-project
 workflow. New issues go on the board with:
 
     gh project item-add 6 --owner deepskandpal --url <issue-url>
+
+### 14. Polarity is a field, and it is part of the signature
+
+`Fact.polarity` is `asserted` / `denied` / `partial`. Before it existed the only
+place a denial could go was `qualifiers`, which #11 keeps out of `signature` —
+so "X sells customer data" and "X does not sell customer data" shared a
+signature, the corroborator merged them, and each raised the other's `support`.
+A denial and its own contradiction strengthened each other.
+
+It joins `signature` because a denial is not the same claim as an assertion; it
+is the opposite one. Hand annotation of a real corpus found 6% of facts negative
+or partial, which is too many to lose and too many to merge wrongly.
+
+*Cost:* one more field on a frozen model, and a re-partition of any graph built
+before it — which is why it lands in M0, before anything is serialised.

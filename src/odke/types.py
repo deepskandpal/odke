@@ -122,6 +122,23 @@ class GroundingVerdict(StrEnum):
     NOT_FOUND = "not_found"
 
 
+class Polarity(StrEnum):
+    """Whether the source asserts the claim, denies it, or qualifies it.
+
+    A graph holding only positive assertions cannot answer "does X sell customer
+    data?" when the source says it does not. Six percent of a hand-annotated
+    corpus was negative or partial, so this is a field rather than a qualifier —
+    and it is part of `Fact.signature`, because a denial and its assertion are
+    opposite claims, not one claim told twice.
+    """
+
+    ASSERTED = "asserted"
+    DENIED = "denied"
+    # "Only for EU customers", "in most cases": true with a scope the source
+    # states and the triple cannot carry.
+    PARTIAL = "partial"
+
+
 class Entity(Frozen):
     """A node. `key` is the identity the corroborator merges on."""
 
@@ -149,6 +166,7 @@ class Fact(Frozen):
     predicate: str
     object_entity: Entity | None = None
     object_value: Any = None
+    polarity: Polarity = Polarity.ASSERTED
     # Predicate-scoped modifiers from the ontology: start_time, end_time, rank.
     qualifiers: dict[str, Any] = Field(default_factory=dict)
 
@@ -164,15 +182,18 @@ class Fact(Frozen):
         return self.object_entity is not None
 
     @property
-    def signature(self) -> tuple[str, str, str, str]:
+    def signature(self) -> tuple[str, str, str, str, str]:
         """The identity two extractions must share to count as the same claim.
+
+        Polarity is included: if it were not, "X sells data" and "X does not
+        sell data" would merge and each would raise the other's `support`.
 
         Qualifiers are deliberately excluded: "CEO of X (2019-2024)" and "CEO of
         X (since 2019)" are the same claim told two ways, and the corroborator's
         job is to reconcile them rather than to emit both.
         """
         obj = self.object_entity.key if self.object_entity else repr(self.object_value)
-        return (self.subject.key, self.subject.type, self.predicate, obj)
+        return (self.subject.key, self.subject.type, self.predicate, obj, self.polarity.value)
 
 
 # --------------------------------------------------------------------------- #

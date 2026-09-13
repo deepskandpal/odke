@@ -16,6 +16,7 @@ from odke.types import (
     Fact,
     GroundingVerdict,
     KnowledgeGraph,
+    Polarity,
     SourceTier,
     Span,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "Ontology",
     "OntologySnippet",
     "Pipeline",
+    "Polarity",
     "Predicate",
     "SourceTier",
     "Span",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from odke import Document, Entity, Fact, KnowledgeGraph, SourceTier, Span
+from odke import Document, Entity, Fact, KnowledgeGraph, Polarity, SourceTier, Span
 
 
 def test_facts_are_immutable() -> None:
@@ -33,6 +33,21 @@ def test_signature_ignores_qualifiers_so_the_same_claim_merges() -> None:
     b = Fact(subject=subject, predicate="ceo_of", object_entity=obj, qualifiers={"end": "2024"})
     assert a.signature == b.signature
     assert a.id != b.id
+
+
+def test_a_denial_does_not_corroborate_its_own_contradiction() -> None:
+    """'X sells data' and 'X does not sell data' must never merge into one claim."""
+    subject = Entity(key="c1", type="Company")
+    asserted = Fact(subject=subject, predicate="sells", object_value="customer_data")
+    denied = asserted.model_copy(update={"polarity": Polarity.DENIED})
+    partial = asserted.model_copy(update={"polarity": Polarity.PARTIAL})
+    assert asserted.polarity is Polarity.ASSERTED
+    assert len({asserted.signature, denied.signature, partial.signature}) == 3
+
+
+def test_polarity_survives_serialisation() -> None:
+    fact = Fact(subject=Entity(key="c1", type="Company"), predicate="p", polarity=Polarity.DENIED)
+    assert Fact.model_validate_json(fact.model_dump_json()).signature == fact.signature
 
 
 def test_edges_and_properties_split_on_the_object_kind() -> None:
