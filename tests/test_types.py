@@ -16,6 +16,7 @@ from odke import (
     KnowledgeGraph,
     LinkKind,
     Polarity,
+    Resolution,
     SourceTier,
     Span,
 )
@@ -140,6 +141,23 @@ def test_links_ride_on_the_graph_and_default_to_none() -> None:
     kg = KnowledgeGraph(links=(link,))
     round_tripped = KnowledgeGraph.model_validate_json(kg.model_dump_json())
     assert round_tripped.links[0].kind is LinkKind.SAME_AS
+
+
+def test_an_entity_records_how_its_key_was_decided() -> None:
+    """A wrong link is invisible without this; with it, it is a query."""
+    unresolved = Entity(key="acme", type="Company")
+    linked = Entity(
+        key="acme",
+        type="Company",
+        resolution=Resolution(method="linker", score=0.87, linker="splink"),
+    )
+    by_id = Entity(key="Q95", type="Company", resolution=Resolution(method="external_id"))
+    assert unresolved.resolution is None
+    assert linked.resolution is not None and linked.resolution.score == 0.87
+    assert by_id.resolution is not None and by_id.resolution.score is None
+    assert Entity.model_validate_json(linked.model_dump_json()).resolution == linked.resolution
+    with pytest.raises(ValidationError):
+        Resolution(method="guess")  # type: ignore[arg-type]
 
 
 def test_trust_tiers_are_ordered_so_conflicts_can_be_resolved() -> None:

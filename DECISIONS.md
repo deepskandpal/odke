@@ -212,3 +212,19 @@ when the staleness queue is built.
 
 *Cost:* two nullable fields most extractors will leave empty. A migration if
 added later, which is why they are here now.
+
+### 18. An entity records how its key was decided
+
+`Entity.resolution` is `Resolution(method, score, linker)`, with `method` one
+of `caller`, `external_id`, `linker`. The paper's two identity paths — a global
+identifier links directly, otherwise a linker decides — become a field, plus
+the third case an SDK meets and the paper does not: the caller already knew.
+
+Without it a wrong link is invisible. With it, it is a query — every entity
+whose identity came from an embedding match below 0.9 — and a `DIFFERENT` link
+(#16) is auditable rather than merely recorded. `linker` also names a platform
+resolver when the pass was delegated (#21), so a merge the store made can be
+read back and scored the same way as one made here.
+
+*Cost:* one nullable field. Left `None` by anything that did not resolve, which
+is itself the answer to "who decided this?".

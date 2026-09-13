@@ -139,6 +139,23 @@ class Polarity(StrEnum):
     PARTIAL = "partial"
 
 
+class Resolution(Frozen):
+    """How `Entity.key` was decided.
+
+    Without this a wrong link is invisible. With it, it is a query: show me
+    every entity whose identity came from an embedding match below 0.9.
+    """
+
+    # "caller": the key arrived with the input. "external_id": a global
+    # identifier (a Q-id, a customer id) settled it — exact, free, no score.
+    # "linker": something compared and decided, and `score` says how sure.
+    method: Literal["caller", "external_id", "linker"]
+    score: float | None = None
+    # Which linker, when one ran — including a platform's, when the pass was
+    # delegated rather than run here.
+    linker: str | None = None
+
+
 class Entity(Frozen):
     """A node. `key` is the identity the corroborator merges on."""
 
@@ -149,6 +166,7 @@ class Entity(Frozen):
     # A resolved identifier in some external authority (Wikidata Q-id, an
     # internal customer id) when entity linking found one.
     external_id: str | None = None
+    resolution: Resolution | None = None
     attributes: dict[str, Any] = Field(default_factory=dict)
 
 

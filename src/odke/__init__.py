@@ -19,6 +19,7 @@ from odke.types import (
     KnowledgeGraph,
     LinkKind,
     Polarity,
+    Resolution,
     SourceTier,
     Span,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "Polarity",
     "Predicate",
     "Qualifier",
+    "Resolution",
     "SourceTier",
     "Span",
     "__version__",
