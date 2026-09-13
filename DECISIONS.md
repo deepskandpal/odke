@@ -249,3 +249,24 @@ enum in this code.
 
 *Cost:* a `Chunk` carries `doc_id`, offsets, text and an index, and nothing
 else. An extractor that needs the document's modality or tier looks it up.
+
+### 20. Thirteen Protocols, each with a pass-through default
+
+The generic pipeline is thirteen stages — load, chunk, route, extract, ground,
+normalise, resolve, corroborate, score, validate, sink, constrain, infer —
+and every one is a `Protocol` in `odke.stages` with a concrete default that is
+the identity function, or the nearest thing to one. A caller who wants only
+extract-and-sink gets no-ops for the other eleven and never notices them.
+
+This is what makes the package a superset rather than a product. Every corpus
+that has been looked at needs a different subset of the thirteen, and nothing
+domain-specific — labels, ontologies, tenancy keys, qualifier semantics —
+enters the code. It all arrives as data through one of these seams.
+
+The extractor is the one stage with no identity function, so it has no
+default. `Grounder` stamps a verdict rather than dropping the fact, so an
+ablation can count what would have gone; the `Validator` is the gate.
+
+*Cost:* the four original Protocols changed shape — per chunk and per fact
+rather than per batch — before anything implemented them. Later would have
+been a migration for every caller.

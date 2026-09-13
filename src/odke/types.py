@@ -156,6 +156,19 @@ class GroundingVerdict(StrEnum):
     NOT_FOUND = "not_found"
 
 
+class ValidationVerdict(Frozen):
+    """What the validator concluded, checking a fact against the ontology.
+
+    `accept` is written. `refuse` is not, and `reason` says why. `conflict` is
+    written and flagged: the fact is well-formed but disagrees with something
+    already held, and that is a queue for a person or for the store's own
+    constraints, not a reason to drop it silently.
+    """
+
+    action: Literal["accept", "refuse", "conflict"]
+    reason: str | None = None
+
+
 class Polarity(StrEnum):
     """Whether the source asserts the claim, denies it, or qualifies it.
 
