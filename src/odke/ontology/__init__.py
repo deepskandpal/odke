@@ -16,9 +16,27 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Cardinality = Literal["single", "multi"]
+
+
+class Qualifier(BaseModel):
+    """What one qualifier key means for a fact's identity.
+
+    Two kinds share the `qualifiers` bucket. A *reconcilable* qualifier
+    (`start_time`, `end_time`, `rank`) is one claim seen imprecisely — "CEO since
+    2019" and "CEO 2019-2024" — and the corroborator merges them. An
+    *identity-bearing* qualifier (`percentile`, `tier`, `region`) makes two facts
+    different claims — uptime at p50 is not uptime at p95 — and merging them is
+    data loss. Only the ontology author knows which is which, so it is declared
+    here and stamped onto `Fact.identity_keys` at extraction.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    identity: bool = False
+    description: str | None = None
 
 
 class Predicate(BaseModel):
@@ -35,13 +53,27 @@ class Predicate(BaseModel):
     domain: tuple[str, ...] = ()
     range: str = "string"
     cardinality: Cardinality = "single"
-    qualifiers: tuple[str, ...] = ()
+    qualifiers: dict[str, Qualifier] = Field(default_factory=dict)
     aliases: tuple[str, ...] = ()
     # Drives snippet ranking. In the paper this comes from frequency in the
     # existing KG; when there is no KG yet, the ontology author sets it, and an
     # inferred ontology sets it from corpus support.
     importance: float = 0.5
     examples: tuple[str, ...] = ()
+
+    @field_validator("qualifiers", mode="before")
+    @classmethod
+    def _names_are_reconcilable(cls, value: Any) -> Any:
+        # A bare list of names is the older, shorter spelling; every name in it
+        # is reconcilable, which keeps DECISIONS #11 the default.
+        if isinstance(value, list | tuple):
+            return dict.fromkeys(value, {})
+        return value
+
+    @property
+    def identity_keys(self) -> tuple[str, ...]:
+        """The qualifier keys that make two facts on this predicate different claims."""
+        return tuple(sorted(k for k, q in self.qualifiers.items() if q.identity))
 
     def is_edge_in(self, ontology: Ontology) -> bool:
         return self.range in ontology.types
@@ -92,6 +124,16 @@ class Ontology(BaseModel):
             for p in self.predicates.values()
             if not p.domain or any(d in lineage for d in p.domain)
         ]
+
+    def identity_keys(self, predicate: str) -> tuple[str, ...]:
+        """What to stamp onto `Fact.identity_keys` for a fact on this predicate.
+
+        The fact carries the keys rather than a reference to the ontology so that
+        `Fact.signature` stays a pure property and a serialised fact still means
+        the same thing after the schema it came from has moved on.
+        """
+        found = self.predicates.get(predicate)
+        return found.identity_keys if found else ()
 
     def lineage(self, type_name: str) -> set[str]:
         """A type and all of its ancestors, cycle-safe."""
@@ -190,4 +232,4 @@ _JSON_TYPES = {
     "datetime": "string",
 }
 
-__all__ = ["Cardinality", "EntityType", "Ontology", "OntologySnippet", "Predicate"]
+__all__ = ["Cardinality", "EntityType", "Ontology", "OntologySnippet", "Predicate", "Qualifier"]

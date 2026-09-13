@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from odke.ontology import EntityType, Ontology, Predicate
+from odke.ontology import EntityType, Ontology, Predicate, Qualifier
 
 
 def _ontology() -> Ontology:
@@ -82,6 +82,39 @@ def test_lineage_survives_a_cycle() -> None:
         }
     )
     assert ontology.lineage("A") == {"A", "B"}
+
+
+def test_the_ontology_declares_which_qualifiers_bear_identity() -> None:
+    """Identity keys come out sorted so they can be stamped straight onto a fact."""
+    ontology = Ontology(
+        predicates={
+            "has_uptime": Predicate(
+                name="has_uptime",
+                qualifiers={
+                    "tier": Qualifier(identity=True),
+                    "percentile": {"identity": True},
+                    "start_time": {},
+                },
+            )
+        }
+    )
+    assert ontology.identity_keys("has_uptime") == ("percentile", "tier")
+    assert ontology.identity_keys("not_declared") == ()
+
+
+def test_a_bare_list_of_qualifier_names_is_still_accepted_and_reconcilable() -> None:
+    """The shorter spelling keeps working, and every name in it keeps DECISIONS #11."""
+    predicate = Predicate(name="employer", qualifiers=["start_date", "end_date", "role"])
+    assert set(predicate.qualifiers) == {"start_date", "end_date", "role"}
+    assert predicate.identity_keys == ()
+    assert not any(q.identity for q in predicate.qualifiers.values())
+
+
+def test_qualifier_names_still_render_into_the_snippet() -> None:
+    ontology = Ontology(
+        predicates={"employer": Predicate(name="employer", qualifiers=["start_date", "role"])}
+    )
+    assert "[qualifiers: start_date, role]" in ontology.snippet("Person").render()
 
 
 def test_multi_cardinality_becomes_an_array_in_the_schema() -> None:

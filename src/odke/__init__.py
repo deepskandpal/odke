@@ -7,7 +7,7 @@ generalised from one production knowledge graph to a general-purpose SDK. See
 NOTICE for the relationship to that paper.
 """
 
-from odke.ontology import EntityType, Ontology, OntologySnippet, Predicate
+from odke.ontology import EntityType, Ontology, OntologySnippet, Predicate, Qualifier
 from odke.pipeline import Pipeline
 from odke.types import (
     Document,
@@ -36,6 +36,7 @@ __all__ = [
     "Pipeline",
     "Polarity",
     "Predicate",
+    "Qualifier",
     "SourceTier",
     "Span",
     "__version__",

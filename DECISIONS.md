@@ -110,11 +110,15 @@ Callers reason about "curated vs. scraped", not about 0.8. Four named tiers with
 fixed weights make conflict resolution explainable, which matters the first time
 someone asks why the graph picked one of two contradictory answers.
 
-### 11. `Fact.signature` excludes qualifiers
+### 11. `Fact.signature` excludes reconcilable qualifiers
 
 "CEO since 2019" and "CEO 2019–2024" are one claim told two ways. If qualifiers
 were part of identity, both would land in the graph as separate edges, which is
 exactly the failure corroboration exists to prevent.
+
+*Amended in M0 (#48):* this holds for **reconcilable** qualifiers, which is what
+every qualifier is unless the ontology says otherwise. A key the ontology
+declares `identity: true` is a different matter — see #15.
 
 ### 12. Verification is one script
 
@@ -149,3 +153,24 @@ or partial, which is too many to lose and too many to merge wrongly.
 
 *Cost:* one more field on a frozen model, and a re-partition of any graph built
 before it — which is why it lands in M0, before anything is serialised.
+
+### 15. The ontology says which qualifiers bear identity; the fact carries the answer
+
+#11 is right about `start_time` and wrong about `percentile`. "Uptime 99.9% at
+p50" and "uptime 99.9% at p95" are two measurements; with qualifiers excluded
+from `signature` they merged into one claim with `support = 2`, and where the
+values differed a single-valued predicate saw a contradiction that was not one.
+Two in five facts in a real corpus carried a qualifier of this kind.
+
+So `Predicate.qualifiers` maps each key to a `Qualifier(identity=...)`,
+defaulting to `False` — #11 stays the default and nothing in an existing
+ontology changes meaning. The extractor stamps `Ontology.identity_keys(pred)`
+onto `Fact.identity_keys`, and `signature` includes those keys, sorted.
+
+The fact carries the key names rather than a reference to the ontology because
+`signature` has to stay a pure property of the fact: a serialised fact must mean
+the same thing after the schema it came from has been edited, and the
+corroborator must never need the schema in hand to merge two facts.
+
+*Cost:* an extractor that forgets to stamp `identity_keys` silently gets #11's
+old behaviour. That is the safe direction to fail in.

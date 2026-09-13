@@ -169,6 +169,11 @@ class Fact(Frozen):
     polarity: Polarity = Polarity.ASSERTED
     # Predicate-scoped modifiers from the ontology: start_time, end_time, rank.
     qualifiers: dict[str, Any] = Field(default_factory=dict)
+    # Which qualifier keys make this a different claim rather than the same one
+    # told imprecisely — `percentile`, `tier`, not `start_time`. Stamped by the
+    # extractor from `Ontology.identity_keys()`, so the fact never needs the
+    # ontology in hand to know its own identity.
+    identity_keys: tuple[str, ...] = ()
 
     evidence: tuple[Evidence, ...] = ()
     extractor: str = "unknown"
@@ -182,18 +187,29 @@ class Fact(Frozen):
         return self.object_entity is not None
 
     @property
-    def signature(self) -> tuple[str, str, str, str, str]:
+    def signature(self) -> tuple[str, str, str, str, str, tuple[tuple[str, str], ...]]:
         """The identity two extractions must share to count as the same claim.
 
         Polarity is included: if it were not, "X sells data" and "X does not
         sell data" would merge and each would raise the other's `support`.
 
-        Qualifiers are deliberately excluded: "CEO of X (2019-2024)" and "CEO of
-        X (since 2019)" are the same claim told two ways, and the corroborator's
-        job is to reconcile them rather than to emit both.
+        Reconcilable qualifiers are deliberately excluded: "CEO of X (2019-2024)"
+        and "CEO of X (since 2019)" are the same claim told two ways, and the
+        corroborator's job is to reconcile them rather than to emit both. The
+        keys named in `identity_keys` are included, sorted: uptime at p50 and
+        uptime at p95 are two measurements, and merging them inflates support.
         """
         obj = self.object_entity.key if self.object_entity else repr(self.object_value)
-        return (self.subject.key, self.subject.type, self.predicate, obj, self.polarity.value)
+        present = (k for k in self.identity_keys if k in self.qualifiers)
+        scoped = tuple(sorted((k, repr(self.qualifiers[k])) for k in present))
+        return (
+            self.subject.key,
+            self.subject.type,
+            self.predicate,
+            obj,
+            self.polarity.value,
+            scoped,
+        )
 
 
 # --------------------------------------------------------------------------- #

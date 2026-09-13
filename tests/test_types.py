@@ -35,6 +35,30 @@ def test_signature_ignores_qualifiers_so_the_same_claim_merges() -> None:
     assert a.id != b.id
 
 
+def test_identity_qualifiers_split_the_signature_and_reconcilable_ones_do_not() -> None:
+    """Uptime at p50 and at p95 are two claims; 'since 2019' and '2019-2024' are one."""
+    subject = Entity(key="c1", type="Company")
+    p50 = Fact(
+        subject=subject,
+        predicate="has_uptime",
+        object_value="99.9%",
+        qualifiers={"percentile": "p50", "start_time": "2024"},
+        identity_keys=("percentile",),
+    )
+    p95 = p50.model_copy(update={"qualifiers": {"percentile": "p95", "start_time": "2024"}})
+    later = p50.model_copy(update={"qualifiers": {"percentile": "p50", "start_time": "2025"}})
+    assert p50.signature != p95.signature
+    assert p50.signature == later.signature
+
+
+def test_identity_keys_absent_from_the_qualifiers_are_ignored() -> None:
+    """A declared key the extractor did not fill must not split the claim on a blank."""
+    subject = Entity(key="c1", type="Company")
+    with_key = Fact(subject=subject, predicate="p", object_value=1, identity_keys=("tier",))
+    without = Fact(subject=subject, predicate="p", object_value=1)
+    assert with_key.signature == without.signature
+
+
 def test_a_denial_does_not_corroborate_its_own_contradiction() -> None:
     """'X sells data' and 'X does not sell data' must never merge into one claim."""
     subject = Entity(key="c1", type="Company")
