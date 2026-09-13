@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from pydantic import ValidationError
 
@@ -95,6 +97,23 @@ def test_edges_and_properties_split_on_the_object_kind() -> None:
     assert kg.edges == (edge,)
     assert kg.properties == (prop,)
     assert len(kg) == 2
+
+
+def test_valid_time_is_the_second_clock_and_stays_out_of_the_signature() -> None:
+    """When a claim was true is not what the claim is; the interval is reconciled, not split on."""
+    subject = Entity(key="p1", type="Person")
+    obj = Entity(key="c1", type="Company")
+    open_ended = Fact(
+        subject=subject,
+        predicate="ceo_of",
+        object_entity=obj,
+        valid_from=datetime(2019, 1, 1, tzinfo=UTC),
+    )
+    closed = open_ended.model_copy(update={"valid_to": datetime(2024, 1, 1, tzinfo=UTC)})
+    assert open_ended.valid_to is None
+    assert open_ended.signature == closed.signature
+    # The transaction clock lives on the evidence, and defaults to now.
+    assert Evidence(doc_id="d1").retrieved_at.tzinfo is not None
 
 
 def test_links_record_a_rejected_merge_with_its_reason() -> None:

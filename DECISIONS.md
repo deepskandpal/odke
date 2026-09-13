@@ -194,3 +194,21 @@ sink with no use for links ignores them.
 
 *Cost:* the store holds duplicates until something acts on the links. That is
 the point — acting on them is a choice a caller can revisit.
+
+### 17. Two clocks: valid time on the fact, transaction time on the evidence
+
+`Fact.valid_from` / `valid_to` say when the claim was true in the world.
+`Evidence.retrieved_at` and `Document.retrieved_at` say when we came to believe
+it. They were one clock before, and one clock cannot tell a CEO who changed
+from two sources that disagree — one is a fact that expired correctly, the
+other is a conflict to resolve, and the corroborator has to do opposite things
+with them.
+
+Neither clock is in `signature`. "CEO 2019–2024" and "CEO since 2019" are one
+claim with two views of its interval, which is the reconciliation #11 exists
+for. Graphiti's bi-temporal model invalidates edges rather than deleting them;
+that is the same instinct, and the shape here is chosen so it can be borrowed
+when the staleness queue is built.
+
+*Cost:* two nullable fields most extractors will leave empty. A migration if
+added later, which is why they are here now.

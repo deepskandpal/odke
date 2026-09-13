@@ -159,6 +159,13 @@ class Fact(Frozen):
     another type produces an edge, a predicate whose range is a literal produces
     a property. Both live in one class because both need identical provenance,
     grounding and corroboration, and splitting them duplicated every stage.
+
+    A fact carries two clocks. `valid_from` / `valid_to` is the *valid* clock:
+    when the claim was true in the world. `Evidence.retrieved_at` (and
+    `Document.retrieved_at`) is the *transaction* clock: when we came to believe
+    it. Without both, a CEO who changed and two sources that disagree look like
+    the same event, and they need opposite handling — one is a fact that expired
+    correctly, the other is a conflict to resolve.
     """
 
     id: str = Field(default_factory=lambda: uuid4().hex)
@@ -174,6 +181,10 @@ class Fact(Frozen):
     # extractor from `Ontology.identity_keys()`, so the fact never needs the
     # ontology in hand to know its own identity.
     identity_keys: tuple[str, ...] = ()
+    # The valid clock. Not part of `signature`: "CEO 2019-2024" and "CEO since
+    # 2019" are still one claim; the interval is what the corroborator reconciles.
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
 
     evidence: tuple[Evidence, ...] = ()
     extractor: str = "unknown"
