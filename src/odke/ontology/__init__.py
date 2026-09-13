@@ -40,7 +40,26 @@ class Qualifier(BaseModel):
 
 
 class Predicate(BaseModel):
-    """One relation or attribute, with the metadata a prompt needs to use it."""
+    """One relation or attribute, with the metadata a prompt needs to use it.
+
+    `cardinality` says how many values a subject may hold; `cardinality_scope`
+    says *within what*. "One price per subject" and "one price per subject per
+    tier" are both `single`, and a flat count treats the second as a stream of
+    contradictions — two in five facts in a real corpus are qualifier-scoped, so
+    that queue would be mostly noise.
+
+    The scope is a list of qualifier keys, and the only keys that make sense in
+    it are the identity-bearing ones: a fact that differs on `tier` is a
+    different claim (DECISIONS #15), so uniqueness has to be counted per tier or
+    the store sees a conflict where there is none. That makes the default
+    obvious — `None` means "every identity-bearing qualifier", and it is right
+    for every predicate without a second declaration. An explicit list exists
+    for the two other cases: `()` to count per subject regardless of qualifiers,
+    and a spelled-out key list so the constraint is visible in the schema. A
+    list that names a reconcilable qualifier is a mistake `validate()` reports
+    rather than a scope that quietly does nothing. `scope_keys` resolves all
+    three to the tuple M4 compiles into a composite uniqueness constraint.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -53,6 +72,7 @@ class Predicate(BaseModel):
     domain: tuple[str, ...] = ()
     range: str = "string"
     cardinality: Cardinality = "single"
+    cardinality_scope: tuple[str, ...] | None = None
     qualifiers: dict[str, Qualifier] = Field(default_factory=dict)
     aliases: tuple[str, ...] = ()
     # Drives snippet ranking. In the paper this comes from frequency in the
@@ -74,6 +94,17 @@ class Predicate(BaseModel):
     def identity_keys(self) -> tuple[str, ...]:
         """The qualifier keys that make two facts on this predicate different claims."""
         return tuple(sorted(k for k, q in self.qualifiers.items() if q.identity))
+
+    @property
+    def scope_keys(self) -> tuple[str, ...]:
+        """The qualifier keys a `single` value is unique within, next to the subject.
+
+        Resolved rather than declared, so the constraint compiler reads one
+        thing: `(subject, *scope_keys)` is the composite uniqueness key.
+        """
+        if self.cardinality_scope is None:
+            return self.identity_keys
+        return tuple(sorted(self.cardinality_scope))
 
     def is_edge_in(self, ontology: Ontology) -> bool:
         return self.range in ontology.types

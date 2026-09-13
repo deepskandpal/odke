@@ -123,3 +123,34 @@ def test_multi_cardinality_becomes_an_array_in_the_schema() -> None:
     )
     schema = ontology.snippet("Anything").json_schema()
     assert schema["properties"]["alias"]["type"] == "array"
+
+
+# --------------------------------------------------------------------------- #
+# Cardinality scope (R4)
+# --------------------------------------------------------------------------- #
+
+_SCOPED_QUALIFIERS = {"tier": {"identity": True}, "region": {"identity": True}, "as_of": {}}
+
+
+def test_cardinality_scope_defaults_to_the_identity_bearing_qualifiers() -> None:
+    """'One price per subject per tier' needs no second declaration: identity implies it."""
+    price = Predicate(name="price", qualifiers=_SCOPED_QUALIFIERS)
+    assert price.cardinality_scope is None
+    assert price.scope_keys == ("region", "tier")
+    assert Predicate(name="flat").scope_keys == ()
+
+
+def test_an_empty_scope_counts_per_subject_regardless_of_qualifiers() -> None:
+    """`()` and `None` are different answers, and both must survive JSON."""
+    flat = Predicate(name="price", qualifiers=_SCOPED_QUALIFIERS, cardinality_scope=())
+    assert flat.scope_keys == ()
+    assert Predicate.model_validate_json(flat.model_dump_json()).cardinality_scope == ()
+    implied = Predicate(name="price", qualifiers=_SCOPED_QUALIFIERS)
+    assert Predicate.model_validate_json(implied.model_dump_json()).cardinality_scope is None
+
+
+def test_an_explicit_scope_is_what_the_constraint_compiler_reads() -> None:
+    """Spelled out, sorted, and taken at its word — judging it is validate()'s job."""
+    price = Predicate(name="price", qualifiers=_SCOPED_QUALIFIERS, cardinality_scope=("tier",))
+    assert price.scope_keys == ("tier",)
+    assert Predicate(name="p", cardinality_scope=("b", "a")).scope_keys == ("a", "b")
