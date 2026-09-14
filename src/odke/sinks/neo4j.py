@@ -185,7 +185,8 @@ def _entity_row(entity: Entity) -> dict[str, Any]:
     }
 
 
-def _is_scoped(fact: Fact) -> bool:
+def is_scoped(fact: Fact) -> bool:
+    """True when the fact carries a value for one of its identity-bearing qualifiers."""
     return any(k in fact.qualifiers for k in fact.identity_keys)
 
 
@@ -195,10 +196,19 @@ def _is_scoped(fact: Fact) -> bool:
 
 
 class Statement(NamedTuple):
-    """One parameterised Cypher statement and the rows it `UNWIND`s."""
+    """One parameterised Cypher statement and the rows it `UNWIND`s.
+
+    `kind` and `names` say what the rows are without parsing the Cypher, which
+    is how the bulk sinks lay the same plan out as a script or as CSV files.
+    """
 
     cypher: str
     rows: list[dict[str, Any]]
+    # entity | edge | claim | projection | link
+    kind: str = ""
+    # (label,) · (subject type, predicate, object type) · (subject type,
+    # predicate) for a claim or a projection · (link kind,)
+    names: tuple[str, ...] = ()
 
 
 def plan(kg: KnowledgeGraph, *, ontology: Ontology | None = None) -> list[Statement]:
@@ -211,10 +221,10 @@ def plan(kg: KnowledgeGraph, *, ontology: Ontology | None = None) -> list[Statem
     statements: list[Statement] = []
 
     by_label: dict[str, list[dict[str, Any]]] = {}
-    for (label, _), entity in sorted(_entities_of(kg).items()):
+    for (label, _), entity in sorted(entities_of(kg).items()):
         by_label.setdefault(label, []).append(_entity_row(entity))
     for label, rows in sorted(by_label.items()):
-        statements.append(Statement(_entity_cypher(label), rows))
+        statements.append(Statement(_entity_cypher(label), rows, "entity", (label,)))
 
     edges: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     claims: dict[tuple[str, str], list[dict[str, Any]]] = {}
@@ -232,21 +242,24 @@ def plan(kg: KnowledgeGraph, *, ontology: Ontology | None = None) -> list[Statem
             }
             claims.setdefault((fact.subject.type, fact.predicate), []).append({**row, **claim})
     for (subject_type, predicate, object_type), rows in sorted(edges.items()):
-        statements.append(Statement(_edge_cypher(subject_type, predicate, object_type), rows))
+        cypher = _edge_cypher(subject_type, predicate, object_type)
+        statements.append(Statement(cypher, rows, "edge", (subject_type, predicate, object_type)))
     for (subject_type, predicate), rows in sorted(claims.items()):
-        statements.append(Statement(_claim_cypher(subject_type, predicate), rows))
-    for (subject_type, predicate), rows in sorted(_projections(kg, ontology).items()):
-        statements.append(Statement(_projection_cypher(subject_type, predicate), rows))
+        cypher = _claim_cypher(subject_type, predicate)
+        statements.append(Statement(cypher, rows, "claim", (subject_type, predicate)))
+    for (subject_type, predicate), rows in sorted(projections(kg, ontology).items()):
+        cypher = _projection_cypher(subject_type, predicate)
+        statements.append(Statement(cypher, rows, "projection", (subject_type, predicate)))
 
     links: dict[str, list[dict[str, Any]]] = {}
     for link in kg.links:
-        links.setdefault(link.kind.value.upper(), []).append(_link_row(link))
+        links.setdefault(link.kind.value.upper(), []).append(link_row(link))
     for kind, rows in sorted(links.items()):
-        statements.append(Statement(_link_cypher(kind), rows))
+        statements.append(Statement(_link_cypher(kind), rows, "link", (kind,)))
     return statements
 
 
-def _entities_of(kg: KnowledgeGraph) -> dict[tuple[str, str], Entity]:
+def entities_of(kg: KnowledgeGraph) -> dict[tuple[str, str], Entity]:
     """Every node to write, by (type, key).
 
     A fact's own subject and object are written too, so an edge whose entity
@@ -264,7 +277,7 @@ def _entities_of(kg: KnowledgeGraph) -> dict[tuple[str, str], Entity]:
     return seen
 
 
-def _projections(
+def projections(
     kg: KnowledgeGraph, ontology: Ontology | None
 ) -> dict[tuple[str, str], list[dict[str, Any]]]:
     """The literal values that go onto subject nodes as plain properties.
@@ -280,7 +293,7 @@ def _projections(
             fact.object_entity is not None
             or fact.object_value is None
             or fact.polarity is not Polarity.ASSERTED
-            or _is_scoped(fact)
+            or is_scoped(fact)
         ):
             continue
         grouped.setdefault((fact.subject.type, fact.predicate, fact.subject.key), []).append(fact)
@@ -304,7 +317,7 @@ def _projections(
     return out
 
 
-def _link_row(link: EntityLink) -> dict[str, Any]:
+def link_row(link: EntityLink) -> dict[str, Any]:
     return {
         "source_key": link.source_key,
         "target_key": link.target_key,
@@ -696,8 +709,12 @@ __all__ = [
     "Statement",
     "cardinality_scope",
     "check_target",
+    "entities_of",
     "is_check",
+    "is_scoped",
+    "link_row",
     "plan",
+    "projections",
     "provenance_of",
     "signature_of",
     "storable",
