@@ -36,3 +36,94 @@ jobs:
         run: ./scripts/verify.sh
         env:
           UV_PYTHON: ${{ matrix.python }}
+
+  # The tests that talk to a real Neo4j skip everywhere else: verify.sh refuses
+  # to run with NEO4J_URI or NEO4J_PASSWORD set, because the suite must never
+  # write to somebody's real graph. So they get their own job, a database that
+  # lives exactly as long as the job does, and no verify.sh. What a recording
+  # driver cannot check — that the MERGEs really are idempotent, that the DDL
+  # is accepted, that a check query finds a real violation — is checked here.
+  neo4j-live:
+    name: neo4j live tests (python 3.12, neo4j 5.26)
+    runs-on: ubuntu-latest
+    services:
+      neo4j:
+        # Relationship uniqueness constraints need 5.7 or later; Community,
+        # because the constrainer emits nothing Enterprise-only.
+        image: neo4j:5.26-community
+        env:
+          # A throwaway password for a container that dies with the job,
+          # derived from the run id so no fixed credential sits in the repo.
+          NEO4J_AUTH: neo4j/ci-${{ github.run_id }}
+        ports:
+          - 7687:7687
+        # Healthy means bolt answers a query with these credentials.
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p ci-${{ github.run_id }} 'RETURN 1'"
+          --health-interval 5s
+          --health-timeout 20s
+          --health-retries 30
+          --health-start-period 20s
+    env:
+      UV_PYTHON: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --locked
+
+      # Only these two steps see the connection settings. Set any wider and the
+      # credential check in verify.sh would be right to refuse.
+      - name: Wait for bolt on 7687
+        env:
+          NEO4J_URI: bolt://localhost:7687
+          NEO4J_USER: neo4j
+          NEO4J_PASSWORD: ci-${{ github.run_id }}
+        run: |
+          uv run python - <<'EOF'
+          import os, time
+          from neo4j import GraphDatabase
+
+          auth = (os.environ["NEO4J_USER"], os.environ["NEO4J_PASSWORD"])
+          deadline = time.monotonic() + 120
+          while True:
+              try:
+                  with GraphDatabase.driver(os.environ["NEO4J_URI"], auth=auth) as driver:
+                      driver.verify_connectivity()
+                      print("bolt is up:", driver.get_server_info().agent)
+                  break
+              except Exception as exc:
+                  if time.monotonic() > deadline:
+                      raise
+                  print(f"waiting for bolt: {exc}")
+                  time.sleep(2)
+          EOF
+
+      # `-k live_neo4j` selects exactly the tests that need a server. A skipped
+      # test is a green tick that proved nothing, so the step then reads the
+      # JUnit report and fails unless at least one ran and none skipped.
+      - name: Live Neo4j tests
+        env:
+          NEO4J_URI: bolt://localhost:7687
+          NEO4J_USER: neo4j
+          NEO4J_PASSWORD: ci-${{ github.run_id }}
+        run: |
+          uv run pytest tests/test_neo4j_sink.py tests/test_neo4j_constraints.py \
+            -k live_neo4j -rA --junitxml=live-neo4j.xml
+          python3 - <<'EOF'
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("live-neo4j.xml").getroot()
+          suite = root if root.tag == "testsuite" else root.find("testsuite")
+          tests, skipped = int(suite.get("tests")), int(suite.get("skipped"))
+          failed = int(suite.get("failures")) + int(suite.get("errors"))
+          ran = tests - skipped
+          print(f"live neo4j tests: {tests} selected, {ran} ran, {skipped} skipped, {failed} failed")
+          if ran < 1 or skipped or failed:
+              raise SystemExit("the live Neo4j tests must run, not skip")
+          EOF
