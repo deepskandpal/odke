@@ -14,12 +14,24 @@ from odke.corroborate.normalize import (
     normalize_value,
 )
 from odke.corroborate.provenance import NAME_KEY, SOURCE_FORM
+from odke.corroborate.resolve import (
+    LINKER,
+    NativeResolver,
+    candidate_pairs,
+    domain_of,
+    name_similarity,
+)
 
 __all__ = [
+    "LINKER",
     "NAME_KEY",
     "SOURCE_FORM",
+    "NativeResolver",
     "ValueNormalizer",
+    "candidate_pairs",
+    "domain_of",
     "name_key",
+    "name_similarity",
     "normalize_date",
     "normalize_quantity",
     "normalize_value",
