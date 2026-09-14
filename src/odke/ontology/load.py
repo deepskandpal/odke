@@ -42,21 +42,34 @@ class OntologyLoadError(ValueError):
         self.problems = problems or (message,)
 
 
-def load_dict(cls: type[OntologyT], data: Any, *, where: str | None = None) -> OntologyT:
+def load_dict(
+    cls: type[OntologyT], data: Any, *, strict: bool, where: str | None = None
+) -> OntologyT:
     if not isinstance(data, Mapping):
         raise OntologyLoadError(
             _prefix(where) + f"the top level must be a mapping of name/types/predicates, "
             f"not {_kind(data)}"
         )
     try:
-        return cls.model_validate(dict(data))
+        ontology = cls.model_validate(dict(data))
     except ValidationError as exc:
         problems = tuple(_format(error) for error in exc.errors())
         # `from None`: the pydantic traceback is the thing being replaced.
         raise OntologyLoadError(_headline(where, problems), problems=problems) from None
+    if strict:
+        # Errors block loading and warnings do not: a warning is a schema that
+        # works, and refusing it would push people to strict=False for good.
+        errors = tuple(
+            f"{d.path}: {d.message} [{d.code}]"
+            for d in ontology.validate()
+            if d.severity == "error"
+        )
+        if errors:
+            raise OntologyLoadError(_headline(where, errors), problems=errors)
+    return ontology
 
 
-def load_json(cls: type[OntologyT], source: Source) -> OntologyT:
+def load_json(cls: type[OntologyT], source: Source, *, strict: bool) -> OntologyT:
     text, where = _read(source)
     try:
         data = json.loads(text)
@@ -64,10 +77,10 @@ def load_json(cls: type[OntologyT], source: Source) -> OntologyT:
         raise OntologyLoadError(
             _prefix(where) + f"line {exc.lineno} column {exc.colno}: {exc.msg}"
         ) from None
-    return load_dict(cls, data, where=where)
+    return load_dict(cls, data, strict=strict, where=where)
 
 
-def load_yaml(cls: type[OntologyT], source: Source) -> OntologyT:
+def load_yaml(cls: type[OntologyT], source: Source, *, strict: bool) -> OntologyT:
     try:
         import yaml
     except ImportError as exc:
@@ -80,7 +93,7 @@ def load_yaml(cls: type[OntologyT], source: Source) -> OntologyT:
         at = f"line {mark.line + 1} column {mark.column + 1}: " if mark else ""
         problem = getattr(exc, "problem", None) or str(exc)
         raise OntologyLoadError(_prefix(where) + at + str(problem)) from None
-    return load_dict(cls, data, where=where)
+    return load_dict(cls, data, strict=strict, where=where)
 
 
 def _read(source: Source) -> tuple[str, str | None]:

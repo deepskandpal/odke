@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from odke.ontology.from_models import ontology_from_models
 from odke.ontology.load import OntologyLoadError, Source, load_dict, load_json, load_yaml
+from odke.ontology.validate import Diagnostic, diagnose
 
 Cardinality = Literal["single", "multi"]
 
@@ -171,34 +172,39 @@ class Ontology(BaseModel):
         return out
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> Ontology:
+    def from_dict(cls, data: Mapping[str, Any], *, strict: bool = True) -> Ontology:
         """An ontology from an already-parsed mapping, with load-time errors explained.
 
         Each problem is one line naming the offending key by its dotted path
         (`predicates.employer.range`) and what was found there; a misspelt key
         gets a suggestion. That message, not a pydantic traceback, is what a
         user has to act on.
+
+        `strict` also runs `validate()` and refuses a schema with errors in it,
+        because a subtly wrong schema is cheapest to catch here. Warnings never
+        block. `strict=False` loads anything well-formed, which is what a tool
+        that wants to *show* the diagnostics needs.
         """
-        return load_dict(cls, data)
+        return load_dict(cls, data, strict=strict)
 
     @classmethod
-    def from_json(cls, source: Source) -> Ontology:
+    def from_json(cls, source: Source, *, strict: bool = True) -> Ontology:
         """An ontology from a JSON file path or a JSON string.
 
         A `str` that looks like a document (a newline, or an opening brace) is
         parsed as one; any other string is a path. Syntax errors carry a line
         and column; everything else is explained as `from_dict` explains it.
         """
-        return load_json(cls, source)
+        return load_json(cls, source, strict=strict)
 
     @classmethod
-    def from_yaml(cls, source: Source) -> Ontology:
+    def from_yaml(cls, source: Source, *, strict: bool = True) -> Ontology:
         """An ontology from a YAML file path or a YAML string.
 
         PyYAML is imported here and only here, behind the `yaml` extra, so the
         base install stays pydantic and typer (DECISIONS #1).
         """
-        return load_yaml(cls, source)
+        return load_yaml(cls, source, strict=strict)
 
     @classmethod
     def from_pydantic(
@@ -213,6 +219,19 @@ class Ontology(BaseModel):
         extractor is never asked about, and nobody would notice.
         """
         return ontology_from_models(cls, models, name=name, version=version)
+
+    def validate(self) -> list[Diagnostic]:  # type: ignore[override]
+        """Everything subtly wrong with this schema, as structured diagnostics.
+
+        A list rather than a bool, because "invalid" is not actionable and
+        `predicates.employer.range: 'Compnay' is neither an entity type nor a
+        literal type — did you mean 'Company'?` is. Never raises: a
+        pathological schema produces diagnostics, not an exception.
+
+        The name shadows pydantic's deprecated `BaseModel.validate` classmethod,
+        which v2 replaced with `model_validate`; the ignore is for that override.
+        """
+        return diagnose(self)
 
     def predicates_for(self, type_name: str) -> list[Predicate]:
         """Predicates whose domain covers this type, including inherited ones.
@@ -337,6 +356,7 @@ _JSON_TYPES = {
 
 __all__ = [
     "Cardinality",
+    "Diagnostic",
     "EntityType",
     "Ontology",
     "OntologyLoadError",

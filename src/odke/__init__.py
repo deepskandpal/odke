@@ -8,6 +8,7 @@ NOTICE for the relationship to that paper.
 """
 
 from odke.ontology import (
+    Diagnostic,
     EntityType,
     Ontology,
     OntologyLoadError,
@@ -59,6 +60,7 @@ __all__ = [
     "Constrainer",
     "Corroborator",
     "Delegated",
+    "Diagnostic",
     "Document",
     "DoubleStageWarning",
     "Entity",

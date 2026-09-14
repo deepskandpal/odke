@@ -77,9 +77,9 @@ def test_a_name_defaults_to_its_key() -> None:
     assert loaded.types["Person"].name == "Person"
     assert loaded.predicates["age"].name == "age"
     # An explicit name is kept as written; validate() is the judge of a mismatch.
-    assert Ontology.from_dict({"types": {"Person": {"name": "Human"}}}).types["Person"].name == (
-        "Human"
-    )
+    mismatched = Ontology.from_dict({"types": {"Person": {"name": "Human"}}}, strict=False)
+    assert mismatched.types["Person"].name == "Human"
+    assert [d.code for d in mismatched.validate()] == ["name-mismatch"]
 
 
 def test_a_yaml_file_and_a_yaml_string_are_told_apart(tmp_path: Path) -> None:
