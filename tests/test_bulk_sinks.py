@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from odke import (
+from openodke import (
     Entity,
     EntityLink,
     EntityType,
@@ -31,9 +31,9 @@ from odke import (
     Predicate,
     Sink,
 )
-from odke.eval.sinks import assert_idempotent
-from odke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink, Table, cypher_literal
-from odke.sinks.neo4j import Neo4jConstrainer, Neo4jSink, plan, signature_of
+from openodke.eval.sinks import assert_idempotent
+from openodke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink, Table, cypher_literal
+from openodke.sinks.neo4j import Neo4jConstrainer, Neo4jSink, plan, signature_of
 from test_neo4j_sink import _graph, live_graph
 
 # --------------------------------------------------------------------------- #
@@ -164,8 +164,8 @@ def test_the_bulk_sinks_declare_the_neo4j_platform() -> None:
 def test_the_bulk_sinks_need_no_driver(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Both are on the base install: the driver is never imported."""
     monkeypatch.setitem(sys.modules, "neo4j", None)
-    monkeypatch.delitem(sys.modules, "odke.sinks.bulk")
-    module = importlib.import_module("odke.sinks.bulk")
+    monkeypatch.delitem(sys.modules, "openodke.sinks.bulk")
+    module = importlib.import_module("openodke.sinks.bulk")
     module.CypherFileSink(tmp_path / "g.cypher").write(_graph())
     module.Neo4jAdminCsvSink(tmp_path / "csv").write(_graph())
     assert (tmp_path / "csv" / "import.args").is_file()

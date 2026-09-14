@@ -10,13 +10,13 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from odke.cli.main import app, ontology_infer
-from odke.infer import DEFAULT_MAX_PREDICATES, DEFAULT_MAX_TYPES, DEFAULT_SAMPLE_WORDS
-from odke.infer.build import infer_ontology
-from odke.infer.review import evidence_path, format_for, render
-from odke.llm import ReplayClient, register, unregister
-from odke.loaders import DirectoryLoader
-from odke.ontology import Ontology
+from openodke.cli.main import app, ontology_infer
+from openodke.infer import DEFAULT_MAX_PREDICATES, DEFAULT_MAX_TYPES, DEFAULT_SAMPLE_WORDS
+from openodke.infer.build import infer_ontology
+from openodke.infer.review import evidence_path, format_for, render
+from openodke.llm import ReplayClient, register, unregister
+from openodke.loaders import DirectoryLoader
+from openodke.ontology import Ontology
 
 runner = CliRunner()
 FIXTURES = Path(__file__).parent / "fixtures" / "llm"

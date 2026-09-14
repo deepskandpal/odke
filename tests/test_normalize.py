@@ -6,8 +6,8 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from odke import Entity, Fact, KnowledgeGraph, Normalizer, Ontology, Predicate
-from odke.corroborate import (
+from openodke import Entity, Fact, KnowledgeGraph, Normalizer, Ontology, Predicate
+from openodke.corroborate import (
     NAME_KEY,
     SOURCE_FORM,
     ValueNormalizer,

@@ -2,7 +2,7 @@
 #
 #   odke run examples/run.yaml --dry-run
 #
-# Reading YAML needs `pip install "odke[yaml]"`; the same keys as JSON need
+# Reading YAML needs `pip install "openodke[yaml]"`; the same keys as JSON need
 # nothing. Every path below is relative to this file, not to where you run it.
 # This one runs the end-to-end example (examples/e2e/) on recorded responses,
 # so it needs no key and no network.
@@ -25,7 +25,7 @@ inputs:
   - path: e2e/corpus/notes
     loader: {use: directory, tier: community}    # also: text, markdown, html, pdf, docx, csv, tsv, json, jsonl, parquet
   # - path: reports/annual.pdf                   # html, pdf, docx: extracted text, with a source map back to the file
-  #   loader: {use: pdf, per_page: true}         # pdf needs odke[pdf], docx needs odke[docx]; html needs nothing
+  #   loader: {use: pdf, per_page: true}         # pdf needs openodke[pdf], docx needs openodke[docx]; html needs nothing
 
 # Directories put on sys.path, so a stage of your own (package.module:Name)
 # can live next to this file.
@@ -74,8 +74,8 @@ stages:
   # The other built-in sinks connect to nothing; odke run supplies the ontology.
   # sink: {use: cypher_file, path: e2e/out/graph.cypher}        # a cypher-shell script; batch_size
   # sink: {use: neo4j_admin_csv, directory: e2e/out/import}     # neo4j-admin import files; delimiter, array_delimiter
-  # sink: {use: rdf, path: e2e/out/graph.ttl}                   # odke[rdf]; format (turtle, nt, json-ld), base, schema
-  # sink: {use: networkx, path: e2e/out/graph.json}             # odke[networkx]; node-link JSON (without path: memory only)
+  # sink: {use: rdf, path: e2e/out/graph.ttl}                   # openodke[rdf]; format (turtle, nt, json-ld), base, schema
+  # sink: {use: networkx, path: e2e/out/graph.json}             # openodke[networkx]; node-link JSON (without path: memory only)
   constrainer: neo4j                             # the DDL `bootstrap` applies
   # inferrer:     passthrough only — odke run never infers (DECISIONS #8)
 

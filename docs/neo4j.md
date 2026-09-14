@@ -1,6 +1,6 @@
 # Neo4j sink
 
-`odke.sinks.neo4j` is the Neo4j platform. It has two halves that form one design:
+`openodke.sinks.neo4j` is the Neo4j platform. It has two halves that form one design:
 
 - **`Neo4jSink`** writes a `KnowledgeGraph` with batched, idempotent `UNWIND … MERGE`.
 - **`Neo4jConstrainer`** compiles the ontology into the uniqueness constraints
@@ -11,12 +11,12 @@ The ontology that shaped the prompt also shapes the store, so nobody writes the
 rules twice.
 
 ```bash
-pip install "odke[neo4j]"
+pip install "openodke[neo4j]"
 ```
 
 The module imports on the base install, and printing the DDL or the write plan
 needs no driver. Only connecting needs the extra; without it you get
-`the neo4j driver is not installed; run: pip install 'odke[neo4j]'`.
+`the neo4j driver is not installed; run: pip install 'openodke[neo4j]'`.
 
 **Neo4j 5.7 or later.** Relationship uniqueness constraints arrived in 5.7.
 Community Edition is enough, because nothing Enterprise-only is emitted. CI runs
@@ -89,8 +89,8 @@ so an inferred schema cannot inject Cypher.
 ## Using it
 
 ```python
-from odke import Entity, Evidence, Fact, KnowledgeGraph, Ontology, Polarity, Span
-from odke.sinks.neo4j import Neo4jConstrainer, Neo4jSink
+from openodke import Entity, Evidence, Fact, KnowledgeGraph, Ontology, Polarity, Span
+from openodke.sinks.neo4j import Neo4jConstrainer, Neo4jSink
 
 ontology = Ontology.from_dict(
     {
@@ -169,7 +169,7 @@ before the first write.
 ```python
 import warnings
 
-from odke import Pipeline
+from openodke import Pipeline
 
 
 class NoFacts:

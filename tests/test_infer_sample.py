@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from odke import Document
-from odke.infer import DEFAULT_SAMPLE_WORDS, SampleRecord, sample_corpus
-from odke.loaders import DirectoryLoader, RecordsLoader
+from openodke import Document
+from openodke.infer import DEFAULT_SAMPLE_WORDS, SampleRecord, sample_corpus
+from openodke.loaders import DirectoryLoader, RecordsLoader
 
 
 def _corpus_dir(tmp_path: Path) -> Path:

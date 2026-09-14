@@ -9,8 +9,8 @@ from typing import Any
 
 import pytest
 
-from odke import Document, Loader, SourceTier, Span
-from odke.loaders import (
+from openodke import Document, Loader, SourceTier, Span
+from openodke.loaders import (
     CsvLoader,
     DirectoryLoader,
     JsonlLoader,
@@ -19,7 +19,7 @@ from odke.loaders import (
     RecordsLoader,
     TsvLoader,
 )
-from odke.loaders.records import (
+from openodke.loaders.records import (
     format_path,
     parse_path,
     record_document,
@@ -200,7 +200,7 @@ def test_parquet_rows_become_structured_documents(tmp_path: Path) -> None:
 def test_parquet_without_pyarrow_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "pyarrow", None)
     monkeypatch.setitem(sys.modules, "pyarrow.parquet", None)
-    with pytest.raises(ImportError, match=r"odke\[parquet\]"):
+    with pytest.raises(ImportError, match=r"openodke\[parquet\]"):
         ParquetLoader().load(b"PAR1")
 
 

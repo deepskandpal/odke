@@ -8,10 +8,10 @@ odke needs Python 3.11, 3.12 or 3.13.
     These pages describe what is on `main`.
 
 ```bash
-pip install "odke @ git+https://github.com/deepskandpal/odke"
-pip install "odke[neo4j,yaml] @ git+https://github.com/deepskandpal/odke"   # with extras
-pip install "odke[all] @ git+https://github.com/deepskandpal/odke"          # every extra
-uv add "odke[neo4j] @ git+https://github.com/deepskandpal/odke"             # or with uv
+pip install "openodke @ git+https://github.com/deepskandpal/odke"
+pip install "openodke[neo4j,yaml] @ git+https://github.com/deepskandpal/odke"   # with extras
+pip install "openodke[all] @ git+https://github.com/deepskandpal/odke"          # every extra
+uv add "openodke[neo4j] @ git+https://github.com/deepskandpal/odke"             # or with uv
 ```
 
 ## The base install talks to nothing
@@ -31,14 +31,14 @@ On the base install you already have:
 - ontology inference with the deterministic proposers (`odke ontology infer --no-llm`,
   writing a `.json` draft), and with a model over the standard-library client;
 - the loaders for text, Markdown, HTML, directories, JSON, JSONL, CSV and TSV, the
-  sentence chunker, and the extractors in `odke.extract`;
+  sentence chunker, and the extractors in `openodke.extract`;
 - `SpanGrounder`, and `LLMGrounder` over the standard-library OpenAI-compatible
   client;
-- the normalise, resolve, corroborate and score stages in `odke.corroborate`;
+- the normalise, resolve, corroborate and score stages in `openodke.corroborate`;
 - `JsonlSink`, `CypherFileSink` and `Neo4jAdminCsvSink`, and
-  `import odke.sinks.neo4j` including printing its DDL and write plan (only
+  `import openodke.sinks.neo4j` including printing its DDL and write plan (only
   connecting to a server needs the driver);
-- `odke run` with a JSON config, and all of `odke.eval` and `odke eval`.
+- `odke run` with a JSON config, and all of `openodke.eval` and `odke eval`.
 
 ## Extras
 
@@ -62,13 +62,13 @@ These are the extras `pyproject.toml` declares, exactly:
 Every model call goes through one `LLMClient` Protocol. A model string such as
 `ollama/llama3.1` is served by the first client that matches:
 
-1. an adapter you registered for that provider with `odke.llm.register(provider, factory)`;
+1. an adapter you registered for that provider with `openodke.llm.register(provider, factory)`;
 2. the standard-library OpenAI-compatible client, when the provider is `ollama`,
    `vllm`, `lmstudio`, `llamacpp`, `openrouter`, `together`, `groq`, `deepseek` or
    `openai`, or when the `ModelSpec` sets a `base_url` (a proxy, a gateway or a
    local server). This needs no extra;
 3. litellm, for everything else (Anthropic, Azure, Bedrock, Vertex, Gemini,
-   Mistral, Cohere and more). This needs `odke[llm]`.
+   Mistral, Cohere and more). This needs `openodke[llm]`.
 
 `ModelRoles.single("ollama/llama3.1")` on the base install, with a local Ollama,
 is a complete setup.
@@ -80,18 +80,18 @@ the fix:
 
 | Used without its extra | Raises |
 |---|---|
-| `Ontology.from_yaml` | `ImportError: PyYAML is not installed. Run: pip install "odke[yaml]"` |
-| a YAML config in `odke run` | `ImportError: reading a YAML config needs PyYAML. Run: pip install "odke[yaml]", or write the same keys as JSON` |
-| `Neo4jSink(uri, auth)` | `ImportError: the neo4j driver is not installed; run: pip install 'odke[neo4j]'` |
-| `RdfSink(path)` | `ImportError: rdflib is not installed; run: pip install 'odke[rdf]'` |
-| `Ontology.from_owl` | `ImportError: rdflib is not installed. Run: pip install "odke[rdf]"` |
-| `NetworkXSink()` | `ImportError: networkx is not installed; run: pip install 'odke[networkx]'` |
-| `PdfLoader`, reading a file | `MissingExtraError: reading PDF needs pypdf. Run: pip install "odke[pdf]"` |
-| `DocxLoader`, reading a file | `MissingExtraError: reading Word documents needs python-docx. Run: pip install "odke[docx]"` |
-| `ParquetLoader`, reading a file | `MissingExtraError: reading Parquet needs pyarrow. Run: pip install "odke[parquet]"` |
+| `Ontology.from_yaml` | `ImportError: PyYAML is not installed. Run: pip install "openodke[yaml]"` |
+| a YAML config in `odke run` | `ImportError: reading a YAML config needs PyYAML. Run: pip install "openodke[yaml]", or write the same keys as JSON` |
+| `Neo4jSink(uri, auth)` | `ImportError: the neo4j driver is not installed; run: pip install 'openodke[neo4j]'` |
+| `RdfSink(path)` | `ImportError: rdflib is not installed; run: pip install 'openodke[rdf]'` |
+| `Ontology.from_owl` | `ImportError: rdflib is not installed. Run: pip install "openodke[rdf]"` |
+| `NetworkXSink()` | `ImportError: networkx is not installed; run: pip install 'openodke[networkx]'` |
+| `PdfLoader`, reading a file | `MissingExtraError: reading PDF needs pypdf. Run: pip install "openodke[pdf]"` |
+| `DocxLoader`, reading a file | `MissingExtraError: reading Word documents needs python-docx. Run: pip install "openodke[docx]"` |
+| `ParquetLoader`, reading a file | `MissingExtraError: reading Parquet needs pyarrow. Run: pip install "openodke[parquet]"` |
 | `DirectoryLoader`, meeting one of those files | a `MissingExtraWarning` naming the file and the install line; the file is skipped and the walk goes on |
-| a model string that needs litellm | `ProviderNotInstalled`, listing `pip install "odke[llm]"`, a `base_url`, or `odke.llm.register` |
-| a short name in `odke run` whose extra is missing (`pdf`, `docx`, `parquet`, `rdf`, `networkx`) | exit 2 while the config is built, before anything is loaded or opened: `stages.sink: RdfSink needs rdflib, which is not installed. Run: pip install "odke[rdf]"` |
+| a model string that needs litellm | `ProviderNotInstalled`, listing `pip install "openodke[llm]"`, a `base_url`, or `openodke.llm.register` |
+| a short name in `odke run` whose extra is missing (`pdf`, `docx`, `parquet`, `rdf`, `networkx`) | exit 2 while the config is built, before anything is loaded or opened: `stages.sink: RdfSink needs rdflib, which is not installed. Run: pip install "openodke[rdf]"` |
 
 `MissingExtraError` is an `ImportError`.
 

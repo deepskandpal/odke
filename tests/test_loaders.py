@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from odke import Loader, SentenceChunker, SourceTier
-from odke.loaders import (
+from openodke import Loader, SentenceChunker, SourceTier
+from openodke.loaders import (
     DirectoryLoader,
     MarkdownLoader,
     TextLoader,

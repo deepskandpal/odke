@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from odke.ontology import Ontology, OntologyLoadError, Predicate
+from openodke.ontology import Ontology, OntologyLoadError, Predicate
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "people.ontology.json"
 
@@ -167,5 +167,5 @@ def test_a_missing_file_is_a_missing_file_not_a_parse_error(tmp_path: Path) -> N
 def test_yaml_without_pyyaml_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     """DECISIONS #1: the base install must fail with the fix in the message."""
     monkeypatch.setitem(sys.modules, "yaml", None)
-    with pytest.raises(ImportError, match=r'pip install "odke\[yaml\]"'):
+    with pytest.raises(ImportError, match=r'pip install "openodke\[yaml\]"'):
         Ontology.from_yaml("name: x\n")

@@ -22,11 +22,11 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from odke import Entity, Evidence, Fact, Span
-from odke.cli.main import app
-from odke.eval import StageReport, load_jsonl, per_document, run_ablation
-from odke.eval.formats import GoldFact
-from odke.run import load_config, parse_config
+from openodke import Entity, Evidence, Fact, Span
+from openodke.cli.main import app
+from openodke.eval import StageReport, load_jsonl, per_document, run_ablation
+from openodke.eval.formats import GoldFact
+from openodke.run import load_config, parse_config
 
 runner = CliRunner()
 
@@ -125,7 +125,7 @@ def test_the_command_prints_the_table_and_writes_nothing(example: Path) -> None:
     ("extra", "message"),
     [
         (["--predictions", "p.jsonl"], "takes --config and --labels"),
-        (["--run", "odke.stages:PassThroughRouter"], "takes --config and --labels"),
+        (["--run", "openodke.stages:PassThroughRouter"], "takes --config and --labels"),
     ],
 )
 def test_ablation_takes_a_config_and_labels_only(

@@ -10,7 +10,7 @@ import pytest
 
 nx = pytest.importorskip("networkx")
 
-from odke import (  # noqa: E402
+from openodke import (  # noqa: E402
     Entity,
     EntityLink,
     Evidence,
@@ -24,9 +24,9 @@ from odke import (  # noqa: E402
     SourceTier,
     Span,
 )
-from odke.eval.sinks import assert_idempotent  # noqa: E402
-from odke.sinks.neo4j import signature_of  # noqa: E402
-from odke.sinks.networkx import EXTRA_HINT, NetworkXSink, claim_node  # noqa: E402
+from openodke.eval.sinks import assert_idempotent  # noqa: E402
+from openodke.sinks.neo4j import signature_of  # noqa: E402
+from openodke.sinks.networkx import EXTRA_HINT, NetworkXSink, claim_node  # noqa: E402
 from test_neo4j_sink import PROVENANCE, _graph  # noqa: E402
 
 _ENTITY_FIELDS = (
@@ -289,8 +289,8 @@ def test_the_graph_can_be_laid_out_for_drawing() -> None:
 def test_a_missing_networkx_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     """The module imports on the base install; only building a sink needs the extra."""
     monkeypatch.setitem(sys.modules, "networkx", None)
-    monkeypatch.delitem(sys.modules, "odke.sinks.networkx")
-    module = importlib.import_module("odke.sinks.networkx")
-    with pytest.raises(ImportError, match=r"odke\[networkx\]"):
+    monkeypatch.delitem(sys.modules, "openodke.sinks.networkx")
+    module = importlib.import_module("openodke.sinks.networkx")
+    with pytest.raises(ImportError, match=r"openodke\[networkx\]"):
         module.NetworkXSink()
-    assert "odke[networkx]" in EXTRA_HINT
+    assert "openodke[networkx]" in EXTRA_HINT

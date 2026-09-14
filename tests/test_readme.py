@@ -34,7 +34,7 @@ def test_the_shell_quickstart_is_the_example_config_and_install_is_from_github()
     assert "odke run examples/e2e/odke.yaml" in quickstart
     assert (README.parent / "examples" / "e2e" / "odke.yaml").is_file()
     install = _section("Install")
-    assert "pip install odke\n" not in install
+    assert "pip install openodke\n" not in install
     assert "git+https://github.com/deepskandpal/odke" in install
 
 

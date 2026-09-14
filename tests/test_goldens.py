@@ -26,7 +26,7 @@ import yaml
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from odke.ontology import EntityType, Ontology, OntologyLoadError, Predicate, Qualifier
+from openodke.ontology import EntityType, Ontology, OntologyLoadError, Predicate, Qualifier
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ontologies"
 EXAMPLE = Path(__file__).parent.parent / "examples" / "people.ontology.json"

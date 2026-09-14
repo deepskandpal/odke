@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from odke.ontology import EntityType, Ontology, Predicate, Qualifier
+from openodke.ontology import EntityType, Ontology, Predicate, Qualifier
 
 
 def _ontology() -> Ontology:
@@ -151,7 +151,7 @@ def test_a_declared_scope_adds_keys_and_can_never_remove_an_identity_key() -> No
 
 def test_scope_keys_is_exactly_what_the_neo4j_check_groups_by() -> None:
     """R4 is declared here and compiled in M4; the two must not drift apart."""
-    from odke.sinks.neo4j import cardinality_scope
+    from openodke.sinks.neo4j import cardinality_scope
 
     for predicate in (
         Predicate(name="flat"),

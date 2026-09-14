@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from odke import (
+from openodke import (
     Chunk,
     Document,
     Entity,
@@ -15,7 +15,7 @@ from odke import (
     Validator,
     VerdictValidator,
 )
-from odke.eval.grounding import kept
+from openodke.eval.grounding import kept
 
 ADA = Entity(key="Person:ada", type="Person", label="Ada")
 

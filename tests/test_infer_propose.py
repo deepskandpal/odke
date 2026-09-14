@@ -6,17 +6,17 @@ from pathlib import Path
 
 import pytest
 
-from odke import Document
-from odke.infer import sample_corpus
-from odke.infer.candidates import PredicateCandidate, Proposals, TypeCandidate
-from odke.infer.names import normal_form, predicate_name, singular, type_name
-from odke.infer.propose import (
+from openodke import Document
+from openodke.infer import sample_corpus
+from openodke.infer.candidates import PredicateCandidate, Proposals, TypeCandidate
+from openodke.infer.names import normal_form, predicate_name, singular, type_name
+from openodke.infer.propose import (
     CooccurrenceProposer,
     HearstProposer,
     RecordShapeProposer,
     propose,
 )
-from odke.loaders import DirectoryLoader
+from openodke.loaders import DirectoryLoader
 
 PEOPLE = (
     "name,born,employer,city\n"

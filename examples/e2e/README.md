@@ -26,7 +26,7 @@ before reading anything into the numbers.
 ## 1. Run it
 
 ```bash
-pip install "odke[yaml] @ git+https://github.com/deepskandpal/odke"
+pip install "openodke[yaml] @ git+https://github.com/deepskandpal/odke"
 odke run examples/e2e/odke.yaml
 ```
 
@@ -77,7 +77,7 @@ verdict, confidence and support, and `manifest.json` has the counts above.
 ## 2. Into Neo4j
 
 ```bash
-pip install "odke[neo4j,yaml] @ git+https://github.com/deepskandpal/odke"
+pip install "openodke[neo4j,yaml] @ git+https://github.com/deepskandpal/odke"
 export NEO4J_PASSWORD=...            # eight characters or more
 docker compose -f examples/e2e/docker-compose.yml up -d
 export NEO4J_URI=bolt://localhost:7687 NEO4J_USER=neo4j
@@ -214,7 +214,7 @@ Token counts on recorded grounding responses are estimates, and no response
 carries a price, so cost is reported as unknown. To run against real models,
 delete the two `replay` lines from the config; the provider reads its own key
 from the environment. To record real responses for a test, wrap a client in
-`odke.llm.testing.RecordingClient`.
+`openodke.llm.testing.RecordingClient`.
 
 ## 5. The ablation, on this example
 

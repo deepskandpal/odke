@@ -25,9 +25,9 @@ from pathlib import Path
 
 import pytest
 
-from odke import Entity, Fact, Scorer
-from odke.eval import CalibrationLabel, load_jsonl
-from odke.eval.calibration import bin_of, evaluate_calibration, run_score
+from openodke import Entity, Fact, Scorer
+from openodke.eval import CalibrationLabel, load_jsonl
+from openodke.eval.calibration import bin_of, evaluate_calibration, run_score
 
 FIXTURES = Path(__file__).parent / "fixtures" / "eval"
 LABELS = load_jsonl(FIXTURES / "score.labels.jsonl", CalibrationLabel)

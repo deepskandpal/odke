@@ -4,24 +4,24 @@ A sink is where a finished `KnowledgeGraph` goes, and it is one method:
 `write(kg)`. Six ship with odke. Every graph-shaped sink writes the **same shape**
 Neo4j gets: entities as nodes, each fact as its own edge carrying its provenance,
 a literal fact's value on a claim node, and `EntityLink`s as edges that never merge
-nodes. They share one write plan (`odke.sinks.neo4j.plan()`) and one rule for
+nodes. They share one write plan (`openodke.sinks.neo4j.plan()`) and one rule for
 which literal values are projected onto a subject. So a graph written to Neo4j,
 replayed from a Cypher script, imported from CSV, loaded into a triple store or
 inspected in NetworkX is one graph.
 
 | Sink | Module | Writes | Extra | A second `write` |
 |---|---|---|---|---|
-| `JsonlSink` | `odke.sinks` | `entities.jsonl`, `facts.jsonl`, `links.jsonl`, `manifest.json` | — | rewrites the files |
-| `Neo4jSink` | `odke.sinks.neo4j` | a live Neo4j, through the driver | `neo4j` | updates in place (`MERGE`) |
-| `CypherFileSink` | `odke.sinks.bulk` | a `.cypher` script for `cypher-shell -f` | — | rewrites the file, which replays idempotently |
-| `Neo4jAdminCsvSink` | `odke.sinks.bulk` | node and relationship CSVs for `neo4j-admin database import`, plus `import.args` | — | rewrites the files |
-| `RdfSink` | `odke.sinks.rdf` | Turtle, N-Triples or JSON-LD | `rdf` | rewrites the file |
-| `NetworkXSink` | `odke.sinks.networkx` | a `networkx.MultiDiGraph` in memory | `networkx` | adds and updates, never removes |
+| `JsonlSink` | `openodke.sinks` | `entities.jsonl`, `facts.jsonl`, `links.jsonl`, `manifest.json` | — | rewrites the files |
+| `Neo4jSink` | `openodke.sinks.neo4j` | a live Neo4j, through the driver | `neo4j` | updates in place (`MERGE`) |
+| `CypherFileSink` | `openodke.sinks.bulk` | a `.cypher` script for `cypher-shell -f` | — | rewrites the file, which replays idempotently |
+| `Neo4jAdminCsvSink` | `openodke.sinks.bulk` | node and relationship CSVs for `neo4j-admin database import`, plus `import.args` | — | rewrites the files |
+| `RdfSink` | `openodke.sinks.rdf` | Turtle, N-Triples or JSON-LD | `rdf` | rewrites the file |
+| `NetworkXSink` | `openodke.sinks.networkx` | a `networkx.MultiDiGraph` in memory | `networkx` | adds and updates, never removes |
 
 Every module imports on the base install ([DECISIONS #1](decisions.md)). A driver
 or library is imported only when a sink needs it, and a missing extra fails with
 the command that fixes it. `JsonlSink` is the only sink re-exported from
-`odke.sinks`; the others are imported from their own module. In an
+`openodke.sinks`; the others are imported from their own module. In an
 [`odke run`](run.md#sinks) config they are `jsonl`, `neo4j`, `cypher_file`,
 `neo4j_admin_csv`, `rdf` and `networkx`.
 
@@ -33,7 +33,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from odke import (
+from openodke import (
     Entity,
     EntityLink,
     Evidence,
@@ -125,7 +125,7 @@ ontology name, `created_at`, the counts, and `KnowledgeGraph.stats`, which is wh
 `odke run` puts every stage's own counts.
 
 ```python
-from odke.sinks import JsonlSink
+from openodke.sinks import JsonlSink
 
 JsonlSink(out / "jsonl").write(kg)
 
@@ -163,7 +163,7 @@ self-contained artefact to review or commit.
 - One graph always compiles to the same bytes.
 
 ```python
-from odke.sinks.bulk import CypherFileSink
+from openodke.sinks.bulk import CypherFileSink
 
 script = CypherFileSink(out / "graph.cypher", ontology=ontology)
 script.write(kg)
@@ -213,7 +213,7 @@ An import builds a new database rather than updating one. To extend a live graph
 use `Neo4jSink` or `CypherFileSink`.
 
 ```python
-from odke.sinks.bulk import Neo4jAdminCsvSink
+from openodke.sinks.bulk import Neo4jAdminCsvSink
 
 importer = Neo4jAdminCsvSink(out / "import", ontology=ontology)
 importer.write(kg)
@@ -283,7 +283,7 @@ The cost is bulk, six or more triples per fact, which is the price of provenance
 that can be queried rather than merely stored.
 
 ```python
-from odke.sinks.rdf import RdfSink
+from openodke.sinks.rdf import RdfSink
 
 rdf = RdfSink(out / "graph.ttl", ontology=ontology)
 rdf.write(kg)
@@ -341,7 +341,7 @@ they were. The node id is the key alone, as in RDF, so a key two types share is 
 node. `to_graph(kg)` returns a new graph and leaves `sink.graph` untouched.
 
 ```python
-from odke.sinks.networkx import NetworkXSink
+from openodke.sinks.networkx import NetworkXSink
 
 inspector = NetworkXSink(ontology=ontology)
 inspector.write(kg)
@@ -364,7 +364,7 @@ for _, _, attrs in nx_graph.edges(data=True):
 Anything with `write(kg)` is a sink: no base class, no registration
 ([DECISIONS #5](decisions.md)). Two things are worth borrowing:
 
-- `odke.sinks.neo4j.plan(kg, ontology=...)` and `provenance_of(fact, extracted_at)`
+- `openodke.sinks.neo4j.plan(kg, ontology=...)` and `provenance_of(fact, extracted_at)`
   give you the shared shape without reimplementing it, which is how the bulk, RDF
   and NetworkX sinks are built.
 - A sink whose store does a stage itself declares `profile = PlatformProfile(...)`,
@@ -372,5 +372,5 @@ Anything with `write(kg)` is a sink: no base class, no registration
   ([Concepts](concepts.md#platformprofile-and-delegated)).
 
 Whether a sink is idempotent is checkable without labels:
-`odke.eval.assert_idempotent(sink, kg, counts)` writes twice and compares whatever
+`openodke.eval.assert_idempotent(sink, kg, counts)` writes twice and compares whatever
 `counts` returns ([Evaluation](evaluation.md#sink)).

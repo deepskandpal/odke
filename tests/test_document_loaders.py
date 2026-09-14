@@ -9,9 +9,9 @@ from typing import Any
 
 import pytest
 
-from odke import Document, Fact, Loader, Ontology, SentenceChunker, SourceTier, Span
-from odke.extract import PatternExtractor
-from odke.loaders import (
+from openodke import Document, Fact, Loader, Ontology, SentenceChunker, SourceTier, Span
+from openodke.extract import PatternExtractor
+from openodke.loaders import (
     DirectoryLoader,
     DocxLoader,
     MissingExtraError,
@@ -190,7 +190,7 @@ def test_pdf_from_bytes_with_its_own_separator() -> None:
 
 def test_pdf_without_pypdf_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "pypdf", None)
-    with pytest.raises(MissingExtraError, match=r'pip install "odke\[pdf\]"'):
+    with pytest.raises(MissingExtraError, match=r'pip install "openodke\[pdf\]"'):
         PdfLoader().load(b"%PDF-1.4")
 
 
@@ -355,7 +355,7 @@ def test_docx_core_title_deep_headings_and_prose_only() -> None:
 
 def test_docx_without_python_docx_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "docx", None)
-    with pytest.raises(MissingExtraError, match=r'pip install "odke\[docx\]"'):
+    with pytest.raises(MissingExtraError, match=r'pip install "openodke\[docx\]"'):
         DocxLoader().load(b"PK")
 
 
@@ -387,10 +387,10 @@ def test_a_missing_extra_skips_that_file_and_keeps_walking(
     assert [d.text for d in docs] == ["Alpha.", "# Delta"]
     messages = [str(w.message) for w in caught]
     assert len(messages) == 2
-    assert "b.pdf" in messages[0] and "odke[pdf]" in messages[0]
-    assert "c.docx" in messages[1] and "odke[docx]" in messages[1]
+    assert "b.pdf" in messages[0] and "openodke[pdf]" in messages[0]
+    assert "c.docx" in messages[1] and "openodke[docx]" in messages[1]
 
-    with pytest.raises(MissingExtraError, match=r"odke\[pdf\]"):
+    with pytest.raises(MissingExtraError, match=r"openodke\[pdf\]"):
         list(DirectoryLoader(missing_extras="raise").load(tmp_path))
     with pytest.raises(ValueError, match="missing_extras"):
         DirectoryLoader(missing_extras="ignore")  # type: ignore[arg-type]

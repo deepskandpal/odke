@@ -11,9 +11,9 @@ from typing import Any
 
 import pytest
 
-from odke import Chunk, Document, Entity, Fact, GroundingVerdict, Ontology, Pipeline
-from odke.eval.cost import CallRecord, CostMeter, CostReport, compare_costs
-from odke.llm import Completion, LLMClient, Message, ModelSpec, ScriptedClient
+from openodke import Chunk, Document, Entity, Fact, GroundingVerdict, Ontology, Pipeline
+from openodke.eval.cost import CallRecord, CostMeter, CostReport, compare_costs
+from openodke.llm import Completion, LLMClient, Message, ModelSpec, ScriptedClient
 
 SPEC = ModelSpec(model="test/model")
 

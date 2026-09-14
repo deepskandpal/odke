@@ -4,7 +4,7 @@
 
 Precision and recall claims need a harness, or they are marketing. A number
 computed against the pipeline's own output measures nothing, though, and the
-package cannot label your corpus for you. So for every stage, `odke.eval` ships
+package cannot label your corpus for you. So for every stage, `openodke.eval` ships
 three things, and never a fourth:
 
 - a **dataset format**: a JSONL row model whose docstring says exactly what one
@@ -21,7 +21,7 @@ three things, and never a fourth:
     corpus, no gold slice and no leaderboard. The numbers that mean something are
     the ones you compute on labels you made from your own documents.
 
-Brier, B-cubed and P/R/F1 are arithmetic, so `odke.eval` adds no dependency to
+Brier, B-cubed and P/R/F1 are arithmetic, so `openodke.eval` adds no dependency to
 the base install.
 
 ## `StageReport`
@@ -87,8 +87,8 @@ collapsed, case folded, numbers in one spelling), so `1815` and `"1815"` are one
 value. A flipped polarity is never a near miss.
 
 ```python
-from odke import Entity, Evidence, Fact, GroundingVerdict, Span
-from odke.eval import GoldFact, evaluate_extraction
+from openodke import Entity, Evidence, Fact, GroundingVerdict, Span
+from openodke.eval import GoldFact, evaluate_extraction
 
 ada = Entity(key="ada", type="Person")
 gold = [
@@ -123,7 +123,7 @@ unless its verdict is `contradicted` or `not_found`), and the recall that
 precision cost.
 
 ```python
-from odke.eval import GroundingLabel, evaluate_grounding, grounding_ablation
+from openodke.eval import GroundingLabel, evaluate_grounding, grounding_ablation
 
 text = "Ada Lovelace was born in London in 1815."
 passage = (Evidence(doc_id="d1", span=Span(doc_id="d1", start=0, end=len(text))),)
@@ -171,7 +171,7 @@ so it scores exactly like a resolver that linked. `similar` counts as no decisio
 unless you pass `similar_as_same=True`.
 
 ```python
-from odke.eval import PairLabel, evaluate_resolution, links_from_clusters
+from openodke.eval import PairLabel, evaluate_resolution, links_from_clusters
 
 pairs = [
     PairLabel(a="acme", b="acme-inc", same=True),
@@ -198,7 +198,7 @@ makes them look like probabilities without making them behave like ones.
   useless scorer, which is why Brier sits next to it.
 
 ```python
-from odke.eval import CalibrationLabel, evaluate_calibration
+from openodke.eval import CalibrationLabel, evaluate_calibration
 
 rows = [
     CalibrationLabel(
@@ -233,9 +233,9 @@ callable for `JsonlSink`, and a Neo4j test passes one that runs `count(n)`.
 ```python
 import tempfile
 
-from odke import KnowledgeGraph
-from odke.eval import assert_idempotent, jsonl_counts
-from odke.sinks import JsonlSink
+from openodke import KnowledgeGraph
+from openodke.eval import assert_idempotent, jsonl_counts
+from openodke.sinks import JsonlSink
 
 graph = KnowledgeGraph(facts=tuple(row.fact for row in labels))
 with tempfile.TemporaryDirectory() as out:
@@ -256,9 +256,9 @@ has `cost_usd = None` rather than a partial sum that would understate the bill.
 The partial sum is still available, as `priced_usd`.
 
 ```python
-from odke.eval import CostMeter
-from odke.ground import LLMGrounder
-from odke.llm import ModelRoles, ScriptedClient
+from openodke.eval import CostMeter
+from openodke.ground import LLMGrounder
+from openodke.llm import ModelRoles, ScriptedClient
 
 meter = CostMeter()
 client = meter.client(ScriptedClient([{"verdict": "supported"}] * len(labels)), stage="ground")
@@ -329,8 +329,8 @@ odke eval ablation --describe
 Cost is unknown in all three rows: the recorded responses carry no price.
 
 ```python
-from odke.eval import GoldFact, load_jsonl, run_ablation
-from odke.run import load_config
+from openodke.eval import GoldFact, load_jsonl, run_ablation
+from openodke.run import load_config
 
 ablation = run_ablation(
     load_config("examples/e2e/odke.yaml"), load_jsonl("examples/e2e/gold.jsonl", GoldFact)

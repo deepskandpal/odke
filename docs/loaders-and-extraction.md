@@ -15,12 +15,12 @@ flowchart LR
   ontology[(Ontology)] -. snippets .-> extractor
 ```
 
-Everything on this page is in `odke.loaders`, `odke.chunking` and `odke.extract`,
+Everything on this page is in `openodke.loaders`, `openodke.chunking` and `openodke.extract`,
 and runs on the base install except where an extra is named.
 
 ## Loaders
 
-Every loader satisfies `odke.stages.Loader`: `load(source)` takes a path or bytes
+Every loader satisfies `openodke.stages.Loader`: `load(source)` takes a path or bytes
 and returns documents, each with a `modality` and a `tier` attached. The modality
 is what the [hybrid extractor](#hybridextractor) routes on, and the tier is the
 [`SourceTier`](concepts.md#spans-evidence-and-trust) every fact from the document
@@ -59,7 +59,7 @@ takes the first level-one heading as the title. `heading_path(doc, offset)` puts
 any offset back under its section.
 
 ```python
-from odke.loaders import MarkdownLoader, heading_path
+from openodke.loaders import MarkdownLoader, heading_path
 
 (guide,) = MarkdownLoader().load(b"# Guide\r\n\r\n## Install\r\n\r\nRun pip.\r\n")
 
@@ -85,7 +85,7 @@ values from the row and cites the rendered cell; it never parses the rendering
 back.
 
 ```python
-from odke.loaders import CsvLoader
+from openodke.loaders import CsvLoader
 
 (ada,) = CsvLoader(tier="curated").load(b"\xef\xbb\xbfname,born\nAda Lovelace,1815-12-10\n")
 
@@ -175,7 +175,7 @@ Markdown on purpose, because the rest of the pipeline already reads Markdown:
 - The `<title>` is the title, else the first `h1`. It is not part of the text.
 
 ```python
-from odke.loaders import HtmlLoader, source_locations
+from openodke.loaders import HtmlLoader, source_locations
 
 markup = b"""<html><head><title>Acme</title></head><body>
 <h1>Acme &amp; Sons</h1>
@@ -225,7 +225,7 @@ import io
 
 import docx
 
-from odke.loaders import DocxLoader
+from openodke.loaders import DocxLoader
 
 word = docx.Document()
 word.add_heading("Acme", level=1)
@@ -311,7 +311,7 @@ two runs over one directory produce documents in the same order.
   passed to every loader in the default one.
 
 ```text
-MissingExtraWarning: skipped corpus/scan.pdf: reading PDF needs pypdf. Run: pip install "odke[pdf]"
+MissingExtraWarning: skipped corpus/scan.pdf: reading PDF needs pypdf. Run: pip install "openodke[pdf]"
 ```
 
 ## Chunking: never split a sentence
@@ -342,7 +342,7 @@ half a sentence is asked nothing ([DECISIONS #19](decisions.md)). So:
   facts are merged by signature later.
 
 ```python
-from odke import Document, SentenceChunker
+from openodke import Document, SentenceChunker
 
 doc = Document(
     id="d1",
@@ -407,8 +407,8 @@ identifiable subject yields nothing. `confidence` defaults to 1.0, because the
 value is exactly what the source says under that column.
 
 ```python
-from odke import Chunk, Ontology
-from odke.extract import PatternExtractor
+from openodke import Chunk, Ontology
+from openodke.extract import PatternExtractor
 
 people = Ontology.from_dict(
     {
@@ -474,8 +474,8 @@ rejection rather than raised, because one bad reply should not end a long run.
 Provider errors still raise.
 
 ```python
-from odke.extract import LLMExtractor
-from odke.llm import ScriptedClient
+from openodke.extract import LLMExtractor
+from openodke.llm import ScriptedClient
 
 note = Document(id="note", text="Grace Hopper was born in 1906. She joined the US Navy in 1943.")
 passage = Chunk(doc_id="note", start=0, end=len(note.text), text=note.text, index=0)
@@ -509,7 +509,7 @@ span points. `confidence` defaults to 0.5, a prior for the
 [scorer](resolution-and-corroboration.md#score) rather than a probability.
 `calls` and `rejections` accumulate across chunks, so cost and drop rate are
 counts to read after a run. No vendor is named: pass `client=`, `spec=` or
-`roles=`, or let `odke.llm.resolve` pick a client for the `extract` role when the
+`roles=`, or let `openodke.llm.resolve` pick a client for the `extract` role when the
 first call is made.
 
 ### `HybridExtractor`
@@ -536,7 +536,7 @@ A chunk whose document is not registered raises `LookupError`. `report` holds a
 tokens and cost), and `totals()` sums them.
 
 ```python
-from odke import HybridExtractor, Pipeline
+from openodke import HybridExtractor, Pipeline
 
 answer = {
     "entities": [

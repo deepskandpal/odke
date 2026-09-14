@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from odke import (
+from openodke import (
     Chunk,
     Document,
     Entity,
@@ -23,9 +23,9 @@ from odke import (
     Pipeline,
     Span,
 )
-from odke.ground import LLMGrounder, RetryPolicy, is_transient
-from odke.ground.retry import call_with_retry, retry_after
-from odke.llm import (
+from openodke.ground import LLMGrounder, RetryPolicy, is_transient
+from openodke.ground.retry import call_with_retry, retry_after
+from openodke.llm import (
     Completion,
     LLMClient,
     Message,

@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from odke import Chunk, Document, Extractor, Fact, Ontology, Polarity, SourceTier
-from odke.extract import LLMExtractor, response_schema
-from odke.llm import ModelRoles, ModelSpec, OpenAICompatClient, ReplayClient, ScriptedClient
+from openodke import Chunk, Document, Extractor, Fact, Ontology, Polarity, SourceTier
+from openodke.extract import LLMExtractor, response_schema
+from openodke.llm import ModelRoles, ModelSpec, OpenAICompatClient, ReplayClient, ScriptedClient
 
 FIXTURES = Path(__file__).parent / "fixtures" / "llm"
 SONNET = ModelSpec(model="anthropic/claude-sonnet-5")

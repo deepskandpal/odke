@@ -33,18 +33,28 @@ step () {
   fi
 }
 
-# The promise in the README is that `pip install odke` needs no provider and no
+# The promise in the README is that `pip install openodke` needs no provider and no
 # driver. That is only true if it is checked: this imports the package with the
 # base dependencies alone, in a throwaway environment.
 base_install_is_self_sufficient () {
-  uv run --isolated --no-project --with . python -c "import odke; odke.Ontology(name='x').snippet('T')"
+  uv run --isolated --no-project --with . python -c "import openodke; openodke.Ontology(name='x').snippet('T')"
 }
 
+# The wheel is `openodke`; it installs both commands, the short `odke` and
+# `openodke` (DECISIONS #22). Each must run from a clean environment and report
+# the distribution name, and the import package must be `openodke` alone.
 smoke_wheel () {
-  local wheel
-  wheel=$(ls -t dist/*.whl 2>/dev/null | head -1) || return 1
+  local wheel out
+  wheel=$(ls -t dist/openodke-*.whl 2>/dev/null | head -1) || return 1
   [ -n "$wheel" ] || return 1
-  uv run --isolated --no-project --with "$wheel" odke --version >/dev/null
+  for cmd in odke openodke; do
+    out=$(uv run --isolated --no-project --with "$wheel" "$cmd" --version) || return 1
+    case "$out" in
+      "openodke "*) ;;
+      *) echo "$cmd --version printed: $out" >&2; return 1 ;;
+    esac
+  done
+  uv run --isolated --no-project --with "$wheel" python -c "import openodke"
 }
 
 step "1. no live credentials present"        python3 scripts/assert_no_credentials.py

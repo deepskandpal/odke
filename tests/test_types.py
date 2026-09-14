@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from odke import (
+from openodke import (
     Chunk,
     Document,
     Entity,

@@ -59,7 +59,7 @@ correctness bugs, not gaps.
 - `Entity.resolution` — how the key was decided, and by what (#51)
 - `Chunk`, `RouteVerdict`, and a `Router` protocol that defaults to
   pass-everything (#52)
-- The thirteen-Protocol surface in `odke.stages`, each with a pass-through
+- The thirteen-Protocol surface in `openodke.stages`, each with a pass-through
   default, so a caller takes the subset they need (#53)
 - `PlatformProfile` on a sink and `Delegated(to=...)`, so a stage the platform
   already does is warned about, never silently done twice (#59)
@@ -131,7 +131,7 @@ ontology importers are v0.2.
 
 *Bring your own labelled dataset.* Precision and recall claims need a harness
 or they are marketing — but a number computed against the pipeline's own output
-measures nothing, and the package cannot label a corpus for you. So `odke.eval`
+measures nothing, and the package cannot label a corpus for you. So `openodke.eval`
 ships, for every stage, a documented **dataset format** (what to label), an
 **evaluator** (labelled set in, `StageReport` out) and a tiny **fixture** for our
 own tests. It never ships a corpus, and the README says plainly that the
@@ -198,6 +198,6 @@ schema that silently drifts between runs produces a graph nobody can query.
 - **Reproducing the paper's benchmark numbers.** Those came from Apple's internal
   KG against private evaluation sets. Neither is available, and claiming to match
   a number nobody can check would be dishonest.
-- **A labelled corpus.** `odke.eval` scores yours; shipping one would be a
+- **A labelled corpus.** `openodke.eval` scores yours; shipping one would be a
   benchmark nobody asked for and a claim nobody could check.
 - **A UI.** The graph goes into a store that already has one.

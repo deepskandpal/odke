@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from odke import (
+from openodke import (
     Delegated,
     Entity,
     EntityLink,
@@ -30,10 +30,10 @@ from odke import (
     ValidationVerdict,
     Validator,
 )
-from odke.eval import ValidationLabel, ValidationPrediction, load_jsonl
-from odke.eval.sinks import assert_idempotent, check_idempotency, jsonl_counts
-from odke.eval.validation import evaluate_validation, run_validate
-from odke.sinks import JsonlSink
+from openodke.eval import ValidationLabel, ValidationPrediction, load_jsonl
+from openodke.eval.sinks import assert_idempotent, check_idempotency, jsonl_counts
+from openodke.eval.validation import evaluate_validation, run_validate
+from openodke.sinks import JsonlSink
 
 FIXTURES = Path(__file__).parent / "fixtures" / "eval"
 LABELS = load_jsonl(FIXTURES / "validate.labels.jsonl", ValidationLabel)

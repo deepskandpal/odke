@@ -17,9 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from odke import Chunk, Router, RouteVerdict
-from odke.eval import RouteLabel, RoutePrediction, load_jsonl
-from odke.eval.routing import evaluate_routing, run_route
+from openodke import Chunk, Router, RouteVerdict
+from openodke.eval import RouteLabel, RoutePrediction, load_jsonl
+from openodke.eval.routing import evaluate_routing, run_route
 
 FIXTURES = Path(__file__).parent / "fixtures" / "eval"
 LABELS = load_jsonl(FIXTURES / "route.labels.jsonl", RouteLabel)

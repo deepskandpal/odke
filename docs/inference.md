@@ -1,6 +1,6 @@
 # Ontology inference
 
-For a corpus that arrives with no schema, `odke.infer` drafts one: a small
+For a corpus that arrives with no schema, `openodke.infer` drafts one: a small
 ontology, marked `inferred=True`, with the evidence behind every type and
 predicate, for a person to review, edit and freeze before anything is extracted
 against it.
@@ -92,9 +92,9 @@ documents behind those spans.
 import tempfile
 from pathlib import Path
 
-from odke.infer import infer_ontology
-from odke.infer.review import summary
-from odke.loaders import DirectoryLoader
+from openodke.infer import infer_ontology
+from openodke.infer.review import summary
+from openodke.loaders import DirectoryLoader
 
 corpus = Path(tempfile.mkdtemp())
 (corpus / "people.csv").write_text(
@@ -158,10 +158,10 @@ ontology back as structured output.
   reviewer. The merge step still refuses a merge whose ranges conflict.
 - A reply that is not the contract gets one repair attempt and is then recorded
   and ignored; a provider error raises. No vendor is named: the client comes from
-  `client=`, `spec=`, `roles=` or `odke.llm.resolve`.
+  `client=`, `spec=`, `roles=` or `openodke.llm.resolve`.
 
 ```python
-from odke.llm import ScriptedClient
+from openodke.llm import ScriptedClient
 
 reply = {
     "types": [
@@ -300,7 +300,7 @@ it was.
   `frozen_at` and `frozen_by` like any other field.
 
 ```python
-from odke.ontology import OntologyFreezeError
+from openodke.ontology import OntologyFreezeError
 
 frozen = ontology.freeze(by="Ada Lovelace")
 assert (frozen.inferred, frozen.frozen_by, frozen.validate()) == (False, "Ada Lovelace", [])
@@ -328,8 +328,8 @@ Until it is frozen, an inferred ontology says so wherever it could do lasting ha
 ```python
 import warnings
 
-from odke.ontology import UnreviewedOntologyWarning
-from odke.sinks.neo4j import Neo4jSink
+from openodke.ontology import UnreviewedOntologyWarning
+from openodke.sinks.neo4j import Neo4jSink
 
 with warnings.catch_warnings(record=True) as caught:
     warnings.simplefilter("always")

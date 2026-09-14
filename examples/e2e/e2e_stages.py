@@ -1,6 +1,6 @@
-"""The example's own stage: registration numbers become external ids, then odke resolves.
+"""The example's own stage: registration numbers become external ids, then openodke resolves.
 
-odke's extractors key an entity by its type and name and never guess an
+openodke's extractors key an entity by its type and name and never guess an
 identifier (DECISIONS #18). This corpus has one — every company in the register
 carries its company number — and a stage of your own is how a fact about one
 corpus enters a run without entering the package (DECISIONS #20). The config
@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from odke import Entity, EntityLink, Fact, NativeResolver
-from odke.stages import EntityIndex
+from openodke import Entity, EntityLink, Fact, NativeResolver
+from openodke.stages import EntityIndex
 
 
 class RegistryResolver:

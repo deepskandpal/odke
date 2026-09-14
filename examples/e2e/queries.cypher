@@ -21,7 +21,7 @@ MATCH (a:Company)-[l:DIFFERENT]->(b:Company)
 RETURN a.label AS company, b.label AS other, l.score AS name_similarity, l.reason AS reason;
 
 // 4. Cardinality: a company with more than one head office. This is the check
-//    odke compiles from the ontology (`headquarters` is single-valued).
+//    openodke compiles from the ontology (`headquarters` is single-valued).
 MATCH (s)-[r:`headquarters`]->(o)
 WHERE r.polarity = 'asserted' AND r.valid_to IS NULL
 WITH s, collect(DISTINCT coalesce(o.key, o.value)) AS objects

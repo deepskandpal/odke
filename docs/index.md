@@ -20,7 +20,7 @@ affiliated with or endorsed by Apple Inc.; see
 
 ## A superset, not a product
 
-The pipeline is thirteen stages. Each one is a `Protocol` in `odke.stages`, and
+The pipeline is thirteen stages. Each one is a `Protocol` in `openodke.stages`, and
 each has a pass-through default: the identity function, or the nearest thing to
 one. A caller who wants only extract-and-sink gets no-ops for the other eleven
 and never notices them. Every corpus needs a different subset of the thirteen,
@@ -63,31 +63,31 @@ odke is pre-alpha. This site documents what is on `main`:
 
 | Area | Module | Status |
 |---|---|---|
-| Data model, the thirteen Protocols, the pipeline | `odke.types`, `odke.stages`, `odke.pipeline` | on `main` — [Concepts](concepts.md) |
-| Ontology loading, validation and diff | `odke.ontology`, `odke ontology …` | on `main` — [Ontology](ontology.md) |
-| Grounding: span verification and a second model | `odke.ground` | on `main` — [Grounding](grounding.md) |
-| Neo4j sink and constraint bootstrap | `odke.sinks.neo4j` | on `main` — [Neo4j sink](neo4j.md) |
-| Evaluation against your own labels | `odke.eval`, `odke eval` | on `main` — [Evaluation](evaluation.md) |
-| Loaders (text, Markdown, records, HTML, PDF, DOCX), the sentence chunker, pattern / LLM / hybrid extractors | `odke.loaders`, `odke.chunking`, `odke.extract` | on `main` — [Loaders & extraction](loaders-and-extraction.md) |
-| Normalise, resolve, corroborate, score | `odke.corroborate` | on `main` — [Resolution & corroboration](resolution-and-corroboration.md) |
+| Data model, the thirteen Protocols, the pipeline | `openodke.types`, `openodke.stages`, `openodke.pipeline` | on `main` — [Concepts](concepts.md) |
+| Ontology loading, validation and diff | `openodke.ontology`, `odke ontology …` | on `main` — [Ontology](ontology.md) |
+| Grounding: span verification and a second model | `openodke.ground` | on `main` — [Grounding](grounding.md) |
+| Neo4j sink and constraint bootstrap | `openodke.sinks.neo4j` | on `main` — [Neo4j sink](neo4j.md) |
+| Evaluation against your own labels | `openodke.eval`, `odke eval` | on `main` — [Evaluation](evaluation.md) |
+| Loaders (text, Markdown, records, HTML, PDF, DOCX), the sentence chunker, pattern / LLM / hybrid extractors | `openodke.loaders`, `openodke.chunking`, `openodke.extract` | on `main` — [Loaders & extraction](loaders-and-extraction.md) |
+| Normalise, resolve, corroborate, score | `openodke.corroborate` | on `main` — [Resolution & corroboration](resolution-and-corroboration.md) |
 | Ontology import from OWL, RDFS, SKOS and a live Neo4j graph | `Ontology.from_owl`, `Ontology.from_neo4j` | on `main` — [Ontology](ontology.md#importing-a-schema-you-already-have) |
-| Ontology inference: a draft to review, then freeze | `odke.infer`, `odke ontology infer`, `odke ontology freeze` | on `main` — [Ontology inference](inference.md) |
-| JSONL, Cypher-file, neo4j-admin CSV, RDF and NetworkX sinks | `odke.sinks` | on `main` — [Sinks](sinks.md) |
-| The whole pipeline from one config file | `odke.run`, `odke run` | on `main` — [`odke run`](run.md) |
-| The ablation: extraction alone, + grounding, + corroboration | `odke.eval.run_ablation`, `odke eval ablation` | on `main` — [Evaluation](evaluation.md#ablation) |
+| Ontology inference: a draft to review, then freeze | `openodke.infer`, `odke ontology infer`, `odke ontology freeze` | on `main` — [Ontology inference](inference.md) |
+| JSONL, Cypher-file, neo4j-admin CSV, RDF and NetworkX sinks | `openodke.sinks` | on `main` — [Sinks](sinks.md) |
+| The whole pipeline from one config file | `openodke.run`, `odke run` | on `main` — [`odke run`](run.md) |
+| The ablation: extraction alone, + grounding, + corroboration | `openodke.eval.run_ablation`, `odke eval ablation` | on `main` — [Evaluation](evaluation.md#ablation) |
 
 ## Five minutes, no keys
 
 Nothing below needs a model provider, a database or a network. The extractor is
-a toy regular expression, to show the seam: `odke.extract` has the real pattern,
+a toy regular expression, to show the seam: `openodke.extract` has the real pattern,
 LLM and hybrid extractors, and any class with an `extract(chunk, ontology)`
 method is an extractor.
 
 ```python
 import re
 
-from odke import Document, Entity, Evidence, Fact, GroundingVerdict, Ontology, Pipeline, Span
-from odke.ground import SpanGrounder
+from openodke import Document, Entity, Evidence, Fact, GroundingVerdict, Ontology, Pipeline, Span
+from openodke.ground import SpanGrounder
 
 ontology = Ontology.from_dict(
     {

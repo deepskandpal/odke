@@ -1,15 +1,16 @@
 [project]
-name = "odke"
+name = "openodke"
 version = "0.0.1"
-description = "Ontology-guided knowledge extraction: text in, a grounded knowledge graph out, ready for Neo4j or any graph store."
+description = "An open implementation of the ODKE+ architecture (Apple, arXiv:2509.04696): ontology-guided knowledge extraction into a grounded graph. Independent; not affiliated with Apple."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11,<3.14"
 authors = [{ name = "Deepak Kandpal" }]
 keywords = [
-  "knowledge-graph", "ontology", "information-extraction", "neo4j",
-  "rdf", "llm", "entity-extraction", "relation-extraction", "graphrag",
+  "odke", "odke-plus", "ODKE+", "knowledge-graph", "knowledge-extraction",
+  "ontology", "neo4j", "rdf", "llm", "information-extraction",
+  "entity-extraction", "relation-extraction", "graphrag",
 ]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
@@ -26,7 +27,7 @@ classifiers = [
 # The base install is the data model, the ontology compiler and the pattern
 # extractor. All of that is deterministic and runs with no model provider, no
 # database driver and no network. Everything that talks to something else is an
-# extra, so `pip install odke` never drags in a stack the caller did not ask for.
+# extra, so `pip install openodke` never drags in a stack the caller did not ask for.
 dependencies = [
   "pydantic>=2.7,<3",
   "typer>=0.15,<1.0",
@@ -50,7 +51,7 @@ yaml = ["pyyaml>=6,<7"]
 # Columnar records. pyarrow is large, so reading Parquet is opt-in; the loader
 # imports it on first use and names this extra when it is missing.
 parquet = ["pyarrow>=15"]
-all = ["odke[llm,neo4j,rdf,networkx,docs,pdf,docx,yaml,parquet]"]
+all = ["openodke[llm,neo4j,rdf,networkx,docs,pdf,docx,yaml,parquet]"]
 
 [project.urls]
 Homepage = "https://github.com/deepskandpal/odke"
@@ -59,7 +60,10 @@ Issues = "https://github.com/deepskandpal/odke/issues"
 Changelog = "https://github.com/deepskandpal/odke/blob/main/CHANGELOG.md"
 
 [project.scripts]
-odke = "odke.cli.main:app"
+# The distribution and the import package are `openodke`; the command stays the
+# short tool name, `odke` (DECISIONS #22). `openodke` runs the same app.
+odke = "openodke.cli.main:app"
+openodke = "openodke.cli.main:app"
 
 [dependency-groups]
 dev = [
@@ -70,7 +74,7 @@ dev = [
   # Installed for the suite and not for users, so the provider and sink code
   # paths are executed in CI rather than skipped. No network is touched: the
   # tests replay recorded responses through a stub transport.
-  "odke[all]",
+  "openodke[all]",
   # Stubs for mypy; PyYAML ships none.
   "types-pyyaml>=6",
   "hypothesis>=6",
@@ -88,7 +92,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/odke"]
+packages = ["src/openodke"]
 
 [tool.ruff]
 line-length = 100
@@ -100,14 +104,14 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.ruff.lint.per-file-ignores]
 # typer's entire API is "call in the argument default". B008 is a true positive
 # for most code and a false one for every typer command ever written.
-"src/odke/cli/*.py" = ["B008"]
+"src/openodke/cli/*.py" = ["B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
 
 [tool.mypy]
-files = ["src/odke"]
+files = ["src/openodke"]
 python_version = "3.11"
 strict = false
 warn_unused_ignores = true
