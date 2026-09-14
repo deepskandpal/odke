@@ -136,6 +136,39 @@ def ontology_diff(
         raise typer.Exit(1)
 
 
+@app.command("run")
+def run_command(
+    config: Path = typer.Argument(..., help="Run config, YAML or JSON. See examples/run.yaml."),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Load, extract and ground, then print what would be written instead of writing it.",
+    ),
+) -> None:
+    """Run the whole pipeline from a config file.
+
+    The config names the inputs, the ontology, the models and which
+    implementation fills each of the thirteen stages. A dry run still calls
+    the models; it is the store it spares. Exit 2 is a config that cannot run,
+    exit 1 a run that failed.
+    """
+    # Imported here so `odke --version` and the ontology commands stay light.
+    from odke.llm.base import ProviderError
+    from odke.run import ConfigError, execute, load_config
+
+    try:
+        result = execute(load_config(config), dry_run=dry_run)
+    except (ConfigError, ImportError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    except (ProviderError, OSError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    for warning in result.warnings:
+        typer.echo(f"warning: {warning}", err=True)
+    typer.echo(result.render())
+
+
 @app.command("eval")
 def eval_stage(
     stage: str = typer.Argument(..., help="route, extract, ground, resolve, score or validate."),
