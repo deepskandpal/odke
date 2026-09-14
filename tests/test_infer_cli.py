@@ -16,6 +16,7 @@ from openodke.infer.build import infer_ontology
 from openodke.infer.review import evidence_path, format_for, render
 from openodke.llm import ReplayClient, register, unregister
 from openodke.loaders import DirectoryLoader
+from openodke.loaders.directory import default_loaders
 from openodke.ontology import Ontology
 
 runner = CliRunner()
@@ -191,6 +192,9 @@ def test_bad_input_exits_2_with_a_message(tmp_path: Path) -> None:
         app, ["ontology", "infer", str(empty), "--out", str(tmp_path / "o.yaml")]
     )
     assert result.exit_code == 2 and "no documents" in result.output
+    # The hint names every suffix the loader reads, HTML, PDF and Word included.
+    for suffix in default_loaders():
+        assert suffix in result.output
     result = runner.invoke(
         app, ["ontology", "infer", str(empty), "--out", str(tmp_path / "o.txt"), "--no-llm"]
     )

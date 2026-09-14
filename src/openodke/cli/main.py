@@ -223,9 +223,10 @@ def ontology_infer(
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from None
     if not docs:
+        # From the loader's own table, so the hint cannot fall behind what it reads.
+        suffixes = ", ".join(loader.loaders)
         typer.echo(
-            "error: no documents: no file under those paths has a loader "
-            "(.txt, .md, .csv, .tsv, .json, .jsonl, .parquet)",
+            f"error: no documents: no file under those paths has a loader ({suffixes})",
             err=True,
         )
         raise typer.Exit(2)

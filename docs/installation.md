@@ -50,7 +50,7 @@ These are the extras `pyproject.toml` declares, exactly:
 | `neo4j` | `neo4j>=5.20,<7` | `Neo4jSink` connecting to a server; `Ontology.from_neo4j` given a URI |
 | `rdf` | `rdflib>=7.0,<8` | `RdfSink`; `Ontology.from_owl` |
 | `networkx` | `networkx>=3.2,<4` | `NetworkXSink` |
-| `docs` | `beautifulsoup4>=4.12,<5`, `pypdf>=5.0,<7`, `lxml>=5.0,<7`, `python-docx>=1.1,<2` | The document readers together, so it covers what `pdf` and `docx` do. Nothing on `main` imports beautifulsoup4 or lxml, because `HtmlLoader` runs on the standard library. This extra is not this site's tooling: that is the `docs` *dependency group* (below). |
+| `docs` | `pypdf>=5.0,<7`, `python-docx>=1.1,<2` | The document readers together, so it covers what `pdf` and `docx` do. HTML needs no extra: `HtmlLoader` runs on the standard library. This extra is not this site's tooling: that is the `docs` *dependency group* (below). |
 | `pdf` | `pypdf>=5.0,<7` | `PdfLoader`, which imports pypdf when it reads a file |
 | `docx` | `python-docx>=1.1,<2` | `DocxLoader`, which imports python-docx when it reads a file |
 | `yaml` | `pyyaml>=6,<7` | `Ontology.from_yaml`; YAML run configs; the `odke ontology` commands on `.yaml`/`.yml` files, including writing a YAML draft or frozen file |

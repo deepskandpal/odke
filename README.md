@@ -153,7 +153,7 @@ missing one is named in the error.
 | `pdf`, `docx` | pypdf; python-docx | `PdfLoader`, `DocxLoader` |
 | `rdf` | rdflib | `RdfSink`, `Ontology.from_owl` |
 | `networkx` | networkx | `NetworkXSink` |
-| `docs` | beautifulsoup4, pypdf, lxml, python-docx | The document readers together |
+| `docs` | pypdf, python-docx | The document readers together |
 | `all` | all of the above | |
 
 Python 3.11–3.13.
