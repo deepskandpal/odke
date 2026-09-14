@@ -13,9 +13,10 @@ source gave. `support` is the count of **independent sources**: forty pages
 from one host are one source, two chunks of one document are one.
 
 **Contest.** Two claims conflict when they share subject and predicate, the
-predicate is single-valued in the ontology, the objects differ and their valid
-intervals overlap — or when a denial and an assertion share an object, on any
-predicate. Every claim gets a rank:
+predicate is single-valued in the ontology, they agree on its `scope_keys` (the
+qualifiers a single value is unique within, which the Neo4j constraint checks
+too), the objects differ and their valid intervals overlap — or when a denial
+and an assertion share an object, on any predicate. Every claim gets a rank:
 
     rank      = trust × agreement
     trust     = max over its evidence of tier.weight × freshness
@@ -253,9 +254,13 @@ class SignatureCorroborator:
     # Contest
     # ----------------------------------------------------------------------- #
 
-    def _single(self, predicate: str) -> bool:
+    def _scope(self, predicate: str) -> tuple[str, ...] | None:
+        # The qualifier keys a single value is unique within — the grouping the
+        # Neo4j constraint compiler checks too — or None when nothing is single.
         found = self.ontology.predicates.get(predicate) if self.ontology else None
-        return found is not None and found.cardinality == "single"
+        if found is None or found.cardinality != "single":
+            return None
+        return found.scope_keys
 
     def _freshness(self, moment: datetime, newest: datetime) -> float:
         age_days = max(0.0, (newest - moment).total_seconds() / 86_400)
@@ -295,8 +300,14 @@ class SignatureCorroborator:
             subject, kind, predicate, obj, _, scope = fact.signature
             if fact.polarity is not Polarity.PARTIAL:
                 contests[("polarity", subject, kind, predicate, obj, scope)].append(i)
-            if fact.polarity is Polarity.ASSERTED and self._single(predicate):
-                contests[("value", subject, kind, predicate, scope)].append(i)
+            keys = self._scope(predicate)
+            if fact.polarity is Polarity.ASSERTED and keys is not None:
+                # Scoped by the schema, not by what the extractor stamped: a
+                # price per tier is not a conflict across tiers either way.
+                bounded = tuple(
+                    sorted((k, repr(fact.qualifiers[k])) for k in keys if k in fact.qualifiers)
+                )
+                contests[("value", subject, kind, predicate, bounded)].append(i)
 
         outcomes: dict[int, list[tuple[str, int]]] = defaultdict(list)
         for key, members in contests.items():
