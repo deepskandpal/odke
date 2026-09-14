@@ -1,0 +1,32 @@
+{
+  "description": "Hand-authored. A model without structured output answers in prose, is sent the repair prompt, and answers again with the object inside a code fence.",
+  "interactions": [
+    {
+      "match": {
+        "contains": [
+          "Grace Hopper was born in 1906."
+        ]
+      },
+      "response": {
+        "text": "Sure! Grace Hopper was born in 1906, so her birth date is 1906.",
+        "model": "llama3.1",
+        "prompt_tokens": 690,
+        "completion_tokens": 19
+      }
+    },
+    {
+      "match": {
+        "contains": [
+          "Grace Hopper was born in 1906.",
+          "not a JSON object"
+        ]
+      },
+      "response": {
+        "text": "```json\n{\n  \"entities\": [\n    {\n      \"type\": \"Person\",\n      \"name\": \"Grace Hopper\",\n      \"facts\": [\n        {\n          \"predicate\": \"birth_date\",\n          \"value\": \"1906\",\n          \"quote\": \"born in 1906\",\n          \"start\": 17\n        }\n      ]\n    }\n  ]\n}\n```",
+        "model": "llama3.1",
+        "prompt_tokens": 731,
+        "completion_tokens": 58
+      }
+    }
+  ]
+}
