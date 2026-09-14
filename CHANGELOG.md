@@ -144,6 +144,10 @@ was serialised. Two of them fix live correctness bugs.
   is opened, and each input's loader is now built then too.
 
 ### Changed
+- `odke ontology infer` with no readable documents lists every suffix
+  `DirectoryLoader` reads, taken from its own table, so `.html`, `.pdf` and
+  `.docx` are no longer missing from the hint. The `docs` extra is pypdf and
+  python-docx: beautifulsoup4 and lxml were in it and nothing imported them.
 - The distribution and the import package are now `openodke` (`pip install
   "openodke[neo4j]"`, `import openodke`); the command is still `odke`, and an
   `openodke` command runs the same app. The reserved `odke.*` keys, the RDF

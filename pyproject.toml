@@ -40,7 +40,7 @@ neo4j = ["neo4j>=5.20,<7"]
 rdf = ["rdflib>=7.0,<8"]
 networkx = ["networkx>=3.2,<4"]
 # Readers for the "whatever form possible" half of the promise.
-docs = ["beautifulsoup4>=4.12,<5", "pypdf>=5.0,<7", "lxml>=5.0,<7", "python-docx>=1.1,<2"]
+docs = ["pypdf>=5.0,<7", "python-docx>=1.1,<2"]
 # One reader each, for a caller who wants PDFs or Word files without the rest of
 # `[docs]`. Both loaders import their library on first use and name the extra
 # when it is missing; HTML needs neither, it runs on the standard library.
