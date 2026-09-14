@@ -19,6 +19,7 @@ from odke import (
     Ontology,
     Polarity,
     Predicate,
+    Qualifier,
     SourceTier,
 )
 from odke.corroborate import (
@@ -191,6 +192,35 @@ def test_a_curated_older_source_beats_a_fresh_unverified_scrape_and_says_why() -
     )
     assert "'John Roe' by 1 independent source (unverified, retrieved 2026-09-01)" in lost["reason"]
     assert winner.qualifiers[CONFLICT]["reason"] == lost["reason"]
+
+
+def test_single_values_are_contested_within_the_predicate_scope_keys() -> None:
+    """The grouping the store's constraint uses: a price per tier is not a conflict across tiers."""
+    ontology = Ontology(
+        predicates={
+            "price": Predicate(
+                name="price", cardinality="single", qualifiers={"tier": Qualifier(identity=True)}
+            )
+        }
+    )
+    assert ontology.predicates["price"].scope_keys == ("tier",)
+
+    def price(value: str, level: str, doc: str, trust: SourceTier = SourceTier.UNVERIFIED) -> Fact:
+        # identity_keys deliberately left unstamped: the schema scopes the contest.
+        return _fact(value, _ev(doc, tier=trust), predicate="price", qualifiers={"tier": level})
+
+    across = SignatureCorroborator(ontology).corroborate(
+        [price("10 USD", "gold", "d1"), price("5 USD", "silver", "d2", SourceTier.CURATED)]
+    )
+    assert all(CONFLICT not in f.qualifiers for f in across)
+
+    within = _by_value(
+        SignatureCorroborator(ontology).corroborate(
+            [price("10 USD", "gold", "d1"), price("12 USD", "gold", "d2", SourceTier.CURATED)]
+        )
+    )
+    assert within["10 USD"].qualifiers[CONFLICT]["status"] == "lost"
+    assert within["12 USD"].qualifiers[CONFLICT]["status"] == "won"
 
 
 def test_a_multi_valued_predicate_keeps_every_value() -> None:
