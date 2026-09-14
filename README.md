@@ -111,7 +111,7 @@ config, or a stage of yours.
 
 | Stage | Built-in | Name in `odke run` | Left out |
 |---|---|---|---|
-| load | `DirectoryLoader`, `TextLoader`, `MarkdownLoader`, `HtmlLoader`, `PdfLoader`, `DocxLoader`, `CsvLoader`, `TsvLoader`, `JsonLoader`, `JsonlLoader`, `ParquetLoader` | `directory` (every suffix), `text`, `markdown`, `csv`, … | `directory` |
+| load | `DirectoryLoader`, `TextLoader`, `MarkdownLoader`, `HtmlLoader`, `PdfLoader`, `DocxLoader`, `CsvLoader`, `TsvLoader`, `JsonLoader`, `JsonlLoader`, `ParquetLoader` | `directory` (every suffix), `text`, `markdown`, `html`, `pdf`, `docx`, `csv`, … | `directory` |
 | chunk | `SentenceChunker` — whole sentences, offsets intact | `sentence` | one chunk per document |
 | route | yours: skip marketing, policy, narrative | — | extract everything |
 | extract | `PatternExtractor`, `LLMExtractor`, `HybridExtractor` | `pattern`, `llm`, `hybrid` | required |
@@ -121,9 +121,9 @@ config, or a stage of yours.
 | corroborate | `SignatureCorroborator` | `signature` | every fact its own claim |
 | score | `EvidenceScorer` | `evidence` | confidence unchanged |
 | validate | `VerdictValidator` — refuses `contradicted` | `verdict` | accept everything |
-| sink | `JsonlSink`, `Neo4jSink`, `CypherFileSink`, `Neo4jAdminCsvSink`, `RdfSink`, `NetworkXSink` | `jsonl`, `neo4j`; others as `package.module:Name` | nothing written |
+| sink | `JsonlSink`, `Neo4jSink`, `CypherFileSink`, `Neo4jAdminCsvSink`, `RdfSink`, `NetworkXSink` | `jsonl`, `neo4j`, `cypher_file`, `neo4j_admin_csv`, `rdf`, `networkx` | nothing written |
 | constrain | `Neo4jConstrainer` — the ontology as DDL | `neo4j` | no constraints |
-| infer | v0.5 | — | never run: inference is a bootstrap (DECISIONS #8) |
+| infer | `OntologyInferrer`; `odke ontology infer`, then review and `freeze` | — | never run: inference is a bootstrap (DECISIONS #8) |
 
 ## Install
 
@@ -280,14 +280,13 @@ and which reconcile (`start_time`), and that decides what counts as one claim.
   it cheap, and a span that leaves out the subject cannot support the claim.
 - **Resolution never merges on names.** Only a shared identifier re-keys an
   entity; a name match is a `SIMILAR` link for someone to act on.
-- **`odke run` names two sinks.** `jsonl` and `neo4j` are built in; the RDF,
-  NetworkX and bulk sinks are reached as `package.module:Name` for now.
-- **No ontology inference.** That is v0.5, and a bootstrap when it comes
+- **Inference drafts; it never decides.** `odke ontology infer` proposes a small
+  schema for a person to review and freeze, and nothing infers implicitly
   (DECISIONS #8).
 
 ## Documentation
 
-- [deepskandpal.github.io/odke](https://deepskandpal.github.io/odke/) — the documentation site: concepts, ontology, grounding, the Neo4j sink, evaluation
+- [deepskandpal.github.io/odke](https://deepskandpal.github.io/odke/) — the documentation site: concepts, ontology and inference, loaders and extraction, grounding, resolution and corroboration, sinks, `odke run`, evaluation
 - [examples/](examples/README.md) — the end-to-end example and the commented run config
 - [ROADMAP.md](ROADMAP.md) — milestones, what each one delivers, and the estimate
 - [CHANGELOG.md](CHANGELOG.md) — what landed, milestone by milestone

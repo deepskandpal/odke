@@ -21,7 +21,9 @@ inspected in NetworkX is one graph.
 Every module imports on the base install ([DECISIONS #1](decisions.md)). A driver
 or library is imported only when a sink needs it, and a missing extra fails with
 the command that fixes it. `JsonlSink` is the only sink re-exported from
-`odke.sinks`; the others are imported from their own module.
+`odke.sinks`; the others are imported from their own module. In an
+[`odke run`](run.md#sinks) config they are `jsonl`, `neo4j`, `cypher_file`,
+`neo4j_admin_csv`, `rdf` and `networkx`.
 
 Every example on this page writes this small graph: an asserted value, a denial, a
 value scoped by an identity-bearing qualifier, and a `DIFFERENT` link.

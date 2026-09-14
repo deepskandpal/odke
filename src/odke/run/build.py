@@ -22,8 +22,9 @@ import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import date, datetime, time
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import unquote, urlsplit
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -40,18 +41,24 @@ from odke.llm.testing import RecordedClient, ReplayClient
 from odke.loaders import (
     CsvLoader,
     DirectoryLoader,
+    DocxLoader,
+    HtmlLoader,
     JsonlLoader,
     JsonLoader,
     MarkdownLoader,
     ParquetLoader,
+    PdfLoader,
     TextLoader,
     TsvLoader,
 )
 from odke.ontology import Ontology, OntologyLoadError
 from odke.pipeline import Pipeline
-from odke.run.config import STAGES, ConfigError, RunConfig, StageSpec
+from odke.run.config import STAGES, ConfigError, InputSpec, RunConfig, StageSpec
+from odke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink
 from odke.sinks.jsonl import JsonlSink
 from odke.sinks.neo4j import Neo4jConstrainer, Neo4jSink, is_check, plan
+from odke.sinks.networkx import NetworkXSink
+from odke.sinks.rdf import RdfSink
 from odke.stages import (
     Chunker,
     Constrainer,
@@ -197,6 +204,38 @@ def construct(
         raise ConfigError(f"{where}: {exc}") from None
 
 
+class Extra(NamedTuple):
+    """An optional dependency a built-in needs: the module to import, the extra, the package."""
+
+    module: str
+    extra: str
+    package: str
+
+
+PYARROW = Extra("pyarrow.parquet", "parquet", "pyarrow")
+PYPDF = Extra("pypdf", "pdf", "pypdf")
+PYTHON_DOCX = Extra("docx", "docx", "python-docx")
+RDFLIB = Extra("rdflib", "rdf", "rdflib")
+NETWORKX = Extra("networkx", "networkx", "networkx")
+
+
+def require_extra(needs: Extra, what: str, where: str) -> None:
+    """Import what a built-in needs now, or refuse the config with the extra that provides it.
+
+    The built-ins import their library when they first read or write, which is
+    right for a library and late for a run: a PDF input without pypdf would fail
+    after the sink had opened. Checked while the config is built, a missing extra
+    is a config error before anything is loaded, called or written.
+    """
+    try:
+        importlib.import_module(needs.module)
+    except ImportError:
+        raise ConfigError(
+            f"{where}: {what} needs {needs.package}, which is not installed. "
+            f'Run: pip install "odke[{needs.extra}]"'
+        ) from None
+
+
 def _plain(cls: Callable[..., Any]) -> Factory:
     return lambda options, ctx, where: construct(cls, options, where)
 
@@ -217,8 +256,10 @@ def _tier(options: dict[str, Any], where: str) -> dict[str, Any]:
         raise ConfigError(f"{where}.tier: {options['tier']!r} is not one of {tiers}") from None
 
 
-def _loader(cls: Callable[..., Any]) -> Factory:
+def _loader(cls: type, needs: Extra | None = None) -> Factory:
     def make(options: dict[str, Any], ctx: Context, where: str) -> Any:
+        if needs is not None:
+            require_extra(needs, cls.__name__, where)
         return construct(cls, _tier(options, where), where, reserved=("loaders",))
 
     return make
@@ -312,14 +353,18 @@ _PASSTHROUGH: dict[str, Callable[[], Any]] = {
 
 BUILTINS: dict[str, dict[str, Factory]] = {
     "loader": {
+        # Every suffix below, and each missing extra a warning that skips its files.
         "directory": _loader(DirectoryLoader),
         "text": _loader(TextLoader),
         "markdown": _loader(MarkdownLoader),
+        "html": _loader(HtmlLoader),
+        "pdf": _loader(PdfLoader, PYPDF),
+        "docx": _loader(DocxLoader, PYTHON_DOCX),
         "csv": _loader(CsvLoader),
         "tsv": _loader(TsvLoader),
         "json": _loader(JsonLoader),
         "jsonl": _loader(JsonlLoader),
-        "parquet": _loader(ParquetLoader),
+        "parquet": _loader(ParquetLoader, PYARROW),
     },
     "chunker": {"sentence": _plain(SentenceChunker)},
     "router": {},
@@ -517,6 +562,171 @@ class _Neo4jPlan(SinkPlan):
         return [s for s in compiled if not is_check(s)]
 
 
+class _WriterPlan(SinkPlan):
+    """A built-in sink that connects to nothing: it writes a file, a directory, or memory.
+
+    Constructed once while the config is built, so a bad option is a config
+    error before anything runs, and again by `open()`, so a run writes with a
+    fresh sink. `odke run` supplies the ontology, which decides whether a
+    projected value is one value or a list and, where the format has room,
+    declares the schema.
+    """
+
+    # The option that names where the sink writes, resolved against the config.
+    target_key = "path"
+    needs: Extra | None = None
+    what = ""
+
+    def __init__(self, options: dict[str, Any], ctx: Context, where: str) -> None:
+        if self.needs is not None:
+            require_extra(self.needs, self.what, where)
+        self.where = where
+        self.ontology = ctx.ontology
+        self.options = dict(options)
+        self.target = self._target(ctx)
+        self._make()
+
+    def _target(self, ctx: Context) -> Path | None:
+        value = self.options.get(self.target_key)
+        if not isinstance(value, str):
+            noun = "directory" if self.target_key == "directory" else "file"
+            raise ConfigError(f"{self.where}.{self.target_key}: the {noun} to write into")
+        path = ctx.config.resolve(value)
+        self.options[self.target_key] = path
+        return path
+
+    def _construct(
+        self, cls: Callable[..., Any], options: Mapping[str, Any], reserved: Sequence[str] = ()
+    ) -> Any:
+        injected = {"ontology": self.ontology}
+        return construct(cls, options, self.where, injected=injected, reserved=reserved)
+
+    def _make(self) -> Any:  # pragma: no cover - every plan overrides it
+        raise NotImplementedError
+
+    def open(self) -> Sink:
+        sink: Sink = self._make()
+        return sink
+
+
+class _CypherFilePlan(_WriterPlan):
+    name = "cypher_file"
+    profile = CypherFileSink.profile
+    what = "CypherFileSink"
+
+    def _make(self) -> CypherFileSink:
+        sink: CypherFileSink = self._construct(CypherFileSink, self.options)
+        return sink
+
+    def describe(self, kg: KnowledgeGraph) -> list[str]:
+        statements = self._make().statements(kg)
+        schema = len(Neo4jConstrainer().schema(self.ontology))
+        rows = sum(len(s.rows) for s in plan(kg, ontology=self.ontology))
+        return [
+            f"cypher_file → {self.target}: {len(statements)} statements ({schema} schema, "
+            f"{len(statements) - schema} UNWIND … MERGE), {rows} rows"
+        ]
+
+
+class _Neo4jAdminCsvPlan(_WriterPlan):
+    name = "neo4j_admin_csv"
+    profile = Neo4jAdminCsvSink.profile
+    target_key = "directory"
+    what = "Neo4jAdminCsvSink"
+
+    def _make(self) -> Neo4jAdminCsvSink:
+        sink: Neo4jAdminCsvSink = self._construct(Neo4jAdminCsvSink, self.options)
+        return sink
+
+    def describe(self, kg: KnowledgeGraph) -> list[str]:
+        tables = self._make().tables(kg)
+        nodes = sum(table.kind == "nodes" for table in tables)
+        lines = [
+            f"neo4j_admin_csv → {self.target}: {nodes} node files, "
+            f"{len(tables) - nodes} relationship files, import.args"
+        ]
+        lines.extend(f"  {len(table.rows):>4} × {table.file}" for table in tables)
+        return lines
+
+
+class _RdfPlan(_WriterPlan):
+    name = "rdf"
+    needs = RDFLIB
+    what = "RdfSink"
+
+    def _make(self) -> RdfSink:
+        sink: RdfSink = self._construct(RdfSink, self.options)
+        return sink
+
+    def describe(self, kg: KnowledgeGraph) -> list[str]:
+        sink = self._make()
+        return [f"rdf → {self.target} ({sink.format}): {len(sink.graph(kg))} triples"]
+
+
+class _NetworkXPlan(_WriterPlan):
+    """A `MultiDiGraph`, kept for the run, and written as node-link JSON when `path` is set."""
+
+    name = "networkx"
+    needs = NETWORKX
+    what = "NetworkXSink"
+
+    def _target(self, ctx: Context) -> Path | None:
+        unknown = sorted(set(self.options) - {"path", "graph"})
+        if unknown:
+            raise ConfigError(f"{self.where}.{unknown[0]}: unknown option; networkx takes path")
+        return super()._target(ctx) if "path" in self.options else None
+
+    def _make(self) -> Sink:
+        options = {k: v for k, v in self.options.items() if k != "path"}
+        sink: NetworkXSink = self._construct(NetworkXSink, options, reserved=("graph",))
+        return sink if self.target is None else NodeLinkFile(sink, self.target)
+
+    def describe(self, kg: KnowledgeGraph) -> list[str]:
+        graph = NetworkXSink(ontology=self.ontology).to_graph(kg)
+        where = (
+            f"{self.target} (node-link JSON)" if self.target else "a MultiDiGraph, kept for the run"
+        )
+        return [
+            f"networkx → {where}: {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges"
+        ]
+
+
+class NodeLinkFile:
+    """A `NetworkXSink` whose graph is also written as node-link JSON after every write.
+
+    The graph a NetworkX sink fills lives in memory and ends with the process
+    that filled it, so from `odke run` it would be written nowhere. This keeps
+    it. `networkx.node_link_graph(data, edges="edges")` reads the file back
+    (`link="edges"` before networkx 3.4). Dates and times are ISO strings.
+    """
+
+    def __init__(self, sink: NetworkXSink, path: Path) -> None:
+        self.sink = sink
+        self.path = path
+
+    @property
+    def graph(self) -> Any:
+        return self.sink.graph
+
+    def write(self, kg: KnowledgeGraph) -> None:
+        import networkx  # type: ignore[import-untyped]
+
+        self.sink.write(kg)
+        edges = (
+            "edges" if "edges" in inspect.signature(networkx.node_link_data).parameters else "link"
+        )
+        data = networkx.node_link_data(self.sink.graph, **{edges: "edges"})
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        text = json.dumps(data, default=_json_value, ensure_ascii=False)
+        self.path.write_text(text + "\n", encoding="utf-8")
+
+
+def _json_value(value: Any) -> Any:
+    if isinstance(value, datetime | date | time):
+        return value.isoformat()
+    return str(value)
+
+
 class _CustomPlan(SinkPlan):
     def __init__(self, spec: StageSpec, where: str) -> None:
         self.spec = spec
@@ -543,18 +753,28 @@ class _CustomPlan(SinkPlan):
         return [f"{self.spec.use} → write() with {len(kg.facts)} facts, {len(kg.links)} links"]
 
 
+SINKS: dict[str, Callable[[dict[str, Any], Context, str], SinkPlan]] = {
+    "jsonl": _JsonlPlan,
+    "neo4j": _Neo4jPlan,
+    "cypher_file": _CypherFilePlan,
+    "neo4j_admin_csv": _Neo4jAdminCsvPlan,
+    "rdf": _RdfPlan,
+    "networkx": _NetworkXPlan,
+}
+
+
 def sink_plan(spec: StageSpec, ctx: Context, where: str) -> SinkPlan:
     if spec.is_custom:
         return _CustomPlan(spec, where)
-    if spec.use == "jsonl":
-        return _JsonlPlan(dict(spec.options), ctx, where)
-    if spec.use == "neo4j":
-        return _Neo4jPlan(dict(spec.options), ctx, where)
-    close = difflib.get_close_matches(spec.use, ["jsonl", "neo4j"], n=1)
+    make = SINKS.get(spec.use)
+    if make is not None:
+        return make(dict(spec.options), ctx, where)
+    names = sorted(SINKS)
+    close = difflib.get_close_matches(spec.use, names, n=1)
     hint = f" — did you mean {close[0]!r}?" if close else ""
     raise ConfigError(
-        f"{where}: unknown sink {spec.use!r}{hint} (built-ins: jsonl, neo4j; or name your own "
-        "as package.module:Name)"
+        f"{where}: unknown sink {spec.use!r}{hint} (built-ins: {', '.join(names)}; or name "
+        "your own as package.module:Name)"
     )
 
 
@@ -603,16 +823,22 @@ class Built:
         name them, and "every fact from this source" is a query on a string
         you already know rather than on a UUID minted by the run.
         """
-        default = self.config.stages.loader or StageSpec(use="directory")
         docs: list[Document] = []
         for i, item in enumerate(self.config.inputs):
-            where = f"inputs[{i}].loader" if item.loader else "stages.loader"
-            loader = build_stage("loader", item.loader or default, self.context, where)
+            spec, where = input_loader(self.config, i, item)
+            loader = build_stage("loader", spec, self.context, where)
             path = self.config.resolve(item.path)
             if not path.exists():
                 raise ConfigError(f"inputs[{i}].path: {path} does not exist")
             docs.extend(loader.load(path))
         return with_path_ids(docs, self.config.base_dir)
+
+
+def input_loader(config: RunConfig, index: int, item: InputSpec) -> tuple[StageSpec, str]:
+    """The loader an input is read with, and the key a problem with it is reported under."""
+    if item.loader is not None:
+        return item.loader, f"inputs[{index}].loader"
+    return config.stages.loader or StageSpec(use="directory"), "stages.loader"
 
 
 def with_path_ids(docs: Sequence[Document], base: Path) -> list[Document]:
@@ -658,6 +884,11 @@ def build(config: RunConfig) -> Built:
         roles=config.models.roles(),
         meter=CostMeter() if config.models.meter else None,
     )
+    # Each input's loader is built here too and discarded, so an unknown loader or
+    # a missing extra stops the config before a sink is opened.
+    for i, item in enumerate(config.inputs):
+        spec, where = input_loader(config, i, item)
+        build_stage("loader", spec, context, where)
     stages: dict[str, Any] = {}
     for stage in STAGES:
         if stage in {"loader", "sink"}:
@@ -693,12 +924,17 @@ def _ontology(config: RunConfig) -> Ontology:
 __all__ = [
     "BUILTINS",
     "PROTOCOLS",
+    "SINKS",
     "Built",
     "Context",
+    "Extra",
+    "NodeLinkFile",
     "SinkPlan",
     "build",
     "build_stage",
     "construct",
+    "input_loader",
+    "require_extra",
     "sink_plan",
     "with_path_ids",
 ]

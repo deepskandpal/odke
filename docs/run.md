@@ -121,7 +121,7 @@ would have to be a Python object, such as a corroborator's `source` callable.
 
 | Stage | Short names | Built from | Options |
 |---|---|---|---|
-| `loader` | `directory`, `text`, `markdown`, `csv`, `tsv`, `json`, `jsonl`, `parquet` | the `odke.loaders` classes | `tier`, and each class's own (`encoding`, `modality`, `records`, `delimiter`, `columns`, `pattern`) |
+| `loader` | `directory`, `text`, `markdown`, `html`, `pdf`, `docx`, `csv`, `tsv`, `json`, `jsonl`, `parquet` | the `odke.loaders` classes | `tier`, and each class's own: `encoding`, `modality`, `records`, `delimiter`, `columns`, `pattern`; `html`: `strip_boilerplate`; `pdf`: `per_page`, `page_separator` |
 | `chunker` | `sentence`, `passthrough` | `SentenceChunker` | `max_words`, `overlap` |
 | `router` | `passthrough`, `delegated` | — | your own is `package.module:Name` |
 | `extractor` | `pattern`, `llm`, `hybrid` | `PatternExtractor`, `LLMExtractor`, `HybridExtractor` | `pattern`: `mappings`, `subject_type`, `confidence`; `llm`: `types`, `snippet_limit`, `confidence`, `repairs`; `hybrid`: `llm` (options, or `false`), `pattern` (options) |
@@ -131,7 +131,7 @@ would have to be a Python object, such as a corroborator's `source` callable.
 | `corroborator` | `signature`, `passthrough`, `delegated` | `SignatureCorroborator` | `half_life_days`, `freshness_floor`, `intervals` |
 | `scorer` | `evidence`, `passthrough`, `delegated` | `EvidenceScorer` | `prior`, `verdict_weights` |
 | `validator` | `verdict`, `passthrough`, `delegated` | `VerdictValidator` | `refuse_not_found` |
-| `sink` | `jsonl`, `neo4j` | `JsonlSink`, `Neo4jSink` | see [below](#sinks) |
+| `sink` | `jsonl`, `neo4j`, `cypher_file`, `neo4j_admin_csv`, `rdf`, `networkx` | the [sinks](sinks.md) | see [below](#sinks) |
 | `constrainer` | `neo4j`, `passthrough`, `delegated` | `Neo4jConstrainer` | — |
 | `inferrer` | `passthrough` only | — | `odke run` never infers ([below](#the-inferrer)) |
 
@@ -143,6 +143,20 @@ would have to be a Python object, such as a corroborator's `source` callable.
 |---|---|---|
 | `jsonl` | [`JsonlSink`](sinks.md#jsonl) | `directory` (required) |
 | `neo4j` | [`Neo4jSink`](neo4j.md) | `uri` or `uri_env` (one required); `user` or `user_env` (default `neo4j`); `password_env` (default `NEO4J_PASSWORD`); `database`; `batch_size` (default 500) |
+| `cypher_file` | [`CypherFileSink`](sinks.md#cypher-file) | `path` (required); `batch_size` (default 500) |
+| `neo4j_admin_csv` | [`Neo4jAdminCsvSink`](sinks.md#neo4j-admin-csv) | `directory` (required); `delimiter` (default `,`); `array_delimiter` (default `;`) |
+| `rdf` | [`RdfSink`](sinks.md#rdf), needs `rdf` | `path` (required); `format` (`turtle`, `nt`, `json-ld`; default from the suffix); `base`; `schema` |
+| `networkx` | [`NetworkXSink`](sinks.md#networkx), needs `networkx` | `path`: where to write the filled graph as node-link JSON. Without it the graph is filled in memory and written nowhere, so give it a `path`. |
+
+`odke run` supplies the ontology to every sink but `jsonl`, so projections of
+multi-valued predicates are lists, the Cypher script opens with the constraint DDL,
+and the RDF file declares its schema. Paths resolve against the config. A sink is
+constructed while the config is built, so a bad option fails before anything
+runs, and a missing extra is a config error naming it:
+`stages.sink: RdfSink needs rdflib, which is not installed. Run: pip install "odke[rdf]"`.
+The same holds for the `pdf`, `docx` and `parquet` loaders. A node-link file reads
+back with `networkx.node_link_graph(data, edges="edges")` (`link="edges"` before
+networkx 3.4), with dates and times as ISO strings.
 
 **A password never goes in a config file.** `password:` is refused with an error
 that says to name an environment variable with `password_env` instead. The

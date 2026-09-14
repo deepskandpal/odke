@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import sys
 import types
+from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -17,11 +19,16 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from odke import Chunk, Ontology, RouteVerdict
+from odke import Chunk, Ontology, RouteVerdict, Sink
 from odke.cli.main import app
 from odke.llm import ModelRoles, ModelSpec
-from odke.run import ConfigError, build, execute, load_config, parse_config
+from odke.loaders import DocxLoader, HtmlLoader, PdfLoader
+from odke.run import ConfigError, StageSpec, build, execute, load_config, parse_config
+from odke.run.build import NodeLinkFile, build_stage
 from odke.sinks import neo4j as neo4j_module
+from odke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink
+from odke.sinks.networkx import NetworkXSink
+from odke.sinks.rdf import RdfSink
 from test_neo4j_sink import FakeDriver
 
 runner = CliRunner()
@@ -397,6 +404,22 @@ def _stages(**changes: Any) -> dict[str, Any]:
             "never goes in a config file",
         ),
         (_stages(sink="parquet"), "unknown sink 'parquet'"),
+        (_stages(sink="rfd"), "unknown sink 'rfd' — did you mean 'rdf'?"),
+        (_stages(sink={"use": "cypher_file"}), "stages.sink.path: the file to write into"),
+        (
+            _stages(sink={"use": "neo4j_admin_csv", "path": "out"}),
+            "stages.sink.directory: the directory to write into",
+        ),
+        (
+            _stages(sink={"use": "rdf", "path": "graph.ttl", "formt": "nt"}),
+            "it takes path, format, base, schema",
+        ),
+        (_stages(sink={"use": "rdf", "path": "graph.ttl", "format": "rdfxml"}), "format must be"),
+        (
+            _stages(sink={"use": "networkx", "pth": "graph.json"}),
+            "stages.sink.pth: unknown option; networkx takes path",
+        ),
+        (_stages(sink={"use": "rdf", "path": "g.ttl", "ontology": "x"}), "set by odke run"),
         ({**_config(), "bootstrap": True}, "bootstrap: true needs a sink that applies"),
         (_config(inputs=["nowhere"]), "inputs[0].path:"),
         (
@@ -440,3 +463,223 @@ def test_the_commented_reference_config_is_a_valid_config() -> None:
     config = load_config(reference)
     assert config.stages.extractor.use == "hybrid"
     assert config.base_dir == reference.parent.resolve()
+
+
+# --------------------------------------------------------------------------- #
+# Short names for the loaders and sinks that landed after the builder
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("use", "options", "cls", "attribute", "value"),
+    [
+        ("html", {"strip_boilerplate": True}, HtmlLoader, "strip_boilerplate", True),
+        ("pdf", {"per_page": True, "tier": "curated"}, PdfLoader, "per_page", True),
+        ("docx", {"modality": "structured"}, DocxLoader, "modality", "structured"),
+    ],
+)
+def test_each_document_loader_has_a_short_name_and_takes_its_options(
+    project: Path, use: str, options: dict[str, Any], cls: type, attribute: str, value: Any
+) -> None:
+    built = build(parse_config(_config(), base_dir=project))
+    spec = StageSpec.model_validate({"use": use, **options})
+    loader = build_stage("loader", spec, built.context, "inputs[0].loader")
+    assert isinstance(loader, cls)
+    assert getattr(loader, attribute) == value
+
+
+def test_an_html_input_read_by_its_short_name_is_extracted_and_named_by_its_path(
+    project: Path,
+) -> None:
+    (project / "page.html").write_text(
+        "<title>Ada</title><table><tr><th>name</th><td>Ada Lovelace</td></tr>"
+        "<tr><th>born</th><td>1815-12-10</td></tr></table>",
+        encoding="utf-8",
+    )
+    config = _config(
+        inputs=[{"path": "page.html", "loader": {"use": "html", "tier": "authoritative"}}],
+        models={},
+        stages={"extractor": "pattern"},
+    )
+    result = execute(parse_config(config, base_dir=project), dry_run=True)
+    facts = result.graph.facts
+    assert {(f.predicate, f.object_value) for f in facts} == {
+        ("full_name", "Ada Lovelace"),
+        ("birth_date", "1815-12-10"),
+    }
+    assert {(e.doc_id, e.tier.value) for f in facts for e in f.evidence} == {
+        ("page.html", "authoritative")
+    }
+
+
+def _inner(sink: Any) -> Any:
+    return sink.sink if isinstance(sink, NodeLinkFile) else sink
+
+
+@pytest.mark.parametrize(
+    ("sink", "cls", "check"),
+    [
+        (
+            {"use": "cypher_file", "path": "out/graph.cypher", "batch_size": 50},
+            CypherFileSink,
+            lambda s: s.batch_size == 50 and s.path.name == "graph.cypher",
+        ),
+        (
+            {"use": "neo4j_admin_csv", "directory": "out/import", "delimiter": "|"},
+            Neo4jAdminCsvSink,
+            lambda s: s.delimiter == "|" and s.directory.name == "import",
+        ),
+        (
+            {"use": "rdf", "path": "out/graph.nt"},
+            RdfSink,
+            lambda s: s.format == "nt",
+        ),
+        (
+            {"use": "rdf", "path": "out/graph.ttl", "format": "json-ld", "base": "urn:x:"},
+            RdfSink,
+            lambda s: (s.format, s.base) == ("json-ld", "urn:x:"),
+        ),
+        ({"use": "networkx"}, NetworkXSink, lambda s: s.graph.number_of_nodes() == 0),
+        (
+            {"use": "networkx", "path": "out/graph.json"},
+            NodeLinkFile,
+            lambda s: s.path.name == "graph.json",
+        ),
+    ],
+)
+def test_each_v02_sink_has_a_short_name_and_a_dry_run_writes_none_of_them(
+    project: Path, sink: dict[str, Any], cls: type, check: Callable[[Any], bool]
+) -> None:
+    config = _config()
+    config["stages"]["sink"] = sink
+    built = build(parse_config(config, base_dir=project))
+    (plan,) = built.sinks
+    opened = plan.open()
+    assert isinstance(opened, cls) and check(opened)
+    assert isinstance(opened, Sink)
+    # Paths resolve against the config, and odke run supplies the ontology.
+    assert _inner(opened).ontology == built.ontology
+    target = getattr(opened, "path", None) or getattr(opened, "directory", None)
+    assert target is None or target.is_relative_to(project)
+
+    result = execute(parse_config(config, base_dir=project), dry_run=True)
+    assert result.written[0].startswith(f"{sink['use']} → ")
+    assert not (project / "out").exists()
+
+
+@pytest.mark.parametrize(
+    ("module", "change", "message"),
+    [
+        (
+            "pypdf",
+            {"inputs": [{"path": "corpus", "loader": {"use": "pdf"}}]},
+            "inputs[0].loader: PdfLoader needs pypdf, which is not installed. "
+            'Run: pip install "odke[pdf]"',
+        ),
+        (
+            "docx",
+            {"inputs": [{"path": "corpus", "loader": {"use": "docx"}}]},
+            "inputs[0].loader: DocxLoader needs python-docx, which is not installed. "
+            'Run: pip install "odke[docx]"',
+        ),
+        (
+            "pyarrow.parquet",
+            {"inputs": ["corpus"], "stages__loader": "parquet"},
+            "stages.loader: ParquetLoader needs pyarrow, which is not installed. "
+            'Run: pip install "odke[parquet]"',
+        ),
+        (
+            "rdflib",
+            {"stages__sink": {"use": "rdf", "path": "out/graph.ttl"}},
+            "stages.sink: RdfSink needs rdflib, which is not installed. "
+            'Run: pip install "odke[rdf]"',
+        ),
+        (
+            "networkx",
+            {"stages__sink": {"use": "networkx", "path": "out/graph.json"}},
+            "stages.sink: NetworkXSink needs networkx, which is not installed. "
+            'Run: pip install "odke[networkx]"',
+        ),
+    ],
+)
+def test_a_short_name_whose_extra_is_missing_is_a_config_error_naming_the_extra(
+    project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    module: str,
+    change: dict[str, Any],
+    message: str,
+) -> None:
+    # A None entry makes the lazy import fail exactly as an uninstalled extra does.
+    monkeypatch.setitem(sys.modules, module, None)
+    result = runner.invoke(app, ["run", str(_write(project, _config(**change)))])
+    assert result.exit_code == 2, result.output
+    assert message in result.output
+    assert "Traceback" not in result.output
+    assert not (project / "out").exists()
+
+
+def _example_into(example: Path, sink: dict[str, Any]) -> Path:
+    """The end-to-end example's own config, with its sink replaced."""
+    config = yaml.safe_load((example / "odke.yaml").read_text(encoding="utf-8"))
+    config["stages"]["sink"] = sink
+    path = example / "odke.sink.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    return path
+
+
+GMBH, LTD = "Company:halden robotics gmbh", "Company:halden robotics ltd"
+
+
+def test_the_example_runs_end_to_end_into_rdf(example: Path) -> None:
+    rdflib = pytest.importorskip("rdflib")
+    from rdflib.namespace import OWL, RDF
+
+    from odke.sinks.rdf import VOCAB
+
+    config = _example_into(example, {"use": "rdf", "path": "out/graph.ttl"})
+    result = runner.invoke(app, ["run", str(config)])
+    assert result.exit_code == 0, result.output
+    assert "wrote         rdf → " in result.output
+    assert "graph         25 facts" in result.output
+
+    graph = rdflib.Graph().parse(example / "out" / "graph.ttl", format="turtle")
+    sink = RdfSink(example / "out" / "graph.ttl")
+    odke = rdflib.Namespace(VOCAB)
+    ont = rdflib.Namespace(f"{sink.base}schema/")
+    gmbh, ltd = rdflib.URIRef(sink.entity_iri(GMBH)), rdflib.URIRef(sink.entity_iri(LTD))
+
+    # One reified statement per fact the gate let through, each with its evidence.
+    statements = set(graph.subjects(RDF.type, odke.Fact))
+    assert len(statements) == 25
+    assert all(graph.value(s, odke.evidence) is not None for s in statements)
+    # The head office the model invented for the GmbH was refused, so no triple says it.
+    assert (gmbh, ont.headquarters, rdflib.Literal("Leeds")) not in graph
+    # Two companies with one name are two resources, and the link says why.
+    assert (gmbh, odke.different_from, ltd) in graph or (ltd, odke.different_from, gmbh) in graph
+    (link,) = graph.subjects(odke.kind, rdflib.Literal("different"))
+    assert "external_id mismatch" in str(graph.value(link, odke.reason))
+    # odke run supplied the ontology, so the file declares its schema.
+    assert (ont.headquarters, RDF.type, OWL.FunctionalProperty) in graph
+
+
+def test_the_example_runs_end_to_end_into_networkx(example: Path) -> None:
+    nx = pytest.importorskip("networkx")
+    config = _example_into(example, {"use": "networkx", "path": "out/graph.json"})
+    result = runner.invoke(app, ["run", str(config)])
+    assert result.exit_code == 0, result.output
+    assert "wrote         networkx → " in result.output
+
+    data = json.loads((example / "out" / "graph.json").read_text(encoding="utf-8"))
+    graph = nx.node_link_graph(data, edges="edges")
+    assert graph.is_directed() and graph.is_multigraph()
+    nodes = Counter(attrs["kind"] for _, attrs in graph.nodes(data=True))
+    assert nodes["entity"] == 7
+    facts = [attrs for _, _, attrs in graph.edges(data=True) if attrs["kind"] == "fact"]
+    assert len(facts) == 25
+    assert all(isinstance(f["extracted_at"], str) for f in facts)  # dates as ISO text
+    links = {
+        (u, v, key)
+        for u, v, key, attrs in graph.edges(keys=True, data=True)
+        if attrs["kind"] == "link"
+    }
+    assert (GMBH, LTD, "DIFFERENT") in links or (LTD, GMBH, "DIFFERENT") in links
