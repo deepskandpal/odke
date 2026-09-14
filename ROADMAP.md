@@ -24,16 +24,16 @@ shipped as 0.0.1.
 *"The only pipeline that asks a second model whether the cited span supports
 the claim — and lets you measure every stage against your own labelled data."*
 
-| # | Milestone | Delivers | Days |
-|---|---|---|---|
-| M0 | Data model | The types that cannot change later | 3 |
-| M1 | Ontology I/O & validation | Load, validate, diff schemas | 3 |
-| M2 | Loaders & extraction | Text and structured input → candidate facts | 4 |
-| M3 | Grounding & corroboration | The precision stages, and the ablation | 9 |
-| M4 | Sinks & the `run` command | End-to-end into Neo4j | 3 |
-| M6 | Evaluation (BYOLD) | An evaluator per stage, for your own labels | 5 |
-| M7 | v0.1.0 release | On PyPI, documented | 3 |
-|  | **Total** | | **30** |
+| # | Milestone | Delivers | Days | Status |
+|---|---|---|---|---|
+| M0 | Data model | The types that cannot change later | 3 | done (#60) |
+| M1 | Ontology I/O & validation | Load, validate, diff schemas | 3 | done (#63) |
+| M2 | Loaders & extraction | Text and structured input → candidate facts | 4 | done (#66) |
+| M3 | Grounding & corroboration | The precision stages, and the ablation | 9 | done (#61, #65; ablation #38) |
+| M4 | Sinks & the `run` command | End-to-end into Neo4j | 3 | done (#62; `odke run` #29, example #30) |
+| M6 | Evaluation (BYOLD) | An evaluator per stage, for your own labels | 5 | done (#64) |
+| M7 | v0.1.0 release | On PyPI, documented | 3 | waits on Trusted Publishing |
+|  | **Total** | | **30** | |
 
 M0 blocks M1–M4: every issue in it changes a frozen type, and each would be a
 migration once a fact is serialised. After M0 the milestones touch different
@@ -152,6 +152,8 @@ arithmetic.
 ### M7 — v0.1.0 release
 
 Documentation site, examples, TestPyPI rehearsal, PyPI publish, announcement.
+The site and the end-to-end example are on `main`; the publish waits on PyPI
+Trusted Publishing being configured for the repository.
 
 ---
 
