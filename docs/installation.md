@@ -4,11 +4,13 @@ odke needs Python 3.11, 3.12 or 3.13.
 
 !!! note "Not on PyPI yet"
     `odke` has no release on PyPI yet; v0.1.0 is the first planned one. Until
-    then, install from the repository. These pages describe what is on `main`.
+    then, install from the repository with `git+https://github.com/deepskandpal/odke`.
+    These pages describe what is on `main`.
 
 ```bash
 pip install "odke @ git+https://github.com/deepskandpal/odke"
 pip install "odke[neo4j,yaml] @ git+https://github.com/deepskandpal/odke"   # with extras
+pip install "odke[all] @ git+https://github.com/deepskandpal/odke"          # every extra
 uv add "odke[neo4j] @ git+https://github.com/deepskandpal/odke"             # or with uv
 ```
 
@@ -25,28 +27,35 @@ On the base install you already have:
 
 - the data model, the thirteen stage Protocols and `Pipeline`;
 - ontologies from dicts, JSON and pydantic models, plus `validate`, `diff`,
-  snippets and the `odke ontology` commands;
-- the loaders in `odke.loaders` (text, Markdown, directories, JSON, JSONL, CSV,
-  TSV; Parquet needs an extra) and the extractors in `odke.extract`;
+  snippets, `freeze` and the `odke ontology` commands;
+- ontology inference with the deterministic proposers (`odke ontology infer --no-llm`,
+  writing a `.json` draft), and with a model over the standard-library client;
+- the loaders for text, Markdown, HTML, directories, JSON, JSONL, CSV and TSV, the
+  sentence chunker, and the extractors in `odke.extract`;
 - `SpanGrounder`, and `LLMGrounder` over the standard-library OpenAI-compatible
   client;
 - the normalise, resolve, corroborate and score stages in `odke.corroborate`;
-- `JsonlSink`, and all of `odke.eval` and `odke eval`;
-- `import odke.sinks.neo4j`, including printing its DDL and write plan. Only
-  connecting to a server needs the driver.
+- `JsonlSink`, `CypherFileSink` and `Neo4jAdminCsvSink`, and
+  `import odke.sinks.neo4j` including printing its DDL and write plan (only
+  connecting to a server needs the driver);
+- `odke run` with a JSON config, and all of `odke.eval` and `odke eval`.
 
 ## Extras
+
+These are the extras `pyproject.toml` declares, exactly:
 
 | Extra | Pulls in | What uses it on `main` |
 |---|---|---|
 | `llm` | `litellm>=1.55,<2` | Model strings the built-in client does not serve (see below) |
-| `neo4j` | `neo4j>=5.20,<7` | `Neo4jSink` connecting to a server |
-| `yaml` | `pyyaml>=6,<7` | `Ontology.from_yaml`, and the `odke ontology` commands on `.yaml` / `.yml` files |
-| `parquet` | `pyarrow>=15` | `ParquetLoader`, which imports pyarrow only when it reads a file |
-| `rdf` | `rdflib>=7.0,<8` | Nothing yet: `RdfSink` and `Ontology.from_owl` are planned for v0.2 |
-| `networkx` | `networkx>=3.2,<4` | Nothing yet: `NetworkXSink` is planned for v0.2 |
-| `docs` | `beautifulsoup4`, `pypdf`, `lxml` | Nothing yet: HTML and PDF readers are planned for v0.2. This extra is not this site's tooling. |
-| `all` | every extra above | |
+| `neo4j` | `neo4j>=5.20,<7` | `Neo4jSink` connecting to a server; `Ontology.from_neo4j` given a URI |
+| `rdf` | `rdflib>=7.0,<8` | `RdfSink`; `Ontology.from_owl` |
+| `networkx` | `networkx>=3.2,<4` | `NetworkXSink` |
+| `docs` | `beautifulsoup4>=4.12,<5`, `pypdf>=5.0,<7`, `lxml>=5.0,<7`, `python-docx>=1.1,<2` | The document readers together, so it covers what `pdf` and `docx` do. Nothing on `main` imports beautifulsoup4 or lxml, because `HtmlLoader` runs on the standard library. This extra is not this site's tooling: that is the `docs` *dependency group* (below). |
+| `pdf` | `pypdf>=5.0,<7` | `PdfLoader`, which imports pypdf when it reads a file |
+| `docx` | `python-docx>=1.1,<2` | `DocxLoader`, which imports python-docx when it reads a file |
+| `yaml` | `pyyaml>=6,<7` | `Ontology.from_yaml`; YAML run configs; the `odke ontology` commands on `.yaml`/`.yml` files, including writing a YAML draft or frozen file |
+| `parquet` | `pyarrow>=15` | `ParquetLoader`, which imports pyarrow when it reads a file |
+| `all` | `llm`, `neo4j`, `rdf`, `networkx`, `docs`, `pdf`, `docx`, `yaml`, `parquet` | |
 
 ### Which model strings need `llm`
 
@@ -72,9 +81,18 @@ the fix:
 | Used without its extra | Raises |
 |---|---|
 | `Ontology.from_yaml` | `ImportError: PyYAML is not installed. Run: pip install "odke[yaml]"` |
+| a YAML config in `odke run` | `ImportError: reading a YAML config needs PyYAML. Run: pip install "odke[yaml]", or write the same keys as JSON` |
 | `Neo4jSink(uri, auth)` | `ImportError: the neo4j driver is not installed; run: pip install 'odke[neo4j]'` |
-| `ParquetLoader`, reading a file | `ImportError: reading Parquet needs pyarrow. Run: pip install "odke[parquet]"` |
+| `RdfSink(path)` | `ImportError: rdflib is not installed; run: pip install 'odke[rdf]'` |
+| `Ontology.from_owl` | `ImportError: rdflib is not installed. Run: pip install "odke[rdf]"` |
+| `NetworkXSink()` | `ImportError: networkx is not installed; run: pip install 'odke[networkx]'` |
+| `PdfLoader`, reading a file | `MissingExtraError: reading PDF needs pypdf. Run: pip install "odke[pdf]"` |
+| `DocxLoader`, reading a file | `MissingExtraError: reading Word documents needs python-docx. Run: pip install "odke[docx]"` |
+| `ParquetLoader`, reading a file | `MissingExtraError: reading Parquet needs pyarrow. Run: pip install "odke[parquet]"` |
+| `DirectoryLoader`, meeting one of those files | a `MissingExtraWarning` naming the file and the install line; the file is skipped and the walk goes on |
 | a model string that needs litellm | `ProviderNotInstalled`, listing `pip install "odke[llm]"`, a `base_url`, or `odke.llm.register` |
+
+`MissingExtraError` is an `ImportError`.
 
 ## Working on odke
 
@@ -84,6 +102,10 @@ git clone https://github.com/deepskandpal/odke && cd odke
 uv run --group docs mkdocs serve                     # this site, at http://127.0.0.1:8000
 uv run --group docs mkdocs build --strict            # what the docs workflow runs
 ```
+
+The site's tooling (`mkdocs` and `mkdocs-material`) is the `docs` dependency group,
+not the `docs` extra: a group never reaches a user's install, and groups and extras
+are separate namespaces.
 
 `verify.sh` needs [uv](https://docs.astral.sh/uv/). Its first step refuses to run
 if a provider key or `NEO4J_URI` / `NEO4J_PASSWORD` is in the environment, because

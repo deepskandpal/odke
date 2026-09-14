@@ -65,10 +65,15 @@ nav:
   - Home: index.md
   - Installation: installation.md
   - Concepts: concepts.md
-  - Ontology: ontology.md
+  - Ontology:
+      - "Loading, validating, importing": ontology.md
+      - Inference: inference.md
   - "Loaders & extraction": loaders-and-extraction.md
   - Grounding: grounding.md
   - "Resolution & corroboration": resolution-and-corroboration.md
-  - Neo4j sink: neo4j.md
+  - Sinks:
+      - "All sinks": sinks.md
+      - Neo4j: neo4j.md
+  - "odke run": run.md
   - "Evaluation (BYOLD)": evaluation.md
   - Decisions: decisions.md
