@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] — unreleased; dated when the tag is pushed
+
 The v0.1 milestones now on `main`: the data model (M0), ontology I/O (M1),
 loaders and extraction (M2), grounding and corroboration (M3), the Neo4j sink and
 `odke run` (M4), and evaluation against your own labels (M6). Not yet on PyPI:

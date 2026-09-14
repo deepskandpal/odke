@@ -1,6 +1,6 @@
 [project]
 name = "openodke"
-version = "0.0.1"
+version = "0.1.0"
 description = "An open implementation of the ODKE+ architecture (Apple, arXiv:2509.04696): ontology-guided knowledge extraction into a grounded graph. Independent; not affiliated with Apple."
 readme = "README.md"
 license = "Apache-2.0"
