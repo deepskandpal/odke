@@ -1,0 +1,9 @@
+{
+  "name": "minimal",
+  "types": {
+    "Thing": {}
+  },
+  "predicates": {
+    "label": {}
+  }
+}

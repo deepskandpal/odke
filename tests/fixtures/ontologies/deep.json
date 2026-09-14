@@ -1,0 +1,27 @@
+{
+  "name": "deep",
+  "version": "1",
+  "types": {
+    "Entity": {"description": "Anything with an identity."},
+    "Agent": {"parents": ["Entity"]},
+    "Person": {"parents": ["Agent"], "keys": ["full_name"]},
+    "Organization": {"parents": ["Agent"]},
+    "Company": {"parents": ["Organization"], "keys": ["legal_name"]},
+    "FinancialInstitution": {"parents": ["Organization"]},
+    "Bank": {
+      "description": "A company and a financial institution: the diamond.",
+      "parents": ["Company", "FinancialInstitution"],
+      "keys": ["swift_code"]
+    },
+    "CentralBank": {"parents": ["Bank"]}
+  },
+  "predicates": {
+    "label": {"domain": ["Entity"], "importance": 1.0},
+    "full_name": {"domain": ["Person"], "required": true},
+    "founded": {"domain": ["Organization"], "range": "date"},
+    "legal_name": {"domain": ["Company"], "required": true},
+    "regulator": {"domain": ["FinancialInstitution"], "range": "Organization"},
+    "swift_code": {"domain": ["Bank"]},
+    "governor": {"domain": ["CentralBank"], "range": "Person"}
+  }
+}

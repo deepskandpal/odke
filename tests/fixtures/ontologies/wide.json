@@ -1,0 +1,2407 @@
+{
+  "name": "wide",
+  "version": "1",
+  "types": {
+    "Type00": {
+      "name": "Type00",
+      "description": "Entity type 0."
+    },
+    "Type01": {
+      "name": "Type01",
+      "description": "Entity type 1.",
+      "parents": [
+        "Type00"
+      ]
+    },
+    "Type02": {
+      "name": "Type02",
+      "description": "Entity type 2.",
+      "parents": [
+        "Type00"
+      ]
+    },
+    "Type03": {
+      "name": "Type03",
+      "description": "Entity type 3.",
+      "parents": [
+        "Type00"
+      ]
+    },
+    "Type04": {
+      "name": "Type04",
+      "description": "Entity type 4.",
+      "parents": [
+        "Type00"
+      ]
+    },
+    "Type05": {
+      "name": "Type05",
+      "description": "Entity type 5.",
+      "parents": [
+        "Type00"
+      ]
+    },
+    "Type06": {
+      "name": "Type06",
+      "description": "Entity type 6.",
+      "parents": [
+        "Type00"
+      ]
+    },
+    "Type07": {
+      "name": "Type07",
+      "description": "Entity type 7.",
+      "parents": [
+        "Type00"
+      ]
+    },
+    "Type08": {
+      "name": "Type08",
+      "description": "Entity type 8.",
+      "parents": [
+        "Type00"
+      ]
+    },
+    "Type09": {
+      "name": "Type09",
+      "description": "Entity type 9.",
+      "parents": [
+        "Type00"
+      ]
+    },
+    "Type10": {
+      "name": "Type10",
+      "description": "Entity type 10.",
+      "parents": [
+        "Type00"
+      ]
+    },
+    "Type11": {
+      "name": "Type11",
+      "description": "Entity type 11.",
+      "parents": [
+        "Type00"
+      ]
+    }
+  },
+  "predicates": {
+    "p000": {
+      "name": "p000",
+      "description": "Predicate 0.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "Type00",
+      "cardinality": "multi",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.0
+    },
+    "p001": {
+      "name": "p001",
+      "description": "Predicate 1.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "integer",
+      "importance": 0.37
+    },
+    "p002": {
+      "name": "p002",
+      "description": "Predicate 2.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "number",
+      "importance": 0.74
+    },
+    "p003": {
+      "name": "p003",
+      "description": "Predicate 3.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.11
+    },
+    "p004": {
+      "name": "p004",
+      "description": "Predicate 4.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "date",
+      "importance": 0.48
+    },
+    "p005": {
+      "name": "p005",
+      "description": "Predicate 5.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "Type11",
+      "importance": 0.85
+    },
+    "p006": {
+      "name": "p006",
+      "description": "Predicate 6.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.22
+    },
+    "p007": {
+      "name": "p007",
+      "description": "Predicate 7.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "integer",
+      "importance": 0.59
+    },
+    "p008": {
+      "name": "p008",
+      "description": "Predicate 8.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "number",
+      "importance": 0.96
+    },
+    "p009": {
+      "name": "p009",
+      "description": "Predicate 9.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.33
+    },
+    "p010": {
+      "name": "p010",
+      "description": "Predicate 10.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "Type10",
+      "importance": 0.7
+    },
+    "p011": {
+      "name": "p011",
+      "description": "Predicate 11.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "datetime",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.07
+    },
+    "p012": {
+      "name": "p012",
+      "description": "Predicate 12.",
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.44
+    },
+    "p013": {
+      "name": "p013",
+      "description": "Predicate 13.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "integer",
+      "importance": 0.81
+    },
+    "p014": {
+      "name": "p014",
+      "description": "Predicate 14.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "number",
+      "importance": 0.18
+    },
+    "p015": {
+      "name": "p015",
+      "description": "Predicate 15.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "Type09",
+      "cardinality": "multi",
+      "importance": 0.55
+    },
+    "p016": {
+      "name": "p016",
+      "description": "Predicate 16.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "date",
+      "importance": 0.92
+    },
+    "p017": {
+      "name": "p017",
+      "description": "Predicate 17.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "datetime",
+      "importance": 0.29
+    },
+    "p018": {
+      "name": "p018",
+      "description": "Predicate 18.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.66
+    },
+    "p019": {
+      "name": "p019",
+      "description": "Predicate 19.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "integer",
+      "importance": 0.03
+    },
+    "p020": {
+      "name": "p020",
+      "description": "Predicate 20.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "Type08",
+      "importance": 0.4
+    },
+    "p021": {
+      "name": "p021",
+      "description": "Predicate 21.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.77
+    },
+    "p022": {
+      "name": "p022",
+      "description": "Predicate 22.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "date",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.14
+    },
+    "p023": {
+      "name": "p023",
+      "description": "Predicate 23.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "datetime",
+      "importance": 0.51
+    },
+    "p024": {
+      "name": "p024",
+      "description": "Predicate 24.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.88
+    },
+    "p025": {
+      "name": "p025",
+      "description": "Predicate 25.",
+      "range": "Type07",
+      "importance": 0.25
+    },
+    "p026": {
+      "name": "p026",
+      "description": "Predicate 26.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "number",
+      "importance": 0.62
+    },
+    "p027": {
+      "name": "p027",
+      "description": "Predicate 27.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.99
+    },
+    "p028": {
+      "name": "p028",
+      "description": "Predicate 28.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "date",
+      "importance": 0.36
+    },
+    "p029": {
+      "name": "p029",
+      "description": "Predicate 29.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "datetime",
+      "importance": 0.73
+    },
+    "p030": {
+      "name": "p030",
+      "description": "Predicate 30.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "Type06",
+      "cardinality": "multi",
+      "importance": 0.1
+    },
+    "p031": {
+      "name": "p031",
+      "description": "Predicate 31.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "integer",
+      "importance": 0.47
+    },
+    "p032": {
+      "name": "p032",
+      "description": "Predicate 32.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "number",
+      "importance": 0.84
+    },
+    "p033": {
+      "name": "p033",
+      "description": "Predicate 33.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.21
+    },
+    "p034": {
+      "name": "p034",
+      "description": "Predicate 34.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "date",
+      "importance": 0.58
+    },
+    "p035": {
+      "name": "p035",
+      "description": "Predicate 35.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "Type05",
+      "importance": 0.95
+    },
+    "p036": {
+      "name": "p036",
+      "description": "Predicate 36.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.32
+    },
+    "p037": {
+      "name": "p037",
+      "description": "Predicate 37.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "integer",
+      "importance": 0.69
+    },
+    "p038": {
+      "name": "p038",
+      "description": "Predicate 38.",
+      "range": "number",
+      "importance": 0.06
+    },
+    "p039": {
+      "name": "p039",
+      "description": "Predicate 39.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.43
+    },
+    "p040": {
+      "name": "p040",
+      "description": "Predicate 40.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "Type04",
+      "importance": 0.8
+    },
+    "p041": {
+      "name": "p041",
+      "description": "Predicate 41.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "datetime",
+      "importance": 0.17
+    },
+    "p042": {
+      "name": "p042",
+      "description": "Predicate 42.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.54
+    },
+    "p043": {
+      "name": "p043",
+      "description": "Predicate 43.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "integer",
+      "importance": 0.91
+    },
+    "p044": {
+      "name": "p044",
+      "description": "Predicate 44.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "number",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.28
+    },
+    "p045": {
+      "name": "p045",
+      "description": "Predicate 45.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "Type03",
+      "cardinality": "multi",
+      "importance": 0.65
+    },
+    "p046": {
+      "name": "p046",
+      "description": "Predicate 46.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "date",
+      "importance": 0.02
+    },
+    "p047": {
+      "name": "p047",
+      "description": "Predicate 47.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "datetime",
+      "importance": 0.39
+    },
+    "p048": {
+      "name": "p048",
+      "description": "Predicate 48.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.76
+    },
+    "p049": {
+      "name": "p049",
+      "description": "Predicate 49.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "integer",
+      "importance": 0.13
+    },
+    "p050": {
+      "name": "p050",
+      "description": "Predicate 50.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "Type02",
+      "importance": 0.5
+    },
+    "p051": {
+      "name": "p051",
+      "description": "Predicate 51.",
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.87
+    },
+    "p052": {
+      "name": "p052",
+      "description": "Predicate 52.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "date",
+      "importance": 0.24
+    },
+    "p053": {
+      "name": "p053",
+      "description": "Predicate 53.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "datetime",
+      "importance": 0.61
+    },
+    "p054": {
+      "name": "p054",
+      "description": "Predicate 54.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.98
+    },
+    "p055": {
+      "name": "p055",
+      "description": "Predicate 55.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "Type01",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.35
+    },
+    "p056": {
+      "name": "p056",
+      "description": "Predicate 56.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "number",
+      "importance": 0.72
+    },
+    "p057": {
+      "name": "p057",
+      "description": "Predicate 57.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.09
+    },
+    "p058": {
+      "name": "p058",
+      "description": "Predicate 58.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "date",
+      "importance": 0.46
+    },
+    "p059": {
+      "name": "p059",
+      "description": "Predicate 59.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "datetime",
+      "importance": 0.83
+    },
+    "p060": {
+      "name": "p060",
+      "description": "Predicate 60.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "Type00",
+      "cardinality": "multi",
+      "importance": 0.2
+    },
+    "p061": {
+      "name": "p061",
+      "description": "Predicate 61.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "integer",
+      "importance": 0.57
+    },
+    "p062": {
+      "name": "p062",
+      "description": "Predicate 62.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "number",
+      "importance": 0.94
+    },
+    "p063": {
+      "name": "p063",
+      "description": "Predicate 63.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.31
+    },
+    "p064": {
+      "name": "p064",
+      "description": "Predicate 64.",
+      "range": "date",
+      "importance": 0.68
+    },
+    "p065": {
+      "name": "p065",
+      "description": "Predicate 65.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "Type11",
+      "importance": 0.05
+    },
+    "p066": {
+      "name": "p066",
+      "description": "Predicate 66.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.42
+    },
+    "p067": {
+      "name": "p067",
+      "description": "Predicate 67.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "integer",
+      "importance": 0.79
+    },
+    "p068": {
+      "name": "p068",
+      "description": "Predicate 68.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "number",
+      "importance": 0.16
+    },
+    "p069": {
+      "name": "p069",
+      "description": "Predicate 69.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.53
+    },
+    "p070": {
+      "name": "p070",
+      "description": "Predicate 70.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "Type10",
+      "importance": 0.9
+    },
+    "p071": {
+      "name": "p071",
+      "description": "Predicate 71.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "datetime",
+      "importance": 0.27
+    },
+    "p072": {
+      "name": "p072",
+      "description": "Predicate 72.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.64
+    },
+    "p073": {
+      "name": "p073",
+      "description": "Predicate 73.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "integer",
+      "importance": 0.01
+    },
+    "p074": {
+      "name": "p074",
+      "description": "Predicate 74.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "number",
+      "importance": 0.38
+    },
+    "p075": {
+      "name": "p075",
+      "description": "Predicate 75.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "Type09",
+      "cardinality": "multi",
+      "importance": 0.75
+    },
+    "p076": {
+      "name": "p076",
+      "description": "Predicate 76.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "date",
+      "importance": 0.12
+    },
+    "p077": {
+      "name": "p077",
+      "description": "Predicate 77.",
+      "range": "datetime",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.49
+    },
+    "p078": {
+      "name": "p078",
+      "description": "Predicate 78.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.86
+    },
+    "p079": {
+      "name": "p079",
+      "description": "Predicate 79.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "integer",
+      "importance": 0.23
+    },
+    "p080": {
+      "name": "p080",
+      "description": "Predicate 80.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "Type08",
+      "importance": 0.6
+    },
+    "p081": {
+      "name": "p081",
+      "description": "Predicate 81.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.97
+    },
+    "p082": {
+      "name": "p082",
+      "description": "Predicate 82.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "date",
+      "importance": 0.34
+    },
+    "p083": {
+      "name": "p083",
+      "description": "Predicate 83.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "datetime",
+      "importance": 0.71
+    },
+    "p084": {
+      "name": "p084",
+      "description": "Predicate 84.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.08
+    },
+    "p085": {
+      "name": "p085",
+      "description": "Predicate 85.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "Type07",
+      "importance": 0.45
+    },
+    "p086": {
+      "name": "p086",
+      "description": "Predicate 86.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "number",
+      "importance": 0.82
+    },
+    "p087": {
+      "name": "p087",
+      "description": "Predicate 87.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.19
+    },
+    "p088": {
+      "name": "p088",
+      "description": "Predicate 88.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "date",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.56
+    },
+    "p089": {
+      "name": "p089",
+      "description": "Predicate 89.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "datetime",
+      "importance": 0.93
+    },
+    "p090": {
+      "name": "p090",
+      "description": "Predicate 90.",
+      "range": "Type06",
+      "cardinality": "multi",
+      "importance": 0.3
+    },
+    "p091": {
+      "name": "p091",
+      "description": "Predicate 91.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "integer",
+      "importance": 0.67
+    },
+    "p092": {
+      "name": "p092",
+      "description": "Predicate 92.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "number",
+      "importance": 0.04
+    },
+    "p093": {
+      "name": "p093",
+      "description": "Predicate 93.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.41
+    },
+    "p094": {
+      "name": "p094",
+      "description": "Predicate 94.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "date",
+      "importance": 0.78
+    },
+    "p095": {
+      "name": "p095",
+      "description": "Predicate 95.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "Type05",
+      "importance": 0.15
+    },
+    "p096": {
+      "name": "p096",
+      "description": "Predicate 96.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.52
+    },
+    "p097": {
+      "name": "p097",
+      "description": "Predicate 97.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "integer",
+      "importance": 0.89
+    },
+    "p098": {
+      "name": "p098",
+      "description": "Predicate 98.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "number",
+      "importance": 0.26
+    },
+    "p099": {
+      "name": "p099",
+      "description": "Predicate 99.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.63
+    },
+    "p100": {
+      "name": "p100",
+      "description": "Predicate 100.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "Type04",
+      "importance": 0.0
+    },
+    "p101": {
+      "name": "p101",
+      "description": "Predicate 101.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "datetime",
+      "importance": 0.37
+    },
+    "p102": {
+      "name": "p102",
+      "description": "Predicate 102.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.74
+    },
+    "p103": {
+      "name": "p103",
+      "description": "Predicate 103.",
+      "range": "integer",
+      "importance": 0.11
+    },
+    "p104": {
+      "name": "p104",
+      "description": "Predicate 104.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "number",
+      "importance": 0.48
+    },
+    "p105": {
+      "name": "p105",
+      "description": "Predicate 105.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "Type03",
+      "cardinality": "multi",
+      "importance": 0.85
+    },
+    "p106": {
+      "name": "p106",
+      "description": "Predicate 106.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "date",
+      "importance": 0.22
+    },
+    "p107": {
+      "name": "p107",
+      "description": "Predicate 107.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "datetime",
+      "importance": 0.59
+    },
+    "p108": {
+      "name": "p108",
+      "description": "Predicate 108.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.96
+    },
+    "p109": {
+      "name": "p109",
+      "description": "Predicate 109.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "integer",
+      "importance": 0.33
+    },
+    "p110": {
+      "name": "p110",
+      "description": "Predicate 110.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "Type02",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.7
+    },
+    "p111": {
+      "name": "p111",
+      "description": "Predicate 111.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.07
+    },
+    "p112": {
+      "name": "p112",
+      "description": "Predicate 112.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "date",
+      "importance": 0.44
+    },
+    "p113": {
+      "name": "p113",
+      "description": "Predicate 113.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "datetime",
+      "importance": 0.81
+    },
+    "p114": {
+      "name": "p114",
+      "description": "Predicate 114.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.18
+    },
+    "p115": {
+      "name": "p115",
+      "description": "Predicate 115.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "Type01",
+      "importance": 0.55
+    },
+    "p116": {
+      "name": "p116",
+      "description": "Predicate 116.",
+      "range": "number",
+      "importance": 0.92
+    },
+    "p117": {
+      "name": "p117",
+      "description": "Predicate 117.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.29
+    },
+    "p118": {
+      "name": "p118",
+      "description": "Predicate 118.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "date",
+      "importance": 0.66
+    },
+    "p119": {
+      "name": "p119",
+      "description": "Predicate 119.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "datetime",
+      "importance": 0.03
+    },
+    "p120": {
+      "name": "p120",
+      "description": "Predicate 120.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "Type00",
+      "cardinality": "multi",
+      "importance": 0.4
+    },
+    "p121": {
+      "name": "p121",
+      "description": "Predicate 121.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "integer",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.77
+    },
+    "p122": {
+      "name": "p122",
+      "description": "Predicate 122.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "number",
+      "importance": 0.14
+    },
+    "p123": {
+      "name": "p123",
+      "description": "Predicate 123.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.51
+    },
+    "p124": {
+      "name": "p124",
+      "description": "Predicate 124.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "date",
+      "importance": 0.88
+    },
+    "p125": {
+      "name": "p125",
+      "description": "Predicate 125.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "Type11",
+      "importance": 0.25
+    },
+    "p126": {
+      "name": "p126",
+      "description": "Predicate 126.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.62
+    },
+    "p127": {
+      "name": "p127",
+      "description": "Predicate 127.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "integer",
+      "importance": 0.99
+    },
+    "p128": {
+      "name": "p128",
+      "description": "Predicate 128.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "number",
+      "importance": 0.36
+    },
+    "p129": {
+      "name": "p129",
+      "description": "Predicate 129.",
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.73
+    },
+    "p130": {
+      "name": "p130",
+      "description": "Predicate 130.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "Type10",
+      "importance": 0.1
+    },
+    "p131": {
+      "name": "p131",
+      "description": "Predicate 131.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "datetime",
+      "importance": 0.47
+    },
+    "p132": {
+      "name": "p132",
+      "description": "Predicate 132.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.84
+    },
+    "p133": {
+      "name": "p133",
+      "description": "Predicate 133.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "integer",
+      "importance": 0.21
+    },
+    "p134": {
+      "name": "p134",
+      "description": "Predicate 134.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "number",
+      "importance": 0.58
+    },
+    "p135": {
+      "name": "p135",
+      "description": "Predicate 135.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "Type09",
+      "cardinality": "multi",
+      "importance": 0.95
+    },
+    "p136": {
+      "name": "p136",
+      "description": "Predicate 136.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "date",
+      "importance": 0.32
+    },
+    "p137": {
+      "name": "p137",
+      "description": "Predicate 137.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "datetime",
+      "importance": 0.69
+    },
+    "p138": {
+      "name": "p138",
+      "description": "Predicate 138.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.06
+    },
+    "p139": {
+      "name": "p139",
+      "description": "Predicate 139.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "integer",
+      "importance": 0.43
+    },
+    "p140": {
+      "name": "p140",
+      "description": "Predicate 140.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "Type08",
+      "importance": 0.8
+    },
+    "p141": {
+      "name": "p141",
+      "description": "Predicate 141.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.17
+    },
+    "p142": {
+      "name": "p142",
+      "description": "Predicate 142.",
+      "range": "date",
+      "importance": 0.54
+    },
+    "p143": {
+      "name": "p143",
+      "description": "Predicate 143.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "datetime",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.91
+    },
+    "p144": {
+      "name": "p144",
+      "description": "Predicate 144.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.28
+    },
+    "p145": {
+      "name": "p145",
+      "description": "Predicate 145.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "Type07",
+      "importance": 0.65
+    },
+    "p146": {
+      "name": "p146",
+      "description": "Predicate 146.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "number",
+      "importance": 0.02
+    },
+    "p147": {
+      "name": "p147",
+      "description": "Predicate 147.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.39
+    },
+    "p148": {
+      "name": "p148",
+      "description": "Predicate 148.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "date",
+      "importance": 0.76
+    },
+    "p149": {
+      "name": "p149",
+      "description": "Predicate 149.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "datetime",
+      "importance": 0.13
+    },
+    "p150": {
+      "name": "p150",
+      "description": "Predicate 150.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "Type06",
+      "cardinality": "multi",
+      "importance": 0.5
+    },
+    "p151": {
+      "name": "p151",
+      "description": "Predicate 151.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "integer",
+      "importance": 0.87
+    },
+    "p152": {
+      "name": "p152",
+      "description": "Predicate 152.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "number",
+      "importance": 0.24
+    },
+    "p153": {
+      "name": "p153",
+      "description": "Predicate 153.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.61
+    },
+    "p154": {
+      "name": "p154",
+      "description": "Predicate 154.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "date",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.98
+    },
+    "p155": {
+      "name": "p155",
+      "description": "Predicate 155.",
+      "range": "Type05",
+      "importance": 0.35
+    },
+    "p156": {
+      "name": "p156",
+      "description": "Predicate 156.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.72
+    },
+    "p157": {
+      "name": "p157",
+      "description": "Predicate 157.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "integer",
+      "importance": 0.09
+    },
+    "p158": {
+      "name": "p158",
+      "description": "Predicate 158.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "number",
+      "importance": 0.46
+    },
+    "p159": {
+      "name": "p159",
+      "description": "Predicate 159.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.83
+    },
+    "p160": {
+      "name": "p160",
+      "description": "Predicate 160.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "Type04",
+      "importance": 0.2
+    },
+    "p161": {
+      "name": "p161",
+      "description": "Predicate 161.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "datetime",
+      "importance": 0.57
+    },
+    "p162": {
+      "name": "p162",
+      "description": "Predicate 162.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.94
+    },
+    "p163": {
+      "name": "p163",
+      "description": "Predicate 163.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "integer",
+      "importance": 0.31
+    },
+    "p164": {
+      "name": "p164",
+      "description": "Predicate 164.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "number",
+      "importance": 0.68
+    },
+    "p165": {
+      "name": "p165",
+      "description": "Predicate 165.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "Type03",
+      "cardinality": "multi",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.05
+    },
+    "p166": {
+      "name": "p166",
+      "description": "Predicate 166.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "date",
+      "importance": 0.42
+    },
+    "p167": {
+      "name": "p167",
+      "description": "Predicate 167.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "datetime",
+      "importance": 0.79
+    },
+    "p168": {
+      "name": "p168",
+      "description": "Predicate 168.",
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.16
+    },
+    "p169": {
+      "name": "p169",
+      "description": "Predicate 169.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "integer",
+      "importance": 0.53
+    },
+    "p170": {
+      "name": "p170",
+      "description": "Predicate 170.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "Type02",
+      "importance": 0.9
+    },
+    "p171": {
+      "name": "p171",
+      "description": "Predicate 171.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.27
+    },
+    "p172": {
+      "name": "p172",
+      "description": "Predicate 172.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "date",
+      "importance": 0.64
+    },
+    "p173": {
+      "name": "p173",
+      "description": "Predicate 173.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "datetime",
+      "importance": 0.01
+    },
+    "p174": {
+      "name": "p174",
+      "description": "Predicate 174.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.38
+    },
+    "p175": {
+      "name": "p175",
+      "description": "Predicate 175.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "Type01",
+      "importance": 0.75
+    },
+    "p176": {
+      "name": "p176",
+      "description": "Predicate 176.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "number",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.12
+    },
+    "p177": {
+      "name": "p177",
+      "description": "Predicate 177.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.49
+    },
+    "p178": {
+      "name": "p178",
+      "description": "Predicate 178.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "date",
+      "importance": 0.86
+    },
+    "p179": {
+      "name": "p179",
+      "description": "Predicate 179.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "datetime",
+      "importance": 0.23
+    },
+    "p180": {
+      "name": "p180",
+      "description": "Predicate 180.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "Type00",
+      "cardinality": "multi",
+      "importance": 0.6
+    },
+    "p181": {
+      "name": "p181",
+      "description": "Predicate 181.",
+      "range": "integer",
+      "importance": 0.97
+    },
+    "p182": {
+      "name": "p182",
+      "description": "Predicate 182.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "number",
+      "importance": 0.34
+    },
+    "p183": {
+      "name": "p183",
+      "description": "Predicate 183.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.71
+    },
+    "p184": {
+      "name": "p184",
+      "description": "Predicate 184.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "date",
+      "importance": 0.08
+    },
+    "p185": {
+      "name": "p185",
+      "description": "Predicate 185.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "Type11",
+      "importance": 0.45
+    },
+    "p186": {
+      "name": "p186",
+      "description": "Predicate 186.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.82
+    },
+    "p187": {
+      "name": "p187",
+      "description": "Predicate 187.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "integer",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.19
+    },
+    "p188": {
+      "name": "p188",
+      "description": "Predicate 188.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "number",
+      "importance": 0.56
+    },
+    "p189": {
+      "name": "p189",
+      "description": "Predicate 189.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.93
+    },
+    "p190": {
+      "name": "p190",
+      "description": "Predicate 190.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "Type10",
+      "importance": 0.3
+    },
+    "p191": {
+      "name": "p191",
+      "description": "Predicate 191.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "datetime",
+      "importance": 0.67
+    },
+    "p192": {
+      "name": "p192",
+      "description": "Predicate 192.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.04
+    },
+    "p193": {
+      "name": "p193",
+      "description": "Predicate 193.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "integer",
+      "importance": 0.41
+    },
+    "p194": {
+      "name": "p194",
+      "description": "Predicate 194.",
+      "range": "number",
+      "importance": 0.78
+    },
+    "p195": {
+      "name": "p195",
+      "description": "Predicate 195.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "Type09",
+      "cardinality": "multi",
+      "importance": 0.15
+    },
+    "p196": {
+      "name": "p196",
+      "description": "Predicate 196.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "date",
+      "importance": 0.52
+    },
+    "p197": {
+      "name": "p197",
+      "description": "Predicate 197.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "datetime",
+      "importance": 0.89
+    },
+    "p198": {
+      "name": "p198",
+      "description": "Predicate 198.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.26
+    },
+    "p199": {
+      "name": "p199",
+      "description": "Predicate 199.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "integer",
+      "importance": 0.63
+    },
+    "p200": {
+      "name": "p200",
+      "description": "Predicate 200.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "Type08",
+      "importance": 0.0
+    },
+    "p201": {
+      "name": "p201",
+      "description": "Predicate 201.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.37
+    },
+    "p202": {
+      "name": "p202",
+      "description": "Predicate 202.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "date",
+      "importance": 0.74
+    },
+    "p203": {
+      "name": "p203",
+      "description": "Predicate 203.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "datetime",
+      "importance": 0.11
+    },
+    "p204": {
+      "name": "p204",
+      "description": "Predicate 204.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.48
+    },
+    "p205": {
+      "name": "p205",
+      "description": "Predicate 205.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "Type07",
+      "importance": 0.85
+    },
+    "p206": {
+      "name": "p206",
+      "description": "Predicate 206.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "number",
+      "importance": 0.22
+    },
+    "p207": {
+      "name": "p207",
+      "description": "Predicate 207.",
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.59
+    },
+    "p208": {
+      "name": "p208",
+      "description": "Predicate 208.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "date",
+      "importance": 0.96
+    },
+    "p209": {
+      "name": "p209",
+      "description": "Predicate 209.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "datetime",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.33
+    },
+    "p210": {
+      "name": "p210",
+      "description": "Predicate 210.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "Type06",
+      "cardinality": "multi",
+      "importance": 0.7
+    },
+    "p211": {
+      "name": "p211",
+      "description": "Predicate 211.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "integer",
+      "importance": 0.07
+    },
+    "p212": {
+      "name": "p212",
+      "description": "Predicate 212.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "number",
+      "importance": 0.44
+    },
+    "p213": {
+      "name": "p213",
+      "description": "Predicate 213.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.81
+    },
+    "p214": {
+      "name": "p214",
+      "description": "Predicate 214.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "date",
+      "importance": 0.18
+    },
+    "p215": {
+      "name": "p215",
+      "description": "Predicate 215.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "Type05",
+      "importance": 0.55
+    },
+    "p216": {
+      "name": "p216",
+      "description": "Predicate 216.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.92
+    },
+    "p217": {
+      "name": "p217",
+      "description": "Predicate 217.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "integer",
+      "importance": 0.29
+    },
+    "p218": {
+      "name": "p218",
+      "description": "Predicate 218.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "number",
+      "importance": 0.66
+    },
+    "p219": {
+      "name": "p219",
+      "description": "Predicate 219.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.03
+    },
+    "p220": {
+      "name": "p220",
+      "description": "Predicate 220.",
+      "range": "Type04",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.4
+    },
+    "p221": {
+      "name": "p221",
+      "description": "Predicate 221.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "datetime",
+      "importance": 0.77
+    },
+    "p222": {
+      "name": "p222",
+      "description": "Predicate 222.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.14
+    },
+    "p223": {
+      "name": "p223",
+      "description": "Predicate 223.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "integer",
+      "importance": 0.51
+    },
+    "p224": {
+      "name": "p224",
+      "description": "Predicate 224.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "number",
+      "importance": 0.88
+    },
+    "p225": {
+      "name": "p225",
+      "description": "Predicate 225.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "Type03",
+      "cardinality": "multi",
+      "importance": 0.25
+    },
+    "p226": {
+      "name": "p226",
+      "description": "Predicate 226.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "date",
+      "importance": 0.62
+    },
+    "p227": {
+      "name": "p227",
+      "description": "Predicate 227.",
+      "domain": [
+        "Type06"
+      ],
+      "range": "datetime",
+      "importance": 0.99
+    },
+    "p228": {
+      "name": "p228",
+      "description": "Predicate 228.",
+      "domain": [
+        "Type07"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.36
+    },
+    "p229": {
+      "name": "p229",
+      "description": "Predicate 229.",
+      "domain": [
+        "Type08"
+      ],
+      "range": "integer",
+      "importance": 0.73
+    },
+    "p230": {
+      "name": "p230",
+      "description": "Predicate 230.",
+      "domain": [
+        "Type09"
+      ],
+      "range": "Type02",
+      "importance": 0.1
+    },
+    "p231": {
+      "name": "p231",
+      "description": "Predicate 231.",
+      "domain": [
+        "Type10"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "qualifiers": {
+        "as_of": {},
+        "tier": {
+          "identity": true
+        }
+      },
+      "importance": 0.47
+    },
+    "p232": {
+      "name": "p232",
+      "description": "Predicate 232.",
+      "domain": [
+        "Type11"
+      ],
+      "range": "date",
+      "importance": 0.84
+    },
+    "p233": {
+      "name": "p233",
+      "description": "Predicate 233.",
+      "range": "datetime",
+      "importance": 0.21
+    },
+    "p234": {
+      "name": "p234",
+      "description": "Predicate 234.",
+      "domain": [
+        "Type00"
+      ],
+      "range": "string",
+      "cardinality": "multi",
+      "importance": 0.58
+    },
+    "p235": {
+      "name": "p235",
+      "description": "Predicate 235.",
+      "domain": [
+        "Type01"
+      ],
+      "range": "Type01",
+      "importance": 0.95
+    },
+    "p236": {
+      "name": "p236",
+      "description": "Predicate 236.",
+      "domain": [
+        "Type02"
+      ],
+      "range": "number",
+      "importance": 0.32
+    },
+    "p237": {
+      "name": "p237",
+      "description": "Predicate 237.",
+      "domain": [
+        "Type03"
+      ],
+      "range": "boolean",
+      "cardinality": "multi",
+      "importance": 0.69
+    },
+    "p238": {
+      "name": "p238",
+      "description": "Predicate 238.",
+      "domain": [
+        "Type04"
+      ],
+      "range": "date",
+      "importance": 0.06
+    },
+    "p239": {
+      "name": "p239",
+      "description": "Predicate 239.",
+      "domain": [
+        "Type05"
+      ],
+      "range": "datetime",
+      "importance": 0.43
+    }
+  }
+}
