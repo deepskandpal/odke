@@ -1,24 +1,30 @@
-"""The Neo4j platform sink.
+"""The Neo4j platform: the sink, and the constrainer that is its other half.
 
-Writes with `MERGE` on entity keys and fact signatures, so a pipeline run twice
-updates the graph it wrote rather than duplicating it.
+One module because they are one design. The sink writes with `MERGE` on entity
+keys and fact signatures, so a pipeline run twice updates the graph it wrote
+rather than duplicating it. The constrainer compiles the ontology into the
+uniqueness constraints that make those MERGEs correct under concurrency, and
+into check queries for the rule Neo4j cannot enforce. That is the dotted arrow
+of the design: the ontology that shaped the prompt shapes the store, and
+nobody writes the rules twice.
 
 The module never imports the driver at the top. `import odke.sinks.neo4j` works
-on the base install (DECISIONS #1); the driver is imported the first time a
-connection is needed, behind the `[neo4j]` extra.
+on the base install (DECISIONS #1), and so does printing the DDL; the driver is
+imported the first time a connection is needed, behind the `[neo4j]` extra.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterator, Sequence
+import re
+from collections.abc import Iterable, Iterator, Sequence
 from datetime import date, datetime, time
 from enum import Enum
 from typing import Any, NamedTuple
 
-from odke.ontology import Ontology
-from odke.stages import PlatformProfile
+from odke.ontology import Ontology, Predicate
+from odke.stages import DDL, Constrainer, PlatformProfile
 from odke.types import Entity, EntityLink, Fact, KnowledgeGraph, Polarity
 
 EXTRA_HINT = "the neo4j driver is not installed; run: pip install 'odke[neo4j]'"
@@ -431,9 +437,9 @@ class Neo4jSink:
     committed; because every statement is a MERGE, recovering is running the
     write again.
 
-    `profile` says the store constrains: the uniqueness constraints are what
-    make these MERGEs correct under concurrent writers. It neither resolves
-    nor prunes.
+    `profile` says the store constrains: once `bootstrap()` has applied a
+    `Neo4jConstrainer`'s DDL, the uniqueness constraints are what make these
+    MERGEs correct under concurrent writers. It neither resolves nor prunes.
     """
 
     profile = PlatformProfile(name="neo4j", resolves=False, constrains=True, prunes=False)
@@ -470,6 +476,47 @@ class Neo4jSink:
                 for batch in _batches(statement.rows, self.batch_size):
                     session.execute_write(_unwind, statement.cypher, batch)
 
+    def bootstrap(
+        self,
+        ontology: Ontology,
+        *,
+        constrainer: Constrainer | None = None,
+        dry_run: bool = False,
+    ) -> list[str]:
+        """Apply the ontology's constraints and indexes; safe to run on every start.
+
+        Every statement is `IF NOT EXISTS`, so a database already constrained is
+        left as it is. Returns the DDL it ran; with `dry_run` it runs nothing,
+        so a DBA can apply the same statements by hand. Check queries are not
+        run here — they return violators, and `check()` is where to ask.
+        """
+        self.ontology = ontology
+        compiled = (constrainer or Neo4jConstrainer()).constrain(ontology)
+        ddl = [s for s in compiled if not is_check(s)]
+        if not dry_run:
+            with self._driver.session(**self._session_config()) as session:
+                for statement in ddl:
+                    session.run(statement).consume()
+        return ddl
+
+    def check(
+        self, ontology: Ontology, *, constrainer: Constrainer | None = None
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Run the cardinality checks; the violators, by predicate.
+
+        A check and never a repair (09-quality §4): nothing here deletes, merges
+        or picks a winner. What to do with a Person holding two employers is a
+        person's call, and the rows say which ones to look at.
+        """
+        compiled = (constrainer or Neo4jConstrainer()).constrain(ontology)
+        found: dict[str, list[dict[str, Any]]] = {}
+        with self._driver.session(**self._session_config()) as session:
+            for statement in (s for s in compiled if is_check(s)):
+                rows = session.execute_read(_rows, statement)
+                if rows:
+                    found[check_target(statement)] = rows
+        return found
+
     def close(self) -> None:
         self._driver.close()
 
@@ -483,12 +530,173 @@ class Neo4jSink:
         return {"database": self.database} if self.database else {}
 
 
+# --------------------------------------------------------------------------- #
+# The constrainer
+# --------------------------------------------------------------------------- #
+
+# A check query returns violators and changes nothing. The marker is a Cypher
+# comment, so the DDL stays runnable by hand, and it lets `bootstrap()` run the
+# DDL and `check()` run the checks without either running the other.
+CHECK_MARKER = "// odke:check "
+
+
+def is_check(statement: str) -> bool:
+    return statement.startswith(CHECK_MARKER)
+
+
+def check_target(statement: str) -> str:
+    """The predicate a check query is about."""
+    return statement.splitlines()[0].removeprefix(CHECK_MARKER)
+
+
+def cardinality_scope(predicate: Predicate) -> tuple[str, ...]:
+    """The qualifier keys a single-valued predicate is single *per*.
+
+    Always its identity-bearing keys: uptime at p50 and at p95 are two claims
+    (DECISIONS #15), so holding both is not a violation. Plus M1's
+    `cardinality_scope` where that field exists — read by name, because M1
+    lands separately and this must work on either side of it.
+    """
+    declared = getattr(predicate, "cardinality_scope", None) or ()
+    if isinstance(declared, str):
+        declared = (declared,)
+    return tuple(sorted({*predicate.identity_keys, *declared}))
+
+
+def _schema_name(kind: str, name: str) -> str:
+    # Constraint and index names must be plain identifiers. A squashed name
+    # carries a hash of the original so `A-B` and `A_B` stay distinct: an
+    # existing name turns `IF NOT EXISTS` into a silent no-op.
+    slug = re.sub(r"\W", "_", name, flags=re.ASCII)
+    if slug != name:
+        slug = f"{slug}_{hashlib.sha256(name.encode('utf-8')).hexdigest()[:8]}"
+    return f"odke_{kind}_{slug}"
+
+
+def _rows(tx: Any, cypher: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = tx.run(cypher).data()
+    return rows
+
+
+class Neo4jConstrainer:
+    """Compiles the ontology into what Neo4j enforces, and checks for what it cannot.
+
+    `Neo4jSink.profile` says the store constrains, and the pipeline's
+    double-stage warning takes that at its word. So this says exactly how much
+    that covers.
+
+    Neo4j enforces, in every edition, once `Neo4jSink.bootstrap()` has run:
+
+    - one node per (type, key): a uniqueness constraint per entity type. It is
+      what makes the sink's `MERGE` correct under concurrent writers — without
+      it two writers can both miss and both create — and it is the index the
+      MERGE looks up;
+    - one relationship per (predicate, signature) and one `:Claim` per
+      signature: the same guarantee for facts. Relationship uniqueness
+      constraints need Neo4j 5.7 or later.
+
+    Indexes, which enforce nothing: `external_id` per type; a full-text index
+    over `label` and `aliases` per type, full-text being the index kind that
+    covers a `LIST<STRING>` property; and `key` on the sink's `:Entity` label,
+    which is how a link finds a node without knowing its type.
+
+    Neo4j cannot enforce:
+
+    - relationship cardinality. No constraint says "a Person has at most one
+      employer". Every single-cardinality predicate gets a *check query*
+      instead, marked `// odke:check <predicate>`, which returns the violators
+      and changes nothing — the rule used as a check, not as inference: a
+      reasoner told "at most one" concludes the two employers are one company
+      (09-quality §4). Only asserted, open-ended relationships count: a denial
+      is not a value, and one with `valid_to` set expired correctly (DECISIONS
+      #17). The check groups by the predicate's identity-bearing qualifiers,
+      and by M1's `cardinality_scope` where it exists: uptime is single per
+      percentile. Nothing runs these on write; `Neo4jSink.check()` does.
+    - existence, property-type and node-key constraints. Neo4j has them in
+      Enterprise Edition only, so none is emitted and `EntityType.keys` is not
+      compiled — the corroborator, not the store, is where those keys are used.
+    - domain and range — that an employer is a Company. The validator is the
+      gate for those.
+
+    Only what the ontology names is compiled. A type or predicate that turns up
+    in a graph but not in the schema gets no constraint: the store enforces
+    nothing it was not told about.
+    """
+
+    # The platform this DDL is for. A sink whose profile has the same name is
+    # this compiler's other half, so configuring both is not a stage run twice.
+    platform = "neo4j"
+
+    def constrain(self, ontology: Ontology) -> DDL:
+        return [*self.schema(ontology), *self.checks(ontology)]
+
+    def schema(self, ontology: Ontology) -> list[str]:
+        """Constraints and indexes, every one `IF NOT EXISTS`, in a stable order."""
+        out = [
+            f"CREATE INDEX odke_entity_key IF NOT EXISTS FOR (n:{_ident(ENTITY_LABEL)}) ON (n.key)",
+            f"CREATE CONSTRAINT odke_claim_signature IF NOT EXISTS "
+            f"FOR (c:{_ident(CLAIM_LABEL)}) REQUIRE c.signature IS UNIQUE",
+        ]
+        for name in sorted(ontology.types):
+            label = _ident(name)
+            out += [
+                f"CREATE CONSTRAINT {_schema_name('key', name)} IF NOT EXISTS "
+                f"FOR (n:{label}) REQUIRE n.key IS UNIQUE",
+                f"CREATE INDEX {_schema_name('external_id', name)} IF NOT EXISTS "
+                f"FOR (n:{label}) ON (n.external_id)",
+                f"CREATE FULLTEXT INDEX {_schema_name('names', name)} IF NOT EXISTS "
+                f"FOR (n:{label}) ON EACH [n.label, n.aliases]",
+            ]
+        for name in sorted(ontology.predicates):
+            out.append(
+                f"CREATE CONSTRAINT {_schema_name('signature', name)} IF NOT EXISTS "
+                f"FOR ()-[r:{_ident(name)}]-() REQUIRE r.signature IS UNIQUE"
+            )
+        return out
+
+    def checks(self, ontology: Ontology) -> list[str]:
+        """One violator-returning query per single-cardinality predicate."""
+        return [
+            _cardinality_check(name, cardinality_scope(predicate))
+            for name, predicate in sorted(ontology.predicates.items())
+            if predicate.cardinality == "single"
+        ]
+
+
+def _cardinality_check(predicate: str, scope: Iterable[str]) -> str:
+    scoped = ", ".join(f"r.{_ident(qualifier_property(k))}" for k in scope)
+    objects = "collect(DISTINCT coalesce(o.key, o.value)) AS objects"
+    lines = [
+        f"{CHECK_MARKER}{predicate}",
+        f"MATCH (s)-[r:{_ident(predicate)}]->(o)",
+        "WHERE r.polarity = 'asserted' AND r.valid_to IS NULL",
+    ]
+    if scoped:
+        lines += [
+            f"WITH s, [{scoped}] AS scope, {objects}",
+            "WHERE size(objects) > 1",
+            "RETURN labels(s) AS labels, s.key AS subject, scope, objects",
+        ]
+    else:
+        lines += [
+            f"WITH s, {objects}",
+            "WHERE size(objects) > 1",
+            "RETURN labels(s) AS labels, s.key AS subject, objects",
+        ]
+    return "\n".join(lines)
+
+
 __all__ = [
+    "CHECK_MARKER",
     "CLAIM_LABEL",
     "ENTITY_LABEL",
     "EXTRA_HINT",
+    "Neo4jConstrainer",
     "Neo4jSink",
     "Statement",
+    "cardinality_scope",
+    "check_target",
+    "is_check",
     "plan",
     "provenance_of",
     "signature_of",
