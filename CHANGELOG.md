@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.1.0] — unreleased; dated when the tag is pushed
+## [0.1.0] — 2026-09-14
 
 The v0.1 milestones now on `main`: the data model (M0), ontology I/O (M1),
 loaders and extraction (M2), grounding and corroboration (M3), the Neo4j sink and
