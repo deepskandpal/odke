@@ -34,6 +34,7 @@ from odke import (
     SourceTier,
     Span,
 )
+from odke.eval.sinks import assert_idempotent
 from odke.sinks.neo4j import EXTRA_HINT, Neo4jSink, Statement, signature_of, storable
 
 # --------------------------------------------------------------------------- #
@@ -218,14 +219,24 @@ def _merge_keys(driver: FakeDriver) -> list[tuple[str, tuple[Any, ...]]]:
 # --------------------------------------------------------------------------- #
 
 
+def _merged(driver: FakeDriver) -> Callable[[], dict[str, int]]:
+    """What a store that honours MERGE would hold after the recorded writes: one per identity."""
+
+    def count() -> dict[str, int]:
+        identities = {(cypher, row) for cypher, rows in _merge_keys(driver) for row in rows}
+        return {"identities": len(identities), "statements": len({c for c, _ in driver.writes})}
+
+    return count
+
+
 def test_writing_the_same_graph_twice_sends_identical_statements() -> None:
+    """Write twice, count once — the evaluator's check — and the second write is the first."""
     graph = _graph()
     driver = FakeDriver()
-    sink = Neo4jSink(driver=driver)
-    sink.write(graph)
-    first = list(driver.writes)
-    sink.write(graph)
-    assert first and driver.writes == first + first
+    report = assert_idempotent(Neo4jSink(driver=driver), graph, _merged(driver))
+    assert report.breakdown["identities"]["after_first"]
+    half = len(driver.writes) // 2
+    assert half and driver.writes == driver.writes[:half] * 2
 
 
 def test_a_rerun_merges_on_the_same_keys_though_ids_and_clocks_change() -> None:
@@ -541,10 +552,12 @@ def test_against_a_live_neo4j() -> None:
         try:
             sink.write(graph_a)
             first = driver.execute_query(count).records[0].data()
-            # A second run: new fact ids and clocks, the same claims.
-            sink.write(graph_b)
-            again = driver.execute_query(count).records[0].data()
-            assert first == again
+            # A second run — new fact ids and clocks, the same claims — written
+            # twice, and no count may move from what the first run left.
+            report = assert_idempotent(
+                sink, graph_b, lambda: driver.execute_query(count).records[0].data()
+            )
+            assert {key: row["after_first"] for key, row in report.breakdown.items()} == first
             # Three entities and four claims; one edge, four claim edges, three links.
             assert (first["nodes"], first["rels"]) == (7, 8)
             untraced = driver.execute_query(
