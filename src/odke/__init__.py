@@ -60,6 +60,7 @@ from odke.types import (
     Span,
     ValidationVerdict,
 )
+from odke.validators import VerdictValidator
 
 __version__ = "0.0.1"
 
@@ -112,5 +113,6 @@ __all__ = [
     "ValidationVerdict",
     "Validator",
     "ValueNormalizer",
+    "VerdictValidator",
     "__version__",
 ]

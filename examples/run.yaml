@@ -1,0 +1,78 @@
+# odke run — every key, commented.
+#
+#   odke run examples/run.yaml --dry-run
+#
+# Reading YAML needs `pip install "odke[yaml]"`; the same keys as JSON need
+# nothing. Every path below is relative to this file, not to where you run it.
+# This one runs the end-to-end example (examples/e2e/) on recorded responses,
+# so it needs no key and no network.
+
+# The schema the extractor is held to. JSON or YAML; loaded strictly, so a
+# schema with errors in it stops the run before anything is spent.
+ontology: e2e/ontology.json
+
+# What to read. A bare path uses `stages.loader` (the directory loader when
+# that is left out); a mapping names its own loader and options. Each file's
+# path becomes its documents' id — `e2e/corpus/register.csv#L2` for a record —
+# which is what a labelled set and a provenance query refer to.
+inputs:
+  - path: e2e/corpus/register.csv
+    loader: {use: csv, tier: curated}            # tiers: curated, authoritative, community, unverified
+  - path: e2e/corpus/staff.csv
+    loader: {use: csv, tier: authoritative}
+  - path: e2e/corpus/factsheet.md
+    loader: {use: markdown, tier: authoritative, modality: semi_structured}
+  - path: e2e/corpus/notes
+    loader: {use: directory, tier: community}    # also: text, markdown, csv, tsv, json, jsonl, parquet
+
+# Directories put on sys.path, so a stage of your own (package.module:Name)
+# can live next to this file.
+pythonpath: [e2e]
+
+# Which model does which job (DECISIONS #7a). A string is a model; a mapping is
+# a full ModelSpec (temperature, max_tokens, base_url, api_key_env, extra).
+# Keys never go here — a provider reads its own environment variable.
+models:
+  extract: anthropic/claude-sonnet-5
+  ground: {model: anthropic/claude-haiku-4-5-20251001, max_tokens: 256}
+  # Answer a role from recorded responses instead of a provider. Delete these
+  # two lines to call the models above.
+  replay:
+    extract: e2e/recorded/extract.json
+    ground: e2e/recorded/ground.json
+  # Count calls, tokens and USD per stage into the graph's stats.
+  meter: true
+
+# The thirteen stages (DECISIONS #20). Each is a built-in's short name or
+# package.module:Name, with options as extra keys: {use: name, option: value}.
+# A stage left out is the pass-through. `delegated` (with `to:`) marks a stage
+# the store does itself (DECISIONS #21).
+stages:
+  # loader:       directory (the default for bare input paths)
+  chunker: {use: sentence, max_words: 120}       # or passthrough: one chunk per document
+  # router:       passthrough — or your own, to skip marketing and policy text
+  extractor:                                     # required; pattern, llm or hybrid
+    use: hybrid
+    llm: {snippet_limit: 25, repairs: 1}         # options for the model path, or false
+    pattern: {}                                  # e.g. mappings: [{subject_type: ..., predicates: {...}}]
+  grounder: {use: llm, max_workers: 8}           # or span: the free check alone
+  normalizer: {use: value, person_types: [Person]}
+  resolver: e2e_stages:RegistryResolver          # a stage of the example's own; built-in: native
+  corroborator: signature                        # options: half_life_days, freshness_floor
+  scorer: evidence                               # options: prior, verdict_weights
+  validator: {use: verdict, refuse_not_found: false}
+  sink: {use: jsonl, directory: e2e/out}         # or a list of sinks
+  # sink:
+  #   use: neo4j
+  #   uri_env: NEO4J_URI                         # or uri: bolt://localhost:7687
+  #   user_env: NEO4J_USER                       # or user: neo4j
+  #   password_env: NEO4J_PASSWORD               # a password never goes in this file
+  #   database: neo4j
+  #   batch_size: 500
+  constrainer: neo4j                             # the DDL `bootstrap` applies
+  # inferrer:     passthrough only — odke run never infers (DECISIONS #8)
+
+# Apply the constrainer's DDL through the sink before the first write. Needs a
+# sink that can (neo4j). Every statement is IF NOT EXISTS, so it is safe on
+# every run.
+bootstrap: false
