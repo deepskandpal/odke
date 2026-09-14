@@ -113,7 +113,7 @@ jobs:
           NEO4J_USER: neo4j
           NEO4J_PASSWORD: ci-${{ github.run_id }}
         run: |
-          uv run pytest tests/test_neo4j_sink.py tests/test_neo4j_constraints.py tests/test_bulk_sinks.py tests/test_ontology_neo4j.py \
+          uv run pytest tests/test_neo4j_sink.py tests/test_neo4j_constraints.py tests/test_bulk_sinks.py tests/test_ontology_neo4j.py tests/test_e2e.py \
             -k live_neo4j -rA --junitxml=live-neo4j.xml
           python3 - <<'EOF'
           import xml.etree.ElementTree as ET
