@@ -7,6 +7,7 @@ generalised from one production knowledge graph to a general-purpose SDK. See
 NOTICE for the relationship to that paper.
 """
 
+from odke.chunking import SentenceChunker
 from odke.corroborate import (
     EvidenceScorer,
     NativeResolver,
@@ -97,6 +98,7 @@ __all__ = [
     "RouteVerdict",
     "Router",
     "Scorer",
+    "SentenceChunker",
     "SignatureCorroborator",
     "Sink",
     "SourceTier",
