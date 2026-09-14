@@ -1,0 +1,5 @@
+{"id": "p1", "subject": {"key": "ada", "type": "Person"}, "predicate": "born", "object_value": "1815", "evidence": [{"doc_id": "d1"}]}
+{"id": "p2", "subject": {"key": "ada", "type": "Person"}, "predicate": "name", "object_value": "ada  lovelace", "evidence": [{"doc_id": "d1"}]}
+{"id": "p3", "subject": {"key": "ada", "type": "Person"}, "predicate": "employer", "object_entity": {"key": "c:cambridge", "type": "Company"}, "evidence": [{"doc_id": "d1"}]}
+{"id": "p4", "subject": {"key": "babbage", "type": "Person"}, "predicate": "born", "object_value": 1792, "evidence": [{"doc_id": "d2"}]}
+{"id": "p5", "subject": {"key": "babbage", "type": "Person"}, "predicate": "field", "object_value": "mathematics", "evidence": [{"doc_id": "d2"}]}

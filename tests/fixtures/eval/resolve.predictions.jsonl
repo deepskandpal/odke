@@ -1,0 +1,6 @@
+{"a": "a", "b": "b", "kind": "same_as"}
+{"a": "c", "b": "d", "kind": "same_as"}
+{"source_key": "d", "target_key": "e", "kind": "same_as", "score": 0.97}
+{"a": "f", "b": "a", "kind": "different"}
+{"a": "b", "b": "c", "kind": "different"}
+{"a": "e", "b": "f", "kind": "similar"}

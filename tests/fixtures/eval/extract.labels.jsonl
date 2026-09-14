@@ -1,0 +1,5 @@
+{"doc_id": "d1", "fact": {"subject": {"key": "ada", "type": "Person"}, "predicate": "born", "object_value": 1815}}
+{"doc_id": "d1", "fact": {"subject": {"key": "ada", "type": "Person"}, "predicate": "name", "object_value": "Ada Lovelace"}}
+{"doc_id": "d1", "fact": {"subject": {"key": "ada", "type": "Person"}, "predicate": "employer", "object_entity": {"key": "c:analytical", "type": "Company"}}}
+{"doc_id": "d2", "fact": {"subject": {"key": "babbage", "type": "Person"}, "predicate": "born", "object_value": 1791}}
+{"doc_id": "d2", "fact": {"subject": {"key": "babbage", "type": "Person"}, "predicate": "employer", "object_entity": {"key": "c:cambridge", "type": "Company"}}}

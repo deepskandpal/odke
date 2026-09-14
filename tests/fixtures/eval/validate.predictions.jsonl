@@ -1,0 +1,6 @@
+{"id": "v1", "action": "accept"}
+{"id": "v2", "action": "refuse", "reason": "range mismatch"}
+{"id": "v3", "action": "accept"}
+{"id": "v4", "action": "refuse", "reason": "founded is not a Person predicate"}
+{"id": "v5", "action": "accept"}
+{"id": "v6", "action": "conflict", "reason": "born already 1815"}
