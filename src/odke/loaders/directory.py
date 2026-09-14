@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 
+from odke.loaders.html import HtmlLoader
 from odke.loaders.structured import CsvLoader, JsonlLoader, JsonLoader, ParquetLoader, TsvLoader
 from odke.loaders.text import MarkdownLoader, TextLoader
 from odke.stages import Loader, Source
@@ -25,11 +26,14 @@ def default_loaders(
     text = TextLoader(tier=tier, encoding=text_encoding)
     markdown = MarkdownLoader(tier=tier, encoding=text_encoding)
     jsonl = JsonlLoader(tier=tier, encoding=record_encoding)
+    html = HtmlLoader(tier=tier, encoding=text_encoding)
     return {
         ".txt": text,
         ".text": text,
         ".md": markdown,
         ".markdown": markdown,
+        ".html": html,
+        ".htm": html,
         ".csv": CsvLoader(tier=tier, encoding=record_encoding),
         ".tsv": TsvLoader(tier=tier, encoding=record_encoding),
         ".json": JsonLoader(tier=tier, encoding=record_encoding),
