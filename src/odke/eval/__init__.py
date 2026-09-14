@@ -22,6 +22,7 @@ Cost needs no labels: `CostMeter` wraps the `LLMClient` a stage was built
 with, so a run is measured without any stage Protocol changing.
 """
 
+from odke.eval.ablation import per_document, run_ablation
 from odke.eval.calibration import evaluate_calibration, run_score
 from odke.eval.cost import (
     CallRecord,
@@ -91,6 +92,8 @@ __all__ = [
     "links_from_clusters",
     "load_jsonl",
     "match_extraction",
+    "per_document",
+    "run_ablation",
     "run_extract",
     "run_ground",
     "run_route",

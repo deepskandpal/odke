@@ -16,9 +16,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import sys
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -32,20 +29,10 @@ from odke.run import execute, load_config
 from odke.sinks import neo4j as neo4j_module
 from odke.sinks.neo4j import CHECK_MARKER, Neo4jConstrainer
 
-EXAMPLES = Path(__file__).parent.parent / "examples"
-EXAMPLE = EXAMPLES / "e2e"
+# `example`, a copy of examples/e2e/ to run in, is in conftest.py.
+EXAMPLE = Path(__file__).parent.parent / "examples" / "e2e"
 HALDEN_NOTE = "corpus/notes/halden-robotics.md"
 runner = CliRunner()
-
-
-@pytest.fixture
-def example(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """A copy of `examples/`, so a run writes nowhere in the repository."""
-    shutil.copytree(EXAMPLES, tmp_path / "examples", ignore=shutil.ignore_patterns("out"))
-    monkeypatch.setattr(sys, "path", list(sys.path))
-    sys.modules.pop("e2e_stages", None)
-    yield tmp_path / "examples" / "e2e"
-    sys.modules.pop("e2e_stages", None)
 
 
 def _lines(path: Path) -> list[dict[str, Any]]:
