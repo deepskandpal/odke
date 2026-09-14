@@ -1,0 +1,8 @@
+{"fact": {"id": "s1", "subject": {"key": "ada", "type": "Person"}, "predicate": "born", "object_value": 1815, "confidence": 0.95}, "true": true}
+{"fact": {"id": "s2", "subject": {"key": "ada", "type": "Person"}, "predicate": "birthplace", "object_value": "London", "confidence": 0.9}, "true": true}
+{"fact": {"id": "s3", "subject": {"key": "ada", "type": "Person"}, "predicate": "died", "object_value": 1851, "confidence": 0.9}, "true": false}
+{"fact": {"id": "s4", "subject": {"key": "babbage", "type": "Person"}, "predicate": "born", "object_value": 1791, "confidence": 0.7}, "true": true}
+{"fact": {"id": "s5", "subject": {"key": "babbage", "type": "Person"}, "predicate": "died", "object_value": 1870, "confidence": 0.6}, "true": false}
+{"fact": {"id": "s6", "subject": {"key": "babbage", "type": "Person"}, "predicate": "birthplace", "object_value": "Bristol", "confidence": 0.3}, "true": false}
+{"fact": {"id": "s7", "subject": {"key": "babbage", "type": "Person"}, "predicate": "field", "object_value": "mathematics", "confidence": 0.2}, "true": true}
+{"fact": {"id": "s8", "subject": {"key": "ada", "type": "Person"}, "predicate": "field", "object_value": "chemistry", "confidence": 0.1}, "true": false}

@@ -1,0 +1,6 @@
+{"id": "c1", "action": "extract", "label": "fact"}
+{"id": "c2", "action": "skip", "label": "marketing"}
+{"id": "c3", "action": "skip", "label": "marketing"}
+{"id": "c4", "action": "extract", "label": "fact"}
+{"id": "c5", "action": "extract", "label": "fact"}
+{"id": "c6", "action": "skip", "label": "policy"}

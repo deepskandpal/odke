@@ -1,0 +1,6 @@
+{"id": "c1", "text": "Ada Lovelace was born in London in 1815.", "action": "extract", "label": "fact"}
+{"id": "c2", "text": "She worked with Charles Babbage on the Analytical Engine.", "action": "extract", "label": "fact"}
+{"id": "c3", "text": "Join thousands of happy customers today!", "action": "skip", "label": "marketing"}
+{"id": "c4", "text": "Limited offer: upgrade now and save.", "action": "skip", "label": "marketing"}
+{"id": "c5", "text": "Babbage was born in 1791.", "action": "extract", "label": "fact"}
+{"id": "c6", "text": "We may update these terms at any time.", "action": "skip", "label": "policy"}

@@ -1,0 +1,6 @@
+{"a": "a", "b": "b", "same": true}
+{"a": "b", "b": "c", "same": true}
+{"a": "d", "b": "e", "same": true}
+{"a": "c", "b": "d", "same": false}
+{"a": "e", "b": "f", "same": false}
+{"a": "a", "b": "f", "same": false}

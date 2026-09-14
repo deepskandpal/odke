@@ -1,0 +1,6 @@
+{"fact": {"id": "v1", "subject": {"key": "ada", "type": "Person"}, "predicate": "born", "object_value": 1815}, "action": "accept"}
+{"fact": {"id": "v2", "subject": {"key": "ada", "type": "Person"}, "predicate": "name", "object_value": "Ada Lovelace"}, "action": "accept"}
+{"fact": {"id": "v3", "subject": {"key": "babbage", "type": "Person"}, "predicate": "born", "object_value": 1791}, "action": "accept"}
+{"fact": {"id": "v4", "subject": {"key": "ada", "type": "Person"}, "predicate": "founded", "object_value": 1815}, "action": "refuse"}
+{"fact": {"id": "v5", "subject": {"key": "c:analytical", "type": "Company"}, "predicate": "born", "object_value": 1837}, "action": "refuse"}
+{"fact": {"id": "v6", "subject": {"key": "ada", "type": "Person"}, "predicate": "born", "object_value": 1816}, "action": "conflict"}
