@@ -1,0 +1,44 @@
+# Qualifier-scoped facts (R4): one price per service per tier, one uptime per
+# service per percentile per region, one headquarters country regardless of
+# when it was reported.
+name: saas-vendors
+version: "2"
+types:
+  Vendor:
+    description: A company that sells software.
+    keys: [legal_name]
+    aliases: [Supplier]
+  Service:
+    description: A product a vendor runs.
+    keys: [service_name]
+predicates:
+  legal_name:
+    domain: [Vendor]
+    required: true
+  service_name:
+    domain: [Service]
+    required: true
+  operates:
+    domain: [Vendor]
+    range: Service
+    cardinality: multi
+  price:
+    description: List price per seat per month.
+    domain: [Service]
+    range: number
+    # No cardinality_scope: it follows the identity-bearing qualifiers.
+    qualifiers:
+      tier: {identity: true, description: Pricing plan.}
+      as_of: {description: Date the price was quoted.}
+  uptime:
+    domain: [Service]
+    range: number
+    qualifiers:
+      percentile: {identity: true}
+      region: {identity: true}
+      as_of: {}
+    cardinality_scope: [percentile, region]
+  hq_country:
+    domain: [Vendor]
+    qualifiers: [as_of]
+    cardinality_scope: []

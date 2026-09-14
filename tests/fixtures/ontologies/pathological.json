@@ -1,0 +1,23 @@
+{
+  "name": "pathological",
+  "types": {
+    "A": {"parents": ["B"]},
+    "B": {"parents": ["A"]},
+    "Loop": {"parents": ["Loop"]},
+    "Company": {"keys": ["legal_name", "tax_id"], "aliases": ["Firm"]},
+    "Employer": {"keys": ["legal_name"], "aliases": ["firm"]},
+    "Scientist": {"parents": ["Persn"]},
+    "Person": {"name": "Human"}
+  },
+  "predicates": {
+    "employer": {"domain": ["Person"], "range": "Compnay"},
+    "legal_name": {"domain": ["Company"]},
+    "orphan": {"domain": ["Robot"]},
+    "half": {"domain": ["Company", "Robot"]},
+    "works_for": {"aliases": ["employer"]},
+    "price": {
+      "qualifiers": {"tier": {"identity": true}, "as_of": {}},
+      "cardinality_scope": ["as_of", "currency"]
+    }
+  }
+}
