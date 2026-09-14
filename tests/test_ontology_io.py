@@ -33,7 +33,7 @@ def _scoped() -> Ontology:
                 importance=0.9,
                 examples=("120.00",),
             ),
-            "legal_name": Predicate(name="legal_name", domain=("Vendor",)),
+            "legal_name": Predicate(name="legal_name", domain=("Vendor",), required=True),
         },
     )
 
