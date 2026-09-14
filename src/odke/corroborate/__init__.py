@@ -6,6 +6,12 @@ records what it did on the objects it returns — under the reserved keys in
 `odke.corroborate.provenance` — rather than discarding what it replaced.
 """
 
+from odke.corroborate.merge import (
+    DEFAULT_INTERVALS,
+    SignatureCorroborator,
+    independent_sources,
+    source_of,
+)
 from odke.corroborate.normalize import (
     ValueNormalizer,
     name_key,
@@ -13,7 +19,7 @@ from odke.corroborate.normalize import (
     normalize_quantity,
     normalize_value,
 )
-from odke.corroborate.provenance import NAME_KEY, SOURCE_FORM
+from odke.corroborate.provenance import CONFLICT, NAME_KEY, SCORE, SOURCE_FORM
 from odke.corroborate.resolve import (
     LINKER,
     NativeResolver,
@@ -23,16 +29,22 @@ from odke.corroborate.resolve import (
 )
 
 __all__ = [
+    "CONFLICT",
+    "DEFAULT_INTERVALS",
     "LINKER",
     "NAME_KEY",
+    "SCORE",
     "SOURCE_FORM",
     "NativeResolver",
+    "SignatureCorroborator",
     "ValueNormalizer",
     "candidate_pairs",
     "domain_of",
+    "independent_sources",
     "name_key",
     "name_similarity",
     "normalize_date",
     "normalize_quantity",
     "normalize_value",
+    "source_of",
 ]

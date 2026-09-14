@@ -22,12 +22,12 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Collection, Mapping
+from collections.abc import Collection
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from odke.corroborate.provenance import NAME_KEY, SOURCE_FORM
+from odke.corroborate.provenance import NAME_KEY, SOURCE_FORM, source_forms
 from odke.ontology import Ontology
 from odke.types import Entity, Fact
 
@@ -292,7 +292,7 @@ class ValueNormalizer:
         self.person_types = frozenset(person_types)
 
     def normalize(self, fact: Fact) -> Fact:
-        forms = _forms(fact.qualifiers.get(SOURCE_FORM))
+        forms = source_forms(fact.qualifiers.get(SOURCE_FORM))
         predicate = self.ontology.predicates.get(fact.predicate) if self.ontology else None
         # An edge's range is an entity type, not a literal; it says nothing here.
         literal = predicate.range if predicate and not fact.is_edge else None
@@ -329,13 +329,6 @@ class ValueNormalizer:
         if entity.attributes.get(NAME_KEY) == key:
             return entity
         return entity.model_copy(update={"attributes": {**entity.attributes, NAME_KEY: key}})
-
-
-def _forms(raw: Any) -> dict[str, tuple[str, ...]]:
-    # Tuples in memory, lists after a JSON round trip; both read the same.
-    if not isinstance(raw, Mapping):
-        return {}
-    return {str(k): tuple(v) if isinstance(v, list | tuple) else (v,) for k, v in raw.items()}
 
 
 def _record(forms: dict[str, tuple[str, ...]], field: str, original: Any) -> None:
