@@ -30,7 +30,7 @@ from odke.llm.base import (
 from odke.llm.openai_compat import DEFAULT_BASE_URLS, OpenAICompatClient
 from odke.llm.registry import register, registered_providers, resolve, unregister
 from odke.llm.roles import ModelRoles
-from odke.llm.testing import ScriptedClient
+from odke.llm.testing import RecordedClient, ScriptedClient
 
 __all__ = [
     "DEFAULT_BASE_URLS",
@@ -42,6 +42,7 @@ __all__ = [
     "OpenAICompatClient",
     "ProviderError",
     "ProviderNotInstalled",
+    "RecordedClient",
     "ScriptedClient",
     "register",
     "registered_providers",

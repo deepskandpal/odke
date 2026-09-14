@@ -14,6 +14,16 @@ Both stamp `Fact.verdict` and neither drops a fact (DECISIONS #20): the validato
 is the gate, and the ablation counts what would have gone.
 """
 
+from odke.ground.llm import LLMGrounder, build_messages, parse_verdict, render_claim
 from odke.ground.span import SpanGrounder, SpanStatus, check_span, located
 
-__all__ = ["SpanGrounder", "SpanStatus", "check_span", "located"]
+__all__ = [
+    "LLMGrounder",
+    "SpanGrounder",
+    "SpanStatus",
+    "build_messages",
+    "check_span",
+    "located",
+    "parse_verdict",
+    "render_claim",
+]

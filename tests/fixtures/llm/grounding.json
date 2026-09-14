@@ -1,0 +1,26 @@
+[
+  {
+    "match": "Claim: Ada Lovelace (Person) — wrote — \"the first algorithm\".",
+    "response": {"verdict": "supported"}
+  },
+  {
+    "match": "Claim: Ada Lovelace (Person) — birth place — Paris (Place).",
+    "response": {"verdict": "contradicted"}
+  },
+  {
+    "match": "Claim: Ada Lovelace (Person) — birth date — \"1815\".",
+    "response": {"verdict": "not_found"}
+  },
+  {
+    "match": "Claim: It is NOT the case that: Charles Babbage (Person) — finished — Analytical Engine (Machine).",
+    "response": {"verdict": "supported"}
+  },
+  {
+    "match": "Claim: Ada Lovelace (Person) — born in — London (Place).",
+    "response": "Supported"
+  },
+  {
+    "match": "Claim: Ada Lovelace (Person) — died in — London (Place).",
+    "response": "The passage does not say where she died, so this is not supported."
+  }
+]
