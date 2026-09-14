@@ -1,0 +1,69 @@
+{
+  "_about": "Procedure output, in the shape the Python driver's Result.data() returns it, for a graph Neo4jSink wrote: two people and two companies; employer edges (3), founded claims (2) projected as a Date, name claims (2) projected as a String, uptime claims (5) scoped by percentile and never projected, a born attribute on one person, and a SIMILAR link. db.schema.visualization relationships are (start node, type, end node) tuples, as .data() renders a Relationship. relationshipCounts and propertyCounts are the count queries' answers.",
+  "nodeTypeProperties": [
+    {"nodeType": ":`Entity`:`Person`", "nodeLabels": ["Entity", "Person"], "propertyName": "key", "propertyTypes": ["String"], "mandatory": true},
+    {"nodeType": ":`Entity`:`Person`", "nodeLabels": ["Entity", "Person"], "propertyName": "label", "propertyTypes": ["String"], "mandatory": true},
+    {"nodeType": ":`Entity`:`Person`", "nodeLabels": ["Entity", "Person"], "propertyName": "aliases", "propertyTypes": ["StringArray"], "mandatory": true},
+    {"nodeType": ":`Entity`:`Person`", "nodeLabels": ["Entity", "Person"], "propertyName": "external_id", "propertyTypes": ["String"], "mandatory": false},
+    {"nodeType": ":`Entity`:`Person`", "nodeLabels": ["Entity", "Person"], "propertyName": "resolution_method", "propertyTypes": ["String"], "mandatory": false},
+    {"nodeType": ":`Entity`:`Person`", "nodeLabels": ["Entity", "Person"], "propertyName": "born", "propertyTypes": ["Long"], "mandatory": false},
+    {"nodeType": ":`Entity`:`Person`", "nodeLabels": ["Entity", "Person"], "propertyName": "name", "propertyTypes": ["String"], "mandatory": true},
+    {"nodeType": ":`Company`:`Entity`", "nodeLabels": ["Company", "Entity"], "propertyName": "key", "propertyTypes": ["String"], "mandatory": true},
+    {"nodeType": ":`Company`:`Entity`", "nodeLabels": ["Company", "Entity"], "propertyName": "label", "propertyTypes": ["String"], "mandatory": true},
+    {"nodeType": ":`Company`:`Entity`", "nodeLabels": ["Company", "Entity"], "propertyName": "aliases", "propertyTypes": ["StringArray"], "mandatory": true},
+    {"nodeType": ":`Company`:`Entity`", "nodeLabels": ["Company", "Entity"], "propertyName": "resolution_score", "propertyTypes": ["Double"], "mandatory": false},
+    {"nodeType": ":`Company`:`Entity`", "nodeLabels": ["Company", "Entity"], "propertyName": "founded", "propertyTypes": ["Date"], "mandatory": true},
+    {"nodeType": ":`Claim`", "nodeLabels": ["Claim"], "propertyName": "signature", "propertyTypes": ["String"], "mandatory": true},
+    {"nodeType": ":`Claim`", "nodeLabels": ["Claim"], "propertyName": "predicate", "propertyTypes": ["String"], "mandatory": true},
+    {"nodeType": ":`Claim`", "nodeLabels": ["Claim"], "propertyName": "subject_key", "propertyTypes": ["String"], "mandatory": true},
+    {"nodeType": ":`Claim`", "nodeLabels": ["Claim"], "propertyName": "subject_type", "propertyTypes": ["String"], "mandatory": true},
+    {"nodeType": ":`Claim`", "nodeLabels": ["Claim"], "propertyName": "value", "propertyTypes": ["String", "Date"], "mandatory": true}
+  ],
+  "relTypeProperties": [
+    {"relType": ":`employer`", "propertyName": "signature", "propertyTypes": ["String"], "mandatory": true},
+    {"relType": ":`employer`", "propertyName": "polarity", "propertyTypes": ["String"], "mandatory": true},
+    {"relType": ":`employer`", "propertyName": "confidence", "propertyTypes": ["Double"], "mandatory": true},
+    {"relType": ":`employer`", "propertyName": "evidence_doc_ids", "propertyTypes": ["StringArray"], "mandatory": true},
+    {"relType": ":`employer`", "propertyName": "valid_from", "propertyTypes": ["DateTime"], "mandatory": false},
+    {"relType": ":`employer`", "propertyName": "start_time", "propertyTypes": ["String"], "mandatory": false},
+    {"relType": ":`employer`", "propertyName": "qualifier_signature", "propertyTypes": ["String"], "mandatory": false},
+    {"relType": ":`founded`", "propertyName": "signature", "propertyTypes": ["String"], "mandatory": true},
+    {"relType": ":`founded`", "propertyName": "polarity", "propertyTypes": ["String"], "mandatory": true},
+    {"relType": ":`founded`", "propertyName": "extracted_at", "propertyTypes": ["DateTime"], "mandatory": true},
+    {"relType": ":`name`", "propertyName": "signature", "propertyTypes": ["String"], "mandatory": true},
+    {"relType": ":`name`", "propertyName": "polarity", "propertyTypes": ["String"], "mandatory": true},
+    {"relType": ":`uptime`", "propertyName": "signature", "propertyTypes": ["String"], "mandatory": true},
+    {"relType": ":`uptime`", "propertyName": "identity_keys", "propertyTypes": ["StringArray"], "mandatory": true},
+    {"relType": ":`uptime`", "propertyName": "percentile", "propertyTypes": ["String"], "mandatory": true},
+    {"relType": ":`SIMILAR`", "propertyName": "score", "propertyTypes": ["Double"], "mandatory": true},
+    {"relType": ":`SIMILAR`", "propertyName": "reason", "propertyTypes": ["String"], "mandatory": false},
+    {"relType": ":`SIMILAR`", "propertyName": "created_at", "propertyTypes": ["DateTime"], "mandatory": true},
+    {"relType": ":`SIMILAR`", "propertyName": "evidence_doc_ids", "propertyTypes": ["StringArray"], "mandatory": true}
+  ],
+  "visualization": {
+    "nodes": [
+      {"name": "Person", "indexes": [], "constraints": ["Constraint( id=4, name='odke_key_Person', type='UNIQUENESS', schema=(:Person {key}), ownedIndex=3 )"]},
+      {"name": "Entity", "indexes": ["key"], "constraints": []},
+      {"name": "Company", "indexes": [], "constraints": []},
+      {"name": "Claim", "indexes": [], "constraints": []}
+    ],
+    "relationships": [
+      [{"name": "Person"}, "employer", {"name": "Company"}],
+      [{"name": "Person"}, "employer", {"name": "Entity"}],
+      [{"name": "Entity"}, "employer", {"name": "Company"}],
+      [{"name": "Entity"}, "employer", {"name": "Entity"}],
+      [{"name": "Company"}, "founded", {"name": "Claim"}],
+      [{"name": "Entity"}, "founded", {"name": "Claim"}],
+      [{"name": "Person"}, "name", {"name": "Claim"}],
+      [{"name": "Entity"}, "name", {"name": "Claim"}],
+      [{"name": "Company"}, "uptime", {"name": "Claim"}],
+      [{"name": "Entity"}, "uptime", {"name": "Claim"}],
+      [{"name": "Company"}, "SIMILAR", {"name": "Company"}],
+      [{"name": "Company"}, "SIMILAR", {"name": "Entity"}],
+      [{"name": "Entity"}, "SIMILAR", {"name": "Company"}],
+      [{"name": "Entity"}, "SIMILAR", {"name": "Entity"}]
+    ]
+  },
+  "relationshipCounts": {"employer": 3, "founded": 2, "name": 2, "uptime": 5, "SIMILAR": 1},
+  "propertyCounts": {"Person": {"born": 1, "name": 2}, "Company": {"founded": 2}}
+}

@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from odke.ontology.diff import SchemaChange
 from odke.ontology.diff import diff as schema_diff
 from odke.ontology.from_models import ontology_from_models
+from odke.ontology.from_neo4j import ontology_from_neo4j
 from odke.ontology.from_owl import ontology_from_owl
 from odke.ontology.load import (
     OntologyImportWarning,
@@ -261,6 +262,40 @@ class Ontology(BaseModel):
             name=name,
             version=version,
             language=language,
+            strict=strict,
+        )
+
+    @classmethod
+    def from_neo4j(
+        cls,
+        source: Any,
+        *,
+        auth: Any = None,
+        database: str | None = None,
+        name: str | None = None,
+        version: str = "0",
+        strict: bool = True,
+    ) -> Ontology:
+        """The schema of a live Neo4j graph, ranked by how much the graph uses it.
+
+        `source` is a driver, or a URI to connect to with `auth` — which needs
+        the `neo4j` extra. Labels become entity types, relationship types edge
+        predicates, node properties literal ones, via `db.schema.*` procedures
+        that only read. `importance` is set from counts in the graph, so a
+        snippet ranks the graph's most-used predicates first — the paper's
+        frequency signal. A graph `Neo4jSink` wrote reads back as its own shape.
+
+        What cannot be mapped is reported: `strict` raises `OntologyLoadError`,
+        `strict=False` loads the rest and warns with `OntologyImportWarning`.
+        See `odke.ontology.from_neo4j` for what the store cannot say.
+        """
+        return ontology_from_neo4j(
+            cls,
+            source,
+            auth=auth,
+            database=database,
+            name=name,
+            version=version,
             strict=strict,
         )
 
