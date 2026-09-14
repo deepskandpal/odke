@@ -14,9 +14,12 @@ over to exactly the same code.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from odke.ontology.load import OntologyLoadError, Source, load_dict, load_json, load_yaml
 
 Cardinality = Literal["single", "multi"]
 
@@ -142,6 +145,56 @@ class Ontology(BaseModel):
     # caller, so a sink can refuse to write an unreviewed schema into production.
     inferred: bool = False
 
+    @model_validator(mode="before")
+    @classmethod
+    def _names_default_to_keys(cls, value: Any) -> Any:
+        # `Person: {name: Person, ...}` says the name twice, and the second copy
+        # is where key/name mismatches come from. The key wins when the entry
+        # has no name of its own.
+        if not isinstance(value, Mapping):
+            return value
+        out = dict(value)
+        for section in ("types", "predicates"):
+            entries = out.get(section)
+            if isinstance(entries, Mapping):
+                out[section] = {
+                    key: {"name": key, **entry}
+                    if isinstance(entry, Mapping) and "name" not in entry
+                    else entry
+                    for key, entry in entries.items()
+                }
+        return out
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Ontology:
+        """An ontology from an already-parsed mapping, with load-time errors explained.
+
+        Each problem is one line naming the offending key by its dotted path
+        (`predicates.employer.range`) and what was found there; a misspelt key
+        gets a suggestion. That message, not a pydantic traceback, is what a
+        user has to act on.
+        """
+        return load_dict(cls, data)
+
+    @classmethod
+    def from_json(cls, source: Source) -> Ontology:
+        """An ontology from a JSON file path or a JSON string.
+
+        A `str` that looks like a document (a newline, or an opening brace) is
+        parsed as one; any other string is a path. Syntax errors carry a line
+        and column; everything else is explained as `from_dict` explains it.
+        """
+        return load_json(cls, source)
+
+    @classmethod
+    def from_yaml(cls, source: Source) -> Ontology:
+        """An ontology from a YAML file path or a YAML string.
+
+        PyYAML is imported here and only here, behind the `yaml` extra, so the
+        base install stays pydantic and typer (DECISIONS #1).
+        """
+        return load_yaml(cls, source)
+
     def predicates_for(self, type_name: str) -> list[Predicate]:
         """Predicates whose domain covers this type, including inherited ones.
 
@@ -263,4 +316,12 @@ _JSON_TYPES = {
     "datetime": "string",
 }
 
-__all__ = ["Cardinality", "EntityType", "Ontology", "OntologySnippet", "Predicate", "Qualifier"]
+__all__ = [
+    "Cardinality",
+    "EntityType",
+    "Ontology",
+    "OntologyLoadError",
+    "OntologySnippet",
+    "Predicate",
+    "Qualifier",
+]

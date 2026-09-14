@@ -40,7 +40,9 @@ rdf = ["rdflib>=7.0,<8"]
 networkx = ["networkx>=3.2,<4"]
 # Readers for the "whatever form possible" half of the promise.
 docs = ["beautifulsoup4>=4.12,<5", "pypdf>=5.0,<7", "lxml>=5.0,<7"]
-all = ["odke[llm,neo4j,rdf,networkx,docs]"]
+# `Ontology.from_yaml`; JSON needs nothing.
+yaml = ["pyyaml>=6,<7"]
+all = ["odke[llm,neo4j,rdf,networkx,docs,yaml]"]
 
 [project.urls]
 Homepage = "https://github.com/deepskandpal/odke"
@@ -61,6 +63,8 @@ dev = [
   # paths are executed in CI rather than skipped. No network is touched: the
   # tests replay recorded responses through a stub transport.
   "odke[all]",
+  # Stubs for mypy; PyYAML ships none.
+  "types-pyyaml>=6",
 ]
 
 [build-system]

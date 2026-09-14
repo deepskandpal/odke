@@ -7,7 +7,14 @@ generalised from one production knowledge graph to a general-purpose SDK. See
 NOTICE for the relationship to that paper.
 """
 
-from odke.ontology import EntityType, Ontology, OntologySnippet, Predicate, Qualifier
+from odke.ontology import (
+    EntityType,
+    Ontology,
+    OntologyLoadError,
+    OntologySnippet,
+    Predicate,
+    Qualifier,
+)
 from odke.pipeline import DoubleStageWarning, Pipeline
 from odke.stages import (
     Chunker,
@@ -68,6 +75,7 @@ __all__ = [
     "Loader",
     "Normalizer",
     "Ontology",
+    "OntologyLoadError",
     "OntologySnippet",
     "Pipeline",
     "PlatformProfile",
