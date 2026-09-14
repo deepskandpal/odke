@@ -5,18 +5,40 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 
+from odke.loaders.structured import CsvLoader, JsonlLoader, JsonLoader, ParquetLoader, TsvLoader
 from odke.loaders.text import MarkdownLoader, TextLoader
 from odke.stages import Loader, Source
 from odke.types import Document, SourceTier
 
 
 def default_loaders(
-    *, tier: SourceTier = SourceTier.UNVERIFIED, encoding: str = "utf-8"
+    *, tier: SourceTier = SourceTier.UNVERIFIED, encoding: str | None = None
 ) -> dict[str, Loader]:
-    """The suffix table `DirectoryLoader` starts from. Lower-case, dot included."""
-    text = TextLoader(tier=tier, encoding=encoding)
-    markdown = MarkdownLoader(tier=tier, encoding=encoding)
-    return {".txt": text, ".text": text, ".md": markdown, ".markdown": markdown}
+    """The suffix table `DirectoryLoader` starts from. Lower-case, dot included.
+
+    `encoding` left as None keeps each loader's own default: plain UTF-8 for
+    text, whose offsets are file offsets, and UTF-8 with any byte-order mark
+    stripped for records, whose offsets are into the rendering.
+    """
+    text_encoding = encoding or "utf-8"
+    record_encoding = encoding or "utf-8-sig"
+    text = TextLoader(tier=tier, encoding=text_encoding)
+    markdown = MarkdownLoader(tier=tier, encoding=text_encoding)
+    jsonl = JsonlLoader(tier=tier, encoding=record_encoding)
+    return {
+        ".txt": text,
+        ".text": text,
+        ".md": markdown,
+        ".markdown": markdown,
+        ".csv": CsvLoader(tier=tier, encoding=record_encoding),
+        ".tsv": TsvLoader(tier=tier, encoding=record_encoding),
+        ".json": JsonLoader(tier=tier, encoding=record_encoding),
+        ".jsonl": jsonl,
+        ".ndjson": jsonl,
+        # Claimed so a directory walk says "install the extra" rather than
+        # silently skipping the file.
+        ".parquet": ParquetLoader(tier=tier),
+    }
 
 
 class DirectoryLoader:
@@ -37,7 +59,7 @@ class DirectoryLoader:
         pattern: str = "**/*",
         *,
         tier: SourceTier = SourceTier.UNVERIFIED,
-        encoding: str = "utf-8",
+        encoding: str | None = None,
         loaders: Mapping[str, Loader] | None = None,
     ) -> None:
         self.pattern = pattern

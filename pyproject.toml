@@ -42,7 +42,10 @@ networkx = ["networkx>=3.2,<4"]
 docs = ["beautifulsoup4>=4.12,<5", "pypdf>=5.0,<7", "lxml>=5.0,<7"]
 # `Ontology.from_yaml`; JSON needs nothing.
 yaml = ["pyyaml>=6,<7"]
-all = ["odke[llm,neo4j,rdf,networkx,docs,yaml]"]
+# Columnar records. pyarrow is large, so reading Parquet is opt-in; the loader
+# imports it on first use and names this extra when it is missing.
+parquet = ["pyarrow>=15"]
+all = ["odke[llm,neo4j,rdf,networkx,docs,yaml,parquet]"]
 
 [project.urls]
 Homepage = "https://github.com/deepskandpal/odke"
