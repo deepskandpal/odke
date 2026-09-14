@@ -13,3 +13,5 @@ htmlcov/
 site/
 .env
 .DS_Store
+# What `odke run` writes when the examples are run in place.
+examples/e2e/out/

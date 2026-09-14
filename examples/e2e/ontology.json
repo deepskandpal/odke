@@ -1,0 +1,60 @@
+{
+  "name": "companies",
+  "version": "1",
+  "types": {
+    "Company": {
+      "description": "An incorporated business.",
+      "keys": ["legal_name"]
+    },
+    "Person": {
+      "description": "A named individual.",
+      "keys": ["full_name"]
+    }
+  },
+  "predicates": {
+    "legal_name": {
+      "description": "The company's name as registered.",
+      "domain": ["Company"],
+      "aliases": ["company"],
+      "importance": 1.0
+    },
+    "registration_number": {
+      "description": "The company's number in its national register.",
+      "domain": ["Company"],
+      "aliases": ["company number"],
+      "importance": 0.9
+    },
+    "founded": {
+      "description": "Date of incorporation.",
+      "domain": ["Company"],
+      "range": "date",
+      "aliases": ["incorporated"],
+      "importance": 0.8
+    },
+    "headquarters": {
+      "description": "City of the company's head office.",
+      "domain": ["Company"],
+      "aliases": ["head office"],
+      "importance": 0.7
+    },
+    "chief_executive": {
+      "description": "The person who runs the company.",
+      "domain": ["Company"],
+      "range": "Person",
+      "importance": 0.6
+    },
+    "full_name": {
+      "description": "The person's name as written.",
+      "domain": ["Person"],
+      "importance": 1.0
+    },
+    "employer": {
+      "description": "A company the person works or worked for.",
+      "domain": ["Person"],
+      "range": "Company",
+      "cardinality": "multi",
+      "qualifiers": {"until": {"description": "The year the person left."}},
+      "importance": 0.8
+    }
+  }
+}

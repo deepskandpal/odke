@@ -1,0 +1,26 @@
+{
+  "description": "Hand-authored extraction replies for the three chunks of the example corpus that reach the model. Written to exercise every path, not recorded from a provider: most facts are right, one quote is not in its passage (rejected for free), two facts cite a real span that does not support them (one contradicted, one not found), and two dates are copied as written rather than normalised.",
+  "interactions": [
+    {
+      "match": {"contains": ["makes picking arms for warehouses"]},
+      "response": {
+        "text": "{\"entities\": [{\"type\": \"Company\", \"name\": \"Halden Robotics Ltd\", \"facts\": [{\"predicate\": \"legal_name\", \"value\": \"Halden Robotics Ltd\", \"quote\": \"Halden Robotics Ltd\", \"start\": 18}, {\"predicate\": \"founded\", \"value\": \"10 March 2014\", \"quote\": \"founded on 10 March 2014\"}, {\"predicate\": \"headquarters\", \"value\": \"Sheffield\", \"quote\": \"headquartered in Sheffield\"}, {\"predicate\": \"headquarters\", \"value\": \"Leeds\", \"quote\": \"headquartered in Leeds\"}, {\"predicate\": \"chief_executive\", \"value\": \"Maya Okafor\", \"quote\": \"Its chief executive is Maya Okafor\"}]}, {\"type\": \"Person\", \"name\": \"Maya Okafor\", \"facts\": [{\"predicate\": \"full_name\", \"value\": \"Maya Okafor\", \"quote\": \"Maya Okafor\"}, {\"predicate\": \"employer\", \"value\": \"Corvid Analytics\", \"quote\": \"who joined from Corvid Analytics in 2018\", \"qualifiers\": {\"until\": \"2018\"}}, {\"predicate\": \"employer\", \"value\": \"Halden Robotics GmbH\", \"quote\": \"Halden Robotics GmbH, a Munich engineering firm\"}]}, {\"type\": \"Company\", \"name\": \"Halden Robotics GmbH\", \"facts\": [{\"predicate\": \"legal_name\", \"value\": \"Halden Robotics GmbH\", \"quote\": \"Halden Robotics GmbH\"}, {\"predicate\": \"headquarters\", \"value\": \"Leeds\", \"quote\": \"Halden Robotics GmbH, a Munich engineering firm\"}]}]}",
+        "model": "anthropic/claude-sonnet-5"
+      }
+    },
+    {
+      "match": {"contains": ["a data consultancy in Bristol"]},
+      "response": {
+        "text": "{\"entities\": [{\"type\": \"Company\", \"name\": \"Corvid Analytics\", \"facts\": [{\"predicate\": \"legal_name\", \"value\": \"Corvid Analytics\", \"quote\": \"Corvid Analytics\"}, {\"predicate\": \"headquarters\", \"value\": \"Bristol\", \"quote\": \"a data consultancy in Bristol\"}, {\"predicate\": \"chief_executive\", \"value\": \"Tomas Reyes\", \"quote\": \"run by Tomas Reyes since 2016\"}]}, {\"type\": \"Person\", \"name\": \"Maya Okafor\", \"facts\": [{\"predicate\": \"employer\", \"value\": \"Corvid Analytics\", \"quote\": \"Maya Okafor led its research team until 2018\", \"qualifiers\": {\"until\": \"2018\"}}, {\"predicate\": \"employer\", \"value\": \"Halden Robotics\", \"quote\": \"she left for Halden Robotics\"}]}, {\"type\": \"Person\", \"name\": \"Tomas Reyes\", \"facts\": [{\"predicate\": \"full_name\", \"value\": \"Tomas Reyes\", \"quote\": \"Tomas Reyes\"}, {\"predicate\": \"employer\", \"value\": \"Corvid Analytics\", \"quote\": \"run by Tomas Reyes\"}]}]}",
+        "model": "anthropic/claude-sonnet-5"
+      }
+    },
+    {
+      "match": {"contains": ["Company number: DE-551902"]},
+      "response": {
+        "text": "{\"entities\": [{\"type\": \"Company\", \"name\": \"Halden Robotics GmbH\", \"facts\": [{\"predicate\": \"legal_name\", \"value\": \"Halden Robotics GmbH\", \"quote\": \"Halden Robotics GmbH\"}, {\"predicate\": \"founded\", \"value\": \"1 June 2019\", \"quote\": \"1 June 2019\"}]}]}",
+        "model": "anthropic/claude-sonnet-5"
+      }
+    }
+  ]
+}

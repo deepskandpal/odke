@@ -1,0 +1,176 @@
+[
+  {
+    "match": "Claim: Halden Robotics Ltd (Company) — legal name — \"Halden Robotics Ltd\".\n\nPassage:\nHalden Robotics Ltd",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Halden Robotics Ltd (Company) — registration number — \"HR-104233\".\n\nPassage:\nHR-104233",
+    "response": {
+      "verdict": "not_found"
+    }
+  },
+  {
+    "match": "Claim: Halden Robotics Ltd (Company) — founded — \"2014-03-10\".\n\nPassage:\n2014-03-10",
+    "response": {
+      "verdict": "not_found"
+    }
+  },
+  {
+    "match": "Claim: Halden Robotics Ltd (Company) — headquarters — \"Leeds\".\n\nPassage:\nLeeds",
+    "response": {
+      "verdict": "not_found"
+    }
+  },
+  {
+    "match": "Claim: Halden Robotics GmbH (Company) — legal name — \"Halden Robotics GmbH\".\n\nPassage:\nHalden Robotics GmbH",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Halden Robotics GmbH (Company) — registration number — \"DE-551902\".\n\nPassage:\nDE-551902",
+    "response": {
+      "verdict": "not_found"
+    }
+  },
+  {
+    "match": "Claim: Halden Robotics GmbH (Company) — founded — \"2019-06-01\".\n\nPassage:\n2019-06-01",
+    "response": {
+      "verdict": "not_found"
+    }
+  },
+  {
+    "match": "Claim: Halden Robotics GmbH (Company) — headquarters — \"Munich\".\n\nPassage:\nMunich",
+    "response": {
+      "verdict": "not_found"
+    }
+  },
+  {
+    "match": "Claim: Corvid Analytics Ltd (Company) — legal name — \"Corvid Analytics Ltd\".\n\nPassage:\nCorvid Analytics Ltd",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Corvid Analytics Ltd (Company) — registration number — \"CA-220871\".\n\nPassage:\nCA-220871",
+    "response": {
+      "verdict": "not_found"
+    }
+  },
+  {
+    "match": "Claim: Corvid Analytics Ltd (Company) — founded — \"2011-09-22\".\n\nPassage:\n2011-09-22",
+    "response": {
+      "verdict": "not_found"
+    }
+  },
+  {
+    "match": "Claim: Corvid Analytics Ltd (Company) — headquarters — \"Bristol\".\n\nPassage:\nBristol",
+    "response": {
+      "verdict": "not_found"
+    }
+  },
+  {
+    "match": "Claim: Maya Okafor (Person) — full name — \"Maya Okafor\".\n\nPassage:\nMaya Okafor",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Maya Okafor (Person) — employer — Halden Robotics Ltd (Company).\n\nPassage:\nHalden Robotics Ltd",
+    "response": {
+      "verdict": "not_found"
+    }
+  },
+  {
+    "match": "Claim: Tomas Reyes (Person) — full name — \"Tomas Reyes\".\n\nPassage:\nTomas Reyes",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Tomas Reyes (Person) — employer — Corvid Analytics Ltd (Company).\n\nPassage:\nCorvid Analytics Ltd",
+    "response": {
+      "verdict": "not_found"
+    }
+  },
+  {
+    "match": "Claim: Halden Robotics GmbH (Company) — founded — \"1 June 2019\".\n\nPassage:\n1 June 2019",
+    "response": {
+      "verdict": "not_found"
+    }
+  },
+  {
+    "match": "Claim: Corvid Analytics (Company) — legal name — \"Corvid Analytics\".\n\nPassage:\nCorvid Analytics",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Corvid Analytics (Company) — headquarters — \"Bristol\".\n\nPassage:\na data consultancy in Bristol",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Corvid Analytics (Company) — chief executive — Tomas Reyes (Person).\n\nPassage:\nrun by Tomas Reyes since 2016",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Maya Okafor (Person) — employer — Corvid Analytics (Company).\n\nPassage:\nMaya Okafor led its research team until 2018",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Maya Okafor (Person) — employer — Halden Robotics (Company).\n\nPassage:\nshe left for Halden Robotics",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Tomas Reyes (Person) — employer — Corvid Analytics (Company).\n\nPassage:\nrun by Tomas Reyes",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Halden Robotics Ltd (Company) — founded — \"10 March 2014\".\n\nPassage:\nfounded on 10 March 2014",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Halden Robotics Ltd (Company) — headquarters — \"Sheffield\".\n\nPassage:\nheadquartered in Sheffield",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Halden Robotics Ltd (Company) — chief executive — Maya Okafor (Person).\n\nPassage:\nIts chief executive is Maya Okafor",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Maya Okafor (Person) — employer — Corvid Analytics (Company).\n\nPassage:\nwho joined from Corvid Analytics in 2018",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Maya Okafor (Person) — employer — Halden Robotics GmbH (Company).\n\nPassage:\nHalden Robotics GmbH, a Munich engineering firm",
+    "response": {
+      "verdict": "not_found"
+    }
+  },
+  {
+    "match": "Claim: Halden Robotics GmbH (Company) — headquarters — \"Leeds\".\n\nPassage:\nHalden Robotics GmbH, a Munich engineering firm",
+    "response": {
+      "verdict": "contradicted"
+    }
+  }
+]

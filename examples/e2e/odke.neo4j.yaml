@@ -1,0 +1,49 @@
+# The end-to-end example, written to Neo4j. Needs `pip install "odke[neo4j,yaml]"`
+# and a Neo4j 5.7 or later — docker-compose.yml starts one:
+#
+#   export NEO4J_URI=bolt://localhost:7687 NEO4J_USER=neo4j NEO4J_PASSWORD=...
+#   odke run examples/e2e/odke.neo4j.yaml --dry-run     # the DDL and the statements
+#   odke run examples/e2e/odke.neo4j.yaml
+#
+# Identical to odke.yaml but for the sink, the constrainer and bootstrap, which
+# applies the ontology's constraints before the first write.
+
+ontology: ontology.json
+
+inputs:
+  - path: corpus/register.csv
+    loader: {use: csv, tier: curated}
+  - path: corpus/staff.csv
+    loader: {use: csv, tier: authoritative}
+  - path: corpus/factsheet.md
+    loader: {use: markdown, tier: authoritative, modality: semi_structured}
+  - path: corpus/notes
+    loader: {use: directory, tier: community}
+
+pythonpath: [.]
+
+models:
+  extract: anthropic/claude-sonnet-5
+  ground: anthropic/claude-haiku-4-5-20251001
+  replay:
+    extract: recorded/extract.json
+    ground: recorded/ground.json
+  meter: true
+
+stages:
+  chunker: {use: sentence, max_words: 120}
+  extractor: hybrid
+  grounder: llm
+  normalizer: {use: value, person_types: [Person]}
+  resolver: e2e_stages:RegistryResolver
+  corroborator: signature
+  scorer: evidence
+  validator: verdict
+  sink:
+    use: neo4j
+    uri_env: NEO4J_URI
+    user_env: NEO4J_USER
+    password_env: NEO4J_PASSWORD                 # the password stays in the environment
+  constrainer: neo4j
+
+bootstrap: true
