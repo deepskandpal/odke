@@ -19,6 +19,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from odke.ontology.diff import SchemaChange
+from odke.ontology.diff import diff as schema_diff
 from odke.ontology.from_models import ontology_from_models
 from odke.ontology.load import OntologyLoadError, Source, load_dict, load_json, load_yaml
 from odke.ontology.validate import Diagnostic, diagnose
@@ -233,6 +235,17 @@ class Ontology(BaseModel):
         """
         return diagnose(self)
 
+    def diff(self, new: Ontology) -> list[SchemaChange]:
+        """What changed from this schema to `new`, each change marked breaking or not.
+
+        Once a graph is live an edited ontology is a migration, and the one
+        question worth asking of it is whether existing data and queries still
+        fit. So every change carries `breaking`: removed things, narrowed
+        ranges and domains, changed cardinality and identity. Widening and
+        documentation changes are listed too, as compatible.
+        """
+        return schema_diff(self, new)
+
     def predicates_for(self, type_name: str) -> list[Predicate]:
         """Predicates whose domain covers this type, including inherited ones.
 
@@ -363,4 +376,5 @@ __all__ = [
     "OntologySnippet",
     "Predicate",
     "Qualifier",
+    "SchemaChange",
 ]
