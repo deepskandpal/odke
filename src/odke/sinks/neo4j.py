@@ -478,6 +478,8 @@ class Neo4jSink:
         self.batch_size = batch_size
         # Decides whether a projected property is one value or a list.
         self.ontology = ontology
+        if ontology is not None:
+            ontology.warn_if_unreviewed("Neo4jSink will shape its writes")
 
     def statements(self, kg: KnowledgeGraph) -> list[Statement]:
         """What `write()` would run, without running it."""
@@ -502,7 +504,11 @@ class Neo4jSink:
         left as it is. Returns the DDL it ran; with `dry_run` it runs nothing,
         so a DBA can apply the same statements by hand. Check queries are not
         run here — they return violators, and `check()` is where to ask.
+
+        An ontology still marked `inferred` warns (`UnreviewedOntologyWarning`):
+        constraints compiled from a schema nobody reviewed are hard to take back.
         """
+        ontology.warn_if_unreviewed("Neo4jSink.bootstrap is compiling store constraints")
         self.ontology = ontology
         compiled = (constrainer or Neo4jConstrainer()).constrain(ontology)
         ddl = [s for s in compiled if not is_check(s)]

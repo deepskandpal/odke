@@ -61,7 +61,20 @@ def diagnose(ontology: Ontology) -> list[Diagnostic]:
     found += _aliases(
         "predicates", ((k, p.aliases) for k, p in ontology.predicates.items()), "predicate"
     )
+    found += _review(ontology)
     return found
+
+
+def _review(ontology: Ontology) -> Iterable[Diagnostic]:
+    """An inferred schema works; it is a warning that nobody has checked it (DECISIONS #8)."""
+    if ontology.inferred:
+        yield _warning(
+            "unreviewed",
+            "inferred",
+            "this schema was inferred from a corpus and has not been reviewed; check its "
+            "types, predicates and aliases against the evidence, then freeze it "
+            "(`odke ontology freeze`) before a graph depends on it",
+        )
 
 
 def _type(ontology: Ontology, key: str, entity_type: EntityType) -> Iterable[Diagnostic]:
