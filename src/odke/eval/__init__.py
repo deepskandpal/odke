@@ -17,9 +17,20 @@ every expected number in the tests is computed by hand, and no result on them
 says anything about any extractor, grounder or resolver. There is no corpus,
 no gold slice and no leaderboard. Brier, B-cubed and P/R/F1 are arithmetic,
 so the subpackage adds no dependency to the base install (DECISIONS #1).
+
+Cost needs no labels: `CostMeter` wraps the `LLMClient` a stage was built
+with, so a run is measured without any stage Protocol changing.
 """
 
 from odke.eval.calibration import evaluate_calibration, run_score
+from odke.eval.cost import (
+    CallRecord,
+    CostMeter,
+    CostReport,
+    MeteredClient,
+    StageCost,
+    compare_costs,
+)
 from odke.eval.extraction import evaluate_extraction, match_extraction, run_extract
 from odke.eval.formats import (
     LABEL_FORMATS,
@@ -48,18 +59,24 @@ __all__ = [
     "LABEL_FORMATS",
     "PREDICTION_FORMATS",
     "CalibrationLabel",
+    "CallRecord",
+    "CostMeter",
+    "CostReport",
     "GoldFact",
     "GroundingLabel",
     "LinkRow",
+    "MeteredClient",
     "PairLabel",
     "RouteLabel",
     "RoutePrediction",
+    "StageCost",
     "StageReport",
     "ValidationLabel",
     "ValidationPrediction",
     "as_triples",
     "assert_idempotent",
     "check_idempotency",
+    "compare_costs",
     "describe",
     "dump_jsonl",
     "evaluate_calibration",
