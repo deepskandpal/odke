@@ -67,8 +67,8 @@ odke is pre-alpha. This site documents what is on `main`:
 | Grounding: span verification and a second model | `odke.ground` | on `main` — [Grounding](grounding.md) |
 | Neo4j sink and constraint bootstrap | `odke.sinks.neo4j` | on `main` — [Neo4j sink](neo4j.md) |
 | Evaluation against your own labels | `odke.eval`, `odke eval` | on `main` — [Evaluation](evaluation.md) |
-| Loaders, the span-preserving chunker, pattern / LLM / hybrid extractors | `odke.loaders`, `odke.extract` | on `main`; its page is [coming](loaders-and-extraction.md) |
-| Normalise, resolve, corroborate, score | `odke.corroborate` | on `main`; its page is [coming](resolution-and-corroboration.md) |
+| Loaders (text, Markdown, records, HTML, PDF, DOCX), the sentence chunker, pattern / LLM / hybrid extractors | `odke.loaders`, `odke.chunking`, `odke.extract` | on `main` — [Loaders & extraction](loaders-and-extraction.md) |
+| Normalise, resolve, corroborate, score | `odke.corroborate` | on `main` — [Resolution & corroboration](resolution-and-corroboration.md) |
 
 ## Five minutes, no keys
 
