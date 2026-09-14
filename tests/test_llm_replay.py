@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from odke.llm import (
     Message,
     ModelSpec,
     ProviderError,
+    RecordedClient,
     RecordingClient,
     ReplayClient,
     ScriptedClient,
@@ -28,8 +30,17 @@ def _ask(text: str) -> list[Message]:
 
 
 @pytest.mark.parametrize("path", sorted(FIXTURES.glob("*.json")), ids=lambda p: p.name)
-def test_every_fixture_is_a_valid_cassette(path: Path) -> None:
-    """A hand-authored fixture with a typo fails here, not deep inside another test."""
+def test_every_fixture_loads_in_the_client_that_reads_it(path: Path) -> None:
+    """A hand-authored fixture with a typo fails here, not deep inside another test.
+
+    Two formats share the directory: a JSON list is `RecordedClient` entries, an
+    object is a cassette for `ReplayClient`.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, list):
+        assert data and all("match" in entry for entry in data)
+        RecordedClient.from_fixture(path)
+        return
     cassette = Cassette.load(path)
     assert cassette.description
     assert cassette.interactions
