@@ -36,6 +36,7 @@ from odke.eval.formats import (
     load_jsonl,
 )
 from odke.eval.report import StageReport
+from odke.eval.routing import evaluate_routing, run_route
 
 __all__ = [
     "LABEL_FORMATS",
@@ -52,5 +53,7 @@ __all__ = [
     "ValidationPrediction",
     "describe",
     "dump_jsonl",
+    "evaluate_routing",
     "load_jsonl",
+    "run_route",
 ]
