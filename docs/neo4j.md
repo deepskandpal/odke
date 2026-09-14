@@ -24,7 +24,7 @@ the live tests against `neo4j:5.26-community`.
 
 ## The shape, and why
 
-| odke | In Neo4j |
+| openodke | In Neo4j |
 |---|---|
 | `Entity` | `(:Type:Entity {key})`, `MERGE`d per type on `key`, with `label`, `aliases`, `external_id`, `resolution_method`, `resolution_score`, `resolution_linker` and the entity's attributes as properties |
 | edge `Fact` | `(s)-[:predicate {signature, …provenance}]->(o)`, `MERGE`d on the fact's signature |

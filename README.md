@@ -1,6 +1,8 @@
-# odke
+# openodke
 
-**The seam between text and any graph store.** odke turns documents — prose,
+An open implementation of ODKE+ (Apple, [arXiv:2509.04696](https://arxiv.org/abs/2509.04696)) — independent, and not affiliated with Apple.
+
+**The seam between text and any graph store.** openodke turns documents — prose,
 tables, records — into a knowledge graph held to your ontology, and writes it to
 Neo4j, to JSON Lines, or to a store of your own. It is the only pipeline that
 asks a second model whether the cited span supports the claim, and records the
@@ -130,7 +132,7 @@ config, or a stage of yours.
 Not on PyPI yet. Install from GitHub, naming extras the same way:
 
 ```bash
-pip install "git+https://github.com/deepskandpal/odke"                     # the base install
+pip install "openodke @ git+https://github.com/deepskandpal/odke"                # the base install
 pip install "openodke[yaml] @ git+https://github.com/deepskandpal/odke"         # + YAML configs
 pip install "openodke[neo4j,yaml] @ git+https://github.com/deepskandpal/odke"   # + the Neo4j sink
 pip install "openodke[all] @ git+https://github.com/deepskandpal/odke"          # everything
@@ -195,7 +197,7 @@ document's id is its path, so a label or a query can name it.
 
 ## Evaluate against your own labels
 
-odke ships the formats and the arithmetic for scoring every stage, and never a
+openodke ships the formats and the arithmetic for scoring every stage, and never a
 corpus: a number computed against the pipeline's own output measures nothing.
 Bring your own labelled dataset.
 
@@ -217,7 +219,7 @@ that with a `PlatformProfile`; a stage configured on both sides raises one
 `DoubleStageWarning` and still runs, because the two passes are not the same
 pass (DECISIONS #21). To hand a stage to the platform, pass
 `Delegated(to="neo4j-graphrag:FuzzyMatchResolver")` — or `{use: delegated, to: ...}`
-in a config — and odke stamps who did it wherever the data model has room, so
+in a config — and openodke stamps who did it wherever the data model has room, so
 the platform's work can be read back and scored with the same evaluator.
 
 ## Models and providers

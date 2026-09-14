@@ -253,7 +253,7 @@ out the fields at their defaults.
 ```yaml
 # INFERRED ONTOLOGY — review it before anything is extracted against it.
 #
-# Proposed from a corpus by odke; no person has checked it yet (DECISIONS #8).
+# Proposed from a corpus by openodke; no person has checked it yet (DECISIONS #8).
 # Each entry's evidence is in the comments above it. Edit or delete what is
 # wrong, run `odke ontology validate` on this file, then `odke ontology freeze`.
 #
