@@ -9,10 +9,11 @@ which is the right default for a caller who wants recall and will filter
 themselves.
 
 The order is the ODKE+ order with the seams the paper leaves implicit made
-explicit. Per chunk: route, extract, ground, normalise. Over the batch: resolve,
-corroborate, score, validate. Then write. Resolution runs before corroboration
-on purpose — `Fact.signature` merges on `subject.key`, so corroboration cannot
-repair a resolution failure.
+explicit. Per chunk: route, extract. Per document: ground, normalise — a whole
+document at once, so a grounder that can batch (`ground_many`) runs its calls
+concurrently. Over the batch: resolve, corroborate, score, validate. Then write.
+Resolution runs before corroboration on purpose — `Fact.signature` merges on
+`subject.key`, so corroboration cannot repair a resolution failure.
 
 Two of the thirteen stages are not on the `run()` path. `Constrainer` compiles
 the ontology into the store's own constraints and is exposed as `constraints()`
@@ -146,6 +147,7 @@ class Pipeline:
         stats = {"documents": len(docs), "chunks": 0, "skipped": 0, "deferred": 0, "refused": 0}
         facts: list[Fact] = []
         for doc in docs:
+            candidates: list[Fact] = []
             for chunk in self.chunker.chunk(doc):
                 stats["chunks"] += 1
                 verdict = self.router.route(chunk)
@@ -156,9 +158,9 @@ class Pipeline:
                     if verdict.scope == "document":
                         break
                     continue
-                for candidate in self.extractor.extract(chunk, self.ontology):
-                    grounded = self.grounder.ground(candidate, doc)
-                    facts.append(self.normalizer.normalize(grounded))
+                candidates.extend(self.extractor.extract(chunk, self.ontology))
+            for grounded in _ground(self.grounder, candidates, doc):
+                facts.append(self.normalizer.normalize(grounded))
 
         resolved, links = self.resolver.resolve(facts, _entities_of(facts))
         scored = [self.scorer.score(f) for f in self.corroborator.corroborate(resolved)]
@@ -187,6 +189,28 @@ class Pipeline:
         which sink is the caller's business.
         """
         return self.constrainer.constrain(self.ontology)
+
+
+def _ground(grounder: Grounder, facts: list[Fact], doc: Document) -> list[Fact]:
+    """One document's candidates through the grounder, batched when it can batch.
+
+    A grounder that also has `ground_many(facts, doc)` gets the document's facts
+    in one call and may run its model calls concurrently; any other grounder is
+    called per fact, as the Protocol says. Either way one fact comes back for
+    each that went in: a grounder stamps, it never drops (DECISIONS #20).
+    """
+    if not facts:
+        return []
+    many = getattr(grounder, "ground_many", None)
+    if not callable(many):
+        return [grounder.ground(f, doc) for f in facts]
+    grounded = list(many(facts, doc))
+    if len(grounded) != len(facts):
+        raise ValueError(
+            f"{type(grounder).__name__}.ground_many returned {len(grounded)} facts for "
+            f"{len(facts)}; a grounder stamps a verdict, it never drops a fact"
+        )
+    return grounded
 
 
 def _is_odkes_own(stage: object, default: type) -> bool:

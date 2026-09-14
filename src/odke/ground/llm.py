@@ -19,8 +19,12 @@ import json
 import logging
 import re
 import threading
+import time
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from odke.ground.retry import RetryPolicy, call_with_retry
 from odke.ground.span import Counts, SpanGrounder, located
 from odke.llm.base import Completion, LLMClient, Message, ModelSpec
 from odke.llm.roles import ModelRoles
@@ -132,22 +136,49 @@ class LLMGrounder:
 
     `roles.ground` names the model; `client` overrides how it is reached, which
     is how the suite replays recorded answers. Everything the stage did is in
-    `stats`: calls made, each verdict's count, answers that could not be read,
-    tokens, and the span check's own counts under `"span"`.
+    `stats`: calls made and retried, calls that failed, each verdict's count,
+    answers that could not be read, tokens, and the span check's own counts
+    under `"span"`.
 
-    A verdict already on the fact stands and costs no call. That is what lets an
-    interrupted run resume from a partially grounded set.
+    A call is retried on transient errors under `retry`; when it still fails, or
+    fails in a way retrying cannot fix, the fact is left `UNCHECKED` and logged.
+    `ground` never raises for a provider failure — one bad call must not lose a
+    run of ten thousand — and an `UNCHECKED` fact is exactly what the next run
+    picks up, because a verdict already on a fact stands and costs no call.
+
+    `ground_many` is the batched path the pipeline uses when it is there: a
+    document's facts at once, with at most `max_workers` model calls in flight.
+    Both clients are synchronous and the wait is network I/O, so a thread pool
+    is the right tool and needs nothing outside the standard library.
     """
 
-    def __init__(self, roles: ModelRoles | None = None, *, client: LLMClient | None = None) -> None:
+    def __init__(
+        self,
+        roles: ModelRoles | None = None,
+        *,
+        client: LLMClient | None = None,
+        max_workers: int = 8,
+        retry: RetryPolicy | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        if max_workers < 1:
+            raise ValueError(f"max_workers must be at least 1, got {max_workers}")
         self.roles = roles if roles is not None else ModelRoles()
         self.spec: ModelSpec = self.roles.ground
         self.client: LLMClient = client if client is not None else self.roles.client_for("ground")
+        self.max_workers = max_workers
+        self.retry = retry if retry is not None else RetryPolicy()
         self.span_grounder = SpanGrounder()
+        self._sleep = sleep
+        # The ceiling lives on the call, not the pool, so it also holds for a
+        # caller who runs several `ground_many`s — or plain `ground`s — at once.
+        self._slots = threading.BoundedSemaphore(max_workers)
         self._counts = Counts(
             "facts",
             "skipped",
             "calls",
+            "retries",
+            "failed",
             "unparseable",
             "prompt_tokens",
             "completion_tokens",
@@ -157,25 +188,78 @@ class LLMGrounder:
         self._cost: float | None = None
 
     def ground(self, fact: Fact, doc: Document) -> Fact:
+        prepared, passage = self._prepare(fact, doc)
+        return prepared if passage is None else self._ask(prepared, passage)
+
+    def ground_many(self, facts: Sequence[Fact], doc: Document) -> list[Fact]:
+        """One document's facts, with the model calls run concurrently.
+
+        The span checks run first, here and in order, and only the facts that
+        survive them are handed to the pool. One fact comes back for each that
+        went in, in the same order: a failed call leaves its own fact
+        `UNCHECKED` and the rest of the batch carries on. A client used here
+        must be thread-safe — both built-in clients are; `ScriptedClient`
+        answers by position and is not, which is what `RecordedClient` is for.
+        """
+        out: list[Fact] = []
+        pending: list[tuple[int, Fact, str]] = []
+        for index, fact in enumerate(facts):
+            prepared, passage = self._prepare(fact, doc)
+            out.append(prepared)
+            if passage is not None:
+                pending.append((index, prepared, passage))
+        if len(pending) == 1:
+            index, fact, passage = pending[0]
+            out[index] = self._ask(fact, passage)
+        elif pending:
+            workers = min(self.max_workers, len(pending))
+            with ThreadPoolExecutor(workers, thread_name_prefix="odke-ground") as pool:
+                futures = [(i, pool.submit(self._ask, f, p)) for i, f, p in pending]
+                for index, future in futures:
+                    out[index] = future.result()
+        return out
+
+    def _prepare(self, fact: Fact, doc: Document) -> tuple[Fact, str | None]:
+        """The fact after the free check, and the passage to ask about — or None
+        when there is nothing left to ask."""
         if fact.verdict is not GroundingVerdict.UNCHECKED:
             self._counts.bump("skipped")
-            return fact
+            return fact, None
         self._counts.bump("facts")
         checked = self.span_grounder.ground(fact, doc)
         if checked.verdict is not GroundingVerdict.UNCHECKED:
-            return checked
+            return checked, None
         evidence = located(checked, doc)
         # The span check leaves a fact UNCHECKED only when something located it,
         # so this guard is for the type checker, not a path that runs.
         if evidence is None or evidence.span is None:  # pragma: no cover
-            return checked
-        return self._ask(checked, evidence.span.resolve(doc))
+            return checked, None
+        return checked, evidence.span.resolve(doc)
 
     def _ask(self, fact: Fact, passage: str) -> Fact:
-        self._counts.bump("calls")
-        completion = self.client.complete(
-            build_messages(fact, passage), spec=self.spec, schema=GROUNDING_SCHEMA
-        )
+        messages = build_messages(fact, passage)
+
+        def on_retry(attempt: int, exc: BaseException, wait: float) -> None:
+            self._counts.bump("retries")
+            log.info(
+                "retrying grounding call for fact %s in %.2fs after attempt %d: %s",
+                fact.id,
+                wait,
+                attempt,
+                exc,
+            )
+
+        try:
+            completion = call_with_retry(
+                lambda: self._complete(messages),
+                self.retry,
+                sleep=self._sleep,
+                on_retry=on_retry,
+            )
+        except Exception as exc:  # isolation: one failed call never fails the batch
+            self._counts.bump("failed")
+            log.warning("grounding call failed for fact %s, left unchecked: %s", fact.id, exc)
+            return fact
         self._account(completion)
         verdict = parse_verdict(completion)
         if verdict is None:
@@ -186,6 +270,11 @@ class LLMGrounder:
             return fact
         self._counts.bump(verdict.value)
         return fact.model_copy(update={"verdict": verdict})
+
+    def _complete(self, messages: list[Message]) -> Completion:
+        with self._slots:
+            self._counts.bump("calls")
+            return self.client.complete(messages, spec=self.spec, schema=GROUNDING_SCHEMA)
 
     def _account(self, completion: Completion) -> None:
         self._counts.bump("prompt_tokens", completion.prompt_tokens)
