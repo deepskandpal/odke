@@ -1,0 +1,23 @@
+{
+  "description": "Hand-authored. Two interactions matched by content, one pinned to a model, for the replay harness's own tests.",
+  "interactions": [
+    {
+      "match": {"contains": ["capital of France"]},
+      "response": {
+        "text": "{\"answer\": \"Paris\"}",
+        "model": "claude-sonnet-5",
+        "prompt_tokens": 12,
+        "completion_tokens": 5,
+        "cost_usd": 0.00021
+      }
+    },
+    {
+      "match": {"model": "ollama/llama3.1", "contains": ["capital of Italy"]},
+      "response": {
+        "text": "Rome.",
+        "prompt_tokens": 12,
+        "completion_tokens": 2
+      }
+    }
+  ]
+}
