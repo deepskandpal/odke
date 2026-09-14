@@ -38,6 +38,7 @@ from odke.eval.formats import (
 )
 from odke.eval.grounding import evaluate_grounding, grounding_ablation, kept, run_ground
 from odke.eval.report import StageReport
+from odke.eval.resolution import as_triples, evaluate_resolution, links_from_clusters
 from odke.eval.routing import evaluate_routing, run_route
 
 __all__ = [
@@ -53,13 +54,16 @@ __all__ = [
     "StageReport",
     "ValidationLabel",
     "ValidationPrediction",
+    "as_triples",
     "describe",
     "dump_jsonl",
     "evaluate_extraction",
     "evaluate_grounding",
+    "evaluate_resolution",
     "evaluate_routing",
     "grounding_ablation",
     "kept",
+    "links_from_clusters",
     "load_jsonl",
     "match_extraction",
     "run_extract",
