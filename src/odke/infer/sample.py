@@ -39,7 +39,9 @@ import random
 from collections import Counter, deque
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import TypeVar
+from urllib.parse import unquote, urlparse
 
 from pydantic import BaseModel, ConfigDict
 
@@ -115,13 +117,16 @@ def words_in(text: str) -> int:
 
 
 def document_key(doc: Document) -> str:
-    """What a document is, independent of the id a loader drew for it.
+    """What a document is, independent of the id a loader drew and of where it lives.
 
-    The row index is part of it, so two identical rows of one CSV stay two
-    documents.
+    The file's name, not its full URI: the same files copied to another
+    directory, another machine or another test's temporary path must sample the
+    same way. The row index is part of it, so two identical rows of one CSV stay
+    two documents.
     """
+    name = PurePosixPath(unquote(urlparse(doc.uri).path)).name if doc.uri else ""
     digest = hashlib.sha256()
-    for part in (doc.uri or "", str(doc.metadata.get("row_index", "")), doc.text):
+    for part in (name, str(doc.metadata.get("row_index", "")), doc.text):
         digest.update(part.encode("utf-8", "surrogatepass"))
         digest.update(b"\0")
     return digest.hexdigest()[:16]

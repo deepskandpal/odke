@@ -39,6 +39,17 @@ def test_the_same_corpus_and_seed_give_the_same_sample_across_loads(tmp_path: Pa
     assert _keys(other.record) != _keys(first.record)
 
 
+def test_the_sample_does_not_depend_on_where_the_corpus_lives(tmp_path: Path) -> None:
+    """The same files in another directory — another machine, another tmp path."""
+    (tmp_path / "here").mkdir()
+    (tmp_path / "somewhere" / "much" / "deeper").mkdir(parents=True)
+    here = _corpus_dir(tmp_path / "here")
+    there = _corpus_dir(tmp_path / "somewhere" / "much" / "deeper")
+    first = sample_corpus(DirectoryLoader().load(here), words=600, seed=7)
+    second = sample_corpus(DirectoryLoader().load(there), words=600, seed=7)
+    assert _keys(first.record) == _keys(second.record)
+
+
 def test_the_budget_holds_and_every_chunk_is_a_slice_of_its_document(tmp_path: Path) -> None:
     sample = sample_corpus(DirectoryLoader().load(_corpus_dir(tmp_path)), words=500, seed=1)
     assert 0 < sample.record.words <= 500
