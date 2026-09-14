@@ -92,20 +92,21 @@ def test_qualifier_changes_break_when_they_move_fact_identity() -> None:
         }
     )
     assert _changes(old, new) == [
-        # The implied scope followed the identity qualifiers, and lost `tier`.
+        # The scope follows the identity qualifiers, so it lost `tier`.
         ("changed", "predicates.price.cardinality_scope", True),
         ("changed", "predicates.price.qualifiers.tier.identity", True),
         ("removed", "predicates.price.qualifiers.note", True),
         ("added", "predicates.price.qualifiers.currency", False),
         ("added", "predicates.price.qualifiers.region", True),
     ]
-    assert old.diff(new)[0].detail.startswith("implied (tier) → implied (region)")
+    assert old.diff(new)[0].detail.startswith("(tier) → (region)")
 
 
-def test_a_scope_that_drops_a_key_breaks_and_one_that_adds_a_key_does_not() -> None:
-    qualifiers = {"tier": {"identity": True}, "region": {"identity": True}}
+def test_a_scope_change_breaks_only_when_the_compiled_scope_loses_a_key() -> None:
+    """Identity keys are always in scope, so spelling them out changes no constraint."""
+    identity = {"tier": {"identity": True}, "region": {"identity": True}}
 
-    def scoped(scope: tuple[str, ...] | None) -> Ontology:
+    def scoped(scope: tuple[str, ...], qualifiers: dict = identity) -> Ontology:
         return Ontology(
             predicates={
                 "price": Predicate(name="price", qualifiers=qualifiers, cardinality_scope=scope)
@@ -113,9 +114,12 @@ def test_a_scope_that_drops_a_key_breaks_and_one_that_adds_a_key_does_not() -> N
         )
 
     path = "predicates.price.cardinality_scope"
-    assert _changes(scoped(None), scoped(("region", "tier"))) == [("changed", path, False)]
-    assert _changes(scoped(("region", "tier")), scoped(("tier",))) == [("changed", path, True)]
-    assert _changes(scoped(("tier",)), scoped(("region", "tier"))) == [("changed", path, False)]
+    assert _changes(scoped(()), scoped(("region", "tier"))) == [("changed", path, False)]
+    assert _changes(scoped(("region", "tier")), scoped(("tier",))) == [("changed", path, False)]
+    # A key only the declaration carried is a real narrowing of what the store groups by.
+    declared_only = {"tier": {"identity": True}, "region": {}}
+    before, after = scoped(("region",), declared_only), scoped((), declared_only)
+    assert _changes(before, after) == [("changed", path, True)]
 
 
 def test_a_narrowed_domain_or_a_new_requirement_breaks_and_the_reverse_does_not() -> None:

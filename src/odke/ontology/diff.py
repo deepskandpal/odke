@@ -101,16 +101,20 @@ def _predicate(
         yield _changed(
             f"{path}.cardinality", old.cardinality, new.cardinality, breaking=True, why=why
         )
-    if old.cardinality_scope != new.cardinality_scope or old.scope_keys != new.scope_keys:
+    if old.scope_keys != new.scope_keys:
+        # Compared resolved: the store groups by identity keys plus declared ones,
+        # so only a key leaving that tuple can turn stored values into conflicts.
         lost = [k for k in old.scope_keys if k not in new.scope_keys]
         why = f"no longer unique per {', '.join(lost)}, so existing values may conflict"
         yield _changed(
             f"{path}.cardinality_scope",
-            _Shown(_scope(old)),
-            _Shown(_scope(new)),
+            old.scope_keys,
+            new.scope_keys,
             breaking=bool(lost),
             why=why if lost else "",
         )
+    else:
+        yield from _field(f"{path}.cardinality_scope", old.cardinality_scope, new.cardinality_scope)
     if old.domain != new.domain:
         dropped = [d for d in old.domain if d not in new.domain]
         narrowed = bool(new.domain) and (not old.domain or bool(dropped))
@@ -184,12 +188,6 @@ def _range(path: str, old: str, new: str, ontology: Ontology) -> SchemaChange:
 
 class _Shown(str):
     """A value already rendered for display, so `_show` leaves it alone."""
-
-
-def _scope(predicate: Predicate) -> str:
-    if predicate.cardinality_scope is None:
-        return f"implied {_show(predicate.scope_keys)}"
-    return _show(predicate.cardinality_scope)
 
 
 def _domain(domain: tuple[str, ...]) -> str:

@@ -104,9 +104,9 @@ def test_the_wide_golden_is_the_truncation_case_the_paper_is_about() -> None:
     assert len(snippet.json_schema()["properties"]) == 25
 
 
-def test_the_scoped_golden_resolves_cardinality_scope_all_three_ways() -> None:
+def test_the_scoped_golden_resolves_cardinality_scope() -> None:
     predicates = _load(FIXTURES / "scoped.yaml").predicates
-    assert predicates["price"].cardinality_scope is None
+    assert predicates["price"].cardinality_scope == ()
     assert predicates["price"].scope_keys == ("tier",)
     assert predicates["uptime"].scope_keys == ("percentile", "region")
     assert predicates["hq_country"].scope_keys == ()
@@ -118,7 +118,6 @@ ALL_CODES = {
     "key-outside-domain",
     "name-mismatch",
     "scope-not-identity",
-    "scope-omits-identity",
     "scope-undeclared-qualifier",
     "unknown-domain",
     "unknown-key",
@@ -139,7 +138,6 @@ PATHOLOGICAL = [
     ("unknown-domain", "predicates.half.domain[1]", "warning"),
     ("scope-not-identity", "predicates.price.cardinality_scope[0]", "error"),
     ("scope-undeclared-qualifier", "predicates.price.cardinality_scope[1]", "error"),
-    ("scope-omits-identity", "predicates.price.cardinality_scope", "warning"),
     ("duplicate-alias", "types.Employer.aliases[0]", "error"),
     ("duplicate-alias", "predicates.works_for.aliases[0]", "error"),
 ]
@@ -188,8 +186,8 @@ def _predicates(draw: st.DrawFn, name: str, type_names: list[str]) -> Predicate:
         domain=tuple(draw(st.lists(st.sampled_from(pool), max_size=3))),
         range=draw(st.sampled_from(pool)),
         cardinality=draw(st.sampled_from(["single", "multi"])),
-        cardinality_scope=draw(
-            st.none() | st.lists(st.sampled_from(scope_pool), unique=True, max_size=3).map(tuple)
+        cardinality_scope=tuple(
+            draw(st.lists(st.sampled_from(scope_pool), unique=True, max_size=3))
         ),
         required=draw(st.booleans()),
         qualifiers=qualifiers,

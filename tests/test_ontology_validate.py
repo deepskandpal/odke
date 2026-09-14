@@ -166,19 +166,15 @@ def test_a_scope_may_only_name_identity_bearing_qualifiers() -> None:
     assert _found(ontology) == [
         ("scope-not-identity", "predicates.reconcilable.cardinality_scope[2]", "error"),
         ("scope-undeclared-qualifier", "predicates.typo.cardinality_scope[0]", "error"),
-        ("scope-omits-identity", "predicates.typo.cardinality_scope", "warning"),
     ]
     assert "did you mean 'tier'?" in ontology.validate()[1].message
 
 
-def test_a_flat_scope_over_identity_qualifiers_warns_only_when_single_valued() -> None:
-    """p50 and p95 are two claims; one value per subject would call them a conflict."""
-    flat = Predicate(name="price", qualifiers=_QUALIFIERS, cardinality_scope=())
-    assert _found(Ontology(predicates={"price": flat})) == [
-        ("scope-omits-identity", "predicates.price.cardinality_scope", "warning")
-    ]
-    many = flat.model_copy(update={"cardinality": "multi"})
-    assert Ontology(predicates={"price": many}).validate() == []
+def test_a_scope_naming_only_some_identity_keys_is_clean() -> None:
+    """The identity keys are always in scope, so leaving one out cannot cause a false conflict."""
+    partial = Predicate(name="price", qualifiers=_QUALIFIERS, cardinality_scope=("tier",))
+    assert Ontology(predicates={"price": partial}).validate() == []
+    assert partial.scope_keys == ("region", "tier")
 
 
 # --------------------------------------------------------------------------- #
