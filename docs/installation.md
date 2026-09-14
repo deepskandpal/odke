@@ -26,6 +26,8 @@ On the base install you already have:
 - the data model, the thirteen stage Protocols and `Pipeline`;
 - ontologies from dicts, JSON and pydantic models, plus `validate`, `diff`,
   snippets and the `odke ontology` commands;
+- the loaders in `odke.loaders` (text, Markdown, directories, JSON, JSONL, CSV,
+  TSV; Parquet needs an extra) and the extractors in `odke.extract`;
 - `SpanGrounder`, and `LLMGrounder` over the standard-library OpenAI-compatible
   client;
 - the normalise, resolve, corroborate and score stages in `odke.corroborate`;
@@ -40,9 +42,10 @@ On the base install you already have:
 | `llm` | `litellm>=1.55,<2` | Model strings the built-in client does not serve (see below) |
 | `neo4j` | `neo4j>=5.20,<7` | `Neo4jSink` connecting to a server |
 | `yaml` | `pyyaml>=6,<7` | `Ontology.from_yaml`, and the `odke ontology` commands on `.yaml` / `.yml` files |
+| `parquet` | `pyarrow>=15` | `ParquetLoader`, which imports pyarrow only when it reads a file |
 | `rdf` | `rdflib>=7.0,<8` | Nothing yet: `RdfSink` and `Ontology.from_owl` are planned for v0.2 |
 | `networkx` | `networkx>=3.2,<4` | Nothing yet: `NetworkXSink` is planned for v0.2 |
-| `docs` | `beautifulsoup4`, `pypdf`, `lxml` | Nothing yet: document readers (HTML, PDF) are planned for v0.2. This extra is not this site's tooling. |
+| `docs` | `beautifulsoup4`, `pypdf`, `lxml` | Nothing yet: HTML and PDF readers are planned for v0.2. This extra is not this site's tooling. |
 | `all` | every extra above | |
 
 ### Which model strings need `llm`
@@ -70,6 +73,7 @@ the fix:
 |---|---|
 | `Ontology.from_yaml` | `ImportError: PyYAML is not installed. Run: pip install "odke[yaml]"` |
 | `Neo4jSink(uri, auth)` | `ImportError: the neo4j driver is not installed; run: pip install 'odke[neo4j]'` |
+| `ParquetLoader`, reading a file | `ImportError: reading Parquet needs pyarrow. Run: pip install "odke[parquet]"` |
 | a model string that needs litellm | `ProviderNotInstalled`, listing `pip install "odke[llm]"`, a `base_url`, or `odke.llm.register` |
 
 ## Working on odke
