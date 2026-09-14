@@ -1,0 +1,29 @@
+# Plain RDFS, no OWL: rdfs:Class and rdf:Property. Whether a property is an
+# edge or a literal is decided by its range, since RDFS does not say.
+@prefix :     <urn:example:library:> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+:Work a rdfs:Class ;
+    rdfs:label "Work" ;
+    rdfs:comment "A creative work." .
+
+:Book rdfs:subClassOf :Work ;
+    rdfs:label "Book" .
+
+:Author a rdfs:Class .
+
+:author a rdf:Property ;
+    rdfs:domain :Work ;
+    rdfs:range :Author .
+
+:title a rdf:Property ;
+    rdfs:domain :Work ;
+    rdfs:range rdfs:Literal .
+
+:pages rdfs:domain :Book ;
+    rdfs:range xsd:int .
+
+:isbn a rdf:Property ;
+    rdfs:domain :Book .

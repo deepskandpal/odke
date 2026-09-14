@@ -1,0 +1,52 @@
+# One of everything the ontology model cannot hold. Each must be reported by
+# the subject it was found on; none may be dropped silently.
+@prefix :     <https://example.org/org#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<https://example.org/org> a owl:Ontology ;
+    owl:imports <https://example.org/base> .
+
+:Person a owl:Class ;
+    rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :employer ; owl:maxCardinality 1 ] ;
+    owl:disjointWith :Company .
+
+:Company a owl:Class ;
+    owl:equivalentClass :Organisation .
+
+:Organisation a owl:Class .
+
+:employer a owl:ObjectProperty ;
+    rdfs:domain :Person ;
+    rdfs:range :Company ;
+    owl:inverseOf :employs .
+
+:employs a owl:ObjectProperty , owl:InverseFunctionalProperty ;
+    rdfs:domain :Company ;
+    rdfs:range :Person .
+
+:manages a owl:ObjectProperty , owl:TransitiveProperty ;
+    rdfs:subPropertyOf :employs ;
+    rdfs:domain :Person ;
+    rdfs:range :Person .
+
+:partner a owl:ObjectProperty ;
+    rdfs:domain :Company ;
+    rdfs:range [ a owl:Class ; owl:unionOf ( :Person :Company ) ] .
+
+:knows a owl:ObjectProperty ;
+    rdfs:domain :Person .
+
+:born_in_year a owl:DatatypeProperty ;
+    rdfs:domain :Person ;
+    rdfs:range xsd:gYear .
+
+:name a owl:DatatypeProperty ;
+    rdfs:domain :Person ;
+    rdfs:range xsd:string .
+
+:acme a :Company .
+
+[] a owl:AllDisjointClasses ;
+    owl:members ( :Person :Company ) .

@@ -1,0 +1,81 @@
+# The OWL rendering of `_people()` in tests/test_ontology_owl.py, written by
+# hand the way an ontology editor would: one class per block, a union domain,
+# a hasKey, labels in two languages. `from_owl` must read back exactly that
+# ontology — types, parents, keys, aliases, domains, ranges and cardinality.
+@prefix :     <https://example.org/people#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+
+<https://example.org/people> a owl:Ontology ;
+    rdfs:label "people" ;
+    owl:versionInfo "2" ;
+    dct:creator "odke tests" .
+
+:Agent a owl:Class ;
+    rdfs:subClassOf owl:Thing ;
+    rdfs:comment "Anything that can act." .
+
+:Person a owl:Class ;
+    rdfs:subClassOf :Agent ;
+    rdfs:comment "An individual human being."@en , "Un être humain."@fr ;
+    skos:altLabel "Human"@en , "Individual" , "Mensch"@de .
+
+:Scientist a owl:Class ;
+    rdfs:subClassOf :Person ;
+    rdfs:label "Research scientist" .
+
+:Company a owl:Class ;
+    rdfs:subClassOf :Agent ;
+    rdfs:label "Company" ;
+    rdfs:comment "An incorporated organisation." ;
+    owl:hasKey ( :legal_name ) .
+
+:employer a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "Employer" ;
+    rdfs:comment "Where they work." ;
+    rdfs:domain :Person ;
+    rdfs:range :Company .
+
+:past_employers a owl:ObjectProperty ;
+    rdfs:domain :Person ;
+    rdfs:range :Company .
+
+:name a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( :Person :Company ) ] ;
+    rdfs:range xsd:string ;
+    skos:altLabel "full name" .
+
+:legal_name a owl:DatatypeProperty , owl:FunctionalProperty ;
+    skos:prefLabel "Legal name"@en ;
+    skos:definition "Name on the certificate of incorporation." ;
+    rdfs:domain :Company ;
+    rdfs:range xsd:string .
+
+:founded a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:domain :Company ;
+    rdfs:range xsd:date .
+
+:headcount a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:domain :Company ;
+    rdfs:range xsd:nonNegativeInteger .
+
+:revenue a owl:DatatypeProperty ;
+    rdfs:domain :Company ;
+    rdfs:range xsd:decimal .
+
+:listed a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:domain :Company ;
+    rdfs:range xsd:boolean .
+
+:updated_at a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:range xsd:dateTime .
+
+:field a owl:DatatypeProperty ;
+    rdfs:domain :Scientist .
+
+:homepage a owl:AnnotationProperty ;
+    rdfs:comment "Documentation, not schema: never a predicate." .
