@@ -2,6 +2,8 @@
 
 An open implementation of ODKE+ (Apple, [arXiv:2509.04696](https://arxiv.org/abs/2509.04696)) — independent, and not affiliated with Apple.
 
+[PyPI](https://pypi.org/project/openodke/) · [Documentation](https://deepskandpal.github.io/odke/) · [Changelog](CHANGELOG.md) — `pip install openodke`
+
 **The seam between text and any graph store.** openodke turns documents — prose,
 tables, records — into a knowledge graph held to your ontology, and writes it to
 Neo4j, to JSON Lines, or to a store of your own. It is the only pipeline that
@@ -12,13 +14,11 @@ Every fact carries the document, the character span, the source tier and the
 grounding verdict that produced it, so *why is this edge in my graph?* is a query,
 not an investigation.
 
-> **Status: v0.1, not yet on PyPI.** The data model, ontology I/O, loaders and
-> extraction, grounding and corroboration, the Neo4j sink, `odke run` and the
-> evaluation harness are on `main` and tested (milestones M0–M4 and M6 in
-> [ROADMAP.md](ROADMAP.md)). Much of v0.2 has landed on `main` too — HTML, PDF
-> and DOCX loaders, RDF, NetworkX and bulk sinks, OWL and Neo4j ontology import.
-> The PyPI release (M7) waits on Trusted Publishing; until then, install from
-> GitHub.
+> **Status: 0.1.0, released on [PyPI](https://pypi.org/project/openodke/) on
+> 14 September 2026.** Every milestone in [ROADMAP.md](ROADMAP.md) has shipped:
+> the data model, ontology I/O, import and inference, loaders (text, Markdown,
+> records, HTML, PDF, DOCX) and extraction, grounding and corroboration, the
+> Neo4j, RDF, NetworkX and bulk sinks, `odke run`, and the evaluation harness.
 
 ## Quickstart
 
@@ -129,14 +129,16 @@ config, or a stage of yours.
 
 ## Install
 
-Not on PyPI yet. Install from GitHub, naming extras the same way:
+From [PyPI](https://pypi.org/project/openodke/):
 
 ```bash
-pip install "openodke @ git+https://github.com/deepskandpal/odke"                # the base install
-pip install "openodke[yaml] @ git+https://github.com/deepskandpal/odke"         # + YAML configs
-pip install "openodke[neo4j,yaml] @ git+https://github.com/deepskandpal/odke"   # + the Neo4j sink
-pip install "openodke[all] @ git+https://github.com/deepskandpal/odke"          # everything
+pip install openodke                   # the base install
+pip install "openodke[yaml]"           # + YAML configs
+pip install "openodke[neo4j,yaml]"     # + the Neo4j sink
+pip install "openodke[all]"            # everything
 ```
+
+For unreleased changes on `main`: `pip install "openodke @ git+https://github.com/deepskandpal/odke"`.
 
 The base install is pydantic and typer, and talks to nothing: the data model,
 the ontology compiler, the text, Markdown, HTML and record loaders, the pattern
@@ -271,7 +273,6 @@ and which reconcile (`start_time`), and that decides what counts as one claim.
 
 - **The fixtures and the example are not benchmarks.** Their model responses are
   hand-authored. There are no real-model numbers yet.
-- **No PyPI release yet.** M7 waits on Trusted Publishing; install from GitHub.
 - **Live Neo4j needs 5.7 or later.** The constraint bootstrap uses relationship
   uniqueness constraints; Community edition is enough.
 - **Structured facts are grounded against their own cell.** The cell `Leeds`

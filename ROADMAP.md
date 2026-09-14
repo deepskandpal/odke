@@ -19,7 +19,7 @@ shipped as 0.0.1.
 
 ---
 
-## v0.1 — the grounded graph
+## v0.1 — the grounded graph · released as 0.1.0, 14 Sep 2026
 
 *"The only pipeline that asks a second model whether the cited span supports
 the claim — and lets you measure every stage against your own labelled data."*
@@ -32,13 +32,13 @@ the claim — and lets you measure every stage against your own labelled data."*
 | M3 | Grounding & corroboration | The precision stages, and the ablation | 9 | done (#61, #65; ablation #38) |
 | M4 | Sinks & the `run` command | End-to-end into Neo4j | 3 | done (#62; `odke run` #29, example #30) |
 | M6 | Evaluation (BYOLD) | An evaluator per stage, for your own labels | 5 | done (#64) |
-| M7 | v0.1.0 release | On PyPI, documented | 3 | waits on Trusted Publishing |
+| M7 | v0.1.0 release | On PyPI, documented | 3 | done — [0.1.0 on PyPI](https://pypi.org/project/openodke/0.1.0/) (#41, #42) |
 |  | **Total** | | **30** | |
 
 M0 blocks M1–M4: every issue in it changes a frozen type, and each would be a
 migration once a fact is serialised. After M0 the milestones touch different
-packages and can proceed in parallel. M5 is in v0.5, below; the number is the
-board's.
+packages and can proceed in parallel. M5 was planned for v0.5 and shipped in 0.1.0
+as well — see below; the number is the board's.
 
 ### M0 — Data model
 
@@ -151,16 +151,17 @@ arithmetic.
 
 ### M7 — v0.1.0 release
 
-Documentation site, examples, TestPyPI rehearsal, PyPI publish, announcement.
-The site and the end-to-end example are on `main`; the publish waits on PyPI
-Trusted Publishing being configured for the repository.
+Documentation site, examples, TestPyPI rehearsal, PyPI publish. **Done:**
+0.1.0 was rehearsed on TestPyPI and published to PyPI on 14 September 2026
+through trusted publishing, with a GitHub release carrying the wheel and sdist.
 
 ---
 
-## v0.2 — breadth
+## v0.2 — breadth · shipped in 0.1.0
 
-Deferred out of v0.1 because breadth is where this loses and depth after
-extraction is where it wins. All additive; none touches a type.
+Planned after v0.1, because breadth is where this loses and depth after
+extraction is where it wins. All additive; none touches a type. It landed
+before the first release (#68, #69), so 0.1.0 includes all of it.
 
 - HTML loader with offset preservation (#8)
 - PDF and DOCX loaders (#9)
@@ -173,13 +174,15 @@ extraction is where it wins. All additive; none touches a type.
 Between v0.2 and v0.5 sit the store's half (v0.3: constraints in both halves,
 SHACL export, structure-based resolution proposals) and time (v0.4: the valid
 clock in use, a staleness queue, per-predicate refresh). Neither has tickets
-yet; the types they need landed in M0.
+yet; the types they need landed in M0. Also unticketed: a Neptune
+`PlatformProfile`, and the ablation run against a real model rather than
+recorded responses. These are ideas, not commitments.
 
-## v0.5 — no schema
+## v0.5 — no schema · shipped in 0.1.0
 
 ### M5 — Ontology inference
 
-The "I don't have a schema" path. Sample the corpus, propose types and predicates,
+Shipped in 0.1.0 (#71). The "I don't have a schema" path. Sample the corpus, propose types and predicates,
 cluster and merge near-duplicates, set `importance` from corpus support, hand back
 a reviewable `Ontology` marked `inferred=True`. Deterministic routes first —
 emergent schema, Hearst patterns, axiom mining — with the model naming and

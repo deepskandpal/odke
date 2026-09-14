@@ -26,7 +26,7 @@ before reading anything into the numbers.
 ## 1. Run it
 
 ```bash
-pip install "openodke[yaml] @ git+https://github.com/deepskandpal/odke"
+pip install "openodke[yaml]"
 odke run examples/e2e/odke.yaml
 ```
 
@@ -77,7 +77,7 @@ verdict, confidence and support, and `manifest.json` has the counts above.
 ## 2. Into Neo4j
 
 ```bash
-pip install "openodke[neo4j,yaml] @ git+https://github.com/deepskandpal/odke"
+pip install "openodke[neo4j,yaml]"
 export NEO4J_PASSWORD=...            # eight characters or more
 docker compose -f examples/e2e/docker-compose.yml up -d
 export NEO4J_URI=bolt://localhost:7687 NEO4J_USER=neo4j

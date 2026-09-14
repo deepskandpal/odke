@@ -37,6 +37,7 @@ def test_the_shell_quickstart_is_the_example_config_and_install_is_from_github()
     assert "pip install openodke\n" not in install
     assert '"openodke @ git+https://github.com/deepskandpal/odke"' in install
     assert "git+https://github.com/deepskandpal/odke" in install
+    assert "pip install openodke" in install
 
 
 def test_the_readme_says_the_numbers_are_not_a_benchmark() -> None:

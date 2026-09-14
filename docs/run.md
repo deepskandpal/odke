@@ -326,7 +326,7 @@ responses, so it needs no key, no network and no database.
 | `gold.jsonl` | 36 labelled facts, for the [ablation](evaluation.md#ablation) |
 
 ```bash
-pip install "openodke[yaml] @ git+https://github.com/deepskandpal/odke"
+pip install "openodke[yaml]"
 odke run examples/e2e/odke.yaml
 ```
 

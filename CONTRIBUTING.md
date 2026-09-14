@@ -13,6 +13,25 @@ base-install guarantee, the build, and a smoke test of the built wheel in a clea
 environment. CI runs this same script on three interpreters — there is no second
 list of steps to drift out of sync with this one.
 
+## Every change is a pull request
+
+`main` is protected. Nothing is pushed to it directly, and a pull request can
+merge only when these checks pass: `verify (python 3.11)`, `verify (python 3.12)`,
+`verify (python 3.13)` and `neo4j live tests (python 3.12, neo4j 5.26)`. No
+approving review is required. Force-pushes and deleting `main` are blocked.
+
+## Releasing
+
+1. Bump `version` in `pyproject.toml` and `__version__` in
+   `src/openodke/__init__.py`, and move the CHANGELOG's Unreleased section under
+   a dated heading — in a pull request.
+2. Optionally rehearse: `gh workflow run release.yml -f target=testpypi`.
+3. After it merges, tag and push: `git tag -a vX.Y.Z -m "openodke X.Y.Z" && git push origin vX.Y.Z`.
+
+`release.yml` runs the checks, refuses a tag that does not match the package
+version, publishes to PyPI through trusted publishing (the `pypi` environment
+deploys only from `main` or a `v*` tag), and creates the GitHub release.
+
 ## What a good change looks like
 
 - **A test that would fail without it.** Not coverage for its own sake: a test
