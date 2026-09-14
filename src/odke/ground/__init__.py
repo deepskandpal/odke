@@ -15,14 +15,17 @@ is the gate, and the ablation counts what would have gone.
 """
 
 from odke.ground.llm import LLMGrounder, build_messages, parse_verdict, render_claim
+from odke.ground.retry import RetryPolicy, is_transient
 from odke.ground.span import SpanGrounder, SpanStatus, check_span, located
 
 __all__ = [
     "LLMGrounder",
+    "RetryPolicy",
     "SpanGrounder",
     "SpanStatus",
     "build_messages",
     "check_span",
+    "is_transient",
     "located",
     "parse_verdict",
     "render_claim",
