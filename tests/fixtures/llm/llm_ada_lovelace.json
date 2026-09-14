@@ -1,0 +1,19 @@
+{
+  "description": "Hand-authored reply to the Ada Lovelace passage. Five facts are sound; the rest are deliberate faults: a miscounted offset (kept, moved), an invented quote, a quote absent from the passage, a case-changed quote, a predicate outside the snippet, an unknown polarity and a type that was never prompted.",
+  "interactions": [
+    {
+      "match": {
+        "contains": [
+          "Ada Lovelace was born on 10 December 1815 in London. From 1833 she worked with Charles Babbage at Babbage & Co. She never worked for the Royal Society."
+        ]
+      },
+      "response": {
+        "text": "{\"entities\": [{\"type\": \"Person\", \"name\": \"Ada Lovelace\", \"facts\": [{\"predicate\": \"full_name\", \"value\": \"Ada Lovelace\", \"quote\": \"Ada Lovelace\", \"start\": 0, \"polarity\": \"asserted\"}, {\"predicate\": \"birth_date\", \"value\": \"1815-12-10\", \"quote\": \"10 December 1815\", \"start\": 3}, {\"predicate\": \"employer\", \"value\": \"Babbage & Co\", \"quote\": \"she worked with Charles Babbage at Babbage & Co\", \"start\": 63, \"qualifiers\": {\"start_date\": \"1833\", \"shoe_size\": \"9\"}}, {\"predicate\": \"employer\", \"value\": \"Royal Society\", \"quote\": \"She never worked for the Royal Society\", \"start\": 112, \"polarity\": \"denied\"}, {\"predicate\": \"birth_date\", \"value\": \"1815-12-11\", \"quote\": \"born on 11 December 1815\", \"start\": 17}, {\"predicate\": \"full_name\", \"value\": \"Augusta Ada King\", \"quote\": \"Augusta Ada King\"}, {\"predicate\": \"spouse\", \"value\": \"William King\", \"quote\": \"Ada Lovelace\", \"start\": 0}, {\"predicate\": \"full_name\", \"value\": \"Ada Lovelace\", \"quote\": \"ada lovelace\", \"start\": 0}, {\"predicate\": \"employer\", \"value\": \"Babbage & Co\", \"quote\": \"Babbage & Co\", \"polarity\": \"probably\"}]}, {\"type\": \"Company\", \"name\": \"Babbage & Co\", \"facts\": [{\"predicate\": \"legal_name\", \"value\": \"Babbage & Co\", \"quote\": \"Babbage & Co\"}]}, {\"type\": \"City\", \"name\": \"London\", \"facts\": [{\"predicate\": \"name\", \"value\": \"London\", \"quote\": \"London\"}]}]}",
+        "model": "claude-sonnet-5",
+        "prompt_tokens": 812,
+        "completion_tokens": 431,
+        "cost_usd": 0.00891
+      }
+    }
+  ]
+}

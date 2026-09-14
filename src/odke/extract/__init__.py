@@ -6,6 +6,15 @@ from a table and a fact from prose are the same shape and merge by signature.
 """
 
 from odke.extract._common import entity_key
+from odke.extract.llm import LLMExtractor, ModelCall, Rejection, response_schema
 from odke.extract.pattern import PatternExtractor, RecordMapping
 
-__all__ = ["PatternExtractor", "RecordMapping", "entity_key"]
+__all__ = [
+    "LLMExtractor",
+    "ModelCall",
+    "PatternExtractor",
+    "RecordMapping",
+    "Rejection",
+    "entity_key",
+    "response_schema",
+]

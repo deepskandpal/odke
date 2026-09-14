@@ -1,0 +1,19 @@
+{
+  "description": "Hand-authored. Two measurements with the same value at different percentiles: an identity qualifier, so they must stay two claims.",
+  "interactions": [
+    {
+      "match": {
+        "contains": [
+          "Acme Corp reported 99.9% uptime at p50 and 99.9% uptime at p95 during 2024."
+        ]
+      },
+      "response": {
+        "text": "{\"entities\": [{\"type\": \"Company\", \"name\": \"Acme Corp\", \"facts\": [{\"predicate\": \"legal_name\", \"value\": \"Acme Corp\", \"quote\": \"Acme Corp\", \"start\": 0}, {\"predicate\": \"uptime\", \"value\": \"99.9%\", \"quote\": \"99.9% uptime at p50\", \"start\": 19, \"qualifiers\": {\"percentile\": \"p50\", \"year\": \"2024\"}}, {\"predicate\": \"uptime\", \"value\": \"99.9%\", \"quote\": \"99.9% uptime at p95\", \"start\": 43, \"qualifiers\": {\"percentile\": \"p95\", \"year\": \"2024\"}}]}]}",
+        "model": "claude-sonnet-5",
+        "prompt_tokens": 640,
+        "completion_tokens": 120,
+        "cost_usd": 0.0027
+      }
+    }
+  ]
+}
