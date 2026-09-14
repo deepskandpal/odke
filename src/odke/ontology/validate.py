@@ -160,9 +160,7 @@ def _predicate(ontology: Ontology, key: str, predicate: Predicate) -> Iterable[D
 
 
 def _scope(key: str, predicate: Predicate) -> Iterable[Diagnostic]:
-    """R4: a cardinality scope may only name identity-bearing qualifiers."""
-    if predicate.cardinality_scope is None:
-        return
+    """R4: a declared cardinality scope may only name identity-bearing qualifiers."""
     base = f"predicates.{key}.cardinality_scope"
     for i, name in enumerate(predicate.cardinality_scope):
         qualifier = predicate.qualifiers.get(name)
@@ -180,15 +178,6 @@ def _scope(key: str, predicate: Predicate) -> Iterable[Diagnostic]:
                 f"it are one claim (DECISIONS #11), so it cannot separate one value from "
                 "another. Declare it `identity: true` or drop it from the scope",
             )
-    missing = [k for k in predicate.identity_keys if k not in predicate.cardinality_scope]
-    if missing and predicate.cardinality == "single":
-        yield _warning(
-            "scope-omits-identity",
-            base,
-            f"leaves out identity-bearing {', '.join(map(repr, missing))}: facts that differ "
-            "in it are different claims, and one value per subject will report them as "
-            "conflicts. Omit `cardinality_scope` to scope by every identity qualifier",
-        )
 
 
 def _aliases(

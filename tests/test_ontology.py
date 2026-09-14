@@ -132,25 +132,31 @@ def test_multi_cardinality_becomes_an_array_in_the_schema() -> None:
 _SCOPED_QUALIFIERS = {"tier": {"identity": True}, "region": {"identity": True}, "as_of": {}}
 
 
-def test_cardinality_scope_defaults_to_the_identity_bearing_qualifiers() -> None:
+def test_the_scope_always_includes_the_identity_bearing_qualifiers() -> None:
     """'One price per subject per tier' needs no second declaration: identity implies it."""
     price = Predicate(name="price", qualifiers=_SCOPED_QUALIFIERS)
-    assert price.cardinality_scope is None
+    assert price.cardinality_scope == ()
     assert price.scope_keys == ("region", "tier")
     assert Predicate(name="flat").scope_keys == ()
 
 
-def test_an_empty_scope_counts_per_subject_regardless_of_qualifiers() -> None:
-    """`()` and `None` are different answers, and both must survive JSON."""
-    flat = Predicate(name="price", qualifiers=_SCOPED_QUALIFIERS, cardinality_scope=())
-    assert flat.scope_keys == ()
-    assert Predicate.model_validate_json(flat.model_dump_json()).cardinality_scope == ()
-    implied = Predicate(name="price", qualifiers=_SCOPED_QUALIFIERS)
-    assert Predicate.model_validate_json(implied.model_dump_json()).cardinality_scope is None
-
-
-def test_an_explicit_scope_is_what_the_constraint_compiler_reads() -> None:
-    """Spelled out, sorted, and taken at its word — judging it is validate()'s job."""
-    price = Predicate(name="price", qualifiers=_SCOPED_QUALIFIERS, cardinality_scope=("tier",))
-    assert price.scope_keys == ("tier",)
+def test_a_declared_scope_adds_keys_and_can_never_remove_an_identity_key() -> None:
+    """A partial list cannot make two different claims look like a conflict."""
+    partial = Predicate(name="price", qualifiers=_SCOPED_QUALIFIERS, cardinality_scope=("tier",))
+    assert partial.scope_keys == ("region", "tier")
+    # Judging a declared key is validate()'s job; the union takes it at its word.
     assert Predicate(name="p", cardinality_scope=("b", "a")).scope_keys == ("a", "b")
+    assert Predicate.model_validate_json(partial.model_dump_json()) == partial
+
+
+def test_scope_keys_is_exactly_what_the_neo4j_check_groups_by() -> None:
+    """R4 is declared here and compiled in M4; the two must not drift apart."""
+    from odke.sinks.neo4j import cardinality_scope
+
+    for predicate in (
+        Predicate(name="flat"),
+        Predicate(name="implied", qualifiers=_SCOPED_QUALIFIERS),
+        Predicate(name="partial", qualifiers=_SCOPED_QUALIFIERS, cardinality_scope=("tier",)),
+        Predicate(name="extra", qualifiers=_SCOPED_QUALIFIERS, cardinality_scope=("as_of",)),
+    ):
+        assert cardinality_scope(predicate) == predicate.scope_keys, predicate.name
