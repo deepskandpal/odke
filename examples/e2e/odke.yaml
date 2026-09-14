@@ -1,0 +1,41 @@
+# The end-to-end example, written to JSON Lines.
+#
+#   odke run examples/e2e/odke.yaml
+#
+# It runs on recorded responses (models.replay), so it needs no key and no
+# network. Delete the two replay lines to call the models instead.
+# odke.neo4j.yaml is this file with a Neo4j sink; examples/run.yaml explains
+# every key.
+
+ontology: ontology.json
+
+inputs:
+  - path: corpus/register.csv                    # a registry extract: curated
+    loader: {use: csv, tier: curated}
+  - path: corpus/staff.csv                       # a staff directory: authoritative
+    loader: {use: csv, tier: authoritative}
+  - path: corpus/factsheet.md                    # key: value lines and a heading
+    loader: {use: markdown, tier: authoritative, modality: semi_structured}
+  - path: corpus/notes                           # prose, from the trade press
+    loader: {use: directory, tier: community}
+
+pythonpath: [.]                                  # for e2e_stages.py
+
+models:
+  extract: anthropic/claude-sonnet-5
+  ground: anthropic/claude-haiku-4-5-20251001
+  replay:
+    extract: recorded/extract.json
+    ground: recorded/ground.json
+  meter: true
+
+stages:
+  chunker: {use: sentence, max_words: 120}
+  extractor: hybrid
+  grounder: llm
+  normalizer: {use: value, person_types: [Person]}
+  resolver: e2e_stages:RegistryResolver
+  corroborator: signature
+  scorer: evidence
+  validator: verdict
+  sink: {use: jsonl, directory: out}

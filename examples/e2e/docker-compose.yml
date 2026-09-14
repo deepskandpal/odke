@@ -1,0 +1,21 @@
+# A throwaway Neo4j for the end-to-end example.
+#
+#   export NEO4J_PASSWORD=...        # eight characters or more; nothing here stores one
+#   docker compose -f examples/e2e/docker-compose.yml up -d
+#
+# Community edition 5.26: relationship uniqueness constraints need 5.7 or later,
+# and odke's constrainer emits nothing Enterprise-only. Browser on
+# http://localhost:7474, bolt on 7687. `docker compose down -v` removes the data.
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD first}
+    volumes:
+      - odke-e2e-data:/data
+
+volumes:
+  odke-e2e-data:
