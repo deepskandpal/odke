@@ -1,114 +1,225 @@
 # odke
 
-**Text in, a grounded knowledge graph out.** Point it at documents — prose, HTML,
-PDFs, CSVs, JSON, whatever you have — give it an ontology or let it infer one, and
-get back entities and relations that load straight into Neo4j, RDF, NetworkX, or
-your own store.
+**The seam between text and any graph store.** odke turns documents — prose,
+tables, records — into a knowledge graph held to your ontology, and writes it to
+Neo4j, to JSON Lines, or to a store of your own. It is the only pipeline that
+asks a second model whether the cited span supports the claim, and records the
+verdict on every fact.
 
-```python
-from odke import Document, Ontology, Pipeline
-from odke.extract import HybridExtractor  # M2
-from odke.ground import LLMGrounder  # M3
-from odke.corroborate import Corroborator  # M3
-from odke.sinks.neo4j import Neo4jSink  # M4
+Every fact carries the document, the character span, the source tier and the
+grounding verdict that produced it, so *why is this edge in my graph?* is a query,
+not an investigation.
 
-ontology = Ontology.from_json("schema.json")  # or Ontology.infer(docs)  — M5
+> **Status: v0.1, not yet on PyPI.** The data model, ontology I/O, loaders and
+> extraction, grounding and corroboration, the Neo4j sink, `odke run` and the
+> evaluation harness are on `main` and tested (milestones M0–M4 and M6 in
+> [ROADMAP.md](ROADMAP.md)). Much of v0.2 has landed on `main` too — HTML, PDF
+> and DOCX loaders, RDF, NetworkX and bulk sinks, OWL and Neo4j ontology import.
+> The PyPI release (M7) waits on Trusted Publishing; until then, install from
+> GitHub.
 
-kg = Pipeline(
-    ontology,
-    extractor=HybridExtractor(model="claude-sonnet-5"),
-    grounder=LLMGrounder(model="claude-haiku-4-5-20251001"),
-    corroborator=Corroborator(),
-    sinks=[Neo4jSink(uri="bolt://localhost:7687", auth=("neo4j", "…"))],
-).run(docs)
+## Quickstart
 
-print(len(kg.edges), "relations,", len(kg.properties), "attributes")
+From a clone, with no key, no network and no database:
+
+```bash
+git clone https://github.com/deepskandpal/odke && cd odke
+pip install -e ".[yaml]"
+odke run examples/e2e/odke.yaml
 ```
 
-> **Status: pre-alpha.** The data model, the ontology compiler and the snippet
-> generator are implemented and tested. The extractor, grounder, corroborator and
-> database sinks are the next four milestones — see [ROADMAP.md](ROADMAP.md). The
-> API above is the committed shape, not a description of what runs today.
+That runs a small invented corpus through all thirteen stages on recorded model
+responses and writes the graph to `examples/e2e/out/`. The same run from Python:
+
+```python
+from odke import HybridExtractor, LLMExtractor, Ontology, Pipeline, SentenceChunker, VerdictValidator
+from odke.ground import LLMGrounder
+from odke.llm import RecordedClient, ReplayClient
+from odke.loaders import DirectoryLoader
+from odke.sinks import JsonlSink
+
+ontology = Ontology.from_json("examples/e2e/ontology.json")
+docs = list(DirectoryLoader().load("examples/e2e/corpus"))
+# Recorded responses, so this runs with no key. Drop `client=` to call the models.
+extract = ReplayClient("examples/e2e/recorded/extract.json")
+ground = RecordedClient.from_fixture("examples/e2e/recorded/ground.json")
+kg = Pipeline(
+    ontology,
+    HybridExtractor(LLMExtractor(client=extract), documents=docs),
+    chunker=SentenceChunker(max_words=120),
+    grounder=LLMGrounder(client=ground),  # a second model checks every cited span
+    validator=VerdictValidator(),  # refuses a fact its own span contradicts
+    sinks=[JsonlSink("out")],
+).run(docs)
+print(len(kg.facts), "facts,", kg.stats["refused"], "refused")
+```
+
+[`examples/e2e/`](examples/e2e/README.md) goes on into Neo4j and ends with the
+Cypher that shows provenance, a `DIFFERENT` link between two companies with one
+name, and a cardinality check.
+
+## Does it work?
+
+On the example, `odke eval ablation` runs one config three ways against 36
+labelled facts:
+
+| Configuration | Precision | Recall | Model calls |
+|---|---|---|---|
+| extraction alone | 0.889 | 0.889 | 3 |
+| + grounding | 0.914 | 0.889 | 39 |
+| + corroboration | 0.971 | 0.944 | 39 |
+
+**This is a demonstration on hand-authored recorded responses, not a benchmark.**
+The responses and the labels were written for the example, so the table shows
+what the harness reports, not how well any model does. On that fixture,
+grounding caught one of four wrong candidates, and normalisation did more for
+precision than grounding. No number from real model runs exists yet. The paper's
+98.8% is neither reproduced nor claimed. [What the example shows, and does not](examples/e2e/README.md#5-the-ablation-on-this-example).
+
+The harness is the point: run the same command on a slice of your own corpus
+that you have labelled, and it tells you whether grounding earns its calls there.
 
 ## Why this exists
 
 Apple published [ODKE+ (arXiv:2509.04696)](https://arxiv.org/abs/2509.04696), a
 production system that extracts open-domain facts at scale and ingests them into a
-knowledge graph at 98.8% precision. It is a genuinely good architecture and there
-is no implementation of it — Apple released none, and nothing on PyPI, conda,
-GitLab or Hugging Face implements it. This is an independent implementation of
-that architecture, generalised from one company's internal graph into an SDK
-anyone can install.
+knowledge graph at 98.8% precision. Apple released no implementation, and nothing
+on PyPI, conda, GitLab or Hugging Face implements it. This is an independent
+implementation of that architecture, generalised from one company's internal
+graph into an SDK anyone can install.
 
-The three ideas worth stealing from that paper, and what they buy you:
+The three ideas worth taking from that paper:
 
 | Idea | What it does | Why the alternatives lose |
 |---|---|---|
-| **Ontology snippets** | Prompts the model with a small, ranked, per-type schema fragment rather than the whole ontology | A 200-predicate schema does not fit in a useful prompt, and stuffing it in degrades every extraction. Snippets keep prompt size flat as the schema grows |
-| **Grounding verification** | A second, cheap model checks each candidate fact against its own evidence span, and drops what it cannot find | This is where the precision comes from. Extraction alone hallucinates; a yes/no check against a quoted span is cheap and catches it |
-| **Corroboration** | Merges the same claim across sources, resolves conflicts on freshness × trust × agreement | Real corpora disagree with themselves. Without this you write both answers into the graph and the graph stops being trustworthy |
+| **Ontology snippets** | Prompts the model with a small, ranked, per-type schema fragment rather than the whole ontology | A 200-predicate schema does not fit in a useful prompt. Snippets keep prompt size flat as the schema grows |
+| **Grounding verification** | A second, cheap model checks each candidate fact against its own evidence span and records `supported`, `contradicted` or `not_found` on the fact; a validator decides what is written | Extraction alone hallucinates. A yes/no check against a quoted span is cheap, and a verdict kept on the fact can be measured and re-gated later |
+| **Corroboration** | Merges the same claim across sources, and resolves conflicts on freshness × trust × agreement | Real corpora disagree with themselves. Without it you write both answers and cannot say which to believe |
 
-## How it differs from what already exists
-
-There are good libraries that turn text into a graph — [iText2KG](https://github.com/AuvaLab/itext2kg),
+Other libraries turn text into a graph — [iText2KG](https://github.com/AuvaLab/itext2kg),
 [neo4j-graphrag](https://neo4j.com/docs/neo4j-graphrag-python/current/user_guide_kg_builder.html)'s
-`SimpleKGPipeline`, LangChain's `LLMGraphTransformer`, `knowledge-graph-maker`.
-They extract, and most can be handed a schema. What none of them do is the part
-after extraction: **no per-type snippet ranking, no separate grounding pass, no
-cross-source corroboration, no provenance carried to the sink.** Those are
-precisely the three stages that take a demo to 98.8% precision, and they are what
-this library is for.
+`SimpleKGPipeline`, LangChain's `LLMGraphTransformer`. They extract, and most can
+be handed a schema. None of them has a separate grounding pass, cross-source
+corroboration, or character-span provenance carried through to the store.
 
-Concretely, every fact `odke` emits carries the document, the character span, the
-source tier and the grounding verdict that produced it. You can always answer
-"why is this edge in my graph?" — and delete every edge that came from a source
-you no longer trust.
+## Thirteen stages, each one a Protocol
+
+The pipeline is a superset: thirteen stages, each a `typing.Protocol` in
+`odke.stages` with a pass-through default (DECISIONS #20). Take the subset your
+corpus needs, supply your own for any stage by writing one method, and leave the
+rest out. Nothing domain-specific is in the code; it arrives as an ontology, a
+config, or a stage of yours.
+
+| Stage | Built-in | Name in `odke run` | Left out |
+|---|---|---|---|
+| load | `DirectoryLoader`, `TextLoader`, `MarkdownLoader`, `HtmlLoader`, `PdfLoader`, `DocxLoader`, `CsvLoader`, `TsvLoader`, `JsonLoader`, `JsonlLoader`, `ParquetLoader` | `directory` (every suffix), `text`, `markdown`, `csv`, … | `directory` |
+| chunk | `SentenceChunker` — whole sentences, offsets intact | `sentence` | one chunk per document |
+| route | yours: skip marketing, policy, narrative | — | extract everything |
+| extract | `PatternExtractor`, `LLMExtractor`, `HybridExtractor` | `pattern`, `llm`, `hybrid` | required |
+| ground | `SpanGrounder` (free), `LLMGrounder` | `span`, `llm` | verdict `unchecked` |
+| normalise | `ValueNormalizer` — dates, numbers, units, name keys | `value` | unchanged |
+| resolve | `NativeResolver` — blocking, identifiers, links | `native` | keys as given |
+| corroborate | `SignatureCorroborator` | `signature` | every fact its own claim |
+| score | `EvidenceScorer` | `evidence` | confidence unchanged |
+| validate | `VerdictValidator` — refuses `contradicted` | `verdict` | accept everything |
+| sink | `JsonlSink`, `Neo4jSink`, `CypherFileSink`, `Neo4jAdminCsvSink`, `RdfSink`, `NetworkXSink` | `jsonl`, `neo4j`; others as `package.module:Name` | nothing written |
+| constrain | `Neo4jConstrainer` — the ontology as DDL | `neo4j` | no constraints |
+| infer | v0.5 | — | never run: inference is a bootstrap (DECISIONS #8) |
 
 ## Install
 
+Not on PyPI yet. Install from GitHub, naming extras the same way:
+
 ```bash
-pip install odke                 # data model, ontology compiler, pattern extractor
-pip install "odke[llm]"          # + model-backed extraction and grounding
-pip install "odke[neo4j]"        # + the Neo4j sink
-pip install "odke[all]"          # everything
+pip install "git+https://github.com/deepskandpal/odke"                     # the base install
+pip install "odke[yaml] @ git+https://github.com/deepskandpal/odke"         # + YAML configs
+pip install "odke[neo4j,yaml] @ git+https://github.com/deepskandpal/odke"   # + the Neo4j sink
+pip install "odke[all] @ git+https://github.com/deepskandpal/odke"          # everything
 ```
 
-The base install pulls two dependencies and talks to nothing. Model providers and
-database drivers are extras on purpose: nobody should have to install a Neo4j
-driver to compile an ontology.
+The base install is pydantic and typer, and talks to nothing: the data model,
+the ontology compiler, the text, Markdown, HTML and record loaders, the pattern
+extractor, the OpenAI-compatible model client, corroboration, evaluation, and
+the JSONL and Cypher-file sinks. Each extra is imported on first use, and a
+missing one is named in the error.
+
+| Extra | Adds | For |
+|---|---|---|
+| `llm` | litellm | Model providers that do not speak the OpenAI shape |
+| `neo4j` | the Neo4j driver | `Neo4jSink`, `Ontology.from_neo4j` |
+| `yaml` | PyYAML | YAML ontologies and run configs |
+| `parquet` | pyarrow | `ParquetLoader` |
+| `pdf`, `docx` | pypdf; python-docx | `PdfLoader`, `DocxLoader` |
+| `rdf` | rdflib | `RdfSink`, `Ontology.from_owl` |
+| `networkx` | networkx | `NetworkXSink` |
+| `docs` | beautifulsoup4, pypdf, lxml, python-docx | The document readers together |
+| `all` | all of the above | |
 
 Python 3.11–3.13.
 
-## Inputs
+## `odke run`
 
-Anything you can get into a `Document`. Loaders (M2) handle plain text, Markdown,
-HTML, PDF, DOCX, JSON, JSONL, CSV/TSV and Parquet, and the extractor routes each
-by modality: structured and semi-structured inputs go through the **pattern
-extractor**, which is exact, free and deterministic, and only genuine prose costs
-a model call.
+One file names the inputs, the ontology, the models, which implementation fills
+each stage, and the sink:
 
-## Ontologies: bring one, or infer one
-
-```python
-Ontology.from_json("schema.json")  # or .from_yaml
-Ontology.from_owl("schema.ttl")  # OWL / RDFS / SKOS, via rdflib      — M4
-Ontology.from_pydantic(Person, Company)  # — M2
-Ontology.from_neo4j(driver)  # reflect a live graph's schema      — M4
-Ontology.infer(docs, sample=200)  # propose one from the corpus        — M5
+```yaml
+ontology: ontology.json
+inputs:
+  - path: corpus/register.csv
+    loader: {use: csv, tier: curated}
+  - corpus/notes
+models:
+  extract: anthropic/claude-sonnet-5
+  ground: anthropic/claude-haiku-4-5-20251001
+stages:
+  chunker: {use: sentence, max_words: 120}
+  extractor: hybrid
+  grounder: llm
+  normalizer: value
+  corroborator: signature
+  validator: verdict
+  sink: {use: neo4j, uri_env: NEO4J_URI, password_env: NEO4J_PASSWORD}
+  constrainer: neo4j
+bootstrap: true
 ```
-
-An inferred ontology is marked `inferred=True` and carries corpus support counts
-on every predicate, so you can review it, edit it, and freeze it as the schema
-for subsequent runs. Inference is a bootstrap, not a permanent mode.
-
-You can inspect exactly what the model will be shown before spending a token:
 
 ```bash
-odke ontology snippet schema.json Person
-odke ontology snippet schema.json Person --json-schema
+odke run config.yaml --dry-run     # load, extract and ground; print what would be written
+odke run config.yaml
 ```
 
-A bad extraction is usually a bad snippet, and this is how you see it.
+A stage of your own is `package.module:Name` with its options alongside. A dry
+run opens no sink, so it needs no database. Every stage's own counts — verdicts,
+rejections, conflicts, refusals, cost — go into the graph's `stats`, and a
+document's id is its path, so a label or a query can name it.
+[`examples/run.yaml`](examples/run.yaml) comments every key.
+
+## Evaluate against your own labels
+
+odke ships the formats and the arithmetic for scoring every stage, and never a
+corpus: a number computed against the pipeline's own output measures nothing.
+Bring your own labelled dataset.
+
+```bash
+odke eval extract --describe                           # what to label
+odke eval extract --labels gold.jsonl --predictions out/facts.jsonl
+odke eval ablation --config config.yaml --labels gold.jsonl
+```
+
+There is an evaluator for routing, extraction, grounding, resolution, scoring
+(Brier, reliability, ECE) and validation, and `odke.eval.CostMeter` measures
+tokens and USD per stage without touching a stage. The fixtures in the test
+suite exercise the arithmetic and are not a benchmark.
+
+## When the platform does a stage itself
+
+Some stores already resolve, prune or constrain after the write. A sink declares
+that with a `PlatformProfile`; a stage configured on both sides raises one
+`DoubleStageWarning` and still runs, because the two passes are not the same
+pass (DECISIONS #21). To hand a stage to the platform, pass
+`Delegated(to="neo4j-graphrag:FuzzyMatchResolver")` — or `{use: delegated, to: ...}`
+in a config — and odke stamps who did it wherever the data model has room, so
+the platform's work can be read back and scored with the same evaluator.
 
 ## Models and providers
 
@@ -121,76 +232,66 @@ from odke.llm import ModelRoles, ModelSpec
 
 ModelRoles()  # Claude by default: Sonnet extracts, Haiku grounds
 ModelRoles.single("ollama/llama3.1")  # entirely local — no extras, no key, no network
-ModelRoles.single("openai/gpt-4.1")
-ModelRoles.single("azure/my-deployment", extra={"api_version": "2024-10-21"})
-ModelRoles.single("bedrock/anthropic.claude-sonnet-4-20250514-v1:0")
-
-# Mix freely. Frontier extraction, local grounding — the cheap combination
-# that makes the paper's precision affordable at volume.
 ModelRoles(
     extract=ModelSpec(model="anthropic/claude-sonnet-5"),
     ground=ModelSpec(model="ollama/qwen2.5:3b"),
 )
 ```
 
-**Two models, not one, by default.** Extraction wants a capable model;
-grounding asks ten thousand yes/no questions and wants a small one. Making that
-asymmetry the default is most of what keeps the precision stage affordable.
+**Two models, not one, by default.** Extraction wants a capable model; grounding
+asks thousands of yes/no questions and wants a small one. Anything speaking the
+OpenAI chat shape — Ollama, vLLM, LM Studio, llama.cpp, OpenRouter, Groq, a
+gateway — works on the base install; everything else goes through litellm with
+`[llm]`; `odke.llm.register("mycorp", factory)` routes a provider through your
+own client. `ReplayClient`, `RecordedClient` and `ScriptedClient` ship in the
+package, so your own stages are testable offline too.
 
-**Zero-dependency path.** Anything speaking the OpenAI chat shape — Ollama,
-vLLM, LM Studio, llama.cpp, OpenRouter, Groq, Together, DeepSeek, a LiteLLM
-proxy, a corporate gateway — is served by a client written against the standard
-library. `pip install odke` and a local Ollama is a complete, working setup.
-
-**Everything else via litellm.** Anthropic, OpenAI, Azure, Bedrock, Vertex,
-Gemini, Mistral, Cohere and ~100 more, behind `pip install "odke[llm]"`.
-
-**Your own gateway.** One call, and every matching model string routes through
-you — no fork, no subclass:
+## Ontologies
 
 ```python
-from odke.llm import register
+from odke import Ontology
 
-register("mycorp", lambda spec: MyAuditedClient(spec))
+ontology = Ontology.from_json("examples/e2e/ontology.json")  # or from_yaml, from_owl, from_neo4j, …
+print(ontology.validate())  # diagnostics with dotted paths, never an exception
+print(ontology.snippet("Company").render())  # exactly what the model is prompted with
 ```
 
-**Testing without a key.** `ScriptedClient` ships in the package, not just the
-test suite, so your extractors are testable offline too:
-
-```python
-from odke.llm import ScriptedClient
-
-client = ScriptedClient(['{"employer": "Analytical Engine Co"}'])
+```bash
+odke ontology validate schema.json
+odke ontology diff old.json new.json --fail-on-breaking
+odke ontology snippet schema.json Company
 ```
 
-## Outputs
+A bad extraction is usually a bad snippet, and `snippet` shows it before a token
+is spent. The ontology also marks which qualifiers bear identity (`percentile`)
+and which reconcile (`start_time`), and that decides what counts as one claim.
 
-`KnowledgeGraph` is storage-neutral. Sinks translate:
+## Honest limits
 
-| Sink | Extra | Status |
-|---|---|---|
-| `JsonlSink` | — | shipped |
-| `Neo4jSink` — batched `MERGE`, provenance on every edge | `[neo4j]` | M4 |
-| `CypherFileSink` / `Neo4jAdminCsvSink` — bulk load | — | M4 |
-| `RdfSink` — Turtle / N-Triples / JSON-LD | `[rdf]` | M4 |
-| `NetworkXSink` | `[networkx]` | M4 |
-| Memgraph, Kùzu, ArangoDB, TigerGraph | — | community |
-
-Writing your own is one method. `Sink` is a `Protocol` — no base class, no
-registration:
-
-```python
-class MySink:
-    def write(self, kg: KnowledgeGraph) -> None: ...
-```
-
-The same is true of every stage. Swap the grounder, keep the rest.
+- **The fixtures and the example are not benchmarks.** Their model responses are
+  hand-authored. There are no real-model numbers yet.
+- **No PyPI release yet.** M7 waits on Trusted Publishing; install from GitHub.
+- **Live Neo4j needs 5.7 or later.** The constraint bootstrap uses relationship
+  uniqueness constraints; Community edition is enough.
+- **Structured facts are grounded against their own cell.** The cell `Leeds`
+  cannot say whose head office it is, so a careful grounder answers `not_found`
+  and the call is spent for little. The default gate keeps `not_found` for this
+  reason.
+- **The grounder sees the cited span, never the document.** That is what keeps
+  it cheap, and a span that leaves out the subject cannot support the claim.
+- **Resolution never merges on names.** Only a shared identifier re-keys an
+  entity; a name match is a `SIMILAR` link for someone to act on.
+- **`odke run` names two sinks.** `jsonl` and `neo4j` are built in; the RDF,
+  NetworkX and bulk sinks are reached as `package.module:Name` for now.
+- **No ontology inference.** That is v0.5, and a bootstrap when it comes
+  (DECISIONS #8).
 
 ## Documentation
 
 - [deepskandpal.github.io/odke](https://deepskandpal.github.io/odke/) — the documentation site: concepts, ontology, grounding, the Neo4j sink, evaluation
+- [examples/](examples/README.md) — the end-to-end example and the commented run config
 - [ROADMAP.md](ROADMAP.md) — milestones, what each one delivers, and the estimate
-- [The board](https://github.com/users/deepskandpal/projects/6) — every ticket, with estimates
+- [CHANGELOG.md](CHANGELOG.md) — what landed, milestone by milestone
 - [DECISIONS.md](DECISIONS.md) — the design calls and why they went that way
 - [CONTRIBUTING.md](CONTRIBUTING.md) — `./scripts/verify.sh` is the whole check
 - [NOTICE](NOTICE) — the relationship to the ODKE+ paper
@@ -202,11 +303,10 @@ affiliated with or endorsed by Apple Inc., uses no Apple code, data or models,
 and was written from the paper alone. All credit for the architecture belongs to
 Khorshidi et al. See [NOTICE](NOTICE).
 
-It also deliberately departs from the paper where the paper is specific to its
-deployment: ODKE+ decides *what* to refresh by watching Wikipedia edits and
-retrieves its own evidence. Here those two stages are optional protocols —
-`Initiator` and `Retriever` — because an SDK is usually handed its documents. The
-three stages that carry the ideas are the three this library implements.
+It departs from the paper where the paper is specific to its deployment. ODKE+
+decides what to refresh by watching Wikipedia edits and retrieves its own
+evidence; here those two stages are optional protocols, `Initiator` and
+`Retriever`, because an SDK is usually handed its documents.
 
 ## License
 
