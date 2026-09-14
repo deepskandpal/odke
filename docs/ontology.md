@@ -1,14 +1,15 @@
 # Ontology
 
 An `Ontology` is the schema the extractor is held to: named `types` (each an
-`EntityType`) and `predicates` (each a `Predicate`). It is supplied by you as a
-dict, JSON, YAML or pydantic models, or later inferred from a corpus. Either way
-every downstream stage sees this one shape. Everything in `odke.ontology` is
-deterministic and needs no model.
+`EntityType`) and `predicates` (each a `Predicate`). You supply it as a dict, JSON,
+YAML or pydantic models; import it from OWL, RDFS, SKOS or a live Neo4j graph; or
+draft it from a corpus by [inference](inference.md) and freeze it once reviewed.
+Either way every downstream stage sees this one shape. Loading, validating and
+diffing are deterministic and need no model.
 
 | Model | Fields |
 |---|---|
-| `Ontology` | `name`, `version`, `types`, `predicates`, `inferred` |
+| `Ontology` | `name`, `version`, `types`, `predicates`, `inferred`, `frozen_at`, `frozen_by` |
 | `EntityType` | `name`, `description`, `parents`, `keys` (the predicates that together name the thing), `aliases` |
 | `Predicate` | `name`, `label`, `description`, `domain`, `range` (default `"string"`), `cardinality` (`single` or `multi`), `cardinality_scope`, `required`, `qualifiers`, `aliases`, `importance` (default 0.5), `examples` |
 | `Qualifier` | `identity` (default `False`), `description` |
@@ -198,6 +199,7 @@ works but probably is not what was meant.
 | `duplicate-alias` | error | one alias points at two types, or two predicates |
 | `unknown-domain` | warning | part of a domain is not a type; the rest still works |
 | `inheritance-cycle` | warning | types inherit from each other; `lineage()` tolerates it |
+| `unreviewed` | warning | the schema is still marked `inferred`: nobody has reviewed and [frozen](inference.md#freezing) it |
 
 ## Diff
 
@@ -299,6 +301,158 @@ print(snippet.render())
 assert snippet.json_schema()["properties"]["price"]["type"] == "number"
 ```
 
+## Importing a schema you already have
+
+Plenty of schemas already exist, as OWL files or as the graph a database already
+holds, and writing them again as JSON is how two copies drift. Two importers read
+them directly. Both report everything they could not carry over by where it was
+found, and both share one rule for what happens next:
+
+- **`strict=True`** (the default) raises `OntologyLoadError` listing every problem,
+  as `from_pydantic` does, and refuses a result `validate()` finds errors in. A
+  dropped axiom is a rule the extractor is silently never held to.
+- **`strict=False`** loads whatever maps, and the same problems arrive as one
+  `OntologyImportWarning`, whose `.problems` holds the lines `OntologyLoadError`
+  would have raised with. Choosing to load a large public ontology anyway never
+  means choosing not to be told.
+
+### From OWL, RDFS and SKOS
+
+`Ontology.from_owl(source, *, format=None, name=None, version=None, language="en",
+strict=True)` reads a file path, a document, or an rdflib `Graph`, and needs the
+`rdf` extra. `format` is any rdflib parser name; left out, it is guessed from the
+file suffix or from the document (RDF/XML, JSON-LD, else Turtle, which also reads
+N-Triples).
+
+| RDF | Ontology |
+|---|---|
+| `owl:Class`, `rdfs:Class`, `skos:Concept`, and anything used as a class by `rdfs:subClassOf`, `skos:broader`, a domain or an object range | an `EntityType`, named by the IRI's local name |
+| `rdfs:subClassOf`, `skos:broader`, and `skos:narrower` read backwards | `parents` |
+| `owl:hasKey` | `keys` |
+| `owl:ObjectProperty` | an edge predicate to its `rdfs:range` |
+| `owl:DatatypeProperty` | a literal predicate, its XSD range mapped to a literal type |
+| a bare `rdf:Property` | an edge when its range is a class, and a literal otherwise |
+| `rdfs:domain`, or a domain that is an `owl:unionOf` | `domain`, which is already a union |
+| `owl:FunctionalProperty` | `cardinality="single"`. Every other property is `multi`, because OWL's open world lets a property hold any number of values unless it says otherwise. |
+| `rdfs:label` / `skos:prefLabel` | a predicate's `label` |
+| `rdfs:comment` / `skos:definition` | `description`; a type with no comment takes its label when the label says more than the name |
+| `skos:altLabel`, `skos:hiddenLabel` | `aliases` |
+| the `owl:Ontology`'s `rdfs:label` and `owl:versionInfo` | `name` and `version`, unless you pass them |
+
+Text tagged with `language` wins, then untagged text. `importance` stays at its
+default: nothing in an OWL file says how often a predicate is used.
+
+What the model cannot hold is reported by the subject it was found on:
+restrictions, property characteristics other than functional, inverse and
+sub-properties, equivalence and disjointness, union ranges, unmapped datatypes,
+individuals, and imports. `owl:imports` is not followed; parse the imported
+ontology into the same rdflib `Graph` and pass the `Graph`. Annotations outside
+the OWL, RDF, RDFS and SKOS vocabularies, such as Dublin Core or `rdfs:seeAlso`, are
+documentation and are not reported.
+
+```python
+import warnings
+
+from odke import OntologyImportWarning
+
+hr_owl = """
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix : <https://example.org/hr#> .
+
+:Person a owl:Class ; rdfs:comment "A human being." .
+:Company a owl:Class ; owl:hasKey ( :legal_name ) .
+:legal_name a owl:DatatypeProperty ; rdfs:domain :Company ; rdfs:range xsd:string .
+:employer a owl:ObjectProperty, owl:FunctionalProperty ;
+    rdfs:label "Employer" ; rdfs:domain :Person ; rdfs:range :Company .
+:born a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range xsd:date .
+:manages a owl:ObjectProperty ; owl:inverseOf :managedBy ; rdfs:domain :Person ; rdfs:range :Person .
+"""
+try:
+    Ontology.from_owl(hr_owl)
+except OntologyLoadError as exc:
+    print(exc.problems)
+# (':manages: owl:inverseOf is not supported',)
+
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    hr = Ontology.from_owl(hr_owl, name="hr", strict=False)
+(warning,) = caught
+assert warning.category is OntologyImportWarning
+assert warning.message.problems == (":manages: owl:inverseOf is not supported",)
+
+employer = hr.predicates["employer"]
+assert (employer.domain, employer.range, employer.cardinality, employer.label) == (
+    ("Person",),
+    "Company",
+    "single",
+    "Employer",
+)
+assert (hr.predicates["born"].range, hr.predicates["born"].cardinality) == ("date", "multi")
+assert hr.types["Company"].keys == ("legal_name",)
+```
+
+`RdfSink` writes this same vocabulary when it is given an ontology, so a schema it
+wrote reads back ([Sinks](sinks.md#rdf)).
+
+### From a live Neo4j graph
+
+`Ontology.from_neo4j(source, *, auth=None, database=None, name=None, version="0",
+strict=True)` reads the schema of a graph you already have. `source` is a driver,
+or a URI to connect to with `auth`, which needs the `neo4j` extra. It calls three
+procedures present and not deprecated in Neo4j 5, `db.schema.nodeTypeProperties()`,
+`db.schema.relTypeProperties()` and `db.schema.visualization()`, plus counts.
+Nothing is written. The two property procedures read the store, and are not free on
+a large graph.
+
+- A **label** is an entity type.
+- A **relationship type** is an edge predicate to the label it ends at, or a literal
+  predicate when it ends at `:Claim` nodes. Its properties that are not provenance
+  become qualifiers.
+- A **node property** is a literal predicate on the labels that hold it. Its range
+  is read from the value types Neo4j reports; it is `multi` when it holds lists,
+  and `required` when every node of those labels has it.
+- **`importance` comes from counts**: relationships per type and nodes holding each
+  property, log-scaled against the most-used predicate. That is the frequency
+  signal the paper ranks snippets by, so a snippet puts the graph's most-used
+  predicates first.
+
+A graph `Neo4jSink` wrote reads back as the shape it wrote: `:Entity` and `:Claim`
+are the sink's labels, not types; the entity fields and provenance properties are
+not predicates or qualifiers; a projected property and the claims behind it are one
+predicate; and the `SAME_AS`, `SIMILAR` and `DIFFERENT` links are not predicates.
+
+What the store cannot say is not invented. Labels have no hierarchy, so there are
+no parents. Edges are `multi`, because how many one node holds is not in the
+schema. Qualifiers are reconcilable, because whether one bears identity is a
+decision ([DECISIONS #15](decisions.md)) that no count reveals. A value type with no
+literal range, a relationship that ends at several labels (read as the most-used
+one), and one name used by both a relationship and a property are reported.
+
+<!-- docs: no-run -->
+```python
+import os
+
+live = Ontology.from_neo4j(
+    os.environ["NEO4J_URI"],
+    auth=(os.environ["NEO4J_USER"], os.environ["NEO4J_PASSWORD"]),
+    database="neo4j",
+    strict=False,
+)
+print(live.snippet("Company").render())  # the graph's most-used predicates first
+```
+
+## Inferring a draft
+
+A corpus with no schema at all can get a draft: `Ontology.infer(documents)`, or
+`odke ontology infer corpus/ --out draft.yaml`. Deterministic proposers find
+candidate types and predicates with the spans that produced them, a model
+optionally names and ranks them, and the result is marked `inferred=True` for a
+person to review, edit and `freeze()`. It is a bootstrap, never a mode
+([DECISIONS #8](decisions.md)). [Ontology inference](inference.md) covers it end to
+end.
+
 ## From the shell
 
 The CLI loads `.yaml` / `.yml` files as YAML and everything else as JSON. These
@@ -311,6 +465,8 @@ odke ontology diff old.json new.json --fail-on-breaking   # ...and exit 1 if the
 odke ontology types schema.json                  # each type and how many predicates it can carry
 odke ontology snippet schema.json Person         # the exact prompt fragment
 odke ontology snippet schema.json Person --json-schema --limit 10
+odke ontology infer corpus/ --out draft.yaml --no-llm   # a draft for review: see Ontology inference
+odke ontology freeze draft.yaml --by "Ada Lovelace"      # after review; refuses while there are errors
 ```
 
 `validate` takes several files because that is how pre-commit calls it, and

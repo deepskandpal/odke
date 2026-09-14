@@ -55,6 +55,7 @@ wrong", which is a different and worse finding.
 | validate | `ValidationLabel(fact, action)` | `ValidationPrediction(id, action, reason)` | `evaluate_validation`, `run_validate` | agreement, Cohen's kappa, `wrongly_refused`, `wrongly_written`, `conflicts_missed` |
 | sink | none | none | `check_idempotency`, `assert_idempotent`, `jsonl_counts` | every count unchanged across writes |
 | cost | none | none | `CostMeter`, `CostReport`, `compare_costs` | calls, tokens, USD and latency per stage, per 1k documents |
+| ablation | `GoldFact(doc_id, fact)` | a run config, run three ways | `run_ablation`, `odke eval ablation` | precision, recall and F1, facts written and model calls for extraction alone, + grounding, + corroboration |
 
 Fact predictions are joined on `Fact.id`. The `facts.jsonl` a `JsonlSink` writes
 is therefore already a predictions file, and a `links.jsonl` is already a
@@ -275,6 +276,89 @@ print(cost.per_1k_documents()["total"]["calls"])
 `compare_costs({"hybrid": a, "model-only": b})` sets several metered runs side by
 side per thousand documents.
 
+## ablation
+
+The architecture's claim is that grounding and corroboration each earn their place.
+`run_ablation(config, gold)` measures that claim on your labels, or fails to. It
+runs one [run config](run.md) three ways against one labelled extraction set:
+
+1. **extraction alone**: the config's loaders, chunker, router and extractor, with
+   every candidate kept.
+2. **+ grounding**: the same candidates through the config's grounder, then its
+   gate, which is the configured validator or `VerdictValidator` when it names none.
+3. **+ corroboration**: the whole configured pipeline (normalise, resolve,
+   corroborate and score), then the same gate.
+
+Extraction runs once and grounding runs once. The later configurations replay the
+facts the earlier ones produced through the real `Pipeline`, so the rows differ only
+by the stages they add, and a model is never asked the same question twice, which
+would double the bill and could get a different answer the second time. Nothing is
+written to the config's sinks, and the cost meter is on whatever the config says,
+because calls and cost are columns of the table.
+
+Each row is `evaluate_extraction` against the gold facts, per document. A gold fact
+names its document by the id [`odke run`](run.md#inputs) gives it: the input's path
+relative to the config, plus `#L<line>` for a record. A fact that corroboration
+merged across documents cites each of them and is scored once in each, because the
+graph now claims every one of those documents states it. The notes add the view from
+inside the extracted set: how many true facts the gate kept, how many false ones it
+let through, and what refusing `not_found` as well would have changed. If grounding
+does not move precision on your labels, the first note says so. That is a finding
+about your corpus, not a failure of the command.
+
+```bash
+odke eval ablation --config odke.yaml --labels gold.jsonl
+odke eval ablation --describe
+```
+
+### On the end-to-end example
+
+!!! warning "A demonstration on recorded responses, not a benchmark"
+    The table below is `examples/e2e`, run on **hand-authored** recorded model
+    responses against 36 labels written for the same example. The responses and
+    the labels were both written for it, so the numbers measure how that fixture
+    was written and nothing about any model. They show what the command reports
+    and how to read it. Run it on your own labels.
+
+| Configuration | Precision | Recall | F1 | TP | FP | FN | Facts written | Model calls |
+|---|---|---|---|---|---|---|---|---|
+| extraction alone | 0.889 | 0.889 | 0.889 | 32 | 4 | 4 | 36 | 3 |
+| + grounding (gate refuses `contradicted`) | 0.914 | 0.889 | 0.901 | 32 | 3 | 4 | 35 | 39 |
+| + corroboration (normalise, resolve, corroborate, score) | 0.971 | 0.944 | 0.958 | 34 | 1 | 2 | 25 | 39 |
+
+Cost is unknown in all three rows: the recorded responses carry no price.
+
+```python
+from odke.eval import GoldFact, load_jsonl, run_ablation
+from odke.run import load_config
+
+ablation = run_ablation(
+    load_config("examples/e2e/odke.yaml"), load_jsonl("examples/e2e/gold.jsonl", GoldFact)
+)
+rows = ablation.breakdown
+assert [rows[name]["precision"] for name in rows] == [8 / 9, 32 / 35, 34 / 35]
+assert [rows[name]["model_calls"] for name in rows] == [3, 39, 39]
+for note in ablation.notes[:4]:
+    print(note)
+# grounding moved precision from 0.889 to 0.914; recall 0.889 → 0.889
+# normalising, resolving and corroborating moved precision from 0.914 to 0.971; recall 0.889 → 0.944
+# of the 36 extracted facts, 32 are true: the gate kept 32 of them and 3 of the 4 false ones
+# refusing not_found as well would keep 19 of 32 true facts and 1 of 4 false ones (precision 0.950)
+```
+
+What it says about that fixture, and only that fixture:
+
+- **Grounding moved precision from 0.889 to 0.914, and not recall.** Of the four
+  wrong candidates it caught one, a head office the model invented. A second
+  invented fact came back `not_found`, which the default gate keeps.
+- **Refusing `not_found` as well would have been worse there.** It would keep 19
+  of the 32 true facts: a register cell is grounded against itself, which cannot
+  say whose value it is, so a careful grounder answers `not_found` for most
+  structured facts.
+- **Most of the gain came after grounding, from normalisation.** Two dates the
+  model copied as written became the ISO dates the labels use. Merging alone moves
+  neither number, because a merged fact is scored once in each document it cites.
+
 ## From the shell
 
 ```bash
@@ -285,9 +369,11 @@ odke eval route --labels route.jsonl --run mypackage.routers:MarketingRouter
 odke eval extract --labels gold.jsonl --run mypackage.extract:MyExtractor \
     --documents documents.jsonl --ontology schema.json
 odke eval validate --labels verdicts.jsonl --run mypackage.gate:MyValidator --ontology schema.json
+odke eval ablation --config examples/e2e/odke.yaml --labels examples/e2e/gold.jsonl
 ```
 
-- The CLI covers route, extract, ground, resolve, score and validate.
+- The CLI covers route, extract, ground, resolve, score and validate, and the
+  ablation, which takes `--config` and `--labels` and nothing else.
 - `--run package.module:Name` imports a stage and runs it over the labels. A class
   is instantiated with no arguments. Otherwise, point it at a module-level
   instance.

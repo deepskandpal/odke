@@ -411,7 +411,7 @@ graph = pipeline.run([Document(text="Halden Robotics Ltd has its head office in 
 assert [(f.object_value, f.support) for f in graph.facts] == [("Leeds", 2), ("Sheffield", 1)]
 ```
 
-In an `odke run` config the same four are `normalizer: value`, `resolver: native`,
+In an [`odke run`](run.md) config the same four are `normalizer: value`, `resolver: native`,
 `corroborator: signature` and `scorer: evidence`, with their options as extra
 keys; `odke run` supplies the ontology itself. A run's contested values show up in
 its stats, as `corroborator: conflicts (lost 1, won 2)`.

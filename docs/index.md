@@ -54,7 +54,8 @@ flowchart LR
 `constrain` and `infer` are not on the `run()` path. The constrainer compiles
 the ontology into the store's own constraints for a sink to apply before its
 first write. The inferrer is a bootstrap, not a mode: it proposes an ontology
-that you review and then pass in ([DECISIONS #8](decisions.md)).
+that you review, freeze and then pass in ([DECISIONS #8](decisions.md);
+[Ontology inference](inference.md)).
 
 ## What is here today
 
@@ -69,6 +70,11 @@ odke is pre-alpha. This site documents what is on `main`:
 | Evaluation against your own labels | `odke.eval`, `odke eval` | on `main` — [Evaluation](evaluation.md) |
 | Loaders (text, Markdown, records, HTML, PDF, DOCX), the sentence chunker, pattern / LLM / hybrid extractors | `odke.loaders`, `odke.chunking`, `odke.extract` | on `main` — [Loaders & extraction](loaders-and-extraction.md) |
 | Normalise, resolve, corroborate, score | `odke.corroborate` | on `main` — [Resolution & corroboration](resolution-and-corroboration.md) |
+| Ontology import from OWL, RDFS, SKOS and a live Neo4j graph | `Ontology.from_owl`, `Ontology.from_neo4j` | on `main` — [Ontology](ontology.md#importing-a-schema-you-already-have) |
+| Ontology inference: a draft to review, then freeze | `odke.infer`, `odke ontology infer`, `odke ontology freeze` | on `main` — [Ontology inference](inference.md) |
+| JSONL, Cypher-file, neo4j-admin CSV, RDF and NetworkX sinks | `odke.sinks` | on `main` — [Sinks](sinks.md) |
+| The whole pipeline from one config file | `odke.run`, `odke run` | on `main` — [`odke run`](run.md) |
+| The ablation: extraction alone, + grounding, + corroboration | `odke.eval.run_ablation`, `odke eval ablation` | on `main` — [Evaluation](evaluation.md#ablation) |
 
 ## Five minutes, no keys
 
@@ -140,4 +146,6 @@ for a model to decide. The free check never says `SUPPORTED` by itself; see
   drivers and providers.
 - [Concepts](concepts.md): `Fact`, its signature, the two clocks, links, chunks
   and the thirteen Protocols.
+- [`odke run`](run.md): the whole pipeline from one config file, and a walk through
+  the end-to-end example.
 - [Decisions](decisions.md): the design calls and what each one cost.

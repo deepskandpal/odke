@@ -562,7 +562,7 @@ assert len(graph.facts) == 4
 
 ## In a run config
 
-The same classes, by short name, in an `odke run` config:
+The same classes, by short name, in an [`odke run`](run.md) config:
 
 ```yaml
 inputs:
