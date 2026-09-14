@@ -169,6 +169,155 @@ def run_command(
     typer.echo(result.render())
 
 
+@ontology_app.command("infer")
+def ontology_infer(
+    paths: list[Path] = typer.Argument(..., help="Files or directories to infer a schema from."),
+    out: Path = typer.Option(
+        ..., "--out", "-o", help="Where to write the draft: .yaml, .yml or .json."
+    ),
+    max_types: int = typer.Option(10, "--max-types", help="Keep at most this many entity types."),
+    max_predicates: int = typer.Option(
+        25, "--max-predicates", help="Keep at most this many predicates."
+    ),
+    sample_words: int = typer.Option(
+        8_000, "--sample-words", help="How many words of the corpus to sample."
+    ),
+    seed: int = typer.Option(
+        0, "--seed", help="Sampling seed: the same files and seed give the same draft."
+    ),
+    no_llm: bool = typer.Option(
+        False, "--no-llm", help="Deterministic proposers only: no model, no key, no cost."
+    ),
+    model: str | None = typer.Option(
+        None, "--model", help="Model for the infer role, e.g. ollama/llama3.1."
+    ),
+    name: str = typer.Option("inferred", "--name", help="Name of the drafted ontology."),
+) -> None:
+    """Draft an ontology for a corpus that has none: for review, never to use as is.
+
+    Record shapes, Hearst patterns and co-occurrence propose types and predicates,
+    each with the spans that produced it; unless --no-llm, a model (the infer role)
+    then names and merges what they found. Writes the draft marked inferred, with
+    its evidence as comments, and the full evidence beside it as
+    <out>.evidence.json, and prints what backs each proposal. Then validate, edit,
+    and `odke ontology freeze` it.
+    """
+    # Imported here so `odke --version` and the other commands stay light.
+    from odke.infer.build import infer_ontology
+    from odke.infer.review import (
+        evidence_path,
+        format_for,
+        inferred_header,
+        notes,
+        render,
+        summary,
+    )
+    from odke.llm import ModelSpec, ProviderError
+    from odke.loaders import DirectoryLoader
+
+    try:
+        fmt = format_for(out)
+        loader = DirectoryLoader()
+        docs = [doc for path in paths for doc in loader.load(path)]
+    except (OSError, ValueError, ImportError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    if not docs:
+        typer.echo(
+            "error: no documents: no file under those paths has a loader "
+            "(.txt, .md, .csv, .tsv, .json, .jsonl, .parquet)",
+            err=True,
+        )
+        raise typer.Exit(2)
+    try:
+        inference = infer_ontology(
+            docs,
+            llm=not no_llm,
+            spec=ModelSpec(model=model) if model else None,
+            name=name,
+            seed=seed,
+            sample_words=sample_words,
+            max_types=max_types,
+            max_predicates=max_predicates,
+        )
+    except ProviderError as exc:
+        typer.echo(f"error: {exc}\n--no-llm runs the deterministic proposers alone.", err=True)
+        raise typer.Exit(1) from None
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+
+    evidence = evidence_path(out)
+    try:
+        text = render(
+            inference.ontology,
+            fmt=fmt,
+            header=inferred_header(inference, evidence_file=evidence.name),
+            notes=notes(inference),
+        )
+    except ImportError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8")
+    evidence.write_text(
+        inference.model_dump_json(indent=2, exclude={"ontology"}) + "\n", encoding="utf-8"
+    )
+    typer.echo(summary(inference))
+    typer.echo(f"wrote {out} — inferred: review it, then `odke ontology freeze {out}`")
+    typer.echo(f"wrote {evidence}")
+
+
+@ontology_app.command("freeze")
+def ontology_freeze(
+    path: Path = typer.Argument(..., help="The reviewed ontology, JSON or YAML."),
+    by: str | None = typer.Option(
+        None, "--by", help="Who reviewed it. Defaults to the current user."
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", "-o", help="Write the frozen ontology here instead of in place."
+    ),
+) -> None:
+    """Mark a reviewed ontology frozen: inferred cleared, reviewer and time recorded.
+
+    Refuses while `validate` finds an error, printing each one and exiting 1, and
+    leaves the file untouched. The frozen file is written without the review
+    comments; the evidence file beside a draft is left where it is.
+    """
+    from odke.infer.review import format_for, frozen_header, render
+    from odke.ontology import OntologyFreezeError
+
+    ontology = _load_or_exit(path)
+    try:
+        frozen = ontology.freeze(by=by if by is not None else _current_user())
+    except OntologyFreezeError as exc:
+        for diagnostic in exc.diagnostics:
+            typer.echo(f"{path}: {diagnostic}")
+        typer.echo(f"not frozen: {_count(len(exc.diagnostics), 'error')}")
+        raise typer.Exit(1) from None
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    target = out if out is not None else path
+    try:
+        text = render(frozen, fmt=format_for(target), header=frozen_header(frozen))
+    except (ValueError, ImportError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    target.write_text(text, encoding="utf-8")
+    when = frozen.frozen_at.isoformat() if frozen.frozen_at else "now"
+    typer.echo(f"frozen: {target} (by {frozen.frozen_by} at {when})")
+
+
+def _current_user() -> str:
+    import getpass
+
+    try:
+        return getpass.getuser()
+    except (OSError, KeyError, ImportError):
+        return "unknown"
+
+
 @app.command("eval")
 def eval_stage(
     stage: str = typer.Argument(
