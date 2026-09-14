@@ -49,7 +49,7 @@ class SchemaChange(BaseModel):
 def diff(old: Ontology, new: Ontology) -> list[SchemaChange]:
     """Every change from `old` to `new`, in declaration order."""
     out: list[SchemaChange] = []
-    for field in ("name", "version", "inferred"):
+    for field in ("name", "version", "inferred", "frozen_at", "frozen_by"):
         out += _field(field, getattr(old, field), getattr(new, field))
     for key in _union(old.types, new.types):
         path = f"types.{key}"

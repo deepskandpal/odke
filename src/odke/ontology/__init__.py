@@ -8,14 +8,17 @@ keeps extraction schema-aligned across 195 predicates without the prompt growing
 without bound, and it is why this module exists separately from the extractor.
 
 Everything here is deterministic. Inferring an ontology from a corpus (M5) is a
-separate, model-backed path that produces one of these objects and then hands
-over to exactly the same code.
+separate path, `odke.infer`, that produces one of these objects marked
+`inferred=True`; a person reviews it and `freeze()` clears the mark, and from
+then on it is handed to exactly the same code.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any, Literal
+import warnings
+from collections.abc import Iterable, Mapping, Sequence
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -34,7 +37,37 @@ from odke.ontology.load import (
 )
 from odke.ontology.validate import Diagnostic, diagnose
 
+if TYPE_CHECKING:
+    from odke.llm.base import LLMClient, ModelSpec
+    from odke.llm.roles import ModelRoles
+    from odke.types import Document
+
 Cardinality = Literal["single", "multi"]
+
+
+class OntologyFreezeError(ValueError):
+    """`freeze()` refused: the schema still has validation errors.
+
+    `diagnostics` holds them, so a tool can show each one where it is.
+    """
+
+    def __init__(self, diagnostics: Sequence[Diagnostic]) -> None:
+        self.diagnostics = tuple(diagnostics)
+        count = len(self.diagnostics)
+        lines = "\n".join(f"  {d}" for d in self.diagnostics)
+        super().__init__(
+            f"cannot freeze an ontology with {count} validation error{'' if count == 1 else 's'}; "
+            f"fix {'it' if count == 1 else 'them'} first:\n{lines}"
+        )
+
+
+class UnreviewedOntologyWarning(UserWarning):
+    """An ontology still marked `inferred=True` is about to shape a store.
+
+    Warned, not refused: a caller experimenting with an inferred schema on a
+    scratch database is doing nothing wrong. A graph built on one nobody has
+    reviewed is what DECISIONS #8 exists to prevent, so it is said out loud.
+    """
 
 
 class Qualifier(BaseModel):
@@ -159,6 +192,10 @@ class Ontology(BaseModel):
     # Set when the ontology came out of the inference path rather than from the
     # caller, so a sink can refuse to write an unreviewed schema into production.
     inferred: bool = False
+    # Set by `freeze()`: when a person reviewed the schema, and who. Both stay
+    # None on a hand-written ontology, which was reviewed by being written.
+    frozen_at: datetime | None = None
+    frozen_by: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -299,6 +336,51 @@ class Ontology(BaseModel):
             strict=strict,
         )
 
+    @classmethod
+    def infer(
+        cls,
+        corpus: Iterable[Document],
+        *,
+        llm: bool = True,
+        client: LLMClient | None = None,
+        spec: ModelSpec | None = None,
+        roles: ModelRoles | None = None,
+        name: str = "inferred",
+        seed: int = 0,
+        sample_words: int | None = None,
+        max_types: int = 10,
+        max_predicates: int = 25,
+        min_support: int = 1,
+    ) -> Ontology:
+        """A draft ontology for a corpus that has none, marked `inferred=True` for review.
+
+        A bootstrap, not a mode (DECISIONS #8): call it once, review and edit
+        what comes back, `freeze()` it, and pass the frozen ontology to a
+        pipeline. Nothing calls this implicitly.
+
+        Deterministic routes run first — record shapes, Hearst patterns,
+        co-occurrence — and the `infer` model names, merges and ranks what they
+        found; `llm=False` stops there and calls nothing. The evidence behind
+        each entry, what was merged and what was dropped are in
+        `odke.infer.infer_ontology`, which this returns the ontology of.
+        """
+        from odke.infer.build import infer_ontology
+        from odke.infer.sample import DEFAULT_SAMPLE_WORDS
+
+        return infer_ontology(
+            corpus,
+            llm=llm,
+            client=client,
+            spec=spec,
+            roles=roles,
+            name=name,
+            seed=seed,
+            sample_words=DEFAULT_SAMPLE_WORDS if sample_words is None else sample_words,
+            max_types=max_types,
+            max_predicates=max_predicates,
+            min_support=min_support,
+        ).ontology
+
     def validate(self) -> list[Diagnostic]:  # type: ignore[override]
         """Everything subtly wrong with this schema, as structured diagnostics.
 
@@ -322,6 +404,46 @@ class Ontology(BaseModel):
         documentation changes are listed too, as compatible.
         """
         return schema_diff(self, new)
+
+    def freeze(self, *, by: str, at: datetime | None = None) -> Ontology:
+        """This ontology, reviewed: `inferred` cleared, and when and by whom recorded.
+
+        The last step of the bootstrap — infer, review, edit, freeze, then run
+        guided. Refuses with `OntologyFreezeError` while `validate()` reports an
+        error, because freezing is the claim that a person has looked and the
+        schema holds; warnings do not block. `by` is required: a review nobody
+        did is not a review. Returns a copy and leaves this ontology as it was.
+        """
+        reviewer = by.strip()
+        if not reviewer:
+            raise ValueError("freeze() needs to know who reviewed the ontology: pass by=")
+        errors = [d for d in self.validate() if d.severity == "error"]
+        if errors:
+            raise OntologyFreezeError(errors)
+        return self.model_copy(
+            deep=True,
+            update={
+                "inferred": False,
+                "frozen_at": at if at is not None else datetime.now(UTC),
+                "frozen_by": reviewer,
+            },
+        )
+
+    def warn_if_unreviewed(self, action: str, *, stacklevel: int = 3) -> None:
+        """Emit `UnreviewedOntologyWarning` when this ontology is still `inferred`.
+
+        For sinks and constraint compilers: `action` says what is about to
+        happen with it — "compiling Neo4j constraints".
+        """
+        if self.inferred:
+            warnings.warn(
+                UnreviewedOntologyWarning(
+                    f"{action} from ontology {self.name!r}, which was inferred and has not "
+                    "been reviewed. Review it, then freeze it (Ontology.freeze or "
+                    "`odke ontology freeze`) before a graph depends on it."
+                ),
+                stacklevel=stacklevel,
+            )
 
     def predicates_for(self, type_name: str) -> list[Predicate]:
         """Predicates whose domain covers this type, including inherited ones.
@@ -449,10 +571,12 @@ __all__ = [
     "Diagnostic",
     "EntityType",
     "Ontology",
+    "OntologyFreezeError",
     "OntologyImportWarning",
     "OntologyLoadError",
     "OntologySnippet",
     "Predicate",
     "Qualifier",
     "SchemaChange",
+    "UnreviewedOntologyWarning",
 ]
