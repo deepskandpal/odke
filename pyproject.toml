@@ -39,13 +39,18 @@ neo4j = ["neo4j>=5.20,<7"]
 rdf = ["rdflib>=7.0,<8"]
 networkx = ["networkx>=3.2,<4"]
 # Readers for the "whatever form possible" half of the promise.
-docs = ["beautifulsoup4>=4.12,<5", "pypdf>=5.0,<7", "lxml>=5.0,<7"]
+docs = ["beautifulsoup4>=4.12,<5", "pypdf>=5.0,<7", "lxml>=5.0,<7", "python-docx>=1.1,<2"]
+# One reader each, for a caller who wants PDFs or Word files without the rest of
+# `[docs]`. Both loaders import their library on first use and name the extra
+# when it is missing; HTML needs neither, it runs on the standard library.
+pdf = ["pypdf>=5.0,<7"]
+docx = ["python-docx>=1.1,<2"]
 # `Ontology.from_yaml`; JSON needs nothing.
 yaml = ["pyyaml>=6,<7"]
 # Columnar records. pyarrow is large, so reading Parquet is opt-in; the loader
 # imports it on first use and names this extra when it is missing.
 parquet = ["pyarrow>=15"]
-all = ["odke[llm,neo4j,rdf,networkx,docs,yaml,parquet]"]
+all = ["odke[llm,neo4j,rdf,networkx,docs,pdf,docx,yaml,parquet]"]
 
 [project.urls]
 Homepage = "https://github.com/deepskandpal/odke"

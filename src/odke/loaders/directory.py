@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterator, Mapping
 from pathlib import Path
+from typing import Literal
 
+from odke.loaders.base import MissingExtraError, MissingExtraWarning
+from odke.loaders.docx import DocxLoader
 from odke.loaders.html import HtmlLoader
+from odke.loaders.pdf import PdfLoader
 from odke.loaders.structured import CsvLoader, JsonlLoader, JsonLoader, ParquetLoader, TsvLoader
 from odke.loaders.text import MarkdownLoader, TextLoader
 from odke.stages import Loader, Source
@@ -40,8 +45,10 @@ def default_loaders(
         ".jsonl": jsonl,
         ".ndjson": jsonl,
         # Claimed so a directory walk says "install the extra" rather than
-        # silently skipping the file.
+        # silently skipping the file. Each imports its library on first read.
         ".parquet": ParquetLoader(tier=tier),
+        ".pdf": PdfLoader(tier=tier),
+        ".docx": DocxLoader(tier=tier),
     }
 
 
@@ -51,8 +58,13 @@ class DirectoryLoader:
     Modality comes from the loader that claims the suffix, so a mixed directory
     routes itself: Markdown and text arrive unstructured and go to the model,
     records arrive structured and never cost a call. A file no loader claims is
-    skipped rather than guessed at; reading a PDF as UTF-8 would produce a
+    skipped rather than guessed at; reading an image as UTF-8 would produce a
     document, and every fact from it would be noise.
+
+    A file whose loader needs an extra that is not installed — a PDF without
+    `odke[pdf]` — is skipped with a `MissingExtraWarning` naming the file and
+    the install line, and the walk goes on: one PDF should not stop a thousand
+    Markdown files from loading. `missing_extras="raise"` makes it an error.
 
     Files are visited in sorted order, so two runs over one directory produce
     documents in the same order.
@@ -65,10 +77,14 @@ class DirectoryLoader:
         tier: SourceTier = SourceTier.UNVERIFIED,
         encoding: str | None = None,
         loaders: Mapping[str, Loader] | None = None,
+        missing_extras: Literal["warn", "raise"] = "warn",
     ) -> None:
+        if missing_extras not in ("warn", "raise"):
+            raise ValueError(f"missing_extras must be 'warn' or 'raise', not {missing_extras!r}")
         self.pattern = pattern
         table = default_loaders(tier=tier, encoding=encoding) if loaders is None else loaders
         self.loaders = {suffix.lower(): loader for suffix, loader in table.items()}
+        self.missing_extras = missing_extras
 
     def load(self, source: Source) -> Iterator[Document]:
         root = Path(source)
@@ -80,8 +96,14 @@ class DirectoryLoader:
             raise FileNotFoundError(f"no such file or directory: {root}")
         for path in paths:
             loader = self.loaders.get(path.suffix.lower())
-            if loader is not None:
+            if loader is None:
+                continue
+            try:
                 yield from loader.load(path)
+            except MissingExtraError as exc:
+                if self.missing_extras == "raise":
+                    raise
+                warnings.warn(f"skipped {path}: {exc}", MissingExtraWarning, stacklevel=2)
 
 
 __all__ = ["DirectoryLoader", "default_loaders"]

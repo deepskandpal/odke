@@ -14,7 +14,6 @@ stripping it costs nothing.
 from __future__ import annotations
 
 import csv
-import importlib
 import io
 import json
 import os
@@ -23,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from odke._text import iter_lines
-from odke.loaders.base import read_text
+from odke.loaders.base import import_extra, read_text
 from odke.loaders.records import parse_path, record_document, resolve_path
 from odke.stages import Source
 from odke.types import Document, SourceTier
@@ -173,8 +172,8 @@ class ParquetLoader:
     """Parquet, one document per row. Needs `pip install "odke[parquet]"`.
 
     pyarrow is imported when a file is read, not when this module is, so the
-    base install can name the class and a directory walk only fails if it
-    actually meets a Parquet file.
+    base install can name the class and a directory walk only has to say so if
+    it actually meets a Parquet file.
     """
 
     def __init__(
@@ -184,12 +183,9 @@ class ParquetLoader:
         self.columns = list(columns) if columns is not None else None
 
     def load(self, source: Source) -> list[Document]:
-        try:
-            parquet: Any = importlib.import_module("pyarrow.parquet")
-        except ImportError as exc:
-            raise ImportError(
-                'reading Parquet needs pyarrow. Run: pip install "odke[parquet]"'
-            ) from exc
+        parquet: Any = import_extra(
+            "pyarrow.parquet", extra="parquet", package="pyarrow", reading="Parquet"
+        )
         if isinstance(source, bytes | bytearray | memoryview):
             table, uri = parquet.read_table(io.BytesIO(source), columns=self.columns), None
         elif isinstance(source, str | os.PathLike):
