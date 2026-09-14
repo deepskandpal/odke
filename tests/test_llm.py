@@ -16,6 +16,7 @@ from odke.llm import (
     ModelSpec,
     OpenAICompatClient,
     ProviderError,
+    RecordedClient,
     ScriptedClient,
     register,
     registered_providers,
@@ -273,3 +274,51 @@ def test_scripted_client_fails_loudly_when_it_runs_out() -> None:
     assert ScriptedClient([], strict=False).complete(
         [Message(content="a")], spec=ModelSpec(model="test/m")
     ) == Completion(text="", model="test/m")
+
+
+# --------------------------------------------------------------------------- #
+# The recorded client
+# --------------------------------------------------------------------------- #
+
+SPEC = ModelSpec(model="test/model")
+
+
+def test_recorded_client_answers_by_prompt_not_by_position() -> None:
+    """The pairing has to survive a thread pool, so order cannot be what decides it."""
+    client = RecordedClient(
+        [{"match": "Ada", "response": {"who": "Ada"}}, {"match": "Alan", "response": "Alan"}]
+    )
+    assert isinstance(client, LLMClient)
+    assert client.complete([Message(content="about Alan")], spec=SPEC).text == "Alan"
+    assert client.complete([Message(content="about Ada")], spec=SPEC).parsed == {"who": "Ada"}
+    assert client.complete([Message(content="about Ada")], spec=SPEC).parsed == {"who": "Ada"}
+    assert len(client.calls) == 3
+
+
+def test_recorded_client_matches_across_every_message() -> None:
+    client = RecordedClient([{"match": "needle", "response": "found"}])
+    completion = client.complete(
+        [Message(role="system", content="needle"), Message(content="hay")], spec=SPEC
+    )
+    assert completion.text == "found"
+
+
+def test_recorded_client_replays_a_recorded_failure() -> None:
+    client = RecordedClient([{"match": "x", "error": "429 rate limited"}])
+    with pytest.raises(ProviderError, match="rate limited"):
+        client.complete([Message(content="x")], spec=SPEC)
+
+
+def test_recorded_client_with_no_matching_entry_says_so() -> None:
+    with pytest.raises(ProviderError, match="no entry matching"):
+        RecordedClient([]).complete([Message(content="x")], spec=SPEC)
+    assert RecordedClient([], strict=False).complete(
+        [Message(content="x")], spec=SPEC
+    ) == Completion(text="", model="test/model")
+
+
+def test_recorded_client_loads_a_fixture_file(tmp_path) -> None:
+    path = tmp_path / "recorded.json"
+    path.write_text(json.dumps([{"match": "q", "response": {"a": 1}}]), encoding="utf-8")
+    client = RecordedClient.from_fixture(path)
+    assert client.complete([Message(content="q?")], spec=SPEC).parsed == {"a": 1}
