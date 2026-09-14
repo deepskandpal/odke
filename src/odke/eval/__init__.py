@@ -41,6 +41,8 @@ from odke.eval.grounding import evaluate_grounding, grounding_ablation, kept, ru
 from odke.eval.report import StageReport
 from odke.eval.resolution import as_triples, evaluate_resolution, links_from_clusters
 from odke.eval.routing import evaluate_routing, run_route
+from odke.eval.sinks import assert_idempotent, check_idempotency, jsonl_counts
+from odke.eval.validation import evaluate_validation, run_validate
 
 __all__ = [
     "LABEL_FORMATS",
@@ -56,6 +58,8 @@ __all__ = [
     "ValidationLabel",
     "ValidationPrediction",
     "as_triples",
+    "assert_idempotent",
+    "check_idempotency",
     "describe",
     "dump_jsonl",
     "evaluate_calibration",
@@ -63,7 +67,9 @@ __all__ = [
     "evaluate_grounding",
     "evaluate_resolution",
     "evaluate_routing",
+    "evaluate_validation",
     "grounding_ablation",
+    "jsonl_counts",
     "kept",
     "links_from_clusters",
     "load_jsonl",
@@ -72,4 +78,5 @@ __all__ = [
     "run_ground",
     "run_route",
     "run_score",
+    "run_validate",
 ]
