@@ -1,0 +1,20 @@
+{
+  "description": "Hand-authored reply to the ontology proposal prompt for the people/companies corpus. Person, Company and employer claim candidates (employer merges employer and works_at); Place is new but quotes a passage; City claims nothing and quotes nothing; headquarters quotes words that are not in any passage; full_name also claims a candidate that does not exist.",
+  "interactions": [
+    {
+      "match": {
+        "contains": [
+          "Candidates",
+          "Ada Lovelace works at Acme Corp. Grace Hopper works at Globex."
+        ]
+      },
+      "response": {
+        "text": "{\"types\": [{\"name\": \"Person\", \"description\": \"A person named in the staff records.\", \"parents\": [], \"from\": [\"Person\"]}, {\"name\": \"Company\", \"description\": \"An organisation people work for.\", \"from\": [\"Company\"]}, {\"name\": \"City\", \"description\": \"A city.\", \"from\": []}, {\"name\": \"Place\", \"description\": \"Where a company is based.\", \"quote\": \"headquartered in London\"}], \"predicates\": [{\"name\": \"employer\", \"description\": \"The company a person works for.\", \"domain\": [\"Person\"], \"range\": \"Company\", \"cardinality\": \"single\", \"from\": [\"employer\", \"works_at\"]}, {\"name\": \"full_name\", \"description\": \"The person's name as written.\", \"domain\": [\"Person\"], \"range\": \"string\", \"from\": [\"name\", \"ghost\"]}, {\"name\": \"headquarters\", \"domain\": [\"Company\"], \"range\": \"Place\", \"quote\": \"Acme Corp is headquartered in Nowhere\"}]}",
+        "model": "claude-sonnet-5",
+        "prompt_tokens": 940,
+        "completion_tokens": 310,
+        "cost_usd": 0.0075
+      }
+    }
+  ]
+}
