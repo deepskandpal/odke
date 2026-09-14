@@ -125,7 +125,9 @@ class Pipeline:
                     "constrainer",
                     constrainer,
                     PassThroughConstrainer,
-                    profile.constrains,
+                    # A constrainer compiled for this platform is how the store
+                    # learns the rules it enforces: its other half, not a rerun.
+                    profile.constrains and getattr(constrainer, "platform", None) != profile.name,
                     "constrains",
                 ),
             )
