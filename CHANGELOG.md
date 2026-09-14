@@ -136,6 +136,12 @@ was serialised. Two of them fix live correctness bugs.
   `DIFFERENT` link and a cardinality check. (#30)
 - `odke eval ablation --config … --labels …` and `odke.eval.run_ablation`:
   extraction alone, + grounding, + corroboration over your own labels. (#38)
+- `odke run` short names for the loaders and sinks that landed after its
+  builder: loaders `html`, `pdf` and `docx`; sinks `cypher_file`,
+  `neo4j_admin_csv`, `rdf` and `networkx` (which also writes node-link JSON
+  when given `path`). Options pass through as extra keys. A missing extra is a
+  config error naming it, raised while the config is built and before any sink
+  is opened, and each input's loader is now built then too.
 
 ### Changed
 - The stage protocols live in `odke.stages`; `odke.pipeline` re-exports them.

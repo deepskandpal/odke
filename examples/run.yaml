@@ -23,14 +23,16 @@ inputs:
   - path: e2e/corpus/factsheet.md
     loader: {use: markdown, tier: authoritative, modality: semi_structured}
   - path: e2e/corpus/notes
-    loader: {use: directory, tier: community}    # also: text, markdown, csv, tsv, json, jsonl, parquet
+    loader: {use: directory, tier: community}    # also: text, markdown, html, pdf, docx, csv, tsv, json, jsonl, parquet
+  # - path: reports/annual.pdf                   # html, pdf, docx: extracted text, with a source map back to the file
+  #   loader: {use: pdf, per_page: true}         # pdf needs odke[pdf], docx needs odke[docx]; html needs nothing
 
 # Directories put on sys.path, so a stage of your own (package.module:Name)
 # can live next to this file.
 pythonpath: [e2e]
 
 # Which model does which job (DECISIONS #7a). A string is a model; a mapping is
-# a full ModelSpec (temperature, max_tokens, base_url, api_key_env, extra).
+# a full ModelSpec (temperature, max_tokens, timeout, base_url, api_key_env, extra).
 # Keys never go here — a provider reads its own environment variable.
 models:
   extract: anthropic/claude-sonnet-5
@@ -69,6 +71,11 @@ stages:
   #   password_env: NEO4J_PASSWORD               # a password never goes in this file
   #   database: neo4j
   #   batch_size: 500
+  # The other built-in sinks connect to nothing; odke run supplies the ontology.
+  # sink: {use: cypher_file, path: e2e/out/graph.cypher}        # a cypher-shell script; batch_size
+  # sink: {use: neo4j_admin_csv, directory: e2e/out/import}     # neo4j-admin import files; delimiter, array_delimiter
+  # sink: {use: rdf, path: e2e/out/graph.ttl}                   # odke[rdf]; format (turtle, nt, json-ld), base, schema
+  # sink: {use: networkx, path: e2e/out/graph.json}             # odke[networkx]; node-link JSON (without path: memory only)
   constrainer: neo4j                             # the DDL `bootstrap` applies
   # inferrer:     passthrough only — odke run never infers (DECISIONS #8)
 

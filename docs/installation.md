@@ -91,6 +91,7 @@ the fix:
 | `ParquetLoader`, reading a file | `MissingExtraError: reading Parquet needs pyarrow. Run: pip install "odke[parquet]"` |
 | `DirectoryLoader`, meeting one of those files | a `MissingExtraWarning` naming the file and the install line; the file is skipped and the walk goes on |
 | a model string that needs litellm | `ProviderNotInstalled`, listing `pip install "odke[llm]"`, a `base_url`, or `odke.llm.register` |
+| a short name in `odke run` whose extra is missing (`pdf`, `docx`, `parquet`, `rdf`, `networkx`) | exit 2 while the config is built, before anything is loaded or opened: `stages.sink: RdfSink needs rdflib, which is not installed. Run: pip install "odke[rdf]"` |
 
 `MissingExtraError` is an `ImportError`.
 
