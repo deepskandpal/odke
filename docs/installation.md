@@ -2,17 +2,18 @@
 
 openodke needs Python 3.11, 3.12 or 3.13.
 
-!!! note "Not on PyPI yet"
-    `openodke` has no release on PyPI yet; v0.1.0 is the first planned one. Until
-    then, install from the repository with `git+https://github.com/deepskandpal/odke`.
-    These pages describe what is on `main`.
+`openodke` is on [PyPI](https://pypi.org/project/openodke/); 0.1.0 is the
+current release.
 
 ```bash
-pip install "openodke @ git+https://github.com/deepskandpal/odke"
-pip install "openodke[neo4j,yaml] @ git+https://github.com/deepskandpal/odke"   # with extras
-pip install "openodke[all] @ git+https://github.com/deepskandpal/odke"          # every extra
-uv add "openodke[neo4j] @ git+https://github.com/deepskandpal/odke"             # or with uv
+pip install openodke
+pip install "openodke[neo4j,yaml]"   # with extras
+pip install "openodke[all]"          # every extra
+uv add "openodke[neo4j]"             # or with uv
 ```
+
+These pages track `main`. For changes not yet released, install from the
+repository: `pip install "openodke @ git+https://github.com/deepskandpal/odke"`.
 
 ## The base install talks to nothing
 
