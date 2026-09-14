@@ -27,10 +27,13 @@ from odke.corroborate.resolve import (
     domain_of,
     name_similarity,
 )
+from odke.corroborate.score import DEFAULT_VERDICT_WEIGHTS, EvidenceScorer, combine
 
 __all__ = [
     "CONFLICT",
     "DEFAULT_INTERVALS",
+    "DEFAULT_VERDICT_WEIGHTS",
+    "EvidenceScorer",
     "LINKER",
     "NAME_KEY",
     "SCORE",
@@ -39,6 +42,7 @@ __all__ = [
     "SignatureCorroborator",
     "ValueNormalizer",
     "candidate_pairs",
+    "combine",
     "domain_of",
     "independent_sources",
     "name_key",
