@@ -19,6 +19,7 @@ no gold slice and no leaderboard. Brier, B-cubed and P/R/F1 are arithmetic,
 so the subpackage adds no dependency to the base install (DECISIONS #1).
 """
 
+from odke.eval.calibration import evaluate_calibration, run_score
 from odke.eval.extraction import evaluate_extraction, match_extraction, run_extract
 from odke.eval.formats import (
     LABEL_FORMATS,
@@ -57,6 +58,7 @@ __all__ = [
     "as_triples",
     "describe",
     "dump_jsonl",
+    "evaluate_calibration",
     "evaluate_extraction",
     "evaluate_grounding",
     "evaluate_resolution",
@@ -69,4 +71,5 @@ __all__ = [
     "run_extract",
     "run_ground",
     "run_route",
+    "run_score",
 ]
