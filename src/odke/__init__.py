@@ -7,7 +7,7 @@ generalised from one production knowledge graph to a general-purpose SDK. See
 NOTICE for the relationship to that paper.
 """
 
-from odke.corroborate import ValueNormalizer
+from odke.corroborate import NativeResolver, ValueNormalizer
 from odke.ontology import (
     Diagnostic,
     EntityType,
@@ -76,6 +76,7 @@ __all__ = [
     "KnowledgeGraph",
     "LinkKind",
     "Loader",
+    "NativeResolver",
     "Normalizer",
     "Ontology",
     "OntologyLoadError",
