@@ -32,6 +32,7 @@ from odke.corroborate import (
     ValueNormalizer,
 )
 from odke.corroborate.score import EvidenceScorer, combine
+from odke.eval import CalibrationLabel, evaluate_calibration, run_score
 
 V = GroundingVerdict
 ACME = Entity(key="c1", type="Company", label="Acme")
@@ -220,3 +221,20 @@ def test_normalise_resolve_corroborate_score_in_the_pipeline() -> None:
     assert {link.kind for link in kg.links} == {LinkKind.SAME_AS}
     back = KnowledgeGraph.model_validate_json(kg.model_dump_json())
     assert back.facts[0].confidence == fact.confidence
+
+
+def test_the_score_is_readable_by_the_calibration_evaluator() -> None:
+    """#57 measures this number; it must accept every score this scorer can produce."""
+    labels = [
+        CalibrationLabel(fact=_fact(0.9, V.SUPPORTED, "d1", "d2", "d3"), true=True),
+        CalibrationLabel(fact=_fact(0.8, V.UNCHECKED), true=True),
+        CalibrationLabel(fact=_fact(0.0, V.NOT_FOUND), true=False),
+        CalibrationLabel(
+            fact=_fact(0.99, V.CONTRADICTED, *[f"d{i}" for i in range(50)]), true=False
+        ),
+    ]
+    scored = run_score(EvidenceScorer(), labels)
+    assert all(0.0 <= f.confidence <= 1.0 for f in scored)
+    report = evaluate_calibration(labels, scored)
+    assert report.n == len(labels)
+    assert {"brier", "ece"} <= set(report.metrics)
