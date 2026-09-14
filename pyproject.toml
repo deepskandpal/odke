@@ -70,6 +70,13 @@ dev = [
   "types-pyyaml>=6",
   "hypothesis>=6",
 ]
+# The documentation site: `uv run --group docs mkdocs build --strict`. A group,
+# not an extra, so it never reaches a user's install. (The `docs` *extra* above
+# is the document readers; groups and extras are separate namespaces.)
+docs = [
+  "mkdocs>=1.6,<2",
+  "mkdocs-material>=9.5,<10",
+]
 
 [build-system]
 requires = ["hatchling"]

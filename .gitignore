@@ -10,5 +10,6 @@ build/
 .hypothesis/
 .coverage
 htmlcov/
+site/
 .env
 .DS_Store

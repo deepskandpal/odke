@@ -1,0 +1,74 @@
+site_name: odke
+site_description: >-
+  Text in, a grounded knowledge graph out: ontology-guided knowledge extraction
+  for Neo4j or any graph store.
+site_url: https://deepskandpal.github.io/odke/
+repo_url: https://github.com/deepskandpal/odke
+repo_name: deepskandpal/odke
+edit_uri: edit/main/docs/
+copyright: >-
+  Apache-2.0. An independent implementation of the ODKE+ architecture
+  (arXiv:2509.04696); not affiliated with or endorsed by Apple Inc.
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.footer
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+# `mkdocs build --strict` turns every one of these into a failed build, so a
+# link to a page or a heading that no longer exists cannot ship.
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  # DECISIONS.md is rendered from the file in the repository root, not copied:
+  # one copy, so the site and the repo cannot disagree about a decision.
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Concepts: concepts.md
+  - Ontology: ontology.md
+  - "Loaders & extraction": loaders-and-extraction.md
+  - Grounding: grounding.md
+  - "Resolution & corroboration": resolution-and-corroboration.md
+  - Neo4j sink: neo4j.md
+  - "Evaluation (BYOLD)": evaluation.md
+  - Decisions: decisions.md

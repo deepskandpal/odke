@@ -1,0 +1,78 @@
+# The documentation site, built from docs/ and mkdocs.yml.
+#
+# A pull request that touches what the site is built from builds it with
+# --strict, so a broken link, a missing page or a heading that moved fails the
+# PR. Only main deploys, to https://deepskandpal.github.io/odke/, through the
+# github-pages environment. The examples on the pages are run by
+# tests/test_docs_examples.py in the ci workflow, not here.
+
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "src/**"
+      - "DECISIONS.md"          # rendered into the site
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "src/**"
+      - "DECISIONS.md"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # A newer push supersedes a PR build; a deploy already running is let finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # Only the docs group: the site renders markdown and does not import the
+      # package, so it needs neither the package nor its extras to build.
+      - name: Build
+        run: uv run --locked --only-group docs mkdocs build --strict
+        env:
+          UV_PYTHON: "3.12"
+
+      - name: Upload the site
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
