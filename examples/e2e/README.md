@@ -179,7 +179,7 @@ RETURN labels(s) AS labels, s.key AS subject, objects
 ```
 
 One row: `Company:halden robotics ltd`, `["Leeds", "Sheffield"]`. This is the
-check odke compiles from the ontology for every single-valued predicate — Neo4j
+check openodke compiles from the ontology for every single-valued predicate — Neo4j
 cannot enforce relationship cardinality itself. From Python it is
 `Neo4jSink(...).check(ontology)`. It reports and never repairs: which head office
 is right is a decision for a person, and both are still there to decide on.

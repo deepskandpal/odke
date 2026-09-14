@@ -1,9 +1,9 @@
 # Installation
 
-odke needs Python 3.11, 3.12 or 3.13.
+openodke needs Python 3.11, 3.12 or 3.13.
 
 !!! note "Not on PyPI yet"
-    `odke` has no release on PyPI yet; v0.1.0 is the first planned one. Until
+    `openodke` has no release on PyPI yet; v0.1.0 is the first planned one. Until
     then, install from the repository with `git+https://github.com/deepskandpal/odke`.
     These pages describe what is on `main`.
 
@@ -95,7 +95,7 @@ the fix:
 
 `MissingExtraError` is an `ImportError`.
 
-## Working on odke
+## Working on openodke
 
 ```bash
 git clone https://github.com/deepskandpal/odke && cd odke

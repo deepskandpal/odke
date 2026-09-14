@@ -39,7 +39,7 @@ was serialised. Two of them fix live correctness bugs.
   default, plus `ValidationVerdict`. (#53)
 - `PlatformProfile` (declared on a sink), `Delegated(to=...)` (a pass-through
   that satisfies every stage protocol and stamps provenance), and
-  `DoubleStageWarning`, raised once when a stage is configured in odke and the
+  `DoubleStageWarning`, raised once when a stage is configured in openodke and the
   sink's platform does it too. Warned, never refused. (#59)
 
 #### M1 — Ontology I/O & validation (#63)
@@ -144,6 +144,12 @@ was serialised. Two of them fix live correctness bugs.
   is opened, and each input's loader is now built then too.
 
 ### Changed
+- The distribution and the import package are now `openodke` (`pip install
+  "openodke[neo4j]"`, `import openodke`); the command is still `odke`, and an
+  `openodke` command runs the same app. The reserved `odke.*` keys, the RDF
+  `odke:` vocabulary and the Neo4j `odke_*` schema names are unchanged. Nothing
+  had been published under the old name, so there is no compatibility shim.
+  (DECISIONS #22)
 - The stage protocols live in `openodke.stages`; `openodke.pipeline` re-exports them.
   `Extractor` takes one `Chunk` and the ontology; `Grounder` takes one fact and
   its document and sets the verdict rather than dropping; `Corroborator` returns

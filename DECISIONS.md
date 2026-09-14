@@ -277,7 +277,7 @@ The package sits on top of any platform, and some platforms already do a
 stage: neo4j-graphrag resolves after the write, GraphPruner prunes, an RDF
 store refuses what breaks SHACL. Doing those twice is waste at best and a
 second opinion nobody asked for at worst — but forbidding it would be wrong,
-because the two passes are not the same pass. odke's exact match on strong
+because the two passes are not the same pass. openodke's exact match on strong
 identifiers before the write is free and never wrong; the platform's fuzzy
 pass on names after the write is neither. A caller may want both.
 
@@ -296,3 +296,31 @@ refuse it.
 
 *Cost:* a user who ignores the warning gets two resolutions. The evaluator,
 not the pipeline, is where that shows up as a number.
+
+### 22. The package is `openodke`; the tool and its data keep `odke`
+
+The distribution on PyPI and the import package are `openodke`. Anyone who has
+read Apple's ODKE+ paper and searches for it still finds the package, and the
+`open` prefix says what it is: an independent, open implementation of a
+published architecture, not Apple's system. That is the pattern OpenCLIP
+(OpenAI's CLIP), OpenFlamingo and OpenLLaMA already set, and readers know it.
+A bare `odke` on PyPI would read as the paper authors' own release, which is
+the affiliation confusion PEP 541 lets a name be reassigned over; a name that
+states its independence avoids that before the first upload rather than after.
+
+The command stays `odke` — short, and what a person types — and `openodke` is
+installed beside it as the same app. The data keeps `odke` too: the reserved
+qualifier and attribute keys (`odke.source_form`, `odke.name_key`,
+`odke.conflict`, `odke.score`), the resolver's `odke.native` linker, the RDF
+`odke:` prefix and its vocabulary IRI, the Neo4j `odke_*` index and constraint
+names and the `// odke:check` marker. Those are a format, not a Python name:
+they are documented, and they are what graphs written today contain. Renaming
+them would be a data migration nobody asked for, bought only for symmetry. The
+repository and documentation URLs stay where they are until the repository
+itself is renamed, if it ever is.
+
+The rename came before any release, when nobody depends on `import odke`, so
+there is no shim: `import odke` fails.
+
+*Cost:* two names to explain — `pip install openodke`, then `odke run`. The
+README and the installation page say it once each.

@@ -1,8 +1,8 @@
-# odke
+# openodke
 
 **Text in, a grounded knowledge graph out.**
 
-odke is the seam between text and any graph store. You bring documents and an
+openodke is the seam between text and any graph store. You bring documents and an
 ontology; it hands back a `KnowledgeGraph` of entities, facts and the links
 between entities. Every fact carries its receipts: the document, the character
 span, the source tier and the grounding verdict that produced it. Where that
@@ -59,7 +59,7 @@ that you review, freeze and then pass in ([DECISIONS #8](decisions.md);
 
 ## What is here today
 
-odke is pre-alpha. This site documents what is on `main`:
+openodke is pre-alpha. This site documents what is on `main`:
 
 | Area | Module | Status |
 |---|---|---|

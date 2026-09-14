@@ -1,4 +1,4 @@
-site_name: odke
+site_name: openodke
 site_description: >-
   Text in, a grounded knowledge graph out: ontology-guided knowledge extraction
   for Neo4j or any graph store.

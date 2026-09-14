@@ -1,7 +1,7 @@
 # Sinks
 
 A sink is where a finished `KnowledgeGraph` goes, and it is one method:
-`write(kg)`. Six ship with odke. Every graph-shaped sink writes the **same shape**
+`write(kg)`. Six ship with openodke. Every graph-shaped sink writes the **same shape**
 Neo4j gets: entities as nodes, each fact as its own edge carrying its provenance,
 a literal fact's value on a claim node, and `EntityLink`s as edges that never merge
 nodes. They share one write plan (`openodke.sinks.neo4j.plan()`) and one rule for
@@ -245,7 +245,7 @@ accepted), and when it is left out the file suffix decides (`.ttl`, `.nt`,
 `.jsonld`, `.json`), defaulting to Turtle. The default `base` is a documentation
 domain on purpose: data minted under it is visibly unplaced. Pass your own.
 
-| odke | RDF |
+| openodke | RDF |
 |---|---|
 | `Entity` | `<base>entity/<key>`, typed with its class `<schema><Type>` and `odke:Entity`, with `odke:key`, `rdfs:label`, `skos:altLabel` per alias, `odke:external_id`, `odke:resolution_*`, and its attributes under `<schema>attribute/` |
 | `Fact` | a **reified statement** `<base>fact/<signature>`: an `rdf:Statement` and `odke:Fact` with `rdf:subject`, `rdf:predicate` and `rdf:object`, carrying `odke:polarity`, `odke:confidence`, `odke:support`, both clocks, `odke:identity_keys`, its qualifiers under `<schema>qualifier/`, and one `odke:evidence` node per source with `odke:doc_id`, `odke:uri`, `odke:start`, `odke:end`, `odke:quote`, `odke:tier` and `odke:retrieved_at` |

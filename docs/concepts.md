@@ -1,7 +1,7 @@
 # Concepts
 
 Everything in this page lives in `openodke.types`, `openodke.stages` and
-`openodke.pipeline`, and is importable from `odke`. All of it is deterministic and
+`openodke.pipeline`, and is importable from `openodke`. All of it is deterministic and
 provider-free, so `import openodke` works with no model provider, no database driver
 and no network.
 
@@ -335,7 +335,7 @@ caller's business.
 Some stores already do a stage themselves: neo4j-graphrag resolves after the
 write, GraphPruner prunes, and an RDF store refuses what breaks SHACL. Running
 that stage twice is waste at best. Forbidding it would also be wrong, because the
-two passes differ: odke's exact match on strong identifiers before the write is
+two passes differ: openodke's exact match on strong identifiers before the write is
 free and never wrong, while the platform's fuzzy pass on names after the write is
 neither ([DECISIONS #21](decisions.md)).
 

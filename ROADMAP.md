@@ -108,7 +108,7 @@ these two stages that produce it.
 - `LLMGrounder` — per fact, one cheap model call against its own evidence span;
   `SUPPORTED` / `CONTRADICTED` / `NOT_FOUND`; batching and concurrency
 - Normalisation — dates, numbers, units, person and organisation name forms
-- Entity resolution — wrap splink for blocking and scoring; odke's own part is
+- Entity resolution — wrap splink for blocking and scoring; openodke's own part is
   `EntityLink` and the disagreement rule, on top
 - Conflict resolution on freshness × source tier × agreement count
 - Confidence calibration, and `support` counts on every merged fact

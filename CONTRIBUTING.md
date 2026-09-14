@@ -28,7 +28,7 @@ list of steps to drift out of sync with this one.
   with no provider, no driver and no network. `verify.sh` step 8 enforces it, so
   a new top-level import of `litellm`, `neo4j` or `rdflib` will fail the build.
   Import those inside the module that needs them.
-- **No vendor names outside `odke/llm/`.** Everything else goes through
+- **No vendor names outside `openodke/llm/`.** Everything else goes through
   `LLMClient`. A `import anthropic` in the extractor is a bug, not a shortcut.
 - **Tests never touch the network.** Use `ScriptedClient` for model calls and the
   injected opener for HTTP. Step 1 refuses to run if a live key is in the
