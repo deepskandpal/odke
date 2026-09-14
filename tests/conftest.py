@@ -1,10 +1,31 @@
-"""Shared fixtures for the extractor tests."""
+"""Shared fixtures: the people ontology, and a copy of the examples to run."""
 
 from __future__ import annotations
+
+import shutil
+import sys
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
 from odke import EntityType, Ontology, Predicate
+
+EXAMPLES = Path(__file__).parent.parent / "examples"
+
+
+@pytest.fixture
+def example(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """`examples/e2e/` inside a copy of `examples/`, so a run writes nowhere in the repository.
+
+    The example's config puts its own directory on `sys.path` and imports
+    `e2e_stages`; both are undone afterwards.
+    """
+    shutil.copytree(EXAMPLES, tmp_path / "examples", ignore=shutil.ignore_patterns("out"))
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    sys.modules.pop("e2e_stages", None)
+    yield tmp_path / "examples" / "e2e"
+    sys.modules.pop("e2e_stages", None)
 
 
 @pytest.fixture

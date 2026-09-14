@@ -20,6 +20,7 @@ before reading anything into the numbers.
 | `recorded/` | The hand-authored model responses |
 | `odke.yaml`, `odke.neo4j.yaml` | The run, into JSON Lines or into Neo4j |
 | `queries.cypher` | The queries in section 3 |
+| `gold.jsonl` | 36 labelled facts, for the ablation in section 5 |
 | `docker-compose.yml` | A throwaway Neo4j 5.26 Community |
 
 ## 1. Run it
@@ -214,3 +215,42 @@ carries a price, so cost is reported as unknown. To run against real models,
 delete the two `replay` lines from the config; the provider reads its own key
 from the environment. To record real responses for a test, wrap a client in
 `odke.llm.testing.RecordingClient`.
+
+## 5. The ablation, on this example
+
+> **A demonstration on hand-authored recorded responses, not a benchmark.** The
+> responses and the labels were both written for this example, so the numbers
+> below measure how this fixture was written and nothing about any model. They
+> show what the command reports and how to read it. Run it on your own labels.
+
+`gold.jsonl` labels the 36 facts the eight documents state, each under the
+document id `odke run` gives it. The same config, run three ways:
+
+```bash
+odke eval ablation --config examples/e2e/odke.yaml --labels examples/e2e/gold.jsonl
+```
+
+| Configuration | Precision | Recall | F1 | TP | FP | FN | Facts written | Model calls |
+|---|---|---|---|---|---|---|---|---|
+| extraction alone | 0.889 | 0.889 | 0.889 | 32 | 4 | 4 | 36 | 3 |
+| + grounding (gate refuses `contradicted`) | 0.914 | 0.889 | 0.901 | 32 | 3 | 4 | 35 | 39 |
+| + corroboration (normalise, resolve, corroborate, score) | 0.971 | 0.944 | 0.958 | 34 | 1 | 2 | 25 | 39 |
+
+Cost is unknown for all three: the recorded responses carry no price.
+
+What it says about this fixture:
+
+- **Grounding moved precision from 0.889 to 0.914, and not recall.** Of the four
+  wrong candidates it caught one, the head office the model invented for the
+  GmbH. The second invented fact — Maya Okafor working for the GmbH — came back
+  `not_found`, which the default gate keeps.
+- **Refusing `not_found` too would have been worse here.** It would keep 19 of
+  the 32 true extracted facts and 1 of the 4 false ones (precision 0.950): a
+  register cell is grounded against itself, which cannot say whose value it is,
+  so a careful grounder answers `not_found` for most structured facts.
+- **Most of the gain came after grounding, from normalisation.** Two dates the
+  model copied as written ("10 March 2014", "1 June 2019") became the ISO dates
+  the labels use. Corroboration merged the 36 candidates into 26 facts, and the
+  gate refused one of those; a merged fact is scored once in each document it
+  cites, so merging alone moves neither number. Resolution proposed links and
+  re-keyed nothing.

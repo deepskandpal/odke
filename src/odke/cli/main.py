@@ -171,7 +171,9 @@ def run_command(
 
 @app.command("eval")
 def eval_stage(
-    stage: str = typer.Argument(..., help="route, extract, ground, resolve, score or validate."),
+    stage: str = typer.Argument(
+        ..., help="route, extract, ground, resolve, score, validate, or ablation (with --config)."
+    ),
     labels: Path | None = typer.Option(None, "--labels", help="Your labelled rows, as JSONL."),
     predictions: Path | None = typer.Option(
         None, "--predictions", help="What the stage produced, as JSONL."
@@ -185,6 +187,9 @@ def eval_stage(
     documents: Path | None = typer.Option(
         None, "--documents", help="Document JSONL, for --run with extract."
     ),
+    config: Path | None = typer.Option(
+        None, "--config", help="Run config, for ablation: the pipeline to run three ways."
+    ),
     describe: bool = typer.Option(
         False, "--describe", help="Print what a label row and a prediction row are, and exit."
     ),
@@ -195,23 +200,48 @@ def eval_stage(
     Bring your own labelled dataset: odke ships the formats and the arithmetic,
     never a corpus. The fixtures in its test suite are examples of the formats
     and are not a benchmark. Run with --describe to see what to label.
+
+    `ablation` runs a whole config three ways — extraction alone, + grounding,
+    + corroboration — over your labelled extraction set.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
     from odke.eval.formats import describe as describe_formats
     from odke.eval.runner import evaluate_files
+    from odke.llm.base import ProviderError
 
     try:
-        if describe:
-            typer.echo(describe_formats(stage))
-            return
-        if labels is None:
-            raise ValueError("--labels is required (or --describe to see the format)")
-        report = evaluate_files(
-            stage, labels, predictions, run=run, ontology=ontology, documents=documents
-        )
-    except (ValueError, OSError) as exc:
+        if stage == "ablation":
+            from odke.eval.ablation import DESCRIPTION, run_ablation
+            from odke.eval.formats import GoldFact, load_jsonl
+            from odke.run import load_config
+
+            if describe:
+                typer.echo(
+                    f"{DESCRIPTION}\n\n{describe_formats('extract').split('--predictions')[0]}"
+                )
+                return
+            if any(v is not None for v in (predictions, run, ontology, documents)):
+                raise ValueError("ablation runs the config itself; it takes --config and --labels")
+            if config is None or labels is None:
+                raise ValueError("ablation needs --config and --labels (or --describe)")
+            report = run_ablation(load_config(config), load_jsonl(labels, GoldFact))
+        else:
+            if describe:
+                typer.echo(describe_formats(stage))
+                return
+            if labels is None:
+                raise ValueError("--labels is required (or --describe to see the format)")
+            if config is not None:
+                raise ValueError("--config is for ablation")
+            report = evaluate_files(
+                stage, labels, predictions, run=run, ontology=ontology, documents=documents
+            )
+    except (ValueError, OSError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from exc
+    except ProviderError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
     typer.echo(report.model_dump_json(indent=2) if as_json else report.render())
 
 

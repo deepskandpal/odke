@@ -1,0 +1,36 @@
+{"doc_id": "corpus/register.csv#L2", "fact": {"subject": {"key": "Company:halden robotics ltd", "type": "Company"}, "predicate": "legal_name", "object_value": "Halden Robotics Ltd"}}
+{"doc_id": "corpus/register.csv#L2", "fact": {"subject": {"key": "Company:halden robotics ltd", "type": "Company"}, "predicate": "registration_number", "object_value": "HR-104233"}}
+{"doc_id": "corpus/register.csv#L2", "fact": {"subject": {"key": "Company:halden robotics ltd", "type": "Company"}, "predicate": "founded", "object_value": "2014-03-10"}}
+{"doc_id": "corpus/register.csv#L2", "fact": {"subject": {"key": "Company:halden robotics ltd", "type": "Company"}, "predicate": "headquarters", "object_value": "Leeds"}}
+{"doc_id": "corpus/register.csv#L3", "fact": {"subject": {"key": "Company:halden robotics gmbh", "type": "Company"}, "predicate": "legal_name", "object_value": "Halden Robotics GmbH"}}
+{"doc_id": "corpus/register.csv#L3", "fact": {"subject": {"key": "Company:halden robotics gmbh", "type": "Company"}, "predicate": "registration_number", "object_value": "DE-551902"}}
+{"doc_id": "corpus/register.csv#L3", "fact": {"subject": {"key": "Company:halden robotics gmbh", "type": "Company"}, "predicate": "founded", "object_value": "2019-06-01"}}
+{"doc_id": "corpus/register.csv#L3", "fact": {"subject": {"key": "Company:halden robotics gmbh", "type": "Company"}, "predicate": "headquarters", "object_value": "Munich"}}
+{"doc_id": "corpus/register.csv#L4", "fact": {"subject": {"key": "Company:corvid analytics ltd", "type": "Company"}, "predicate": "legal_name", "object_value": "Corvid Analytics Ltd"}}
+{"doc_id": "corpus/register.csv#L4", "fact": {"subject": {"key": "Company:corvid analytics ltd", "type": "Company"}, "predicate": "registration_number", "object_value": "CA-220871"}}
+{"doc_id": "corpus/register.csv#L4", "fact": {"subject": {"key": "Company:corvid analytics ltd", "type": "Company"}, "predicate": "founded", "object_value": "2011-09-22"}}
+{"doc_id": "corpus/register.csv#L4", "fact": {"subject": {"key": "Company:corvid analytics ltd", "type": "Company"}, "predicate": "headquarters", "object_value": "Bristol"}}
+{"doc_id": "corpus/staff.csv#L2", "fact": {"subject": {"key": "Person:maya okafor", "type": "Person"}, "predicate": "full_name", "object_value": "Maya Okafor"}}
+{"doc_id": "corpus/staff.csv#L2", "fact": {"subject": {"key": "Person:maya okafor", "type": "Person"}, "predicate": "employer", "object_entity": {"key": "Company:halden robotics ltd", "type": "Company"}}}
+{"doc_id": "corpus/staff.csv#L3", "fact": {"subject": {"key": "Person:tomas reyes", "type": "Person"}, "predicate": "full_name", "object_value": "Tomas Reyes"}}
+{"doc_id": "corpus/staff.csv#L3", "fact": {"subject": {"key": "Person:tomas reyes", "type": "Person"}, "predicate": "employer", "object_entity": {"key": "Company:corvid analytics ltd", "type": "Company"}}}
+{"doc_id": "corpus/factsheet.md", "fact": {"subject": {"key": "Company:halden robotics gmbh", "type": "Company"}, "predicate": "legal_name", "object_value": "Halden Robotics GmbH"}}
+{"doc_id": "corpus/factsheet.md", "fact": {"subject": {"key": "Company:halden robotics gmbh", "type": "Company"}, "predicate": "registration_number", "object_value": "DE-551902"}}
+{"doc_id": "corpus/factsheet.md", "fact": {"subject": {"key": "Company:halden robotics gmbh", "type": "Company"}, "predicate": "headquarters", "object_value": "Munich"}}
+{"doc_id": "corpus/factsheet.md", "fact": {"subject": {"key": "Company:halden robotics gmbh", "type": "Company"}, "predicate": "founded", "object_value": "2019-06-01"}}
+{"doc_id": "corpus/notes/halden-robotics.md", "fact": {"subject": {"key": "Company:halden robotics ltd", "type": "Company"}, "predicate": "legal_name", "object_value": "Halden Robotics Ltd"}}
+{"doc_id": "corpus/notes/halden-robotics.md", "fact": {"subject": {"key": "Company:halden robotics ltd", "type": "Company"}, "predicate": "founded", "object_value": "2014-03-10"}}
+{"doc_id": "corpus/notes/halden-robotics.md", "fact": {"subject": {"key": "Company:halden robotics ltd", "type": "Company"}, "predicate": "headquarters", "object_value": "Sheffield"}}
+{"doc_id": "corpus/notes/halden-robotics.md", "fact": {"subject": {"key": "Company:halden robotics ltd", "type": "Company"}, "predicate": "chief_executive", "object_entity": {"key": "Person:maya okafor", "type": "Person"}}}
+{"doc_id": "corpus/notes/halden-robotics.md", "fact": {"subject": {"key": "Person:maya okafor", "type": "Person"}, "predicate": "full_name", "object_value": "Maya Okafor"}}
+{"doc_id": "corpus/notes/halden-robotics.md", "fact": {"subject": {"key": "Person:maya okafor", "type": "Person"}, "predicate": "employer", "object_entity": {"key": "Company:corvid analytics", "type": "Company"}}}
+{"doc_id": "corpus/notes/halden-robotics.md", "fact": {"subject": {"key": "Company:halden robotics gmbh", "type": "Company"}, "predicate": "legal_name", "object_value": "Halden Robotics GmbH"}}
+{"doc_id": "corpus/notes/halden-robotics.md", "fact": {"subject": {"key": "Company:halden robotics gmbh", "type": "Company"}, "predicate": "headquarters", "object_value": "Munich"}}
+{"doc_id": "corpus/notes/corvid-analytics.md", "fact": {"subject": {"key": "Company:corvid analytics", "type": "Company"}, "predicate": "legal_name", "object_value": "Corvid Analytics"}}
+{"doc_id": "corpus/notes/corvid-analytics.md", "fact": {"subject": {"key": "Company:corvid analytics", "type": "Company"}, "predicate": "headquarters", "object_value": "Bristol"}}
+{"doc_id": "corpus/notes/corvid-analytics.md", "fact": {"subject": {"key": "Company:corvid analytics", "type": "Company"}, "predicate": "chief_executive", "object_entity": {"key": "Person:tomas reyes", "type": "Person"}}}
+{"doc_id": "corpus/notes/corvid-analytics.md", "fact": {"subject": {"key": "Person:tomas reyes", "type": "Person"}, "predicate": "full_name", "object_value": "Tomas Reyes"}}
+{"doc_id": "corpus/notes/corvid-analytics.md", "fact": {"subject": {"key": "Person:tomas reyes", "type": "Person"}, "predicate": "employer", "object_entity": {"key": "Company:corvid analytics", "type": "Company"}}}
+{"doc_id": "corpus/notes/corvid-analytics.md", "fact": {"subject": {"key": "Person:maya okafor", "type": "Person"}, "predicate": "full_name", "object_value": "Maya Okafor"}}
+{"doc_id": "corpus/notes/corvid-analytics.md", "fact": {"subject": {"key": "Person:maya okafor", "type": "Person"}, "predicate": "employer", "object_entity": {"key": "Company:corvid analytics", "type": "Company"}}}
+{"doc_id": "corpus/notes/corvid-analytics.md", "fact": {"subject": {"key": "Person:maya okafor", "type": "Person"}, "predicate": "employer", "object_entity": {"key": "Company:halden robotics", "type": "Company"}}}
