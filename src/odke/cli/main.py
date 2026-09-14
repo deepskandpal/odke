@@ -136,5 +136,51 @@ def ontology_diff(
         raise typer.Exit(1)
 
 
+@app.command("eval")
+def eval_stage(
+    stage: str = typer.Argument(..., help="route, extract, ground, resolve, score or validate."),
+    labels: Path | None = typer.Option(None, "--labels", help="Your labelled rows, as JSONL."),
+    predictions: Path | None = typer.Option(
+        None, "--predictions", help="What the stage produced, as JSONL."
+    ),
+    run: str | None = typer.Option(
+        None, "--run", help="package.module:Name — run that stage over the labels instead."
+    ),
+    ontology: Path | None = typer.Option(
+        None, "--ontology", help="Ontology JSON, for --run with extract or validate."
+    ),
+    documents: Path | None = typer.Option(
+        None, "--documents", help="Document JSONL, for --run with extract."
+    ),
+    describe: bool = typer.Option(
+        False, "--describe", help="Print what a label row and a prediction row are, and exit."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit the report as JSON."),
+) -> None:
+    """Score one stage against your own labelled data.
+
+    Bring your own labelled dataset: odke ships the formats and the arithmetic,
+    never a corpus. The fixtures in its test suite are examples of the formats
+    and are not a benchmark. Run with --describe to see what to label.
+    """
+    # Imported here so `odke --version` and the ontology commands stay light.
+    from odke.eval.formats import describe as describe_formats
+    from odke.eval.runner import evaluate_files
+
+    try:
+        if describe:
+            typer.echo(describe_formats(stage))
+            return
+        if labels is None:
+            raise ValueError("--labels is required (or --describe to see the format)")
+        report = evaluate_files(
+            stage, labels, predictions, run=run, ontology=ontology, documents=documents
+        )
+    except (ValueError, OSError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(report.model_dump_json(indent=2) if as_json else report.render())
+
+
 if __name__ == "__main__":  # pragma: no cover
     app()
