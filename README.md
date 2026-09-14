@@ -32,7 +32,7 @@ That runs a small invented corpus through all thirteen stages on recorded model
 responses and writes the graph to `examples/e2e/out/`. The same run from Python:
 
 ```python
-from odke import HybridExtractor, LLMExtractor, Ontology, Pipeline, SentenceChunker, VerdictValidator
+from odke import HybridExtractor, LLMExtractor, Ontology, Pipeline, VerdictValidator
 from odke.ground import LLMGrounder
 from odke.llm import RecordedClient, ReplayClient
 from odke.loaders import DirectoryLoader
@@ -46,7 +46,6 @@ ground = RecordedClient.from_fixture("examples/e2e/recorded/ground.json")
 kg = Pipeline(
     ontology,
     HybridExtractor(LLMExtractor(client=extract), documents=docs),
-    chunker=SentenceChunker(max_words=120),
     grounder=LLMGrounder(client=ground),  # a second model checks every cited span
     validator=VerdictValidator(),  # refuses a fact its own span contradicts
     sinks=[JsonlSink("out")],
@@ -251,7 +250,7 @@ package, so your own stages are testable offline too.
 ```python
 from odke import Ontology
 
-ontology = Ontology.from_json("examples/e2e/ontology.json")  # or from_yaml, from_owl, from_neo4j, …
+ontology = Ontology.from_json("examples/e2e/ontology.json")  # or from_owl, from_neo4j
 print(ontology.validate())  # diagnostics with dotted paths, never an exception
 print(ontology.snippet("Company").render())  # exactly what the model is prompted with
 ```
