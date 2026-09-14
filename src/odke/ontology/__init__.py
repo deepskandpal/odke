@@ -19,6 +19,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from odke.ontology.from_models import ontology_from_models
 from odke.ontology.load import OntologyLoadError, Source, load_dict, load_json, load_yaml
 
 Cardinality = Literal["single", "multi"]
@@ -76,6 +77,10 @@ class Predicate(BaseModel):
     range: str = "string"
     cardinality: Cardinality = "single"
     cardinality_scope: tuple[str, ...] | None = None
+    # Every entity in the domain is expected to hold a value. False by default:
+    # a hand-written ontology says nothing about it, and a pydantic model says
+    # it with a non-Optional field that has no default.
+    required: bool = False
     qualifiers: dict[str, Qualifier] = Field(default_factory=dict)
     aliases: tuple[str, ...] = ()
     # Drives snippet ranking. In the paper this comes from frequency in the
@@ -194,6 +199,20 @@ class Ontology(BaseModel):
         base install stays pydantic and typer (DECISIONS #1).
         """
         return load_yaml(cls, source)
+
+    @classmethod
+    def from_pydantic(
+        cls, *models: type[BaseModel], name: str = "untitled", version: str = "0"
+    ) -> Ontology:
+        """An ontology from the pydantic models a Python-first user already has.
+
+        Each model is an entity type and each field a predicate; a field typed as
+        another model passed here is an edge to it. A field whose annotation has
+        no ontology range is reported by `Model.field` and the whole conversion
+        raises `OntologyLoadError` — dropping it would leave a predicate the
+        extractor is never asked about, and nobody would notice.
+        """
+        return ontology_from_models(cls, models, name=name, version=version)
 
     def predicates_for(self, type_name: str) -> list[Predicate]:
         """Predicates whose domain covers this type, including inherited ones.
