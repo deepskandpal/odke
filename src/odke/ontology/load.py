@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import difflib
 import json
-from collections.abc import Mapping
+import warnings
+from collections.abc import Mapping, Sequence
 from os import PathLike, fspath
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -40,6 +41,31 @@ class OntologyLoadError(ValueError):
     def __init__(self, message: str, *, problems: tuple[str, ...] = ()) -> None:
         super().__init__(message)
         self.problems = problems or (message,)
+
+
+class OntologyImportWarning(UserWarning):
+    """What an importer run with `strict=False` could not carry over, one problem per line.
+
+    The same lines `OntologyLoadError` would have raised with, so choosing to
+    load a large public ontology anyway never means choosing not to be told.
+    """
+
+    def __init__(self, message: str, *, problems: tuple[str, ...] = ()) -> None:
+        super().__init__(message)
+        self.problems = problems or (message,)
+
+
+def report_problems(
+    problems: Sequence[str], *, strict: bool, where: str | None, stacklevel: int = 3
+) -> None:
+    """Raise everything an importer could not map, or with `strict=False` warn about it once."""
+    if not problems:
+        return
+    listed = tuple(problems)
+    message = _headline(where, listed)
+    if strict:
+        raise OntologyLoadError(message, problems=listed)
+    warnings.warn(OntologyImportWarning(message, problems=listed), stacklevel=stacklevel)
 
 
 def load_dict(
@@ -180,4 +206,11 @@ def _kind(value: Any) -> str:
     return type(value).__name__
 
 
-__all__ = ["OntologyLoadError", "load_dict", "load_json", "load_yaml"]
+__all__ = [
+    "OntologyImportWarning",
+    "OntologyLoadError",
+    "load_dict",
+    "load_json",
+    "load_yaml",
+    "report_problems",
+]

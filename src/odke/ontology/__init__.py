@@ -22,7 +22,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from odke.ontology.diff import SchemaChange
 from odke.ontology.diff import diff as schema_diff
 from odke.ontology.from_models import ontology_from_models
-from odke.ontology.load import OntologyLoadError, Source, load_dict, load_json, load_yaml
+from odke.ontology.from_owl import ontology_from_owl
+from odke.ontology.load import (
+    OntologyImportWarning,
+    OntologyLoadError,
+    Source,
+    load_dict,
+    load_json,
+    load_yaml,
+)
 from odke.ontology.validate import Diagnostic, diagnose
 
 Cardinality = Literal["single", "multi"]
@@ -220,6 +228,42 @@ class Ontology(BaseModel):
         """
         return ontology_from_models(cls, models, name=name, version=version)
 
+    @classmethod
+    def from_owl(
+        cls,
+        source: Source | Any,
+        *,
+        format: str | None = None,
+        name: str | None = None,
+        version: str | None = None,
+        language: str = "en",
+        strict: bool = True,
+    ) -> Ontology:
+        """An ontology from OWL, RDFS or SKOS: a file path, a document, or an rdflib `Graph`.
+
+        Classes and concepts become entity types, `rdfs:subClassOf` and
+        `skos:broader` their parents; object properties become edges, datatype
+        properties literals, `owl:FunctionalProperty` single cardinality.
+        `format` is any rdflib parser name, guessed from the file suffix or the
+        document when omitted; `language` picks among tagged labels.
+
+        What the model cannot hold is reported by the subject it sits on. With
+        `strict` the conversion raises `OntologyLoadError` listing all of it and
+        refuses a result `validate()` finds errors in; with `strict=False` what
+        maps is loaded and the rest arrives as one `OntologyImportWarning`.
+        `importance` stays at its default: an OWL file says nothing about use.
+        rdflib is imported here and only here, behind the `rdf` extra.
+        """
+        return ontology_from_owl(
+            cls,
+            source,
+            format=format,
+            name=name,
+            version=version,
+            language=language,
+            strict=strict,
+        )
+
     def validate(self) -> list[Diagnostic]:  # type: ignore[override]
         """Everything subtly wrong with this schema, as structured diagnostics.
 
@@ -370,6 +414,7 @@ __all__ = [
     "Diagnostic",
     "EntityType",
     "Ontology",
+    "OntologyImportWarning",
     "OntologyLoadError",
     "OntologySnippet",
     "Predicate",

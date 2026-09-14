@@ -1,0 +1,32 @@
+# A SKOS taxonomy: concepts, a scheme, broader and narrower both ways, and
+# labels. Concepts become entity types; broader/narrower name parents.
+@prefix :     <https://example.org/vehicles/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+
+:scheme a skos:ConceptScheme ;
+    skos:prefLabel "Vehicles" ;
+    skos:hasTopConcept :Vehicle .
+
+:Vehicle a skos:Concept ;
+    skos:inScheme :scheme ;
+    skos:topConceptOf :scheme ;
+    skos:prefLabel "Vehicle"@en ;
+    skos:definition "Anything that carries people or goods."@en ;
+    skos:narrower :Car .
+
+:Car a skos:Concept ;
+    skos:inScheme :scheme ;
+    skos:prefLabel "Car"@en ;
+    skos:altLabel "Automobile"@en , "Motorcar"@en , "Voiture"@fr ;
+    skos:scopeNote "Four wheels, private use." .
+
+:ElectricCar a skos:Concept ;
+    skos:inScheme :scheme ;
+    skos:prefLabel "Electric car"@en ;
+    skos:hiddenLabel "EV"@en ;
+    skos:broader :Car .
+
+:Truck a skos:Concept ;
+    skos:inScheme :scheme ;
+    skos:broader :Vehicle ;
+    skos:related :Car .
