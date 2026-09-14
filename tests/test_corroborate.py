@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from odke import (
+from openodke import (
     Corroborator,
     Entity,
     Evidence,
@@ -22,7 +22,7 @@ from odke import (
     Qualifier,
     SourceTier,
 )
-from odke.corroborate import (
+from openodke.corroborate import (
     CONFLICT,
     SOURCE_FORM,
     SignatureCorroborator,

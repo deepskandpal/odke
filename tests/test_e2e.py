@@ -22,12 +22,12 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from odke import Ontology
-from odke.cli.main import app
-from odke.eval.sinks import assert_idempotent
-from odke.run import execute, load_config
-from odke.sinks import neo4j as neo4j_module
-from odke.sinks.neo4j import CHECK_MARKER, Neo4jConstrainer
+from openodke import Ontology
+from openodke.cli.main import app
+from openodke.eval.sinks import assert_idempotent
+from openodke.run import execute, load_config
+from openodke.sinks import neo4j as neo4j_module
+from openodke.sinks.neo4j import CHECK_MARKER, Neo4jConstrainer
 
 # `example`, a copy of examples/e2e/ to run in, is in conftest.py.
 EXAMPLE = Path(__file__).parent.parent / "examples" / "e2e"

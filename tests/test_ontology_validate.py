@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from odke import Diagnostic
-from odke.ontology import EntityType, Ontology, OntologyLoadError, Predicate
+from openodke import Diagnostic
+from openodke.ontology import EntityType, Ontology, OntologyLoadError, Predicate
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "people.ontology.json"
 

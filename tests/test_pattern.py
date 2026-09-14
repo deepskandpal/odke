@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from odke import (
+from openodke import (
     Chunk,
     Document,
     EntityType,
@@ -15,8 +15,8 @@ from odke import (
     SentenceChunker,
     SourceTier,
 )
-from odke.extract import PatternExtractor, RecordMapping
-from odke.loaders import CsvLoader, JsonLoader
+from openodke.extract import PatternExtractor, RecordMapping
+from openodke.loaders import CsvLoader, JsonLoader
 
 ONTOLOGY = Ontology(
     name="people",

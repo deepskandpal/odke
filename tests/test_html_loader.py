@@ -10,9 +10,9 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from odke import Document, Fact, Loader, Ontology, SentenceChunker, SourceTier
-from odke.extract import PatternExtractor
-from odke.loaders import (
+from openodke import Document, Fact, Loader, Ontology, SentenceChunker, SourceTier
+from openodke.extract import PatternExtractor
+from openodke.loaders import (
     DirectoryLoader,
     HtmlLoader,
     TextLoader,

@@ -9,7 +9,7 @@ from typing import Literal
 
 import pytest
 
-from odke import (
+from openodke import (
     Chunk,
     Delegated,
     Document,
@@ -24,8 +24,8 @@ from odke import (
     RouteVerdict,
     ValidationVerdict,
 )
-from odke.sinks import JsonlSink
-from odke.stages import DDL, EntityIndex, EntityLink
+from openodke.sinks import JsonlSink
+from openodke.stages import DDL, EntityIndex, EntityLink
 
 
 class _StubExtractor:
@@ -170,7 +170,7 @@ def test_a_document_scoped_skip_stops_the_document() -> None:
 
 def test_explicit_defaults_and_none_are_the_same_pipeline() -> None:
     """`None` means the pass-through, so naming every default changes nothing."""
-    from odke import stages
+    from openodke import stages
 
     docs = [Document(id="d1", text="Ada.")]
     implicit = Pipeline(Ontology(name="demo"), _StubExtractor()).run(docs)
@@ -217,7 +217,7 @@ def test_a_stage_the_platform_also_does_warns_once_and_is_not_refused(
 
 
 def test_delegating_the_stage_is_silent_and_stamps_provenance() -> None:
-    """The intended configuration: the platform resolves, odke says so on every entity."""
+    """The intended configuration: the platform resolves, openodke says so on every entity."""
     sink = _PlatformSink(resolves=True)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
@@ -261,7 +261,7 @@ def test_jsonl_sink_round_trips_a_graph(tmp_path) -> None:
 
 def test_the_default_router_passes_everything() -> None:
     """Routing is opt-in: a caller who never asked for it sees no chunk skipped."""
-    from odke.pipeline import PassThroughRouter, Router
+    from openodke.pipeline import PassThroughRouter, Router
 
     router = PassThroughRouter()
     assert isinstance(router, Router)
@@ -273,7 +273,7 @@ def test_the_default_router_passes_everything() -> None:
 
 def test_stub_stages_satisfy_the_declared_protocols() -> None:
     """If a stub stops matching, callers' own implementations would break too."""
-    from odke.pipeline import Chunker, Extractor, Grounder, Router, Sink, Validator
+    from openodke.pipeline import Chunker, Extractor, Grounder, Router, Sink, Validator
 
     assert isinstance(_StubExtractor(), Extractor)
     assert isinstance(_StampingGrounder(), Grounder)

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from odke import EntityType, Ontology, Predicate
+from openodke import EntityType, Ontology, Predicate
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 

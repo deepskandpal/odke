@@ -9,8 +9,8 @@ from typing import Any
 import yaml
 from typer.testing import CliRunner
 
-from odke import __version__
-from odke.cli.main import app
+from openodke import __version__
+from openodke.cli.main import app
 
 runner = CliRunner()
 

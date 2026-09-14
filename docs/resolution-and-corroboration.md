@@ -14,14 +14,14 @@ querying. They run in this order, and the order is deliberate:
 
 Resolution runs before corroboration because `Fact.signature` merges on
 `subject.key`: corroboration cannot repair a resolution failure. All four are in
-`odke.corroborate`, run on the base install, and are plain classes satisfying
-their Protocols in `odke.stages`.
+`openodke.corroborate`, run on the base install, and are plain classes satisfying
+their Protocols in `openodke.stages`.
 
 ```python
 from datetime import UTC, datetime
 
-from odke import Entity, Evidence, Fact, GroundingVerdict, Ontology, SourceTier
-from odke.corroborate import (
+from openodke import Entity, Evidence, Fact, GroundingVerdict, Ontology, SourceTier
+from openodke.corroborate import (
     EvidenceScorer,
     NativeResolver,
     SignatureCorroborator,
@@ -85,7 +85,7 @@ value left alone costs a missed merge; a wrong rewrite costs a wrong fact.
   score.
 
 ```python
-from odke.corroborate import name_key, normalize_date, normalize_quantity
+from openodke.corroborate import name_key, normalize_date, normalize_quantity
 
 assert normalize_date("Dec 10, 1815") == "1815-12-10"
 assert normalize_date("03/04/2020") is None
@@ -175,7 +175,7 @@ duplicate the link still points at. Thresholds are wrong on the first try, and a
 link can be re-run at a new threshold; a merge cannot.
 
 ```python
-from odke import LinkKind
+from openodke import LinkKind
 
 gmbh = Entity(
     key="c:acme-gmbh", type="Company", label="Acme Corporation GmbH", external_id="DE-114322"
@@ -362,7 +362,7 @@ recomputed, audited and measured, and scoring the same fact twice gives the same
 number.
 
 ```python
-from odke.corroborate import combine
+from openodke.corroborate import combine
 
 # Worked values at extractor confidence 0.8.
 assert round(combine(0.8, 1.0, support=1), 2) == 0.80  # one source, supported
@@ -389,7 +389,7 @@ contest.
 ## In a pipeline
 
 ```python
-from odke import Document, Pipeline
+from openodke import Document, Pipeline
 
 
 class Replay:

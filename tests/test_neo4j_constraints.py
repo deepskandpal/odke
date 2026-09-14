@@ -10,7 +10,7 @@ from collections.abc import Iterable
 
 import pytest
 
-from odke import (
+from openodke import (
     Chunk,
     Constrainer,
     Document,
@@ -25,7 +25,7 @@ from odke import (
     Predicate,
     Qualifier,
 )
-from odke.sinks.neo4j import (
+from openodke.sinks.neo4j import (
     CHECK_MARKER,
     Neo4jConstrainer,
     Neo4jSink,

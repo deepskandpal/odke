@@ -28,9 +28,9 @@ from pathlib import Path
 
 import pytest
 
-from odke import EntityLink, LinkKind
-from odke.eval import LinkRow, PairLabel, load_jsonl
-from odke.eval.resolution import (
+from openodke import EntityLink, LinkKind
+from openodke.eval import LinkRow, PairLabel, load_jsonl
+from openodke.eval.resolution import (
     as_triples,
     clusters,
     evaluate_resolution,

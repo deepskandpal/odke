@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from odke.llm import (
+from openodke.llm import (
     Completion,
     LLMClient,
     Message,
@@ -23,7 +23,7 @@ from odke.llm import (
     resolve,
     unregister,
 )
-from odke.llm.litellm_client import LiteLLMClient
+from openodke.llm.litellm_client import LiteLLMClient
 
 
 def _openai_body(content: str = "hi", model: str = "llama3.1") -> dict[str, Any]:

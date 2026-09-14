@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from odke import (
+from openodke import (
     Entity,
     Fact,
     KnowledgeGraph,
@@ -27,14 +27,14 @@ from odke import (
     OntologyLoadError,
     Qualifier,
 )
-from odke.ontology.from_neo4j import (
+from openodke.ontology.from_neo4j import (
     NODE_TYPE_PROPERTIES,
     REL_TYPE_PROPERTIES,
     SCHEMA_VISUALIZATION,
     rel_type_name,
     value_type,
 )
-from odke.sinks.neo4j import Neo4jSink
+from openodke.sinks.neo4j import Neo4jSink
 from test_neo4j_sink import FakeDriver
 
 RECORDED = json.loads(
@@ -193,7 +193,7 @@ def test_a_graph_odke_never_wrote_maps_labels_relationships_and_properties() -> 
     shapes = {n: (p.domain, p.range, p.cardinality) for n, p in ontology.predicates.items()}
     assert shapes == {
         "ACTED_IN": (("Person",), "Movie", "multi"),
-        # Not odke's link: it has no created_at, so it is somebody's predicate.
+        # Not openodke's link: it has no created_at, so it is somebody's predicate.
         "SIMILAR": (("Movie",), "Movie", "multi"),
         "name": (("Person",), "string", "single"),
         "born": (("Person",), "integer", "single"),
@@ -299,7 +299,7 @@ def test_not_strict_loads_the_rest_and_warns_once() -> None:
 
 def test_a_uri_connects_through_the_neo4j_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "neo4j", None)
-    with pytest.raises(ImportError, match=r"odke\[neo4j\]"):
+    with pytest.raises(ImportError, match=r"openodke\[neo4j\]"):
         Ontology.from_neo4j("bolt://localhost:7687", auth=("neo4j", "unused"))
 
 

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from odke import (
+from openodke import (
     Chunk,
     Document,
     Entity,
@@ -23,7 +23,7 @@ from odke import (
     Span,
     ValidationVerdict,
 )
-from odke.ground import (
+from openodke.ground import (
     LLMGrounder,
     SpanGrounder,
     SpanStatus,
@@ -33,8 +33,8 @@ from odke.ground import (
     parse_verdict,
     render_claim,
 )
-from odke.ground.llm import GROUNDING_SCHEMA, SYSTEM_PROMPT
-from odke.llm import Completion, ModelRoles, RecordedClient, ScriptedClient
+from openodke.ground.llm import GROUNDING_SCHEMA, SYSTEM_PROMPT
+from openodke.llm import Completion, ModelRoles, RecordedClient, ScriptedClient
 
 FIXTURE = Path(__file__).parent / "fixtures" / "llm" / "grounding.json"
 
@@ -159,7 +159,7 @@ def test_stats_count_every_status_and_the_rejection_reason_is_logged(
 ) -> None:
     """The run report: a high rejection rate is a prompt problem, not a model problem."""
     grounder = SpanGrounder()
-    with caplog.at_level(logging.DEBUG, logger="odke.ground"):
+    with caplog.at_level(logging.DEBUG, logger="openodke.ground"):
         grounder.ground(_fact(INVENTED, HONEST), DOC)
         grounder.ground(_fact(_cite(0, 500)), DOC)
         grounder.ground(_fact(), DOC)
@@ -364,7 +364,7 @@ def test_prose_is_never_guessed_at(caplog: pytest.LogCaptureFixture) -> None:
     """'not supported' must not become SUPPORTED; an unreadable answer leaves UNCHECKED."""
     fact = _fact(BORN_LONDON, predicate="died_in", object_value=None, object_entity=LONDON)
     grounder = _grounder()
-    with caplog.at_level(logging.WARNING, logger="odke.ground"):
+    with caplog.at_level(logging.WARNING, logger="openodke.ground"):
         grounded = grounder.ground(fact, CORPUS)
     assert grounded.verdict is GroundingVerdict.UNCHECKED
     assert grounder.stats["unparseable"] == 1

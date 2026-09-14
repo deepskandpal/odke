@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from odke.infer.candidates import PredicateCandidate, Proposals, TypeCandidate
-from odke.infer.merge import merge
-from odke.types import Span
+from openodke.infer.candidates import PredicateCandidate, Proposals, TypeCandidate
+from openodke.infer.merge import merge
+from openodke.types import Span
 
 
 def _spans(*doc_ids: str) -> tuple[Span, ...]:

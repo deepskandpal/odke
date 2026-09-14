@@ -17,9 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from odke import Document, Fact, Grounder, GroundingVerdict
-from odke.eval import GroundingLabel, load_jsonl
-from odke.eval.grounding import evaluate_grounding, grounding_ablation, kept, run_ground
+from openodke import Document, Fact, Grounder, GroundingVerdict
+from openodke.eval import GroundingLabel, load_jsonl
+from openodke.eval.grounding import evaluate_grounding, grounding_ablation, kept, run_ground
 
 FIXTURES = Path(__file__).parent / "fixtures" / "eval"
 LABELS = load_jsonl(FIXTURES / "ground.labels.jsonl", GroundingLabel)

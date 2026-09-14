@@ -24,7 +24,7 @@ list of steps to drift out of sync with this one.
 
 ## Things worth knowing before you start
 
-- **The base install talks to nothing.** `pip install odke` must keep working
+- **The base install talks to nothing.** `pip install openodke` must keep working
   with no provider, no driver and no network. `verify.sh` step 8 enforces it, so
   a new top-level import of `litellm`, `neo4j` or `rdflib` will fail the build.
   Import those inside the module that needs them.
@@ -55,7 +55,7 @@ supported by litellm (already covered). If yours is genuinely neither, implement
 `LLMClient` and register it:
 
 ```python
-from odke.llm import register
+from openodke.llm import register
 
 register("myprovider", lambda spec: MyClient(spec))
 ```

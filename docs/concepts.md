@@ -1,8 +1,8 @@
 # Concepts
 
-Everything in this page lives in `odke.types`, `odke.stages` and
-`odke.pipeline`, and is importable from `odke`. All of it is deterministic and
-provider-free, so `import odke` works with no model provider, no database driver
+Everything in this page lives in `openodke.types`, `openodke.stages` and
+`openodke.pipeline`, and is importable from `odke`. All of it is deterministic and
+provider-free, so `import openodke` works with no model provider, no database driver
 and no network.
 
 ## Everything is frozen
@@ -42,7 +42,7 @@ sink `MERGE`s on it, and the extraction evaluator matches on it.
 ```python
 from datetime import UTC, datetime
 
-from odke import Entity, Evidence, Fact, Polarity, SourceTier
+from openodke import Entity, Evidence, Fact, Polarity, SourceTier
 
 acme = Entity(key="c:acme", type="Company", label="Acme")
 p50 = Fact(
@@ -156,7 +156,7 @@ therefore cites `chunk.start + offset` in the document, and provenance survives
 chunking without a lookup.
 
 ```python
-from odke import Chunk, Document, Span
+from openodke import Chunk, Document, Span
 
 doc = Document(id="d1", text="Acme was founded in 1999. It sells anvils.")
 chunk = Chunk(doc_id="d1", start=26, end=42, text=doc.text[26:42], index=1)
@@ -181,7 +181,7 @@ A `Router` sees each chunk before extraction and returns a `RouteVerdict`:
 ```python
 import re
 
-from odke import Chunker, Ontology, Pipeline, RouteVerdict
+from openodke import Chunker, Ontology, Pipeline, RouteVerdict
 
 
 class Sentences:
@@ -249,7 +249,7 @@ identifier that disagrees kills a match however similar the names are, and
 ([DECISIONS #16](decisions.md)).
 
 ```python
-from odke import EntityLink, KnowledgeGraph, LinkKind, Resolution
+from openodke import EntityLink, KnowledgeGraph, LinkKind, Resolution
 
 acme_gmbh = Entity(
     key="c:acme-gmbh",
@@ -278,8 +278,8 @@ understand: `entities`, `facts`, `links`, `ontology_name`, `created_at` and
 
 ## The thirteen Protocols
 
-Every stage is a `typing.Protocol` in `odke.stages`. Any object with the right
-method is a stage: nothing to import from odke, no registration, no inheritance
+Every stage is a `typing.Protocol` in `openodke.stages`. Any object with the right
+method is a stage: nothing to import from openodke, no registration, no inheritance
 ([DECISIONS #5](decisions.md)). Each stage has a pass-through default, and those
 defaults are not stubs. A pipeline built from them is a working pipeline that
 routes nothing out, grounds nothing, resolves nothing and accepts everything,
@@ -359,7 +359,7 @@ So the mechanism is small:
 ```python
 import warnings
 
-from odke import Delegated, DoubleStageWarning, PlatformProfile
+from openodke import Delegated, DoubleStageWarning, PlatformProfile
 
 
 class GraphRagSink:

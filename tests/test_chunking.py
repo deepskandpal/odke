@@ -6,7 +6,7 @@ import random
 
 import pytest
 
-from odke import Chunk, Chunker, Document, Pipeline, SentenceChunker, Span
+from openodke import Chunk, Chunker, Document, Pipeline, SentenceChunker, Span
 
 # Words that cannot trip the abbreviation rules: never one letter, never in the
 # abbreviation list, and a mix of scripts, combining marks and emoji.
@@ -198,7 +198,7 @@ def test_bad_configuration_is_refused() -> None:
 
 
 def test_it_is_a_chunker_and_runs_in_the_pipeline() -> None:
-    from odke import Entity, Fact, Ontology
+    from openodke import Entity, Fact, Ontology
 
     class _Echo:
         def extract(self, chunk: Chunk, ontology: Ontology) -> list[Fact]:

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from odke.llm import (
+from openodke.llm import (
     Cassette,
     LLMClient,
     Message,
@@ -18,7 +18,7 @@ from odke.llm import (
     ReplayClient,
     ScriptedClient,
 )
-from odke.llm.testing import Interaction, RecordedCompletion, RequestMatch, fingerprint
+from openodke.llm.testing import Interaction, RecordedCompletion, RequestMatch, fingerprint
 
 FIXTURES = Path(__file__).parent / "fixtures" / "llm"
 SONNET = ModelSpec(model="anthropic/claude-sonnet-5")

@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from odke import (
+from openodke import (
     Chunk,
     Document,
     Entity,
@@ -22,9 +22,9 @@ from odke import (
     SentenceChunker,
     SourceTier,
 )
-from odke.extract.hybrid import merge
-from odke.llm import Completion, Message, ModelSpec, ReplayClient, ScriptedClient
-from odke.loaders import DirectoryLoader, MarkdownLoader
+from openodke.extract.hybrid import merge
+from openodke.llm import Completion, Message, ModelSpec, ReplayClient, ScriptedClient
+from openodke.loaders import DirectoryLoader, MarkdownLoader
 
 FIXTURES = Path(__file__).parent / "fixtures" / "llm"
 SONNET = ModelSpec(model="anthropic/claude-sonnet-5")

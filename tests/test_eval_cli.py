@@ -11,11 +11,11 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from odke import Chunk, Document, Entity, Fact, Ontology
-from odke.cli.main import app
-from odke.eval import StageReport, dump_jsonl
-from odke.eval.runner import evaluate_files, load_stage
-from odke.stages import PassThroughRouter
+from openodke import Chunk, Document, Entity, Fact, Ontology
+from openodke.cli.main import app
+from openodke.eval import StageReport, dump_jsonl
+from openodke.eval.runner import evaluate_files, load_stage
+from openodke.stages import PassThroughRouter
 
 FIXTURES = Path(__file__).parent / "fixtures" / "eval"
 SUPPORT = "odke_eval_cli_support"
@@ -124,7 +124,7 @@ ROUTE_LABELS = str(FIXTURES / "route.labels.jsonl")
             ["eval", "extract", "--labels", str(FIXTURES / "extract.labels.jsonl")],
             "needs --predictions",
         ),
-        ([*_files("route"), "--run", "odke.stages:PassThroughRouter"], "not both"),
+        ([*_files("route"), "--run", "openodke.stages:PassThroughRouter"], "not both"),
         (
             [
                 "eval",
@@ -132,7 +132,7 @@ ROUTE_LABELS = str(FIXTURES / "route.labels.jsonl")
                 "--labels",
                 ROUTE_LABELS,
                 "--run",
-                "odke.stages:PassThroughResolver",
+                "openodke.stages:PassThroughResolver",
             ],
             "resolve cannot run from labels",
         ),
@@ -141,7 +141,7 @@ ROUTE_LABELS = str(FIXTURES / "route.labels.jsonl")
             "cannot load",
         ),
         (
-            ["eval", "route", "--labels", ROUTE_LABELS, "--run", "odke.stages:Delegated"],
+            ["eval", "route", "--labels", ROUTE_LABELS, "--run", "openodke.stages:Delegated"],
             "cannot instantiate",
         ),
         (
@@ -180,7 +180,7 @@ def test_run_scores_an_importable_router_over_the_labels() -> None:
         "--labels",
         ROUTE_LABELS,
         "--run",
-        "odke.stages:PassThroughRouter",
+        "openodke.stages:PassThroughRouter",
         "--json",
     ]
     result = runner.invoke(app, args)
@@ -194,11 +194,11 @@ def test_run_scores_an_importable_router_over_the_labels() -> None:
 def test_run_validate_needs_an_ontology_and_uses_it(tmp_path: Path) -> None:
     labels = FIXTURES / "validate.labels.jsonl"
     with pytest.raises(ValueError, match="needs --ontology"):
-        evaluate_files("validate", labels, run="odke.stages:PassThroughValidator")
+        evaluate_files("validate", labels, run="openodke.stages:PassThroughValidator")
     ontology = tmp_path / "ontology.json"
     ontology.write_text(json.dumps({"name": "demo"}))
     report = evaluate_files(
-        "validate", labels, run="odke.stages:PassThroughValidator", ontology=ontology
+        "validate", labels, run="openodke.stages:PassThroughValidator", ontology=ontology
     )
     # Accepting everything agrees on the three accept rows only.
     assert report.metrics["agreement"] == 0.5
@@ -238,7 +238,7 @@ def test_run_extract_reads_documents_and_an_ontology(
 def test_load_stage_instantiates_a_class_and_takes_an_instance_as_is(
     support: types.ModuleType,
 ) -> None:
-    assert isinstance(load_stage("odke.stages:PassThroughRouter"), PassThroughRouter)
+    assert isinstance(load_stage("openodke.stages:PassThroughRouter"), PassThroughRouter)
     assert load_stage(f"{SUPPORT}:ROUTER") is support.ROUTER
     with pytest.raises(ValueError, match="package.module:Name"):
-        load_stage("odke.stages")
+        load_stage("openodke.stages")

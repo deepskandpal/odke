@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from odke.ontology import EntityType, Ontology, Predicate
+from openodke.ontology import EntityType, Ontology, Predicate
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "people.ontology.json"
 

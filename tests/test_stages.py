@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from odke import (
+from openodke import (
     Chunk,
     Chunker,
     Constrainer,

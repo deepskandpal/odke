@@ -21,9 +21,9 @@ from pathlib import Path
 
 import pytest
 
-from odke import Chunk, Document, Entity, Evidence, Fact, Ontology, Polarity
-from odke.eval import GoldFact, load_jsonl
-from odke.eval.extraction import (
+from openodke import Chunk, Document, Entity, Evidence, Fact, Ontology, Polarity
+from openodke.eval import GoldFact, load_jsonl
+from openodke.eval.extraction import (
     evaluate_extraction,
     match_extraction,
     normalise_value,

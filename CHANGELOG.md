@@ -33,7 +33,7 @@ was serialised. Two of them fix live correctness bugs.
   an external id, or a named linker with a score. (#51)
 - `Chunk`, `RouteVerdict` and the `Router` protocol; the default passes every
   chunk. (#52)
-- `odke.stages`: thirteen stage protocols — `Loader`, `Chunker`, `Router`,
+- `openodke.stages`: thirteen stage protocols — `Loader`, `Chunker`, `Router`,
   `Extractor`, `Grounder`, `Normalizer`, `Resolver`, `Corroborator`, `Scorer`,
   `Validator`, `Sink`, `Constrainer`, `Inferrer` — each with a pass-through
   default, plus `ValidationVerdict`. (#53)
@@ -123,7 +123,7 @@ was serialised. Two of them fix live correctness bugs.
 
 #### M4 / M6 — The run command, the example, the ablation
 
-- `odke run config.yaml [--dry-run]` and `odke.run`: the whole pipeline from one
+- `odke run config.yaml [--dry-run]` and `openodke.run`: the whole pipeline from one
   YAML or JSON file — inputs and loaders, ontology, model roles with recorded
   responses and a cost meter, the implementation of each of the thirteen stages
   by short name or `package.module:Name`, sinks, and `bootstrap`. Every stage's
@@ -134,7 +134,7 @@ was serialised. Two of them fix live correctness bugs.
 - `examples/e2e/`: an invented corpus, ontology, recorded responses and configs,
   run into JSON Lines or Neo4j, with the queries that show provenance, a
   `DIFFERENT` link and a cardinality check. (#30)
-- `odke eval ablation --config … --labels …` and `odke.eval.run_ablation`:
+- `odke eval ablation --config … --labels …` and `openodke.eval.run_ablation`:
   extraction alone, + grounding, + corroboration over your own labels. (#38)
 - `odke run` short names for the loaders and sinks that landed after its
   builder: loaders `html`, `pdf` and `docx`; sinks `cypher_file`,
@@ -144,7 +144,7 @@ was serialised. Two of them fix live correctness bugs.
   is opened, and each input's loader is now built then too.
 
 ### Changed
-- The stage protocols live in `odke.stages`; `odke.pipeline` re-exports them.
+- The stage protocols live in `openodke.stages`; `openodke.pipeline` re-exports them.
   `Extractor` takes one `Chunk` and the ontology; `Grounder` takes one fact and
   its document and sets the verdict rather than dropping; `Corroborator` returns
   facts and the pipeline assembles the graph. (#60)

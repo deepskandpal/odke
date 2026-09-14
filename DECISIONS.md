@@ -6,7 +6,7 @@ reversed by the next person who finds it inconvenient.
 
 ### 1. The base install talks to nothing
 
-`pip install odke` pulls pydantic and typer. No model provider, no database
+`pip install openodke` pulls pydantic and typer. No model provider, no database
 driver, no HTTP client. Compiling and inspecting an ontology is a genuinely
 useful thing to do offline, and it should not require credentials to exist.
 
@@ -58,7 +58,7 @@ if they are built separately.
 ### 7. Two model adapters, not one, and not a hundred
 
 litellm covers ~100 providers and is the obvious single answer — but making it a
-hard dependency means `pip install odke` drags in a large package before the user
+hard dependency means `pip install openodke` drags in a large package before the user
 has decided to call a model at all, and it makes the most common serious setup
 (a local Ollama) require it too.
 
@@ -254,7 +254,7 @@ else. An extractor that needs the document's modality or tier looks it up.
 
 The generic pipeline is thirteen stages — load, chunk, route, extract, ground,
 normalise, resolve, corroborate, score, validate, sink, constrain, infer —
-and every one is a `Protocol` in `odke.stages` with a concrete default that is
+and every one is a `Protocol` in `openodke.stages` with a concrete default that is
 the identity function, or the nearest thing to one. A caller who wants only
 extract-and-sink gets no-ops for the other eleven and never notices them.
 

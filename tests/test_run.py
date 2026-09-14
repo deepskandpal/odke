@@ -19,16 +19,16 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from odke import Chunk, Ontology, RouteVerdict, Sink
-from odke.cli.main import app
-from odke.llm import ModelRoles, ModelSpec
-from odke.loaders import DocxLoader, HtmlLoader, PdfLoader
-from odke.run import ConfigError, StageSpec, build, execute, load_config, parse_config
-from odke.run.build import NodeLinkFile, build_stage
-from odke.sinks import neo4j as neo4j_module
-from odke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink
-from odke.sinks.networkx import NetworkXSink
-from odke.sinks.rdf import RdfSink
+from openodke import Chunk, Ontology, RouteVerdict, Sink
+from openodke.cli.main import app
+from openodke.llm import ModelRoles, ModelSpec
+from openodke.loaders import DocxLoader, HtmlLoader, PdfLoader
+from openodke.run import ConfigError, StageSpec, build, execute, load_config, parse_config
+from openodke.run.build import NodeLinkFile, build_stage
+from openodke.sinks import neo4j as neo4j_module
+from openodke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink
+from openodke.sinks.networkx import NetworkXSink
+from openodke.sinks.rdf import RdfSink
 from test_neo4j_sink import FakeDriver
 
 runner = CliRunner()
@@ -357,7 +357,7 @@ def test_pythonpath_puts_a_project_module_within_reach(
     monkeypatch.delitem(sys.modules, "project_stages", raising=False)
     (project / "stages").mkdir()
     (project / "stages" / "project_stages.py").write_text(
-        "from odke import RouteVerdict\n\n"
+        "from openodke import RouteVerdict\n\n"
         "class Everything:\n"
         "    def route(self, chunk):\n"
         "        return RouteVerdict(action='defer')\n",
@@ -396,7 +396,10 @@ def _stages(**changes: Any) -> dict[str, Any]:
         (_stages(chunker={"use": "sentence", "max_words": 0}), "max_words must be at least 1"),
         (_stages(normalizer={"use": "value", "ontology": "x"}), "normalizer.ontology: set by"),
         (_stages(inferrer="llm"), "odke run never infers an ontology"),
-        (_stages(router="odke.stages:PassThroughGrounder"), "is not a Router; it needs a method"),
+        (
+            _stages(router="openodke.stages:PassThroughGrounder"),
+            "is not a Router; it needs a method",
+        ),
         (_stages(router="nowhere.at_all:Router"), "cannot load 'nowhere.at_all:Router'"),
         (_stages(sink={"use": "jsonl"}), "stages.sink.directory: the directory to write into"),
         (
@@ -574,31 +577,31 @@ def test_each_v02_sink_has_a_short_name_and_a_dry_run_writes_none_of_them(
             "pypdf",
             {"inputs": [{"path": "corpus", "loader": {"use": "pdf"}}]},
             "inputs[0].loader: PdfLoader needs pypdf, which is not installed. "
-            'Run: pip install "odke[pdf]"',
+            'Run: pip install "openodke[pdf]"',
         ),
         (
             "docx",
             {"inputs": [{"path": "corpus", "loader": {"use": "docx"}}]},
             "inputs[0].loader: DocxLoader needs python-docx, which is not installed. "
-            'Run: pip install "odke[docx]"',
+            'Run: pip install "openodke[docx]"',
         ),
         (
             "pyarrow.parquet",
             {"inputs": ["corpus"], "stages__loader": "parquet"},
             "stages.loader: ParquetLoader needs pyarrow, which is not installed. "
-            'Run: pip install "odke[parquet]"',
+            'Run: pip install "openodke[parquet]"',
         ),
         (
             "rdflib",
             {"stages__sink": {"use": "rdf", "path": "out/graph.ttl"}},
             "stages.sink: RdfSink needs rdflib, which is not installed. "
-            'Run: pip install "odke[rdf]"',
+            'Run: pip install "openodke[rdf]"',
         ),
         (
             "networkx",
             {"stages__sink": {"use": "networkx", "path": "out/graph.json"}},
             "stages.sink: NetworkXSink needs networkx, which is not installed. "
-            'Run: pip install "odke[networkx]"',
+            'Run: pip install "openodke[networkx]"',
         ),
     ],
 )
@@ -634,7 +637,7 @@ def test_the_example_runs_end_to_end_into_rdf(example: Path) -> None:
     rdflib = pytest.importorskip("rdflib")
     from rdflib.namespace import OWL, RDF
 
-    from odke.sinks.rdf import VOCAB
+    from openodke.sinks.rdf import VOCAB
 
     config = _example_into(example, {"use": "rdf", "path": "out/graph.ttl"})
     result = runner.invoke(app, ["run", str(config)])

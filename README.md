@@ -32,11 +32,11 @@ That runs a small invented corpus through all thirteen stages on recorded model
 responses and writes the graph to `examples/e2e/out/`. The same run from Python:
 
 ```python
-from odke import HybridExtractor, LLMExtractor, Ontology, Pipeline, VerdictValidator
-from odke.ground import LLMGrounder
-from odke.llm import RecordedClient, ReplayClient
-from odke.loaders import DirectoryLoader
-from odke.sinks import JsonlSink
+from openodke import HybridExtractor, LLMExtractor, Ontology, Pipeline, VerdictValidator
+from openodke.ground import LLMGrounder
+from openodke.llm import RecordedClient, ReplayClient
+from openodke.loaders import DirectoryLoader
+from openodke.sinks import JsonlSink
 
 ontology = Ontology.from_json("examples/e2e/ontology.json")
 docs = list(DirectoryLoader().load("examples/e2e/corpus"))
@@ -104,7 +104,7 @@ corroboration, or character-span provenance carried through to the store.
 ## Thirteen stages, each one a Protocol
 
 The pipeline is a superset: thirteen stages, each a `typing.Protocol` in
-`odke.stages` with a pass-through default (DECISIONS #20). Take the subset your
+`openodke.stages` with a pass-through default (DECISIONS #20). Take the subset your
 corpus needs, supply your own for any stage by writing one method, and leave the
 rest out. Nothing domain-specific is in the code; it arrives as an ontology, a
 config, or a stage of yours.
@@ -131,9 +131,9 @@ Not on PyPI yet. Install from GitHub, naming extras the same way:
 
 ```bash
 pip install "git+https://github.com/deepskandpal/odke"                     # the base install
-pip install "odke[yaml] @ git+https://github.com/deepskandpal/odke"         # + YAML configs
-pip install "odke[neo4j,yaml] @ git+https://github.com/deepskandpal/odke"   # + the Neo4j sink
-pip install "odke[all] @ git+https://github.com/deepskandpal/odke"          # everything
+pip install "openodke[yaml] @ git+https://github.com/deepskandpal/odke"         # + YAML configs
+pip install "openodke[neo4j,yaml] @ git+https://github.com/deepskandpal/odke"   # + the Neo4j sink
+pip install "openodke[all] @ git+https://github.com/deepskandpal/odke"          # everything
 ```
 
 The base install is pydantic and typer, and talks to nothing: the data model,
@@ -206,7 +206,7 @@ odke eval ablation --config config.yaml --labels gold.jsonl
 ```
 
 There is an evaluator for routing, extraction, grounding, resolution, scoring
-(Brier, reliability, ECE) and validation, and `odke.eval.CostMeter` measures
+(Brier, reliability, ECE) and validation, and `openodke.eval.CostMeter` measures
 tokens and USD per stage without touching a stage. The fixtures in the test
 suite exercise the arithmetic and are not a benchmark.
 
@@ -227,7 +227,7 @@ call goes through one `LLMClient` protocol, and which client serves a model
 string is decided by a small, inspectable routing rule you can override.
 
 ```python
-from odke.llm import ModelRoles, ModelSpec
+from openodke.llm import ModelRoles, ModelSpec
 
 ModelRoles()  # Claude by default: Sonnet extracts, Haiku grounds
 ModelRoles.single("ollama/llama3.1")  # entirely local — no extras, no key, no network
@@ -241,14 +241,14 @@ ModelRoles(
 asks thousands of yes/no questions and wants a small one. Anything speaking the
 OpenAI chat shape — Ollama, vLLM, LM Studio, llama.cpp, OpenRouter, Groq, a
 gateway — works on the base install; everything else goes through litellm with
-`[llm]`; `odke.llm.register("mycorp", factory)` routes a provider through your
+`[llm]`; `openodke.llm.register("mycorp", factory)` routes a provider through your
 own client. `ReplayClient`, `RecordedClient` and `ScriptedClient` ship in the
 package, so your own stages are testable offline too.
 
 ## Ontologies
 
 ```python
-from odke import Ontology
+from openodke import Ontology
 
 ontology = Ontology.from_json("examples/e2e/ontology.json")  # or from_owl, from_neo4j
 print(ontology.validate())  # diagnostics with dotted paths, never an exception

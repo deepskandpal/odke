@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-import odke.eval
-from odke import EntityLink, LinkKind
-from odke.eval import (
+import openodke.eval
+from openodke import EntityLink, LinkKind
+from openodke.eval import (
     LABEL_FORMATS,
     PREDICTION_FORMATS,
     GroundingLabel,
@@ -20,8 +20,8 @@ from odke.eval import (
     dump_jsonl,
     load_jsonl,
 )
-from odke.eval.formats import cite
-from odke.eval.report import accuracy, cohen_kappa, macro_f1, per_class, prf
+from openodke.eval.formats import cite
+from openodke.eval.report import accuracy, cohen_kappa, macro_f1, per_class, prf
 
 FIXTURES = Path(__file__).parent / "fixtures" / "eval"
 STAGES = ("route", "extract", "ground", "resolve", "score", "validate")
@@ -47,8 +47,8 @@ def test_every_fixture_loads_and_is_too_small_to_be_a_benchmark(stage: str) -> N
 
 
 def test_the_package_says_the_fixtures_are_not_a_benchmark() -> None:
-    assert odke.eval.__doc__ is not None
-    assert "not a benchmark" in odke.eval.__doc__
+    assert openodke.eval.__doc__ is not None
+    assert "not a benchmark" in openodke.eval.__doc__
 
 
 @pytest.mark.parametrize("stage", STAGES)

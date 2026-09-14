@@ -23,7 +23,7 @@ predicate applies to every type. Inside `types` and `predicates`, an entry's
 ## Loading
 
 ```python
-from odke import Ontology
+from openodke import Ontology
 
 ontology = Ontology.from_dict(
     {
@@ -85,7 +85,7 @@ A misspelt key gets a suggestion, and a syntax error carries a line and column.
 The same lines are available individually as `exc.problems`.
 
 ```python
-from odke import OntologyLoadError
+from openodke import OntologyLoadError
 
 try:
     Ontology.from_dict({"predicates": {"employer": {"rnage": "Company"}}})
@@ -353,7 +353,7 @@ documentation and are not reported.
 ```python
 import warnings
 
-from odke import OntologyImportWarning
+from openodke import OntologyImportWarning
 
 hr_owl = """
 @prefix owl: <http://www.w3.org/2002/07/owl#> .

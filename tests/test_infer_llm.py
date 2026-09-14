@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from odke import Document
-from odke.infer import sample_corpus
-from odke.infer.candidates import Proposals
-from odke.infer.llm import LLMProposer, render_candidates
-from odke.infer.propose import propose
-from odke.infer.sample import CorpusSample
-from odke.llm import ModelRoles, ModelSpec, ReplayClient, ScriptedClient
-from odke.loaders import DirectoryLoader
+from openodke import Document
+from openodke.infer import sample_corpus
+from openodke.infer.candidates import Proposals
+from openodke.infer.llm import LLMProposer, render_candidates
+from openodke.infer.propose import propose
+from openodke.infer.sample import CorpusSample
+from openodke.llm import ModelRoles, ModelSpec, ReplayClient, ScriptedClient
+from openodke.loaders import DirectoryLoader
 
 FIXTURES = Path(__file__).parent / "fixtures" / "llm"
 SONNET = ModelSpec(model="anthropic/claude-sonnet-5")

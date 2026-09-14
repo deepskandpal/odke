@@ -45,8 +45,8 @@ For each fact, `SpanGrounder`:
   interrupted run resume.
 
 ```python
-from odke import Document, Entity, Evidence, Fact, GroundingVerdict, Span
-from odke.ground import SpanGrounder, SpanStatus, check_span
+from openodke import Document, Entity, Evidence, Fact, GroundingVerdict, Span
+from openodke.ground import SpanGrounder, SpanStatus, check_span
 
 doc = Document(id="d1", text="Ada Lovelace was born in London in 1815.")
 ada = Entity(key="p:ada", type="Person", label="Ada Lovelace")
@@ -94,8 +94,8 @@ whether *this span* supports the claim, and showing more would answer a
 different, dearer question.
 
 ```python
-from odke.ground import LLMGrounder
-from odke.llm import ModelRoles, ScriptedClient
+from openodke.ground import LLMGrounder
+from openodke.llm import ModelRoles, ScriptedClient
 
 client = ScriptedClient([{"verdict": "supported"}])
 grounder = LLMGrounder(ModelRoles.single("ollama/qwen2.5:3b"), client=client)
@@ -141,7 +141,7 @@ assert chatty.ground(born, doc).verdict is GroundingVerdict.UNCHECKED
 assert chatty.stats["unparseable"] == 1
 ```
 
-Transient errors are retried under a `RetryPolicy` (`odke.ground.RetryPolicy`):
+Transient errors are retried under a `RetryPolicy` (`openodke.ground.RetryPolicy`):
 
 - 4 attempts in total by default.
 - Exponential backoff from 0.5 s, multiplier 2, capped at 30 s, with full jitter,
@@ -177,7 +177,7 @@ The pipeline drops only what a validator refuses. To keep ungrounded facts out o
 the graph, pass a validator that refuses them:
 
 ```python
-from odke import Ontology, Pipeline, ValidationVerdict
+from openodke import Ontology, Pipeline, ValidationVerdict
 
 
 class RefuseUngrounded:
@@ -210,5 +210,5 @@ assert kg.stats["refused"] == 1
 ```
 
 Whether grounding earns its cost on *your* corpus is a measurement, not a
-promise: `odke.eval.grounding_ablation` compares precision with grounding off and
+promise: `openodke.eval.grounding_ablation` compares precision with grounding off and
 on against your labels. See [Evaluation](evaluation.md#ground).

@@ -12,15 +12,15 @@ pytest.importorskip("rdflib")
 
 from rdflib import Graph  # noqa: E402
 
-from odke import KnowledgeGraph  # noqa: E402
-from odke.ontology import (  # noqa: E402
+from openodke import KnowledgeGraph  # noqa: E402
+from openodke.ontology import (  # noqa: E402
     EntityType,
     Ontology,
     OntologyImportWarning,
     OntologyLoadError,
     Predicate,
 )
-from odke.sinks.rdf import RdfSink  # noqa: E402
+from openodke.sinks.rdf import RdfSink  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ontologies"
 EXAMPLE = Path(__file__).parent.parent / "examples" / "people.ontology.json"
@@ -310,5 +310,5 @@ def test_broken_input_is_explained() -> None:
 
 def test_a_missing_rdflib_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "rdflib", None)
-    with pytest.raises(ImportError, match=r"odke\[rdf\]"):
+    with pytest.raises(ImportError, match=r"openodke\[rdf\]"):
         Ontology.from_owl(FIXTURES / "people.owl.ttl")

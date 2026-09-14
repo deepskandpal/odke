@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from odke import (
+from openodke import (
     Entity,
     EntityLink,
     Evidence,
@@ -34,8 +34,8 @@ from odke import (
     SourceTier,
     Span,
 )
-from odke.eval.sinks import assert_idempotent
-from odke.sinks.neo4j import EXTRA_HINT, Neo4jSink, Statement, signature_of, storable
+from openodke.eval.sinks import assert_idempotent
+from openodke.sinks.neo4j import EXTRA_HINT, Neo4jSink, Statement, signature_of, storable
 
 # --------------------------------------------------------------------------- #
 # A driver that records
@@ -520,11 +520,11 @@ def test_the_sink_needs_a_uri_or_a_driver_and_a_positive_batch() -> None:
 def test_a_missing_driver_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     """The module imports on the base install; only connecting needs the extra."""
     monkeypatch.setitem(sys.modules, "neo4j", None)
-    monkeypatch.delitem(sys.modules, "odke.sinks.neo4j")
-    module = importlib.import_module("odke.sinks.neo4j")
-    with pytest.raises(ImportError, match=r"odke\[neo4j\]"):
+    monkeypatch.delitem(sys.modules, "openodke.sinks.neo4j")
+    module = importlib.import_module("openodke.sinks.neo4j")
+    with pytest.raises(ImportError, match=r"openodke\[neo4j\]"):
         module.Neo4jSink("bolt://localhost:7687", auth=("neo4j", "unused"))
-    assert "odke[neo4j]" in EXTRA_HINT
+    assert "openodke[neo4j]" in EXTRA_HINT
 
 
 # --------------------------------------------------------------------------- #

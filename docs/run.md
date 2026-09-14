@@ -22,7 +22,7 @@ odke run examples/e2e/odke.yaml --dry-run    # load, extract and ground; print w
 A YAML config (`.yaml`, `.yml`) needs the `yaml` extra; the same keys as JSON need
 nothing. [`examples/run.yaml`](https://github.com/deepskandpal/odke/blob/main/examples/run.yaml)
 comments every key. Everything the command does is reachable from Python as
-`odke.run.execute(load_config(path))`.
+`openodke.run.execute(load_config(path))`.
 
 ## The config
 
@@ -101,7 +101,7 @@ are both accepted: every key except `use` is passed to the implementation as a
 keyword argument, and an option it does not take is an error listing the ones it
 does.
 
-**A stage left out is the pass-through** from `odke.stages`
+**A stage left out is the pass-through** from `openodke.stages`
 ([DECISIONS #20](decisions.md)), and the stats say nothing about it.
 
 **A stage of your own** is `package.module:Name`. A class is constructed with the
@@ -121,7 +121,7 @@ would have to be a Python object, such as a corroborator's `source` callable.
 
 | Stage | Short names | Built from | Options |
 |---|---|---|---|
-| `loader` | `directory`, `text`, `markdown`, `html`, `pdf`, `docx`, `csv`, `tsv`, `json`, `jsonl`, `parquet` | the `odke.loaders` classes | `tier`, and each class's own: `encoding`, `modality`, `records`, `delimiter`, `columns`, `pattern`; `html`: `strip_boilerplate`; `pdf`: `per_page`, `page_separator` |
+| `loader` | `directory`, `text`, `markdown`, `html`, `pdf`, `docx`, `csv`, `tsv`, `json`, `jsonl`, `parquet` | the `openodke.loaders` classes | `tier`, and each class's own: `encoding`, `modality`, `records`, `delimiter`, `columns`, `pattern`; `html`: `strip_boilerplate`; `pdf`: `per_page`, `page_separator` |
 | `chunker` | `sentence`, `passthrough` | `SentenceChunker` | `max_words`, `overlap` |
 | `router` | `passthrough`, `delegated` | — | your own is `package.module:Name` |
 | `extractor` | `pattern`, `llm`, `hybrid` | `PatternExtractor`, `LLMExtractor`, `HybridExtractor` | `pattern`: `mappings`, `subject_type`, `confidence`; `llm`: `types`, `snippet_limit`, `confidence`, `repairs`; `hybrid`: `llm` (options, or `false`), `pattern` (options) |
@@ -153,7 +153,7 @@ multi-valued predicates are lists, the Cypher script opens with the constraint D
 and the RDF file declares its schema. Paths resolve against the config. A sink is
 constructed while the config is built, so a bad option fails before anything
 runs, and a missing extra is a config error naming it:
-`stages.sink: RdfSink needs rdflib, which is not installed. Run: pip install "odke[rdf]"`.
+`stages.sink: RdfSink needs rdflib, which is not installed. Run: pip install "openodke[rdf]"`.
 The same holds for the `pdf`, `docx` and `parquet` loaders. A node-link file reads
 back with `networkx.node_link_graph(data, edges="edges")` (`link="edges"` before
 networkx 3.4), with dates and times as ISO strings.
@@ -187,7 +187,7 @@ loads the ontology, constructs every stage and each input's loader, opens the
 replay files and plans the sinks, and still loads no document and calls no model.
 
 ```python
-from odke.run import ConfigError, build, parse_config
+from openodke.run import ConfigError, build, parse_config
 
 try:
     parse_config(
@@ -266,7 +266,7 @@ Whether to refuse `not_found` on your corpus is a measurement:
 kept and lost.
 
 ```python
-from odke import Entity, Fact, GroundingVerdict, Ontology, VerdictValidator
+from openodke import Entity, Fact, GroundingVerdict, Ontology, VerdictValidator
 
 gate = VerdictValidator()
 ada = Entity(key="p:ada", type="Person")
@@ -295,7 +295,7 @@ command prints. `load_config(path)` reads a file; `parse_config(mapping, base_di
 takes an already-parsed mapping.
 
 ```python
-from odke.run import execute, load_config
+from openodke.run import execute, load_config
 
 result = execute(load_config("examples/e2e/odke.yaml"), dry_run=True)
 
@@ -326,7 +326,7 @@ responses, so it needs no key, no network and no database.
 | `gold.jsonl` | 36 labelled facts, for the [ablation](evaluation.md#ablation) |
 
 ```bash
-pip install "odke[yaml] @ git+https://github.com/deepskandpal/odke"
+pip install "openodke[yaml] @ git+https://github.com/deepskandpal/odke"
 odke run examples/e2e/odke.yaml
 ```
 

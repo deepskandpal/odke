@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from odke import (
+from openodke import (
     Chunk,
     Document,
     Entity,
@@ -18,7 +18,7 @@ from odke import (
     Resolution,
     Resolver,
 )
-from odke.corroborate import (
+from openodke.corroborate import (
     NativeResolver,
     ValueNormalizer,
     candidate_pairs,

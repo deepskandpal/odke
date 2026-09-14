@@ -8,7 +8,7 @@ from itertools import pairwise
 
 import pytest
 
-from odke import (
+from openodke import (
     Chunk,
     Document,
     Entity,
@@ -24,15 +24,15 @@ from odke import (
     SourceTier,
     Span,
 )
-from odke.corroborate import (
+from openodke.corroborate import (
     CONFLICT,
     SCORE,
     NativeResolver,
     SignatureCorroborator,
     ValueNormalizer,
 )
-from odke.corroborate.score import EvidenceScorer, combine
-from odke.eval import CalibrationLabel, evaluate_calibration, run_score
+from openodke.corroborate.score import EvidenceScorer, combine
+from openodke.eval import CalibrationLabel, evaluate_calibration, run_score
 
 V = GroundingVerdict
 ACME = Entity(key="c1", type="Company", label="Acme")

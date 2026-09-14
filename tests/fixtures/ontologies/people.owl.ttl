@@ -13,7 +13,7 @@
 <https://example.org/people> a owl:Ontology ;
     rdfs:label "people" ;
     owl:versionInfo "2" ;
-    dct:creator "odke tests" .
+    dct:creator "openodke tests" .
 
 :Agent a owl:Class ;
     rdfs:subClassOf owl:Thing ;

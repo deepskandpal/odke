@@ -10,12 +10,12 @@ from urllib.parse import unquote, urlparse
 
 import pytest
 
-from odke import Document, Inferrer, Ontology, PatternExtractor, Pipeline
-from odke.infer import DEFAULT_SAMPLE_WORDS
-from odke.infer.build import OntologyInferrer, infer_ontology
-from odke.llm import ModelSpec, ReplayClient
-from odke.loaders import DirectoryLoader
-from odke.ontology import OntologyFreezeError, UnreviewedOntologyWarning
+from openodke import Document, Inferrer, Ontology, PatternExtractor, Pipeline
+from openodke.infer import DEFAULT_SAMPLE_WORDS
+from openodke.infer.build import OntologyInferrer, infer_ontology
+from openodke.llm import ModelSpec, ReplayClient
+from openodke.loaders import DirectoryLoader
+from openodke.ontology import OntologyFreezeError, UnreviewedOntologyWarning
 
 FIXTURES = Path(__file__).parent / "fixtures" / "llm"
 SONNET = ModelSpec(model="anthropic/claude-sonnet-5")
@@ -248,8 +248,8 @@ def test_infer_review_freeze_then_run_guided(tmp_path: Path) -> None:
 def test_inference_never_runs_from_pipeline_on_its_own(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import odke.infer.build as build
-    import odke.infer.sample as sample
+    import openodke.infer.build as build
+    import openodke.infer.sample as sample
 
     def refuse(*args: object, **kwargs: object) -> None:
         raise AssertionError("inference ran")
@@ -270,7 +270,7 @@ def test_inference_never_runs_from_pipeline_on_its_own(
 
 
 def test_a_sink_warns_before_shaping_a_store_with_an_unreviewed_schema(tmp_path: Path) -> None:
-    from odke.sinks.neo4j import Neo4jSink
+    from openodke.sinks.neo4j import Neo4jSink
 
     inferred = infer_ontology(_load(_corpus(tmp_path)), llm=False).ontology
     with pytest.warns(UnreviewedOntologyWarning, match="inferred and has not been reviewed"):

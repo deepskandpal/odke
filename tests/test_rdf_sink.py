@@ -16,7 +16,7 @@ from rdflib import Graph, Literal, URIRef  # noqa: E402
 from rdflib.compare import isomorphic  # noqa: E402
 from rdflib.namespace import OWL, RDF, RDFS, SKOS, XSD  # noqa: E402
 
-from odke import (  # noqa: E402
+from openodke import (  # noqa: E402
     Entity,
     EntityLink,
     EntityType,
@@ -28,9 +28,9 @@ from odke import (  # noqa: E402
     Predicate,
     Sink,
 )
-from odke.eval.sinks import assert_idempotent  # noqa: E402
-from odke.sinks.neo4j import signature_of  # noqa: E402
-from odke.sinks.rdf import DEFAULT_BASE, EXTRA_HINT, VOCAB, RdfSink  # noqa: E402
+from openodke.eval.sinks import assert_idempotent  # noqa: E402
+from openodke.sinks.neo4j import signature_of  # noqa: E402
+from openodke.sinks.rdf import DEFAULT_BASE, EXTRA_HINT, VOCAB, RdfSink  # noqa: E402
 from test_neo4j_sink import _graph  # noqa: E402
 
 FORMATS = ("turtle", "nt", "json-ld")
@@ -357,8 +357,8 @@ def test_the_rdf_sink_is_idempotent(tmp_path: Path, fmt: str) -> None:
 def test_a_missing_rdflib_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     """The module imports on the base install; only building a sink needs the extra."""
     monkeypatch.setitem(sys.modules, "rdflib", None)
-    monkeypatch.delitem(sys.modules, "odke.sinks.rdf")
-    module = importlib.import_module("odke.sinks.rdf")
-    with pytest.raises(ImportError, match=r"odke\[rdf\]"):
+    monkeypatch.delitem(sys.modules, "openodke.sinks.rdf")
+    module = importlib.import_module("openodke.sinks.rdf")
+    with pytest.raises(ImportError, match=r"openodke\[rdf\]"):
         module.RdfSink("g.ttl")
-    assert "odke[rdf]" in EXTRA_HINT
+    assert "openodke[rdf]" in EXTRA_HINT
