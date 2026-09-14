@@ -14,6 +14,7 @@ from odke.corroborate import (
     SignatureCorroborator,
     ValueNormalizer,
 )
+from odke.extract import HybridExtractor, LLMExtractor, PatternExtractor
 from odke.ontology import (
     Diagnostic,
     EntityType,
@@ -79,8 +80,10 @@ __all__ = [
     "Fact",
     "Grounder",
     "GroundingVerdict",
+    "HybridExtractor",
     "Inferrer",
     "KnowledgeGraph",
+    "LLMExtractor",
     "LinkKind",
     "Loader",
     "NativeResolver",
@@ -88,6 +91,7 @@ __all__ = [
     "Ontology",
     "OntologyLoadError",
     "OntologySnippet",
+    "PatternExtractor",
     "Pipeline",
     "PlatformProfile",
     "Polarity",

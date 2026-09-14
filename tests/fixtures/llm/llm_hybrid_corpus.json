@@ -1,0 +1,33 @@
+{
+  "description": "Hand-authored replies for the two chunks of the mixed corpus that reach the model: a prose note, and a semi-structured page whose table repeats two of its sentence's facts.",
+  "interactions": [
+    {
+      "match": {
+        "contains": [
+          "She worked for the US Navy."
+        ]
+      },
+      "response": {
+        "text": "{\"entities\": [{\"type\": \"Person\", \"name\": \"Grace Hopper\", \"facts\": [{\"predicate\": \"full_name\", \"value\": \"Grace Hopper\", \"quote\": \"Grace Hopper\", \"start\": 16}, {\"predicate\": \"birth_date\", \"value\": \"1906\", \"quote\": \"born in 1906\", \"start\": 33}, {\"predicate\": \"employer\", \"value\": \"US Navy\", \"quote\": \"She worked for the US Navy\", \"start\": 47}]}]}",
+        "model": "claude-sonnet-5",
+        "prompt_tokens": 600,
+        "completion_tokens": 140,
+        "cost_usd": 0.003
+      }
+    },
+    {
+      "match": {
+        "contains": [
+          "| Ada Lovelace | 1815-12-10 |"
+        ]
+      },
+      "response": {
+        "text": "{\"entities\": [{\"type\": \"Person\", \"name\": \"Ada Lovelace\", \"facts\": [{\"predicate\": \"full_name\", \"value\": \"Ada Lovelace\", \"quote\": \"Ada Lovelace\", \"start\": 10}, {\"predicate\": \"birth_date\", \"value\": \"1815-12-10\", \"quote\": \"10 December 1815\", \"start\": 35}, {\"predicate\": \"employer\", \"value\": \"Babbage & Co\", \"quote\": \"She worked for Babbage & Co\", \"start\": 53}]}]}",
+        "model": "claude-sonnet-5",
+        "prompt_tokens": 640,
+        "completion_tokens": 150,
+        "cost_usd": 0.0032
+      }
+    }
+  ]
+}
