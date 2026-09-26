@@ -157,10 +157,11 @@ through trusted publishing, with a GitHub release carrying the wheel and sdist.
 
 ---
 
-## 0.1.1 — the first external run
+## 0.1.1 — bug fixes
 
-Five defects and one addition, all from one person using the published package
-against real work for the first time. Nothing here was found by the test suite.
+Five defects and one addition. Every one came from running the published
+package rather than from the test suite, which is why none of them was caught
+before release.
 
 - The extractor cited the bare mention rather than the clause that supports the
   claim, so the grounder correctly refused true facts — every enumerating

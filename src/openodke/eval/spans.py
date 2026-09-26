@@ -6,9 +6,10 @@ extraction bug the grounder reports for free: shown `Ireland` and asked whether
 `Acme operates_in Ireland` follows from it, a correct grounder answers
 `not_found`, and a true fact is thrown away by its own citation.
 
-The first external run measured the two distributions apart: `not_found` median
-8 characters against `supported` 64, with no overlap, on facts a person
-confirmed were true. Where the widths separate like that, **the `not_found`
+Where an extractor makes this mistake the two distributions separate: the
+citations that merely distinguish one fact from its siblings cluster in
+`not_found`, and the clause-width ones in `supported`. Where they separate
+like that, **the `not_found`
 rate is a usable proxy for citation quality with no gold set at all** — it
 scores the "too narrow" error directly, which is the error a span gold set
 would be built to find.

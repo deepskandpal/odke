@@ -249,7 +249,7 @@ assert sum(c.breaking for c in old.diff(new)) == 3
 `cardinality` says how many values a subject may hold; `cardinality_scope` says
 *within what*. "One price per subject" and "one price per subject per tier" are
 both `single`. A flat count would treat the second as a stream of contradictions,
-and two in five facts in a real corpus were qualifier-scoped.
+and qualifier-scoped facts are ordinary — a price per tier, an uptime per plan.
 
 The scope is a list of qualifier keys that is always unioned with the
 identity-bearing ones. A fact that differs on an identity-bearing qualifier is a

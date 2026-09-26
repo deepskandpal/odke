@@ -219,8 +219,8 @@ A true fact cited to a bare mention — `Ireland` rather than the clause that sa
 where the company operates — is correctly refused: the grounder is shown the
 span and nothing else, and that span does not support the claim. So a run with
 many `not_found` verdicts may have a citation problem rather than a fact
-problem, and the two are told apart by width: measured on one external run,
-`not_found` citations had a median of 8 characters against 64 for `supported`.
+problem, and the two are told apart by width: citations too narrow to carry
+their claim cluster in `not_found`, clause-width ones in `supported`.
 
 [`odke eval spans`](evaluation.md#spans) reports that split. It needs no
 labelled data, which makes it the cheapest check on a new extractor or prompt.

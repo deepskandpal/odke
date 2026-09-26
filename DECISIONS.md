@@ -148,8 +148,8 @@ signature, the corroborator merged them, and each raised the other's `support`.
 A denial and its own contradiction strengthened each other.
 
 It joins `signature` because a denial is not the same claim as an assertion; it
-is the opposite one. Hand annotation of a real corpus found 6% of facts negative
-or partial, which is too many to lose and too many to merge wrongly.
+is the opposite one. Denials and partial claims are ordinary in real answers —
+too many to lose, and too many to merge wrongly.
 
 *Cost:* one more field on a frozen model, and a re-partition of any graph built
 before it — which is why it lands in M0, before anything is serialised.
@@ -160,7 +160,8 @@ before it — which is why it lands in M0, before anything is serialised.
 p50" and "uptime 99.9% at p95" are two measurements; with qualifiers excluded
 from `signature` they merged into one claim with `support = 2`, and where the
 values differed a single-valued predicate saw a contradiction that was not one.
-Two in five facts in a real corpus carried a qualifier of this kind.
+Qualifiers of this kind are ordinary: a price per licence tier, an uptime per
+plan, a figure per percentile.
 
 So `Predicate.qualifiers` maps each key to a `Qualifier(identity=...)`,
 defaulting to `False` — #11 stays the default and nothing in an existing
@@ -332,12 +333,11 @@ intended: a span that does not support the claim on its own cannot be argued
 into supporting it. The extractor, left to choose, cited the narrowest text that
 distinguished one fact from its siblings — `Ireland` out of a clause listing
 three regions — and the grounder, asked whether "Acme Cloud operates in Ireland"
-follows from the text `Ireland`, correctly answered `not_found`. The first
-external run lost every enumerated fact this way: of nine facts, the seven
-narrow citations were all `not_found` at a median width of 8 characters and the
-two clause-width ones `supported` at a median of 64, with no overlap. The loss
-is invisible, because a `not_found` fact looks exactly like a fact that was
-properly refused.
+follows from the text `Ireland`, correctly answered `not_found`. An extractor
+that cites this way loses every enumerated fact — regions, languages,
+certifications — while the facts whose object came from its own clause ground
+cleanly. The loss is invisible, because a `not_found` fact looks exactly like a
+fact that was properly refused.
 
 So `Evidence.span` is the clause that supports the claim, and `Evidence.mention`
 is the narrower span inside it that tells this fact from the others the same

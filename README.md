@@ -279,9 +279,8 @@ and which reconcile (`start_time`), and that decides what counts as one claim.
 ## Honest limits
 
 - **The fixtures and the example are not benchmarks.** Their model responses are
-  hand-authored. The only real-model use reported so far is one external run on
-  three short documents, which is what 0.1.1 fixes came from — a bug report, not
-  a measurement. No precision or recall figure has been established.
+  hand-authored, and no precision or recall figure has been established against
+  a real model.
 - **Live Neo4j needs 5.7 or later.** The constraint bootstrap uses relationship
   uniqueness constraints; Community edition is enough.
 - **Structured facts are grounded against their own cell.** The cell `Leeds`
