@@ -21,6 +21,7 @@ from typer.testing import CliRunner
 
 from openodke import Chunk, Ontology, RouteVerdict, Sink
 from openodke.cli.main import app
+from openodke.corroborate import SCORE
 from openodke.llm import ModelRoles, ModelSpec
 from openodke.loaders import DocxLoader, HtmlLoader, PdfLoader
 from openodke.run import ConfigError, StageSpec, build, execute, load_config, parse_config
@@ -232,8 +233,13 @@ def test_paths_resolve_against_the_config_not_the_working_directory(
     assert (project / "out" / "manifest.json").exists()
 
 
-def test_omitted_stages_are_the_pass_through(project: Path) -> None:
-    """Only an extractor: candidates, unchecked, all written, no stage counts invented."""
+def test_omitted_stages_are_the_pass_through_but_the_scorer(project: Path) -> None:
+    """Only an extractor: candidates, unchecked, all written, no stage counts invented.
+
+    The scorer is the one stage `odke run` fills itself, so `confidence` is the
+    extractor's number discounted for never having been checked, not the number
+    itself (#81).
+    """
     config = _config(stages={"extractor": "hybrid"}, models={"replay": {"extract": "extract.json"}})
     result = execute(parse_config(config, base_dir=project))
     assert result.written == []
@@ -241,6 +247,40 @@ def test_omitted_stages_are_the_pass_through(project: Path) -> None:
     assert {f.verdict.value for f in result.graph.facts} == {"unchecked"}
     assert set(result.stats["stages"]) == {"extractor"}
     assert "cost" not in result.stats
+    assert all(f.qualifiers[SCORE]["verdict"] == 0.6 for f in result.graph.facts)
+
+
+def test_a_config_that_names_no_scorer_still_scores_from_the_grounding_verdict(
+    project: Path,
+) -> None:
+    """#81: an untouched extractor confidence is a constant no threshold can use.
+
+    `odke run` writes a graph somebody is about to filter, so it scores whether
+    or not the config says to. The gate is off here to keep the contradicted
+    fact, which the default validator refuses.
+    """
+    config = _config(stages__validator="passthrough")
+    del config["stages"]["scorer"]
+    facts = {
+        (f.predicate, f.object_value): f
+        for f in execute(parse_config(config, base_dir=project)).graph.facts
+    }
+    supported, contradicted = facts[("birth_date", "1906")], facts[("birth_date", "1907")]
+    assert (supported.verdict.value, contradicted.verdict.value) == ("supported", "contradicted")
+    # One extractor, one source, one span apiece: the verdict is the difference.
+    assert contradicted.confidence < supported.confidence
+    assert len({round(f.confidence, 6) for f in facts.values()}) > 1
+    assert all(SCORE in f.qualifiers for f in facts.values())
+
+
+def test_a_config_that_names_the_pass_through_scorer_keeps_the_extractor_s_number(
+    project: Path,
+) -> None:
+    """The default is an opinion, not a policy. Saying `passthrough` still means it."""
+    graph = execute(parse_config(_config(stages__scorer="passthrough"), base_dir=project)).graph
+    # 0.5 is `LLMExtractor`'s prior, 1.0 the pattern path's exact read.
+    assert {f.confidence for f in graph.facts} == {0.5, 1.0}
+    assert not any(SCORE in f.qualifiers for f in graph.facts)
 
 
 def test_models_accept_a_bare_model_string() -> None:

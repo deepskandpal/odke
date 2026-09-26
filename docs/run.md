@@ -109,6 +109,14 @@ does.
 **A stage left out is the pass-through** from `openodke.stages`
 ([DECISIONS #20](decisions.md)), and the stats say nothing about it.
 
+**The scorer is the exception.** Left out, `odke run` fills it with `evidence`
+(`EvidenceScorer`), because the pass-through leaves `Fact.confidence` at whatever
+the extractor put there — one constant for every fact, whatever the grounder
+found — and a threshold set against that silently accepts everything. The library
+keeps its pass-through: `Pipeline` is for a caller who scores themselves, and this
+is the CLI's opinion, on a graph somebody is about to filter. `scorer: passthrough`
+opts out and hands the extractor's number to the sink unchanged.
+
 **A stage of your own** is `package.module:Name`. A class is constructed with the
 options; any other object is used as it is and takes no options. Either way it must
 satisfy the stage's Protocol, which is checked when the config is built rather than
@@ -134,7 +142,7 @@ would have to be a Python object, such as a corroborator's `source` callable.
 | `normalizer` | `value`, `passthrough`, `delegated` | `ValueNormalizer` | `day_first`, `person_types` |
 | `resolver` | `native`, `passthrough`, `delegated` | `NativeResolver` | `threshold`, `nudge_up`, `nudge_down`, `max_block` |
 | `corroborator` | `signature`, `passthrough`, `delegated` | `SignatureCorroborator` | `half_life_days`, `freshness_floor`, `intervals` |
-| `scorer` | `evidence`, `passthrough`, `delegated` | `EvidenceScorer` | `prior`, `verdict_weights` |
+| `scorer` | `evidence` (the default), `passthrough`, `delegated` | `EvidenceScorer` | `prior`, `verdict_weights` |
 | `validator` | `verdict`, `passthrough`, `delegated` | `VerdictValidator` | `refuse_not_found` |
 | `sink` | `jsonl`, `neo4j`, `cypher_file`, `neo4j_admin_csv`, `rdf`, `networkx` | the [sinks](sinks.md) | see [below](#sinks) |
 | `constrainer` | `neo4j`, `passthrough`, `delegated` | `Neo4jConstrainer` | — |

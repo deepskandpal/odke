@@ -25,7 +25,9 @@ rather than a stage silently left as the pass-through.
 
 A stage is a built-in's short name, or `package.module:Name` for your own, and
 either may take options: `{use: name, option: value, ...}`. A stage left out is
-the pass-through from `openodke.stages` (DECISIONS #20).
+the pass-through from `openodke.stages` (DECISIONS #20) — except the scorer,
+which `odke run` fills with `evidence` so that a written fact's confidence
+reflects what the grounder found; `scorer: passthrough` opts out.
 """
 
 from __future__ import annotations
@@ -158,6 +160,7 @@ class StagesConfig(_Strict):
     normalizer: StageSpec | None = None
     resolver: StageSpec | None = None
     corroborator: StageSpec | None = None
+    # Left out, `odke run` scores with `evidence` (`run.build.DEFAULTS`).
     scorer: StageSpec | None = None
     validator: StageSpec | None = None
     # One sink or several; none writes nothing.

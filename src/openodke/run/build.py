@@ -1,7 +1,10 @@
 """From a config to stage objects: the short names, and the checks that make them safe.
 
 Every built-in is a small factory over a class that already exists, so nothing
-here has an idea of its own. The part worth reading is what a factory refuses:
+here has an idea of its own but `DEFAULTS` — the stages `odke run` fills when
+the config leaves them out, because for those the library's pass-through is
+misleading rather than merely absent. The part worth reading is what a factory
+refuses:
 an option the class does not take, an option `odke run` sets itself (the
 ontology, the model client), a password in a config file, and an inferrer
 (DECISIONS #8). Each refusal is a `ConfigError` naming the key.
@@ -389,6 +392,17 @@ for _stage, _cls in _PASSTHROUGH.items():
     # never chunks, and `Delegated` would stand in as a no-split chunker.
     if _stage not in {"chunker", "inferrer"}:
         BUILTINS[_stage]["delegated"] = _delegated
+
+# What `odke run` fills a stage with when the config leaves it out, where the
+# pass-through would be a worse answer than an opinion. The library keeps its
+# pass-through default (DECISIONS #20); this is the CLI's, and a config that
+# names the stage — `passthrough` included — always wins.
+#
+# `scorer`: without one, `Fact.confidence` arrives at the sink as whatever the
+# extractor put there, one constant for every fact whatever the grounder found,
+# and a threshold set against it silently accepts everything (#81).
+# `EvidenceScorer` is the formula the package already documents.
+DEFAULTS: dict[str, StageSpec] = {"scorer": StageSpec(use="evidence")}
 
 
 def build_stage(stage: str, spec: StageSpec, ctx: Context, where: str) -> Any:
@@ -793,7 +807,8 @@ class Built:
     """A config turned into objects: the ontology, one object per stage, and the sink plans.
 
     `stages` holds `None` for a stage the config left out, so `pipeline()` gives
-    it the pass-through and the stats say nothing about it.
+    it the pass-through and the stats say nothing about it — except for the
+    stages in `DEFAULTS`, which `odke run` fills itself.
     """
 
     config: RunConfig
@@ -898,9 +913,9 @@ def build(config: RunConfig) -> Built:
     for stage in STAGES:
         if stage in {"loader", "sink"}:
             continue
-        spec = getattr(config.stages, stage)
+        filled = getattr(config.stages, stage) or DEFAULTS.get(stage)
         stages[stage] = (
-            None if spec is None else build_stage(stage, spec, context, f"stages.{stage}")
+            None if filled is None else build_stage(stage, filled, context, f"stages.{stage}")
         )
     sinks = [
         sink_plan(
@@ -928,6 +943,7 @@ def _ontology(config: RunConfig) -> Ontology:
 
 __all__ = [
     "BUILTINS",
+    "DEFAULTS",
     "PROTOCOLS",
     "SINKS",
     "Built",

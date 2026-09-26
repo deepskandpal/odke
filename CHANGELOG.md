@@ -21,6 +21,11 @@ All notable changes to this project are documented here. The format follows
   the request rather than sending a value. Which temperatures a model accepts is a
   per-model fact, and openodke does not track it: `litellm.drop_params` was not used,
   because it discards a temperature the caller did mean. (#79)
+- `odke run` fills the `scorer` stage with `evidence` (`EvidenceScorer`) when the
+  config leaves it out, so a written fact's confidence reflects the grounding
+  verdict instead of arriving at the sink as the extractor's constant, which no
+  threshold can use. `Pipeline`'s pass-through default is unchanged
+  (DECISIONS #20) and `scorer: passthrough` opts out. (#81)
 
 ### Changed
 - **`ModelRoles()` no longer sets `temperature=0.0` on any role**; it sets nothing,

@@ -413,5 +413,8 @@ assert [(f.object_value, f.support) for f in graph.facts] == [("Leeds", 2), ("Sh
 
 In an [`odke run`](run.md) config the same four are `normalizer: value`, `resolver: native`,
 `corroborator: signature` and `scorer: evidence`, with their options as extra
-keys; `odke run` supplies the ontology itself. A run's contested values show up in
-its stats, as `corroborator: conflicts (lost 1, won 2)`.
+keys; `odke run` supplies the ontology itself. The scorer is the one of the four
+the command fills in when a config leaves it out, so a written fact's confidence
+reflects the grounding verdict by default; `scorer: passthrough` opts out. A
+run's contested values show up in its stats, as
+`corroborator: conflicts (lost 1, won 2)`.
