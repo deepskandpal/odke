@@ -212,3 +212,15 @@ assert kg.stats["refused"] == 1
 Whether grounding earns its cost on *your* corpus is a measurement, not a
 promise: `openodke.eval.grounding_ablation` compares precision with grounding off and
 on against your labels. See [Evaluation](evaluation.md#ground).
+
+## When `not_found` means the citation, not the fact
+
+A true fact cited to a bare mention — `Ireland` rather than the clause that says
+where the company operates — is correctly refused: the grounder is shown the
+span and nothing else, and that span does not support the claim. So a run with
+many `not_found` verdicts may have a citation problem rather than a fact
+problem, and the two are told apart by width: measured on one external run,
+`not_found` citations had a median of 8 characters against 64 for `supported`.
+
+[`odke eval spans`](evaluation.md#spans) reports that split. It needs no
+labelled data, which makes it the cheapest check on a new extractor or prompt.

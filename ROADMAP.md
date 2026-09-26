@@ -157,6 +157,29 @@ through trusted publishing, with a GitHub release carrying the wheel and sdist.
 
 ---
 
+## 0.1.1 — the first external run
+
+Five defects and one addition, all from one person using the published package
+against real work for the first time. Nothing here was found by the test suite.
+
+- The extractor cited the bare mention rather than the clause that supports the
+  claim, so the grounder correctly refused true facts — every enumerating
+  predicate lost every instance, invisibly (#77)
+- An empty extraction was indistinguishable from a document with no facts, so a
+  batch run's recall could not be measured (#78)
+- The shipped default configuration could not make a call: `temperature=0.0`
+  against a model that accepts only `1` (#79)
+- `odke eval spans` — citation width split by grounding verdict, the one
+  evaluator that needs no labelled data (#80)
+- Confidence ignored the grounding verdict; on a default config the ranking was
+  inverted, `not_found` facts scoring above `supported` ones (#81)
+
+## In flight
+
+- **0.2.0 — providers**: `odke models`, `--model` / `--model-provider`, key
+  resolution per provider and a providers page (#83)
+- **Docs on their own domain**, fronted by Cloudflare (#82)
+
 ## v0.2 — breadth · shipped in 0.1.0
 
 Planned after v0.1, because breadth is where this loses and depth after

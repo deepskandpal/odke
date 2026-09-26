@@ -14,11 +14,15 @@ Every fact carries the document, the character span, the source tier and the
 grounding verdict that produced it, so *why is this edge in my graph?* is a query,
 not an investigation.
 
-> **Status: 0.1.0, released on [PyPI](https://pypi.org/project/openodke/) on
-> 14 September 2026.** Every milestone in [ROADMAP.md](ROADMAP.md) has shipped:
-> the data model, ontology I/O, import and inference, loaders (text, Markdown,
-> records, HTML, PDF, DOCX) and extraction, grounding and corroboration, the
-> Neo4j, RDF, NetworkX and bulk sinks, `odke run`, and the evaluation harness.
+> **Status: 0.1.1, on [PyPI](https://pypi.org/project/openodke/).** Every
+> milestone in [ROADMAP.md](ROADMAP.md) has shipped: the data model, ontology
+> I/O, import and inference, loaders (text, Markdown, records, HTML, PDF, DOCX)
+> and extraction, grounding and corroboration, the Neo4j, RDF, NetworkX and bulk
+> sinks, `odke run`, and the evaluation harness. 0.1.1 came out of the first use
+> by someone who had not written it: the extractor now cites the clause that
+> supports a claim rather than the bare mention, empty extractions are counted
+> instead of silent, `odke eval spans` scores citation width, and confidence
+> follows the grounding verdict. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Quickstart
 
@@ -121,7 +125,7 @@ config, or a stage of yours.
 | normalise | `ValueNormalizer` — dates, numbers, units, name keys | `value` | unchanged |
 | resolve | `NativeResolver` — blocking, identifiers, links | `native` | keys as given |
 | corroborate | `SignatureCorroborator` | `signature` | every fact its own claim |
-| score | `EvidenceScorer` | `evidence` | confidence unchanged |
+| score | `EvidenceScorer` — verdict × support × extractor confidence | `evidence` | **`evidence`** under `odke run`; pass-through in a hand-built `Pipeline` |
 | validate | `VerdictValidator` — refuses `contradicted` | `verdict` | accept everything |
 | sink | `JsonlSink`, `Neo4jSink`, `CypherFileSink`, `Neo4jAdminCsvSink`, `RdfSink`, `NetworkXSink` | `jsonl`, `neo4j`, `cypher_file`, `neo4j_admin_csv`, `rdf`, `networkx` | nothing written |
 | constrain | `Neo4jConstrainer` — the ontology as DDL | `neo4j` | no constraints |
@@ -275,7 +279,9 @@ and which reconcile (`start_time`), and that decides what counts as one claim.
 ## Honest limits
 
 - **The fixtures and the example are not benchmarks.** Their model responses are
-  hand-authored. There are no real-model numbers yet.
+  hand-authored. The only real-model use reported so far is one external run on
+  three short documents, which is what 0.1.1 fixes came from — a bug report, not
+  a measurement. No precision or recall figure has been established.
 - **Live Neo4j needs 5.7 or later.** The constraint bootstrap uses relationship
   uniqueness constraints; Community edition is enough.
 - **Structured facts are grounded against their own cell.** The cell `Leeds`
