@@ -1,0 +1,4 @@
+# Commits before 26 Sep 2026 carry a misspelt author name. git log, shortlog
+# and blame read this file; the commits themselves are left alone, because
+# rewriting them would change every SHA in a published repository.
+Deepanshu Kandpal <dkandpalz@gmail.com> Deepak Kandpal <dkandpalz@gmail.com>

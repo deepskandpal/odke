@@ -6,7 +6,7 @@ readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11,<3.14"
-authors = [{ name = "Deepak Kandpal" }]
+authors = [{ name = "Deepanshu Kandpal" }]
 keywords = [
   "odke", "odke-plus", "ODKE+", "knowledge-graph", "knowledge-extraction",
   "ontology", "neo4j", "rdf", "llm", "information-extraction",
