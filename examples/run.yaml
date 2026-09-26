@@ -62,7 +62,7 @@ stages:
   normalizer: {use: value, person_types: [Person]}
   resolver: e2e_stages:RegistryResolver          # a stage of the example's own; built-in: native
   corroborator: signature                        # options: half_life_days, freshness_floor
-  scorer: evidence                               # options: prior, verdict_weights
+  scorer: evidence                               # the default when left out; options: prior, verdict_weights
   validator: {use: verdict, refuse_not_found: false}
   sink: {use: jsonl, directory: e2e/out}         # or a list of sinks
   # sink:

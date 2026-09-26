@@ -24,6 +24,7 @@ from typer.testing import CliRunner
 
 from openodke import Ontology
 from openodke.cli.main import app
+from openodke.corroborate import SCORE
 from openodke.eval.sinks import assert_idempotent
 from openodke.run import execute, load_config
 from openodke.sinks import neo4j as neo4j_module
@@ -98,6 +99,31 @@ def test_the_example_runs_end_to_end_on_recorded_responses(example: Path) -> Non
 
     (different,) = [link for link in _lines(out / "links.jsonl") if link["kind"] == "different"]
     assert different["reason"] == "external_id mismatch: DE-551902 vs HR-104233"
+
+
+def test_the_examples_scorer_line_is_what_odke_run_would_have_done_anyway(example: Path) -> None:
+    """#81: drop `scorer: evidence` from the config and the confidences do not move.
+
+    The line is documentation, not the thing that makes the number mean
+    something: a config that never mentions a scorer gets the same one, so no
+    graph leaves `odke run` with the extractor's constant on every fact.
+    """
+    config = load_config(example / "odke.yaml")
+    unscored = config.model_copy(
+        update={"stages": config.stages.model_copy(update={"scorer": None})}
+    )
+    named = execute(config, dry_run=True).graph
+    silent = execute(unscored, dry_run=True).graph
+
+    by_verdict: dict[str, set[float]] = {}
+    for fact in silent.facts:
+        by_verdict.setdefault(fact.verdict.value, set()).add(round(fact.confidence, 6))
+    assert [round(f.confidence, 6) for f in silent.facts] == [
+        round(f.confidence, 6) for f in named.facts
+    ]
+    # The grounder found both, and the number says which is which.
+    assert max(by_verdict["not_found"]) < max(by_verdict["supported"]) == 1.0
+    assert all(SCORE in f.qualifiers for f in silent.facts)
 
 
 def test_the_neo4j_config_is_the_jsonl_one_but_for_where_it_writes() -> None:
