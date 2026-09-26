@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-09-26
+
+Provider selection and discovery, and design notes argued from first principles
+rather than from measurements taken elsewhere.
+
 ### Added
 - **`odke models`**, and `--model` / `--model-provider` on `odke run` and
   `odke ontology infer`. The command lists every provider openodke can address,

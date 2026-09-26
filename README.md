@@ -14,7 +14,7 @@ Every fact carries the document, the character span, the source tier and the
 grounding verdict that produced it, so *why is this edge in my graph?* is a query,
 not an investigation.
 
-> **Status: 0.1.1, on [PyPI](https://pypi.org/project/openodke/).** Every
+> **Status: 0.2.0, on [PyPI](https://pypi.org/project/openodke/).** Every
 > milestone in [ROADMAP.md](ROADMAP.md) has shipped: the data model, ontology
 > I/O, import and inference, loaders (text, Markdown, records, HTML, PDF, DOCX)
 > and extraction, grounding and corroboration, the Neo4j, RDF, NetworkX and bulk
