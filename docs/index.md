@@ -75,6 +75,7 @@ openodke is pre-alpha. This site documents what is on `main`:
 | JSONL, Cypher-file, neo4j-admin CSV, RDF and NetworkX sinks | `openodke.sinks` | released in 0.1.0 — [Sinks](sinks.md) |
 | The whole pipeline from one config file | `openodke.run`, `odke run` | released in 0.1.0 — [`odke run`](run.md) |
 | The ablation: extraction alone, + grounding, + corroboration | `openodke.eval.run_ablation`, `odke eval ablation` | released in 0.1.0 — [Evaluation](evaluation.md#ablation) |
+| Citation width by grounding verdict — the evaluator that needs no labels | `openodke.eval.evaluate_spans`, `odke eval spans` | released in 0.1.1 — [Evaluation](evaluation.md#spans) |
 
 ## Five minutes, no keys
 
