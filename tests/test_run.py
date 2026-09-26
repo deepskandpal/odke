@@ -179,6 +179,9 @@ def test_a_config_runs_end_to_end_into_jsonl_with_every_stage_counted(project: P
 
     stats = json.loads((project / "out" / "manifest.json").read_text())["stats"]
     assert (stats["documents"], stats["chunks"], stats["refused"]) == (2, 2, 1)
+    # Both chunks yielded facts, and the report says so rather than staying quiet (#78).
+    assert stats["empty_extractions"] == 0
+    assert "0 skipped, 0 deferred, 0 empty" in result.output
     stages = stats["stages"]
     assert stages["extractor"]["rejections"] == {"quote not in the passage": 1}
     paths = stages["extractor"]["paths"]

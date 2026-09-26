@@ -484,6 +484,21 @@ more attempts with a repair prompt, then is recorded as a `malformed reply`
 rejection rather than raised, because one bad reply should not end a long run.
 Provider errors still raise.
 
+An extraction that yields nothing is counted and logged, never silent. The same
+chunk can answer with five facts twice and with none the third time, and a
+factless passage and a dropped one report identically unless something says so:
+
+- `empty_extractions` counts the chunks the model was asked about that produced
+  no fact, whether the reply held no entities or every candidate in it was
+  refused. `Pipeline.run` counts the same thing across all extractors in
+  `stats["empty_extractions"]`, and `odke run` prints it on the `documents` line.
+- A WARNING names the chunk — `doc_id#index` — with the number of entities the
+  reply held and the number of candidates refused, which is what says which of
+  the two happened.
+- `malformed` keeps the raw text of every reply for a chunk whose repair failed,
+  as `MalformedReply(doc_id, chunk_index, replies)`. A parse failure used to
+  leave a count and nothing to read.
+
 ```python
 from openodke.extract import LLMExtractor
 from openodke.llm import ScriptedClient
@@ -526,8 +541,8 @@ assert len(extractor.calls) == 1 and extractor.calls[0].cost_usd is None  # unkn
 The model said `born in 1906` starts at 3; it starts at 17, and that is where the
 span points. `confidence` defaults to 0.5, a prior for the
 [scorer](resolution-and-corroboration.md#score) rather than a probability.
-`calls` and `rejections` accumulate across chunks, so cost and drop rate are
-counts to read after a run. No vendor is named: pass `client=`, `spec=` or
+`calls`, `rejections`, `empty_extractions` and `malformed` accumulate across
+chunks, so cost, drop rate and silence are counts to read after a run. No vendor is named: pass `client=`, `spec=` or
 `roles=`, or let `openodke.llm.resolve` pick a client for the `extract` role when the
 first call is made.
 

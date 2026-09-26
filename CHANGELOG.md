@@ -27,6 +27,11 @@ All notable changes to this project are documented here. The format follows
   `Span.is_faithful`, and a mention outside its clause is dropped rather than
   the fact ([DECISIONS #23](DECISIONS.md)). Additive: facts serialised by 0.1.0
   still load.
+- **An empty extraction is visible (#78).** `Pipeline` stats gain
+  `empty_extractions`, printed on the `documents` line of `odke run`, and
+  `LLMExtractor` counts the same thing per chunk, logs a WARNING naming the
+  chunk and the reason it came back empty, and keeps the raw text of a repair
+  that failed in `malformed`. Nothing changes when an extraction succeeds.
 - `ModelSpec.temperature` may be `None`, and both clients — the standard-library
   OpenAI-compatible one and the litellm adapter — then leave the parameter out of
   the request rather than sending a value. Which temperatures a model accepts is a

@@ -92,6 +92,20 @@ class ModelCall:
 
 
 @dataclass(frozen=True, slots=True)
+class MalformedReply:
+    """Every reply for one chunk that never became the contract, kept whole.
+
+    A repair that fails used to leave a count and nothing to read, so "the model
+    returned nothing" and "the parse failed twice" looked the same from outside.
+    `replies` is the raw text of the first attempt and of each repair, in order.
+    """
+
+    doc_id: str
+    chunk_index: int
+    replies: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Rejection:
     """A candidate the extractor refused, and why. A drop is a count, not a mystery."""
 
@@ -177,8 +191,11 @@ class LLMExtractor:
     should not end a ten-thousand-chunk run. Provider errors still raise.
 
     `confidence` is a prior, not a probability: the scorer calibrates it (M3).
-    `calls` and `rejections` accumulate across chunks, so cost and drop rate are
-    counts a caller can read after a run.
+    `calls`, `rejections`, `empty_extractions` and `malformed` accumulate across
+    chunks, so cost, drop rate and silence are counts a caller can read after a
+    run. An extraction that yields nothing also logs a WARNING naming its chunk:
+    a factless passage and a dropped one are not the same event, and a batch job
+    cannot measure recall if they report identically (#78).
     """
 
     name = "llm"
@@ -204,6 +221,9 @@ class LLMExtractor:
         self.repairs = repairs
         self.calls: list[ModelCall] = []
         self.rejections: list[Rejection] = []
+        # Chunks the model was asked about that yielded no fact at all.
+        self.empty_extractions = 0
+        self.malformed: list[MalformedReply] = []
 
     @property
     def client(self) -> LLMClient:
@@ -237,6 +257,7 @@ class LLMExtractor:
         schema = response_schema(snippets)
         messages = self.messages(chunk, snippets)
         data: dict[str, Any] | None = None
+        replies: list[str] = []
         for attempt in range(self.repairs + 1):
             completion = self.client.complete(messages, spec=self.spec, schema=schema)
             self.calls.append(
@@ -253,6 +274,7 @@ class LLMExtractor:
             data = _contract(completion)
             if data is not None:
                 break
+            replies.append(completion.text)
             messages = [
                 *messages,
                 Message(role="assistant", content=completion.text),
@@ -260,13 +282,40 @@ class LLMExtractor:
             ]
         if data is None:
             self._reject(chunk, "malformed reply")
+            self.malformed.append(
+                MalformedReply(doc_id=chunk.doc_id, chunk_index=chunk.index, replies=tuple(replies))
+            )
+            self.empty_extractions += 1
+            log.warning(
+                "no reply followed the contract for chunk %s#%d after %d attempts; "
+                "nothing extracted. The raw text is in LLMExtractor.malformed[-1]",
+                chunk.doc_id,
+                chunk.index,
+                len(replies),
+            )
             return []
 
         ctx = ChunkContext(chunk, self.documents.get(chunk.doc_id))
         by_type = {s.type_name: s for s in snippets}
+        refused = len(self.rejections)
         facts: list[Fact] = []
         for entity in data["entities"]:
             facts.extend(self._entity(ctx, ontology, by_type, entity))
+        if not facts:
+            # Not an error, and not nothing: the same chunk yields five facts on
+            # one call and none on the next, and only a count and a line in the
+            # log tell that apart from a passage with nothing to say (#78). The
+            # two numbers say which happened — an empty reply, or a reply whose
+            # every candidate was refused.
+            self.empty_extractions += 1
+            log.warning(
+                "extraction returned no facts for chunk %s#%d: %d entities in the reply, "
+                "%d candidates refused",
+                chunk.doc_id,
+                chunk.index,
+                len(data["entities"]),
+                len(self.rejections) - refused,
+            )
         return facts
 
     def _entity(
@@ -448,4 +497,4 @@ def _locate(text: str, quote: str, hint: Any) -> int | None:
     return min(found, key=lambda s: (abs(s - claimed), s))
 
 
-__all__ = ["LLMExtractor", "ModelCall", "Rejection", "response_schema"]
+__all__ = ["LLMExtractor", "MalformedReply", "ModelCall", "Rejection", "response_schema"]

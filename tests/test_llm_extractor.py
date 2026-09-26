@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -106,6 +107,8 @@ def test_sound_facts_survive_and_every_fault_is_dropped_and_recorded(people: Ont
     ]
     invented = {r.quote for r in extractor.rejections if r.reason == "quote not in the passage"}
     assert invented == {"born on 11 December 1815", "Augusta Ada King", "ada lovelace"}
+    # An extraction that yielded facts is silent: nothing counted, nothing kept.
+    assert (extractor.empty_extractions, extractor.malformed) == (0, [])
 
 
 def test_every_span_that_survives_is_faithful_to_the_document(people: Ontology) -> None:
@@ -294,15 +297,63 @@ def test_a_malformed_reply_is_repaired_once(people: Ontology) -> None:
     assert all(c.cost_usd is None for c in extractor.calls)
 
 
-def test_an_unrepairable_reply_is_recorded_not_raised(people: Ontology) -> None:
+def test_an_unrepairable_reply_is_recorded_not_raised(
+    people: Ontology, caplog: pytest.LogCaptureFixture
+) -> None:
     doc, chunk = _doc_and_chunk(GRACE)
     extractor = LLMExtractor(client=ScriptedClient(["nope", "still nope"]), spec=LLAMA)
-    assert extractor.extract(chunk, people) == []
+    with caplog.at_level(logging.WARNING, logger="openodke.extract"):
+        assert extractor.extract(chunk, people) == []
     assert [r.reason for r in extractor.rejections] == ["malformed reply"]
     assert len(extractor.calls) == 2
+    # A repair that failed keeps what the model actually said, both attempts of it.
+    (kept,) = extractor.malformed
+    assert (kept.doc_id, kept.chunk_index) == (chunk.doc_id, chunk.index)
+    assert kept.replies == ("nope", "still nope")
+    assert extractor.empty_extractions == 1
+    warning = "".join(r.getMessage() for r in caplog.records)
+    assert f"{chunk.doc_id}#{chunk.index}" in warning and "LLMExtractor.malformed" in warning
+
     single = LLMExtractor(client=ScriptedClient(["nope"]), spec=LLAMA, repairs=0)
     assert single.extract(chunk, people) == []
     assert len(single.calls) == 1
+    assert [m.replies for m in single.malformed] == [("nope",)]
+
+
+def test_an_empty_extraction_is_counted_and_warned(
+    people: Ontology, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#78: the same chunk answered with five facts twice and with none the third time."""
+    doc, chunk = _doc_and_chunk(GRACE)
+    extractor = LLMExtractor(client=ScriptedClient([{"entities": []}]), spec=SONNET)
+    with caplog.at_level(logging.WARNING, logger="openodke.extract"):
+        assert extractor.extract(chunk, people) == []
+    assert (extractor.empty_extractions, extractor.malformed, extractor.rejections) == (1, [], [])
+    (record,) = caplog.records
+    assert record.levelno == logging.WARNING
+    assert f"{chunk.doc_id}#{chunk.index}" in record.getMessage()
+    assert "0 entities in the reply, 0 candidates refused" in record.getMessage()
+
+
+def test_a_reply_whose_every_candidate_is_refused_is_empty_too(
+    people: Ontology, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The count is what the caller got, not what the model said: both are nothing."""
+    reply = {
+        "entities": [
+            {
+                "type": "Person",
+                "name": "Grace Hopper",
+                "facts": [{"predicate": "birth_date", "value": "1906", "quote": "born in 1907"}],
+            }
+        ]
+    }
+    _, chunk = _doc_and_chunk(GRACE)
+    extractor = LLMExtractor(client=ScriptedClient([reply]), spec=SONNET)
+    with caplog.at_level(logging.WARNING, logger="openodke.extract"):
+        assert extractor.extract(chunk, people) == []
+    assert extractor.empty_extractions == 1
+    assert "1 entities in the reply, 1 candidates refused" in caplog.records[0].getMessage()
 
 
 def test_structured_output_is_read_and_an_unregistered_chunk_is_still_checked(

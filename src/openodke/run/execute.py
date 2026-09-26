@@ -236,7 +236,8 @@ def render(result: RunResult) -> str:
         _row(
             "documents",
             f"{stats.get('documents', 0)} ({stats.get('chunks', 0)} chunks; "
-            f"{stats.get('skipped', 0)} skipped, {stats.get('deferred', 0)} deferred)",
+            f"{stats.get('skipped', 0)} skipped, {stats.get('deferred', 0)} deferred, "
+            f"{stats.get('empty_extractions', 0)} empty)",
         )
     )
     for name, report in stats.get("stages", {}).items():

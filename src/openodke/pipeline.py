@@ -146,7 +146,17 @@ class Pipeline:
     def run(self, docs: Sequence[Document]) -> KnowledgeGraph:
         # Counts, not a log: enough to see that routing or validation did
         # something, which is the first question when a graph comes back small.
-        stats = {"documents": len(docs), "chunks": 0, "skipped": 0, "deferred": 0, "refused": 0}
+        stats = {
+            "documents": len(docs),
+            "chunks": 0,
+            "skipped": 0,
+            "deferred": 0,
+            # Chunks that were extracted from and yielded nothing. A factless
+            # passage and a dropped extraction report identically without this,
+            # so a batch job cannot tell a bad run from a quiet corpus (#78).
+            "empty_extractions": 0,
+            "refused": 0,
+        }
         facts: list[Fact] = []
         for doc in docs:
             candidates: list[Fact] = []
@@ -160,7 +170,10 @@ class Pipeline:
                     if verdict.scope == "document":
                         break
                     continue
-                candidates.extend(self.extractor.extract(chunk, self.ontology))
+                found = list(self.extractor.extract(chunk, self.ontology))
+                if not found:
+                    stats["empty_extractions"] += 1
+                candidates.extend(found)
             for grounded in _ground(self.grounder, candidates, doc):
                 facts.append(self.normalizer.normalize(grounded))
 
