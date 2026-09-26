@@ -1,8 +1,8 @@
 """Span width by verdict: the evaluator that scores citations with no labels at all.
 
 Expected numbers are hand-computed from tests/fixtures/eval/spans.facts.jsonl —
-thirteen facts, the nine of the first external run plus four edge cases, and not
-a benchmark:
+thirteen facts — nine modelled on the narrow-citation failure, plus four edge
+cases — and not a benchmark:
 
     not_found     s1..s7   widths 6, 7, 7, 8, 9, 12, 13
     supported     s8, s9   widths 46, 81

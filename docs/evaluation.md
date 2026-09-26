@@ -168,8 +168,8 @@ It exists because a citation too narrow to carry its claim is an extraction bug
 the grounder reports for free. Shown `Ireland` and asked whether
 `Acme operates_in Ireland` follows from it, a correct grounder answers
 `not_found` — the fact was true, the extraction was right, and the citation threw
-it away. The first external run measured the two distributions apart: `not_found`
-median 8 characters against `supported` 64, with no overlap.
+it away. Where an extractor makes this mistake the two distributions separate:
+narrow citations cluster in `not_found`, clause-width ones in `supported`.
 
 So where the widths separate like that, **the `not_found` rate is a usable proxy
 for citation quality with no gold set**: it scores the too-narrow-citation error

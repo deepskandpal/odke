@@ -94,8 +94,8 @@ class Predicate(BaseModel):
     `cardinality` says how many values a subject may hold; `cardinality_scope`
     says *within what*. "One price per subject" and "one price per subject per
     tier" are both `single`, and a flat count treats the second as a stream of
-    contradictions — two in five facts in a real corpus are qualifier-scoped, so
-    that queue would be mostly noise.
+    contradictions — a price per licence tier and an uptime per plan are
+    ordinary shapes, so that queue would be mostly noise.
 
     The smallest shape that works is a list of qualifier keys that is always
     unioned with the identity-bearing ones. A fact that differs on `tier` is a

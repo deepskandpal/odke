@@ -186,8 +186,8 @@ class Polarity(StrEnum):
     """Whether the source asserts the claim, denies it, or qualifies it.
 
     A graph holding only positive assertions cannot answer "does X sell customer
-    data?" when the source says it does not. Six percent of a hand-annotated
-    corpus was negative or partial, so this is a field rather than a qualifier —
+    data?" when the source says it does not. Denials and partial claims are
+    ordinary in real answers, so this is a field rather than a qualifier —
     and it is part of `Fact.signature`, because a denial and its assertion are
     opposite claims, not one claim told twice.
     """
