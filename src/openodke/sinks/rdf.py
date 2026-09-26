@@ -25,7 +25,7 @@ EXTRA_HINT = "rdflib is not installed; run: pip install 'openodke[rdf]'"
 
 # The namespace of the terms this sink owns: `odke:Fact`, `odke:polarity`,
 # `odke:evidence`. A name, not yet a published document.
-VOCAB = "https://deepskandpal.github.io/odke/vocab#"
+VOCAB = "https://openodke.dev/vocab#"
 # A documentation domain on purpose: data minted under it is visibly unplaced.
 DEFAULT_BASE = "https://example.org/odke/"
 

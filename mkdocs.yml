@@ -2,7 +2,7 @@ site_name: openodke
 site_description: >-
   Text in, a grounded knowledge graph out: ontology-guided knowledge extraction
   for Neo4j or any graph store.
-site_url: https://deepskandpal.github.io/odke/
+site_url: https://openodke.dev/
 repo_url: https://github.com/deepskandpal/odke
 repo_name: deepskandpal/odke
 edit_uri: edit/main/docs/

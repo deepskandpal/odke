@@ -25,7 +25,7 @@ from dataclasses import dataclass
 
 from openodke.llm.base import MissingAPIKey, ModelSpec
 
-DOCS_URL = "https://deepskandpal.github.io/odke/models/"
+DOCS_URL = "https://openodke.dev/models/"
 
 
 @dataclass(frozen=True)
