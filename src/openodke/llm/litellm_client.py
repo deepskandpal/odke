@@ -51,11 +51,14 @@ class LiteLLMClient:
         kwargs: dict[str, Any] = {
             "model": spec.model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
-            "temperature": spec.temperature,
             "max_tokens": spec.max_tokens,
             "timeout": spec.timeout,
-            **spec.extra,
         }
+        # Left out rather than defaulted, and not `drop_params`, which would
+        # discard a temperature the caller did mean (#79).
+        if spec.temperature is not None:
+            kwargs["temperature"] = spec.temperature
+        kwargs.update(spec.extra)
         if spec.base_url:
             kwargs["api_base"] = spec.base_url
         if schema is not None:

@@ -33,7 +33,8 @@ pythonpath: [e2e]
 
 # Which model does which job (DECISIONS #7a). A string is a model; a mapping is
 # a full ModelSpec (temperature, max_tokens, timeout, base_url, api_key_env, extra).
-# Keys never go here — a provider reads its own environment variable.
+# Keys never go here — a provider reads its own environment variable. temperature
+# is unset by default and then not sent at all; set it and it is sent as written.
 models:
   extract: anthropic/claude-sonnet-5
   ground: {model: anthropic/claude-haiku-4-5-20251001, max_tokens: 256}

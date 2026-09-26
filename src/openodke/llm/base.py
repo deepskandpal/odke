@@ -40,7 +40,10 @@ class ModelSpec(BaseModel):
     # "provider/model" — anthropic/claude-sonnet-5, openai/gpt-4.1,
     # ollama/llama3.1, azure/my-deployment, openrouter/…, bedrock/…, vertex/…
     model: str
-    temperature: float = 0.0
+    # None omits the parameter from the request entirely. Which temperatures a
+    # model accepts is a per-model fact this library does not track — some accept
+    # only their own — so the default is to let the provider decide (#79).
+    temperature: float | None = None
     max_tokens: int = 2048
     timeout: float = 120.0
     # For self-hosted and OpenAI-compatible endpoints: Ollama, vLLM, LM Studio,

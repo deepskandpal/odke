@@ -74,10 +74,13 @@ class OpenAICompatClient:
         payload: dict[str, Any] = {
             "model": spec.model.split("/", 1)[-1],
             "messages": [{"role": m.role, "content": m.content} for m in messages],
-            "temperature": spec.temperature,
             "max_tokens": spec.max_tokens,
-            **spec.extra,
         }
+        # Left out rather than defaulted: a model that accepts only one
+        # temperature rejects the key itself, not just the value (#79).
+        if spec.temperature is not None:
+            payload["temperature"] = spec.temperature
+        payload.update(spec.extra)
         if schema is not None:
             # Servers that do not know this key ignore it; the caller still gets
             # JSON because the prompt asks for it too.
