@@ -43,6 +43,15 @@ class _StubExtractor:
         ]
 
 
+class _QuietExtractor:
+    """Finds nothing in a line that says nothing: an empty extraction, not an error."""
+
+    def extract(self, chunk: Chunk, ontology: Ontology) -> Iterable[Fact]:
+        if "Ada" not in chunk.text:
+            return []
+        return _StubExtractor().extract(chunk, ontology)
+
+
 class _StampingGrounder:
     """Supports names, contradicts employers. Stamps; never drops."""
 
@@ -145,6 +154,20 @@ def test_the_grounder_stamps_and_the_validator_gates() -> None:
     assert gated.stats["refused"] == 1
     # The refused fact's object entity is gone with it.
     assert {e.key for e in gated.entities} == {"p:d1"}
+
+
+def test_a_chunk_that_yields_nothing_is_counted_rather_than_silent() -> None:
+    """#78: a factless passage and a dropped extraction reported identically before this."""
+    doc = Document(id="d1", text="Ada.\nNothing here.\nAda again.\n")
+    kg = Pipeline(Ontology(), _QuietExtractor(), chunker=_LineChunker()).run([doc])
+    assert (kg.stats["chunks"], kg.stats["skipped"]) == (3, 0)
+    assert kg.stats["empty_extractions"] == 1
+    assert len(kg) == 4
+    # A skipped chunk was never extracted from, so it is not an empty extraction.
+    routed = Pipeline(
+        Ontology(), _QuietExtractor(), chunker=_LineChunker(), router=_AdRouter()
+    ).run([Document(id="d2", text="Ada.\nAD: buy now\n")])
+    assert (routed.stats["skipped"], routed.stats["empty_extractions"]) == (1, 0)
 
 
 def test_a_chunk_scoped_skip_drops_only_that_chunk() -> None:

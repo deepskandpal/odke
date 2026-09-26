@@ -7,12 +7,19 @@ from a table and a fact from prose are the same shape and merge by signature.
 
 from openodke.extract._common import entity_key
 from openodke.extract.hybrid import HybridExtractor, PathReport, merge
-from openodke.extract.llm import LLMExtractor, ModelCall, Rejection, response_schema
+from openodke.extract.llm import (
+    LLMExtractor,
+    MalformedReply,
+    ModelCall,
+    Rejection,
+    response_schema,
+)
 from openodke.extract.pattern import PatternExtractor, RecordMapping
 
 __all__ = [
     "HybridExtractor",
     "LLMExtractor",
+    "MalformedReply",
     "ModelCall",
     "PathReport",
     "PatternExtractor",

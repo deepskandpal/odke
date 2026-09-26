@@ -345,7 +345,7 @@ odke run examples/e2e/odke.yaml
 
 ```text
 odke run
-documents     8 (8 chunks; 0 skipped, 0 deferred)
+documents     8 (8 chunks; 0 skipped, 0 deferred, 0 empty)
 extractor     paths (paths llm+pattern, chunks 8, pattern_facts 20, llm_facts 18, merged 2, model_calls 3), rejections (quote not in the passage 1)
 grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, supported 20, contradicted 1, not_found 15, span (facts 36, located 36)
 corroborator  conflicts (lost 1, won 2)
@@ -359,7 +359,10 @@ wrote         jsonl → …/examples/e2e/out: entities.jsonl 7, facts.jsonl 25, 
 Line by line:
 
 - **documents.** One per register row and per staff row (each record is rendered to
-  text, so a span can point into it), plus the factsheet and the two notes.
+  text, so a span can point into it), plus the factsheet and the two notes. `empty`
+  is the chunks that were extracted from and yielded nothing: zero here, and a
+  number to watch on a batch run, where a dropped extraction otherwise looks
+  exactly like a passage with no facts in it.
 - **extractor.** The pattern path read 20 facts from the CSV rows and the
   factsheet's `Key: value` lines, exactly and without a model call. The model read
   the three chunks with prose in them, once each, and two of its facts merged into

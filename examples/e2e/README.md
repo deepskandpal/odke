@@ -32,7 +32,7 @@ odke run examples/e2e/odke.yaml
 
 ```text
 odke run
-documents     8 (8 chunks; 0 skipped, 0 deferred)
+documents     8 (8 chunks; 0 skipped, 0 deferred, 0 empty)
 extractor     paths (paths llm+pattern, chunks 8, pattern_facts 20, llm_facts 18, merged 2, model_calls 3), rejections (quote not in the passage 1)
 grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, supported 20, contradicted 1, not_found 15, span (facts 36, located 36)
 corroborator  conflicts (lost 1, won 2)
