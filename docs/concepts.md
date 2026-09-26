@@ -135,10 +135,21 @@ nothing ([DECISIONS #3](decisions.md)). `Span.resolve(doc)` returns the text at
 the offsets; `Span.is_faithful(doc)` is true when the recorded quote is what sits
 there.
 
-`Evidence` is a document id plus an optional span, uri, `SourceTier` and
-`retrieved_at`. Tiers are four named levels with fixed weights, because callers
-reason about "curated vs. scraped", not about 0.8
-([DECISIONS #10](decisions.md)):
+`Evidence` is a document id plus an optional span, an optional narrower
+`mention`, and a uri, `SourceTier` and `retrieved_at`.
+
+`span` is the **claim-bearing clause**: enough text to state the fact when read
+on its own, because a grounder is shown that span and nothing else. Asked
+whether "Acme Cloud operates in Ireland" follows from the text `Ireland`, a
+grounder correctly answers `not_found`, and a true fact is lost. `mention` is
+the narrower span inside the clause that tells this fact from the others the
+same clause states — `Ireland` in a list of three regions. Both are checked with
+`Span.is_faithful`, the mention must lie inside the clause, and nothing in the
+pipeline reads it: it is there for highlighting and for anyone who wants the
+tightest citation ([DECISIONS #23](decisions.md)).
+
+Tiers are four named levels with fixed weights, because callers reason about
+"curated vs. scraped", not about 0.8 ([DECISIONS #10](decisions.md)):
 
 | `SourceTier` | `weight` |
 |---|---|

@@ -13,6 +13,12 @@ quote that is not in the passage at all is dropped, and the drop is recorded.
 Nothing is paraphrased into place, and every span that survives has passed
 `Span.is_faithful`.
 
+The quote asked for is the *clause* that supports the claim, not the word that
+names the value, because the grounder is shown that span and nothing else
+(DECISIONS #23). The word that tells one fact from its siblings — one of three
+regions in a list — is carried alongside as `Evidence.mention`, checked the same
+way and dropped if it is not inside the clause.
+
 No vendor is named here. The call goes through `LLMClient`, served by whatever
 `openodke.llm.resolve` picks for the `extract` role.
 """
@@ -20,6 +26,7 @@ No vendor is named here. The call goes through `LLMClient`, served by whatever
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -35,16 +42,21 @@ from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
 from openodke.llm.registry import resolve
 from openodke.llm.roles import ModelRoles
 from openodke.ontology import Ontology, OntologySnippet, Predicate
-from openodke.types import Chunk, Entity, Fact, Polarity
+from openodke.types import Chunk, Entity, Fact, Polarity, Span
+
+log = logging.getLogger("openodke.extract")
 
 _INSTRUCTIONS = """\
 Extract facts from the passage in the user message, using only the entity types \
 and properties listed below. Anything else is ignored.
 
 Every fact needs "quote": the words of the passage that state it, copied exactly, \
-with the same spelling, capitals, punctuation and spacing. A fact whose quote is \
-not in the passage is discarded. Give "start", the character offset where the \
-quote begins (the passage's first character is 0), if you can.
+with the same spelling, capitals, punctuation and spacing. Quote the whole clause \
+that supports the fact, not just the word naming the value; where one clause \
+states several facts, quote it in full for each and put the words that tell this \
+one apart in "mention". A fact whose quote is not in the passage is discarded. \
+Give "start", the character offset where the quote begins (the passage's first \
+character is 0), if you can.
 
 "polarity" is "denied" when the passage says the fact is not so, "partial" when \
 it holds only with a limitation the passage states, and "asserted" otherwise. \
@@ -53,8 +65,8 @@ the passage writes it.
 
 Reply with one JSON object and nothing else, in this shape:
 {"entities": [{"type": "...", "name": "...", "facts": [{"predicate": "...", \
-"value": "...", "quote": "...", "start": 0, "polarity": "asserted", \
-"qualifiers": {}}]}]}
+"value": "...", "quote": "...", "start": 0, "mention": "...", \
+"polarity": "asserted", "qualifiers": {}}]}]}
 Reply {"entities": []} when the passage states none of these properties."""
 
 _REPAIR = (
@@ -95,9 +107,10 @@ def response_schema(snippets: Sequence[OntologySnippet]) -> dict[str, Any]:
 
     A snippet's schema describes one entity's values, and evidence needs a place
     per fact. So each property becomes one kind of fact item — predicate, value,
-    quote, start, polarity, qualifiers — whose `value` is held to exactly that
-    property's schema (its item schema when multi-valued: a fact holds one
-    value). The prompt renders the same snippets, so the two cannot drift.
+    quote, start, mention, polarity, qualifiers — whose `value` is held to
+    exactly that property's schema (its item schema when multi-valued: a fact
+    holds one value). The prompt renders the same snippets, so the two cannot
+    drift.
     """
     entities: list[dict[str, Any]] = []
     for snippet in snippets:
@@ -110,6 +123,9 @@ def response_schema(snippets: Sequence[OntologySnippet]) -> dict[str, Any]:
                 "value": value["items"] if value.get("type") == "array" else value,
                 "quote": {"type": "string", "minLength": 1},
                 "start": {"type": "integer", "minimum": 0},
+                # The distinguishing words inside the quote. Optional: a clause
+                # that states one fact has nothing to tell it apart from.
+                "mention": {"type": "string", "minLength": 1},
                 "polarity": {"enum": [p.value for p in Polarity]},
             }
             if predicate.qualifiers:
@@ -308,9 +324,10 @@ class LLMExtractor:
             return None
         start = _locate(ctx.chunk.text, quoted, item.get("start")) if quoted else None
         span = ctx.span(start, quoted) if start is not None and quoted else None
-        if span is None:
+        if span is None or start is None or quoted is None:
             self._reject(ctx.chunk, "quote not in the passage", label, quoted)
             return None
+        mention = _mention(ctx, item.get("mention"), quoted, start)
         raw_qualifiers = item.get("qualifiers")
         qualifiers = (
             {
@@ -327,6 +344,7 @@ class LLMExtractor:
             predicate=predicate,
             value=value,
             span=span,
+            mention=mention,
             extractor=self.name,
             confidence=self.confidence,
             polarity=polarity,
@@ -373,6 +391,27 @@ def _contract(completion: Completion) -> dict[str, Any] | None:
     if isinstance(data, dict) and isinstance(data.get("entities"), list):
         return data
     return None
+
+
+def _mention(ctx: ChunkContext, raw: Any, quote: str, start: int) -> Span | None:
+    """The narrower distinguishing span inside the cited clause, or None.
+
+    Found by searching the quote rather than from an offset of its own: models
+    count characters badly (see `_locate`), and a second offset is a second
+    chance to be wrong. The result goes through `ctx.span`, so it is held to
+    `Span.is_faithful` exactly as the clause was.
+
+    A mention the clause does not contain is dropped and logged, not refused.
+    The clause is what the grounder reads, and a fact is not worth losing over a
+    highlight.
+    """
+    if not isinstance(raw, str) or not raw:
+        return None
+    at = quote.find(raw)
+    if at == -1:
+        log.debug("mention %r is not inside the cited clause %r; dropped", raw, quote)
+        return None
+    return ctx.span(start + at, raw)
 
 
 def _polarity(raw: Any) -> Polarity | None:

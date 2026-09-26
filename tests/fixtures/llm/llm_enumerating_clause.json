@@ -1,0 +1,19 @@
+{
+  "description": "Hand-authored. The enumerating case from #77: one clause names three regions and another names two languages, so six facts cite two clauses. Each carries the word that tells it from its siblings as a mention; the German one's mention was translated and is not in the clause, so it is dropped and the fact stands.",
+  "interactions": [
+    {
+      "match": {
+        "contains": [
+          "Acme Cloud runs regional data centres in Ireland, Singapore and Virginia, and its console is available in English and German."
+        ]
+      },
+      "response": {
+        "text": "{\"entities\": [{\"type\": \"Provider\", \"name\": \"Acme Cloud\", \"facts\": [{\"predicate\": \"legal_name\", \"value\": \"Acme Cloud\", \"quote\": \"Acme Cloud runs regional data centres in Ireland, Singapore and Virginia\", \"start\": 0, \"mention\": \"Acme Cloud\"}, {\"predicate\": \"operates_in\", \"value\": \"Ireland\", \"quote\": \"Acme Cloud runs regional data centres in Ireland, Singapore and Virginia\", \"start\": 0, \"mention\": \"Ireland\"}, {\"predicate\": \"operates_in\", \"value\": \"Singapore\", \"quote\": \"Acme Cloud runs regional data centres in Ireland, Singapore and Virginia\", \"start\": 0, \"mention\": \"Singapore\"}, {\"predicate\": \"operates_in\", \"value\": \"Virginia\", \"quote\": \"Acme Cloud runs regional data centres in Ireland, Singapore and Virginia\", \"start\": 0, \"mention\": \"Virginia\"}, {\"predicate\": \"supports_language\", \"value\": \"English\", \"quote\": \"its console is available in English and German\", \"start\": 78, \"mention\": \"English\"}, {\"predicate\": \"supports_language\", \"value\": \"German\", \"quote\": \"its console is available in English and German\", \"start\": 78, \"mention\": \"Deutsch\"}]}]}",
+        "model": "claude-sonnet-5",
+        "prompt_tokens": 705,
+        "completion_tokens": 288,
+        "cost_usd": 0.00542
+      }
+    }
+  ]
+}

@@ -155,12 +155,13 @@ class ChunkContext:
             return None
         return span
 
-    def evidence(self, span: Span) -> Evidence:
+    def evidence(self, span: Span, mention: Span | None = None) -> Evidence:
         if self.doc is None:
-            return Evidence(doc_id=span.doc_id, span=span)
+            return Evidence(doc_id=span.doc_id, span=span, mention=mention)
         return Evidence(
             doc_id=self.doc.id,
             span=span,
+            mention=mention,
             uri=self.doc.uri,
             tier=self.doc.tier,
             retrieved_at=self.doc.retrieved_at,
@@ -174,6 +175,7 @@ class ChunkContext:
         predicate: Predicate,
         value: Any,
         span: Span,
+        mention: Span | None = None,
         extractor: str,
         confidence: float,
         polarity: Polarity = Polarity.ASSERTED,
@@ -182,7 +184,9 @@ class ChunkContext:
         """One fact, with `identity_keys` stamped from the ontology (DECISIONS #15).
 
         A predicate whose range is an entity type makes an edge to an entity
-        keyed exactly as a subject of that name would be.
+        keyed exactly as a subject of that name would be. `span` is the
+        claim-bearing clause; `mention` is the narrower span inside it, when the
+        extractor found one (DECISIONS #23).
         """
         object_entity: Entity | None = None
         object_value = value
@@ -196,7 +200,7 @@ class ChunkContext:
             polarity=polarity,
             qualifiers=dict(qualifiers or {}),
             identity_keys=ontology.identity_keys(predicate.name),
-            evidence=(self.evidence(span),),
+            evidence=(self.evidence(span, mention),),
             extractor=extractor,
             confidence=confidence,
         )

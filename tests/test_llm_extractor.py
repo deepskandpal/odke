@@ -7,9 +7,26 @@ from typing import Any
 
 import pytest
 
-from openodke import Chunk, Document, Extractor, Fact, Ontology, Polarity, SourceTier
+from openodke import (
+    Chunk,
+    Document,
+    Extractor,
+    Fact,
+    GroundingVerdict,
+    Ontology,
+    Polarity,
+    SourceTier,
+)
 from openodke.extract import LLMExtractor, response_schema
-from openodke.llm import ModelRoles, ModelSpec, OpenAICompatClient, ReplayClient, ScriptedClient
+from openodke.ground import LLMGrounder
+from openodke.llm import (
+    ModelRoles,
+    ModelSpec,
+    OpenAICompatClient,
+    RecordedClient,
+    ReplayClient,
+    ScriptedClient,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "llm"
 SONNET = ModelSpec(model="anthropic/claude-sonnet-5")
@@ -21,6 +38,26 @@ ADA = (
 )
 GRACE = "Grace Hopper was born in 1906."
 ACME = "Acme Corp reported 99.9% uptime at p50 and 99.9% uptime at p95 during 2024."
+# The enumerating case of #77: one clause states three regions, another two
+# languages, so one citation per fact would be a bare word.
+CLOUD_TEXT = (
+    "Acme Cloud runs regional data centres in Ireland, Singapore and Virginia, "
+    "and its console is available in English and German."
+)
+REGIONS = "Acme Cloud runs regional data centres in Ireland, Singapore and Virginia"
+LANGUAGES = "its console is available in English and German"
+CLOUD = Ontology.from_dict(
+    {
+        "name": "cloud",
+        "version": "1",
+        "types": {"Provider": {"keys": ["legal_name"]}},
+        "predicates": {
+            "legal_name": {"domain": ["Provider"]},
+            "operates_in": {"domain": ["Provider"], "cardinality": "multi"},
+            "supports_language": {"domain": ["Provider"], "cardinality": "multi"},
+        },
+    }
+)
 
 
 def _doc_and_chunk(passage: str, prefix: str = "") -> tuple[Document, Chunk]:
@@ -106,6 +143,94 @@ def test_identity_qualifiers_keep_two_measurements_apart(people: Ontology) -> No
     assert p50.signature != p95.signature
     later = p50.model_copy(update={"qualifiers": {**p50.qualifiers, "year": "2025"}})
     assert later.signature == p50.signature
+
+
+def _cloud() -> tuple[LLMExtractor, list[Fact], Document]:
+    doc, chunk = _doc_and_chunk(CLOUD_TEXT, PREFACE)
+    client = ReplayClient(FIXTURES / "llm_enumerating_clause.json")
+    extractor = LLMExtractor(client=client, spec=SONNET, documents=[doc])
+    return extractor, extractor.extract(chunk, CLOUD), doc
+
+
+def _cited(fact: Fact) -> tuple[str | None, str | None]:
+    (evidence,) = fact.evidence
+    span, mention = evidence.span, evidence.mention
+    return (span.quote if span else None, mention.quote if mention else None)
+
+
+def test_one_clause_yielding_several_facts_cites_the_clause_and_keeps_the_mention() -> None:
+    """#77: every one of these citations was a bare word in 0.1.0, and grounded `not_found`."""
+    _, facts, _ = _cloud()
+    assert [(f.predicate, f.object_value, *_cited(f)) for f in facts] == [
+        ("legal_name", "Acme Cloud", REGIONS, "Acme Cloud"),
+        ("operates_in", "Ireland", REGIONS, "Ireland"),
+        ("operates_in", "Singapore", REGIONS, "Singapore"),
+        ("operates_in", "Virginia", REGIONS, "Virginia"),
+        ("supports_language", "English", LANGUAGES, "English"),
+        # "Deutsch" is not in the clause, so the mention went and the fact stayed.
+        ("supports_language", "German", LANGUAGES, None),
+    ]
+
+
+def test_both_spans_are_faithful_and_the_mention_lies_inside_the_clause() -> None:
+    _, facts, doc = _cloud()
+    for fact in facts:
+        (evidence,) = fact.evidence
+        span = evidence.span
+        assert span is not None and span.is_faithful(doc)
+        mention = evidence.mention
+        if mention is None:
+            continue
+        assert mention.is_faithful(doc)
+        assert span.start <= mention.start and mention.end <= span.end
+        # The clause is at a document offset, not a chunk one, and so is the mention.
+        assert doc.text[mention.start : mention.end] == mention.quote
+
+
+def test_a_mention_the_clause_does_not_contain_is_dropped_not_refused(people: Ontology) -> None:
+    """The clause is what the grounder reads; a fact is not worth losing over a highlight."""
+    reply = {
+        "entities": [
+            {
+                "type": "Person",
+                "name": "Grace Hopper",
+                "facts": [
+                    {
+                        "predicate": "birth_date",
+                        "value": "1906",
+                        "quote": "Grace Hopper was born in 1906",
+                        "mention": "1906-01-01",
+                    }
+                ],
+            }
+        ]
+    }
+    _, chunk = _doc_and_chunk(GRACE)
+    extractor = LLMExtractor(client=ScriptedClient([reply]), spec=SONNET)
+    (fact,) = extractor.extract(chunk, people)
+    assert _cited(fact) == ("Grace Hopper was born in 1906", None)
+    assert extractor.rejections == []
+
+
+def test_clause_citations_ground_where_0_1_0_bare_mentions_did_not() -> None:
+    """The half of #77 that made the loss invisible: `not_found` looks like a refusal."""
+    _, facts, doc = _cloud()
+    enumerated = [f for f in facts if f.evidence[0].mention is not None]
+
+    def ground(candidates: list[Fact]) -> list[GroundingVerdict]:
+        client = RecordedClient.from_fixture(FIXTURES / "grounding_enumerating.json")
+        grounder = LLMGrounder(client=client)
+        return [grounder.ground(f, doc).verdict for f in candidates]
+
+    # What 0.1.0 cited: the distinguishing mention, on its own.
+    narrowed = [
+        f.model_copy(
+            update={"evidence": (f.evidence[0].model_copy(update={"span": f.evidence[0].mention}),)}
+        )
+        for f in enumerated
+    ]
+    assert set(ground(narrowed)) == {GroundingVerdict.NOT_FOUND}
+    assert set(ground(facts)) == {GroundingVerdict.SUPPORTED}
 
 
 def test_the_prompt_is_the_snippet_and_the_contract_is_its_schema(people: Ontology) -> None:

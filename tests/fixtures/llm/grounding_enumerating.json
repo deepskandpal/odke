@@ -1,0 +1,22 @@
+[
+  {
+    "note": "Entries answer on the passage, not the claim: #77 is one claim, two citations. First match wins, so the two clauses come before the catch-all.",
+    "match": "Passage:\nAcme Cloud runs regional data centres in Ireland, Singapore and Virginia",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Passage:\nits console is available in English and German",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "note": "Any other passage here is a bare mention — 'Ireland', 'German' — which is what 0.1.0 cited and what the grounder correctly refused.",
+    "match": "Passage:\n",
+    "response": {
+      "verdict": "not_found"
+    }
+  }
+]

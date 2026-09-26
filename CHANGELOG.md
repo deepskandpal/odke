@@ -16,6 +16,17 @@ All notable changes to this project are documented here. The format follows
   a proxy for citation quality with no gold set at all. (#80)
 
 ### Fixed
+
+- **The model extractor cites the claim-bearing clause (#77).** It used to cite
+  the narrowest text that told one fact from its siblings — `Ireland` out of a
+  clause listing three regions — and the grounder, shown that span and nothing
+  else, correctly answered `not_found`, so every enumerated fact was lost and
+  the loss looked like a refusal. `Evidence` gains an optional `mention`: the
+  prompt and the structured-output contract now ask for the clause as the quote
+  and the distinguishing words as the mention, both checked with
+  `Span.is_faithful`, and a mention outside its clause is dropped rather than
+  the fact ([DECISIONS #23](DECISIONS.md)). Additive: facts serialised by 0.1.0
+  still load.
 - `ModelSpec.temperature` may be `None`, and both clients — the standard-library
   OpenAI-compatible one and the litellm adapter — then leave the parameter out of
   the request rather than sending a value. Which temperatures a model accepts is a

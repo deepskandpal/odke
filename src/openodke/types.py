@@ -133,10 +133,23 @@ class RouteVerdict(Frozen):
 
 
 class Evidence(Frozen):
-    """Why we believe a fact: a document, and where in it."""
+    """Why we believe a fact: a document, and where in it.
+
+    `span` is the claim-bearing clause. A grounder is shown that span and
+    nothing else, so it has to state the fact when read on its own: asked
+    whether "Acme operates in Ireland" follows from the text `Ireland`, a
+    grounder correctly says `not_found` and a true fact is lost.
+
+    `mention` is the narrower span inside the clause that tells this fact from
+    the others the same clause states — `Ireland` in a list of three regions.
+    It is for highlighting and for anyone who wants the tightest citation;
+    nothing in the pipeline reads it. Optional, so facts serialised before it
+    existed still load (DECISIONS #23).
+    """
 
     doc_id: str
     span: Span | None = None
+    mention: Span | None = None
     uri: str | None = None
     tier: SourceTier = SourceTier.UNVERIFIED
     retrieved_at: datetime = Field(default_factory=_utcnow)
