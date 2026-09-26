@@ -82,8 +82,9 @@ LLMGrounder(roles=None, *, client=None, max_workers=8, retry=None)
 - `roles.ground` names the model. The default `ModelRoles()` grounds with
   `anthropic/claude-haiku-4-5-20251001` at `max_tokens=256`, a smaller model than
   extraction, on purpose. If this pass cost what extraction costs, people would
-  turn it off ([DECISIONS #7a](decisions.md)). `ModelRoles.single("ollama/…")`
-  uses one local model for everything.
+  turn it off ([DECISIONS #7a](decisions.md)). Which provider that string names,
+  which key it reads and who serves it are one page:
+  [Models and providers](models.md), or `odke models`.
 - `client` overrides how the model is reached. Pass any `LLMClient`: your
   gateway, or `ScriptedClient` / `RecordedClient` in tests.
 

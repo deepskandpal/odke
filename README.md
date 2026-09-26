@@ -256,6 +256,15 @@ gateway — works on the base install; everything else goes through litellm with
 own client. `ReplayClient`, `RecordedClient` and `ScriptedClient` ship in the
 package, so your own stages are testable offline too.
 
+```bash
+odke models                                  # every provider, its key variable, whether it is set
+odke run odke.yaml --model openai/gpt-5.5    # override the config's models for one run
+```
+
+`odke models` runs on the base install with no key and no network, and never
+prints a value: keys are read from the environment and stored nowhere. See
+[Models and providers](https://deepskandpal.github.io/odke/models/).
+
 ## Ontologies
 
 ```python

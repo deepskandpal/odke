@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`odke models`**, and `--model` / `--model-provider` on `odke run` and
+  `odke ontology infer`. The command lists every provider openodke can address,
+  the form its model string takes, the environment variable it reads, whether
+  that variable is set, and which client serves it — the standard-library
+  OpenAI-compatible one, litellm, or one registered with `openodke.llm.register`.
+  It runs on the base install, with no key and no network, and never prints a
+  value. The provider table (`openodke.llm.providers`) grows from five providers
+  to twenty-one on litellm's own conventions, Azure's `AZURE_API_KEY` /
+  `AZURE_API_BASE` / `AZURE_API_VERSION` included, and a missing key is now
+  `MissingAPIKey` naming the variable, raised before the request instead of
+  arriving as a provider's 401. Keys are read from the environment and stored
+  nowhere: there is no command that writes one, and no model catalogue is
+  shipped. New page: [Models and providers](docs/models.md). (#83)
+
 ## [0.1.1] — 2026-09-26
 
 Five defects and one addition from the first use of the published package by
