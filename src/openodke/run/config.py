@@ -147,6 +147,22 @@ class ModelsConfig(_Strict):
         }
         return ModelRoles(**given)
 
+    def with_model(self, model: str) -> ModelsConfig:
+        """Every role on one model, keeping the rest of each role's spec.
+
+        Built from `roles()` rather than from the fields, so a role the file left
+        out keeps its `ModelRoles` default: grounding stays at `max_tokens=256`
+        (DECISIONS #7a) instead of quietly becoming as expensive as extraction
+        because a model string was overridden on the command line.
+        """
+        roles = self.roles()
+        return self.model_copy(
+            update={
+                role: getattr(roles, role).model_copy(update={"model": model})
+                for role in ("extract", "ground", "infer")
+            }
+        )
+
 
 class StagesConfig(_Strict):
     """Which implementation fills each of the thirteen stages."""
@@ -207,6 +223,17 @@ class RunConfig(_Strict):
     def resolve(self, path: str) -> Path:
         candidate = Path(path).expanduser()
         return candidate if candidate.is_absolute() else self._base_dir / candidate
+
+    def with_model(self, model: str) -> RunConfig:
+        """This config with every model role on `model`: what `odke run --model` applies.
+
+        `base_dir` is carried over explicitly, because a copy that resolved its
+        paths against the working directory instead of the config file would
+        break the promise that a config runs the same from anywhere.
+        """
+        copy = self.model_copy(update={"models": self.models.with_model(model)})
+        copy._base_dir = self._base_dir
+        return copy
 
 
 def load_config(path: str | Path) -> RunConfig:

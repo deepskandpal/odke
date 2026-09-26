@@ -52,6 +52,26 @@ def _count(n: int, noun: str) -> str:
     return f"{n} {noun}{'' if n == 1 else 's'}"
 
 
+def _qualified(model: str | None, provider: str | None) -> str | None:
+    """`--model` and `--model-provider` as one provider-qualified string, or None.
+
+    Exits 2 rather than raising: choosing a model wrongly is a usage error, and
+    it is worth saying so before a config is read or a document is loaded.
+    """
+    if model is None:
+        if provider is None:
+            return None
+        typer.echo("error: --model-provider needs --model", err=True)
+        raise typer.Exit(2)
+    from openodke.llm.providers import qualify
+
+    try:
+        return qualify(model, provider)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+
+
 @app.callback()
 def main(
     version: bool = typer.Option(
@@ -137,6 +157,10 @@ def ontology_diff(
         raise typer.Exit(1)
 
 
+MODEL_HELP = "Provider-qualified model for every role, e.g. openai/gpt-5.5. Overrides `models`."
+MODEL_PROVIDER_HELP = "Provider for --model when the string does not name one, e.g. openai."
+
+
 @app.command("models")
 def models_command() -> None:
     """List every provider openodke can address, and whether its key is set.
@@ -163,6 +187,8 @@ def run_command(
         "--dry-run",
         help="Load, extract and ground, then print what would be written instead of writing it.",
     ),
+    model: str | None = typer.Option(None, "--model", help=MODEL_HELP),
+    model_provider: str | None = typer.Option(None, "--model-provider", help=MODEL_PROVIDER_HELP),
 ) -> None:
     """Run the whole pipeline from a config file.
 
@@ -170,13 +196,22 @@ def run_command(
     implementation fills each of the thirteen stages. A dry run still calls
     the models; it is the store it spares. Exit 2 is a config that cannot run,
     exit 1 a run that failed.
+
+    `--model` puts every role on one model and prints which, so a run states
+    what it called instead of leaving it to be read out of a config; per-role
+    models stay a config decision. `odke models` lists what can be named.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
     from openodke.llm.base import ProviderError
     from openodke.run import ConfigError, execute, load_config
 
+    chosen = _qualified(model, model_provider)
     try:
-        result = execute(load_config(config), dry_run=dry_run)
+        loaded = load_config(config)
+        if chosen is not None:
+            loaded = loaded.with_model(chosen)
+            typer.echo(f"models: every role on {chosen}")
+        result = execute(loaded, dry_run=dry_run)
     except (ConfigError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from exc
@@ -210,6 +245,7 @@ def ontology_infer(
     model: str | None = typer.Option(
         None, "--model", help="Model for the infer role, e.g. ollama/llama3.1."
     ),
+    model_provider: str | None = typer.Option(None, "--model-provider", help=MODEL_PROVIDER_HELP),
     name: str = typer.Option("inferred", "--name", help="Name of the drafted ontology."),
 ) -> None:
     """Draft an ontology for a corpus that has none: for review, never to use as is.
@@ -234,6 +270,7 @@ def ontology_infer(
     from openodke.llm import ModelSpec, ProviderError
     from openodke.loaders import DirectoryLoader
 
+    chosen = _qualified(model, model_provider)
     try:
         fmt = format_for(out)
         loader = DirectoryLoader()
@@ -253,7 +290,7 @@ def ontology_infer(
         inference = infer_ontology(
             docs,
             llm=not no_llm,
-            spec=ModelSpec(model=model) if model else None,
+            spec=ModelSpec(model=chosen) if chosen else None,
             name=name,
             seed=seed,
             sample_words=sample_words,

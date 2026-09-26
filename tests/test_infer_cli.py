@@ -165,7 +165,8 @@ def replay() -> Iterator[None]:
     unregister("replay")
 
 
-def test_the_model_path_from_the_shell_on_a_recorded_response(tmp_path: Path, replay: None) -> None:
+def _corpus(tmp_path: Path) -> Path:
+    """The corpus the recorded interaction was taken over; its fingerprint pins it."""
     root = tmp_path / "corpus"
     root.mkdir()
     (root / "people.csv").write_text(
@@ -177,12 +178,26 @@ def test_the_model_path_from_the_shell_on_a_recorded_response(tmp_path: Path, re
         "Acme Corp is headquartered in London.\n",
         encoding="utf-8",
     )
+    return root
+
+
+def test_the_model_path_from_the_shell_on_a_recorded_response(tmp_path: Path, replay: None) -> None:
+    root = _corpus(tmp_path)
     out = tmp_path / "draft.yaml"
     stdout = _infer(root, out, "--model", "replay/sonnet")
     assert "# model: replay/sonnet" in out.read_text(encoding="utf-8")
     assert "Place" in Ontology.from_yaml(out).types
     assert "rejected from the model (3)" in stdout
     assert "model calls: 1, 1250 tokens, $0.0075" in stdout
+
+
+def test_model_provider_names_the_provider_the_model_string_left_out(
+    tmp_path: Path, replay: None
+) -> None:
+    """Same run as above, addressed the other way: the flag supplies the prefix."""
+    out = tmp_path / "draft.yaml"
+    _infer(_corpus(tmp_path), out, "--model", "sonnet", "--model-provider", "replay")
+    assert "# model: replay/sonnet" in out.read_text(encoding="utf-8")
 
 
 def test_bad_input_exits_2_with_a_message(tmp_path: Path) -> None:
