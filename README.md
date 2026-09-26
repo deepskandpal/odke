@@ -2,7 +2,7 @@
 
 An open implementation of ODKE+ (Apple, [arXiv:2509.04696](https://arxiv.org/abs/2509.04696)) — independent, and not affiliated with Apple.
 
-[PyPI](https://pypi.org/project/openodke/) · [Documentation](https://deepskandpal.github.io/odke/) · [Changelog](CHANGELOG.md) — `pip install openodke`
+[PyPI](https://pypi.org/project/openodke/) · [Documentation](https://openodke.dev/) · [Changelog](CHANGELOG.md) — `pip install openodke`
 
 **The seam between text and any graph store.** openodke turns documents — prose,
 tables, records — into a knowledge graph held to your ontology, and writes it to
@@ -263,7 +263,7 @@ odke run odke.yaml --model openai/gpt-5.5    # override the config's models for 
 
 `odke models` runs on the base install with no key and no network, and never
 prints a value: keys are read from the environment and stored nowhere. See
-[Models and providers](https://deepskandpal.github.io/odke/models/).
+[Models and providers](https://openodke.dev/models/).
 
 ## Ontologies
 
@@ -306,7 +306,7 @@ and which reconcile (`start_time`), and that decides what counts as one claim.
 
 ## Documentation
 
-- [deepskandpal.github.io/odke](https://deepskandpal.github.io/odke/) — the documentation site: concepts, ontology and inference, loaders and extraction, grounding, resolution and corroboration, sinks, `odke run`, evaluation
+- [deepskandpal.github.io/odke](https://openodke.dev/) — the documentation site: concepts, ontology and inference, loaders and extraction, grounding, resolution and corroboration, sinks, `odke run`, evaluation
 - [examples/](examples/README.md) — the end-to-end example and the commented run config
 - [ROADMAP.md](ROADMAP.md) — milestones, what each one delivers, and the estimate
 - [CHANGELOG.md](CHANGELOG.md) — what landed, milestone by milestone

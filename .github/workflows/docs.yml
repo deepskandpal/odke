@@ -2,7 +2,7 @@
 #
 # A pull request that touches what the site is built from builds it with
 # --strict, so a broken link, a missing page or a heading that moved fails the
-# PR. Only main deploys, to https://deepskandpal.github.io/odke/, through the
+# PR. Only main deploys, to https://openodke.dev/, through the
 # github-pages environment. The examples on the pages are run by
 # tests/test_docs_examples.py in the ci workflow, not here.
 

@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+
+### Changed
+
+- The documentation site moved to <https://openodke.dev>. The old
+  `deepskandpal.github.io/odke` URLs redirect.
+- **The RDF vocabulary namespace moved with it**, from
+  `https://deepskandpal.github.io/odke/vocab#` to `https://openodke.dev/vocab#`.
+  An IRI is an identifier, so this changes the terms in RDF output: graphs
+  written by an earlier version use the old namespace, and a store holding both
+  sees two sets of terms. Nothing rewrites them for you. Moving it now, while
+  the sink is new, is cheaper than moving it later.
 ## [0.2.1] — 2026-09-26
 
 ### Fixed

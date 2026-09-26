@@ -253,7 +253,7 @@ domain on purpose: data minted under it is visibly unplaced. Pass your own.
 | `EntityLink` | `owl:sameAs`, `odke:similar_to` or `odke:different_from` between the two entity IRIs, reified the same way so `odke:score`, `odke:reason` and `odke:created_at` can be read |
 | the ontology, when given | `owl:Class` with `rdfs:subClassOf` and `owl:hasKey`; `owl:ObjectProperty` or `owl:DatatypeProperty` with domain, range and `owl:FunctionalProperty` for `single` |
 
-`odke:` is `https://deepskandpal.github.io/odke/vocab#`. The statement node plays
+`odke:` is `https://openodke.dev/vocab#`. The statement node plays
 the part the relationship plays in Neo4j and carries the same property names, so one
 concept has one name in Cypher and in SPARQL.
 
@@ -290,7 +290,7 @@ rdf.write(kg)
 graph = rdf.graph(kg)  # the rdflib Graph that write() serialises
 
 PREFIXES = """
-PREFIX odke: <https://deepskandpal.github.io/odke/vocab#>
+PREFIX odke: <https://openodke.dev/vocab#>
 PREFIX ont: <https://example.org/odke/schema/>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 """
