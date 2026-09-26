@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-09-26
+
+### Fixed
+
+- The author's name is Deepanshu Kandpal. It was misspelt in the packaging
+  metadata, so PyPI showed the wrong author from 0.1.0 to 0.2.0, and in the
+  LICENSE and NOTICE copyright lines. A `.mailmap` corrects what git displays
+  for the commits, which keep their original author.
+
 ## [0.2.0] — 2026-09-26
 
 Provider selection and discovery, and design notes argued from first principles
