@@ -86,6 +86,11 @@ minted by the run.
 a role takes its `ModelRoles` default. Keys never go in the file: a provider reads
 its own environment variable, or the one `api_key_env` names.
 
+**`temperature` is unset by default**, and then left out of the request entirely,
+so the provider's own applies. Which temperatures a model accepts is a per-model
+fact — some accept only one — and openodke does not keep a table of it. Set the key
+and it is sent exactly as written, `0` included.
+
 - **`replay`** maps a role to a file of recorded responses, either a cassette
   object (`ReplayClient`) or a list of match entries (`RecordedClient`), so a run
   needs no key and no network. Delete the lines to call the models.

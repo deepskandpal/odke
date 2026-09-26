@@ -150,6 +150,24 @@ def test_prose_does_not_become_a_failed_parse() -> None:
     assert completion.text.startswith("Ada")
 
 
+def test_an_unset_temperature_is_absent_from_the_payload() -> None:
+    """Not sent at all, so a model that accepts only its own is not refused (#79)."""
+    http = _FakeHTTP(_openai_body())
+    OpenAICompatClient(opener=http).complete(
+        [Message(content="hi")], spec=ModelSpec(model="ollama/llama3.1")
+    )
+    assert "temperature" not in json.loads(http.request.data)
+
+
+def test_an_explicit_temperature_is_sent_unchanged() -> None:
+    """Including 0.0, which is a setting the caller meant, not an absent one."""
+    http = _FakeHTTP(_openai_body())
+    OpenAICompatClient(opener=http).complete(
+        [Message(content="hi")], spec=ModelSpec(model="ollama/llama3.1", temperature=0.0)
+    )
+    assert json.loads(http.request.data)["temperature"] == 0.0
+
+
 def test_an_unknown_provider_without_a_base_url_says_so() -> None:
     with pytest.raises(ProviderError, match="no base_url"):
         OpenAICompatClient().complete(
@@ -193,6 +211,29 @@ def test_litellm_adapter_normalises_to_the_same_completion() -> None:
     assert captured["model"] == "anthropic/claude-sonnet-5"
 
 
+def _litellm_kwargs(spec: ModelSpec) -> dict[str, Any]:
+    """The kwargs the adapter would hand litellm — asserted instead of a live call."""
+    captured: dict[str, Any] = {}
+
+    def fake_completion(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    LiteLLMClient(completion_fn=fake_completion).complete([Message(content="hi")], spec=spec)
+    return captured
+
+
+def test_litellm_omits_an_unset_temperature() -> None:
+    """The bug in #79: the default config's extract model accepts only temperature=1."""
+    assert "temperature" not in _litellm_kwargs(ModelSpec(model="anthropic/claude-sonnet-5"))
+
+
+def test_litellm_sends_an_explicit_temperature_unchanged() -> None:
+    """Omitting when unset must not become dropping what the caller asked for."""
+    kwargs = _litellm_kwargs(ModelSpec(model="anthropic/claude-sonnet-5", temperature=0.0))
+    assert kwargs["temperature"] == 0.0
+
+
 def test_litellm_errors_are_wrapped() -> None:
     """Callers catch ProviderError, not a different exception type per vendor."""
 
@@ -215,6 +256,14 @@ def test_grounding_defaults_to_a_cheaper_model_than_extraction() -> None:
     roles = ModelRoles()
     assert roles.ground.model != roles.extract.model
     assert roles.ground.max_tokens < roles.extract.max_tokens
+
+
+def test_no_role_defaults_to_a_temperature() -> None:
+    """A default one model accepts is one the next model rejects (#79)."""
+    roles = ModelRoles()
+    assert (roles.extract.temperature, roles.ground.temperature) == (None, None)
+    assert roles.infer is not None and roles.infer.temperature is None
+    assert ModelRoles.single("ollama/llama3.1").extract.temperature is None
 
 
 def test_infer_defaults_to_the_extraction_model() -> None:

@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- `ModelSpec.temperature` may be `None`, and both clients — the standard-library
+  OpenAI-compatible one and the litellm adapter — then leave the parameter out of
+  the request rather than sending a value. Which temperatures a model accepts is a
+  per-model fact, and openodke does not track it: `litellm.drop_params` was not used,
+  because it discards a temperature the caller did mean. (#79)
+
+### Changed
+- **`ModelRoles()` no longer sets `temperature=0.0` on any role**; it sets nothing,
+  so each provider's own default applies. The shipped default configuration could
+  not make a call: its extract model accepts only `temperature=1`. A caller who
+  relied on the implicit `0.0` now gets the provider's default and should set
+  `ModelSpec(temperature=0.0)` to keep it — an explicit value is still sent
+  unchanged. (#79)
+
 ## [0.1.0] — 2026-09-14
 
 The v0.1 milestones now on `main`: the data model (M0), ontology I/O (M1),

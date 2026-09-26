@@ -24,7 +24,12 @@ DEFAULT_GROUND = "anthropic/claude-haiku-4-5-20251001"
 
 
 class ModelRoles(BaseModel):
-    """The models a pipeline uses, by job."""
+    """The models a pipeline uses, by job.
+
+    No role sets a temperature. A default one model accepts is one the next model
+    rejects, so each provider's own applies until a caller asks for something
+    else (`ModelSpec.temperature`, #79).
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
