@@ -115,15 +115,16 @@ def test_validate_edit_freeze_and_diff_from_the_shell(corpus: Path, tmp_path: Pa
     draft.write_text(edited, encoding="utf-8")
     frozen_file = tmp_path / "frozen.yaml"
     frozen = runner.invoke(
-        app, ["ontology", "freeze", str(draft), "--by", "Deepak Kandpal", "--out", str(frozen_file)]
+        app,
+        ["ontology", "freeze", str(draft), "--by", "Deepanshu Kandpal", "--out", str(frozen_file)],
     )
     assert frozen.exit_code == 0, frozen.output
-    assert frozen.stdout.startswith(f"frozen: {frozen_file} (by Deepak Kandpal at ")
+    assert frozen.stdout.startswith(f"frozen: {frozen_file} (by Deepanshu Kandpal at ")
     text = frozen_file.read_text(encoding="utf-8")
-    assert text.startswith("# Reviewed and frozen by Deepak Kandpal at ")
+    assert text.startswith("# Reviewed and frozen by Deepanshu Kandpal at ")
     assert "support:" not in text
     loaded = Ontology.from_yaml(frozen_file)
-    assert (loaded.inferred, loaded.frozen_by) == (False, "Deepak Kandpal")
+    assert (loaded.inferred, loaded.frozen_by) == (False, "Deepanshu Kandpal")
     assert loaded.types["Person"].description == "Staff."
     assert runner.invoke(app, ["ontology", "validate", str(frozen_file)]).stdout.strip() == (
         "0 errors, 0 warnings"
@@ -151,7 +152,7 @@ def test_freeze_refuses_a_file_with_errors_and_leaves_it_alone(
     _infer(corpus, draft, "--no-llm")
     broken = draft.read_text(encoding="utf-8").replace("range: Company", "range: Compnay")
     draft.write_text(broken, encoding="utf-8")
-    result = runner.invoke(app, ["ontology", "freeze", str(draft), "--by", "Deepak"])
+    result = runner.invoke(app, ["ontology", "freeze", str(draft), "--by", "Deepanshu"])
     assert result.exit_code == 1
     assert "[unknown-range]" in result.stdout
     assert result.stdout.splitlines()[-1] == "not frozen: 1 error"

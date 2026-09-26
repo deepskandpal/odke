@@ -189,8 +189,12 @@ WHEN = datetime(2026, 9, 14, 9, 30, tzinfo=UTC)
 
 def test_freeze_clears_inferred_and_records_when_and_by_whom(tmp_path: Path) -> None:
     inferred = infer_ontology(_load(_corpus(tmp_path)), llm=False).ontology
-    frozen = inferred.freeze(by="Deepak Kandpal", at=WHEN)
-    assert (frozen.inferred, frozen.frozen_by, frozen.frozen_at) == (False, "Deepak Kandpal", WHEN)
+    frozen = inferred.freeze(by="Deepanshu Kandpal", at=WHEN)
+    assert (frozen.inferred, frozen.frozen_by, frozen.frozen_at) == (
+        False,
+        "Deepanshu Kandpal",
+        WHEN,
+    )
     assert inferred.inferred and inferred.frozen_at is None
     assert frozen.validate() == []
     assert Ontology.from_json(frozen.model_dump_json()) == frozen
@@ -208,7 +212,7 @@ def test_freeze_refuses_an_ontology_with_validation_errors(tmp_path: Path) -> No
         update={"range": "Compnay"}
     )
     with pytest.raises(OntologyFreezeError, match="1 validation error") as info:
-        broken.freeze(by="Deepak Kandpal")
+        broken.freeze(by="Deepanshu Kandpal")
     (diagnostic,) = info.value.diagnostics
     assert (diagnostic.code, diagnostic.path) == ("unknown-range", "predicates.employer.range")
     assert broken.inferred
@@ -238,7 +242,7 @@ def test_infer_review_freeze_then_run_guided(tmp_path: Path) -> None:
     reviewed.types["Person"] = reviewed.types["Person"].model_copy(
         update={"description": "Someone on the staff list."}
     )
-    frozen = reviewed.freeze(by="Deepak Kandpal", at=WHEN)
+    frozen = reviewed.freeze(by="Deepanshu Kandpal", at=WHEN)
     kg = Pipeline(frozen, PatternExtractor(documents=docs)).run(docs)
     edges = {(f.subject.key, f.predicate, f.object_entity.key) for f in kg.edges if f.object_entity}
     assert ("Person:ada lovelace", "employer", "Company:acme corp") in edges
@@ -280,5 +284,5 @@ def test_a_sink_warns_before_shaping_a_store_with_an_unreviewed_schema(tmp_path:
         sink.bootstrap(inferred, dry_run=True)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        frozen = inferred.freeze(by="Deepak Kandpal", at=WHEN)
+        frozen = inferred.freeze(by="Deepanshu Kandpal", at=WHEN)
         Neo4jSink(driver=object(), ontology=frozen).bootstrap(frozen, dry_run=True)
