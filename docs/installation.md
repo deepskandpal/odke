@@ -2,7 +2,7 @@
 
 openodke needs Python 3.11, 3.12 or 3.13.
 
-`openodke` is on [PyPI](https://pypi.org/project/openodke/); 0.2.0 is the
+`openodke` is on [PyPI](https://pypi.org/project/openodke/); 0.2.1 is the
 current release.
 
 ```bash
