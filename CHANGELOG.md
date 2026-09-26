@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `odke eval spans` and `openodke.eval.evaluate_spans`: cited span width split by
+  grounding verdict — count, median, quartiles, min and max per verdict, the
+  share of facts citing no span, and a summary line naming the gap when the
+  distributions separate. The one evaluator that needs no labelled data: where
+  the `not_found` widths sit below the `supported` ones, the `not_found` rate is
+  a proxy for citation quality with no gold set at all. (#80)
+
 ### Fixed
 - `ModelSpec.temperature` may be `None`, and both clients — the standard-library
   OpenAI-compatible one and the litellm adapter — then leave the parameter out of
