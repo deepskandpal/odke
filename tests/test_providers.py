@@ -33,6 +33,7 @@ from openodke.llm.providers import (
     PROVIDERS,
     describe,
     key_env_for,
+    qualify,
     require_key,
     rows,
 )
@@ -241,3 +242,30 @@ def test_an_injected_transport_is_not_asked_for_a_key(monkeypatch: pytest.Monkey
         [Message(content="hi")], spec=ModelSpec(model="openai/gpt-5.5")
     )
     assert http.request.headers["Authorization"] == f"Bearer {SECRET}"
+
+
+# --------------------------------------------------------------------------- #
+# --model / --model-provider
+# --------------------------------------------------------------------------- #
+
+
+def test_a_provider_qualifies_a_bare_model_string() -> None:
+    assert qualify("gpt-5.5", "openai") == "openai/gpt-5.5"
+    assert qualify("openai/gpt-5.5", "openai") == "openai/gpt-5.5"
+    assert qualify("openai/gpt-5.5", None) == "openai/gpt-5.5"
+    # OpenRouter's own model names carry a vendor, so this nests rather than clashes.
+    assert (
+        qualify("anthropic/claude-sonnet-5", "openrouter") == "openrouter/anthropic/claude-sonnet-5"
+    )
+    assert qualify("meta-llama/Llama-3-70b", "together") == "together/meta-llama/Llama-3-70b"
+
+
+def test_a_provider_that_contradicts_the_string_is_an_error() -> None:
+    with pytest.raises(ValueError, match="already names the provider"):
+        qualify("anthropic/claude-sonnet-5", "openai")
+
+
+def test_the_cli_refuses_a_provider_with_no_model(tmp_path) -> None:
+    result = runner.invoke(app, ["run", str(tmp_path / "x.json"), "--model-provider", "openai"])
+    assert result.exit_code == 2
+    assert "--model-provider needs --model" in result.output

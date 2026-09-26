@@ -729,3 +729,64 @@ def test_the_example_runs_end_to_end_into_networkx(example: Path) -> None:
         if attrs["kind"] == "link"
     }
     assert (GMBH, LTD, "DIFFERENT") in links or (LTD, GMBH, "DIFFERENT") in links
+
+
+# --------------------------------------------------------------------------- #
+# --model and --model-provider
+# --------------------------------------------------------------------------- #
+
+
+def test_model_overrides_the_config_and_says_so(project: Path) -> None:
+    """The point of the flag: the run states what it called, on recorded responses."""
+    path = _write(project, _config())
+    result = runner.invoke(app, ["run", str(path), "--model", "openai/gpt-5.5"])
+    assert result.exit_code == 0, result.output
+    assert "models: every role on openai/gpt-5.5" in result.output
+    assert len(_lines(project / "out" / "facts.jsonl")) == 5
+
+    roles = load_config(path).with_model("openai/gpt-5.5").models.roles()
+    assert {roles.extract.model, roles.ground.model, roles.infer.model} == {"openai/gpt-5.5"}
+    # Only the model string changes: grounding stays the cheap role it was.
+    assert roles.ground.max_tokens == 256
+
+
+def test_model_provider_names_the_provider_the_string_left_out(project: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            str(_write(project, _config())),
+            "--model",
+            "gpt-5.5",
+            "--model-provider",
+            "openai",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "models: every role on openai/gpt-5.5" in result.output
+
+
+def test_a_model_provider_contradicting_the_model_string_exits_2(project: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            str(_write(project, _config())),
+            "--model",
+            "anthropic/claude-sonnet-5",
+            "--model-provider",
+            "openai",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "already names the provider 'anthropic'" in result.output
+    assert not (project / "out").exists()
+
+
+def test_an_overridden_config_still_resolves_paths_against_its_own_directory(
+    project: Path, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    monkeypatch.chdir(tmp_path_factory.mktemp("elsewhere"))
+    overridden = load_config(_write(project, _config())).with_model("groq/llama-3.3-70b")
+    assert overridden.base_dir == project.resolve()
+    assert execute(overridden, dry_run=True).graph.stats["documents"] == 2
