@@ -64,12 +64,15 @@ Every model call goes through one `LLMClient` Protocol. A model string such as
 `ollama/llama3.1` is served by the first client that matches:
 
 1. an adapter you registered for that provider with `openodke.llm.register(provider, factory)`;
-2. the standard-library OpenAI-compatible client, when the provider is `ollama`,
-   `vllm`, `lmstudio`, `llamacpp`, `openrouter`, `together`, `groq`, `deepseek` or
-   `openai`, or when the `ModelSpec` sets a `base_url` (a proxy, a gateway or a
-   local server). This needs no extra;
-3. litellm, for everything else (Anthropic, Azure, Bedrock, Vertex, Gemini,
-   Mistral, Cohere and more). This needs `openodke[llm]`.
+2. the standard-library OpenAI-compatible client, when the provider has a default
+   endpoint or the `ModelSpec` sets a `base_url` (a proxy, a gateway or a local
+   server). This needs no extra;
+3. litellm, for everything else. This needs `openodke[llm]`.
+
+`odke models` prints which of the three serves each provider, in the environment
+you are in, and says which providers the missing extra excludes. Every provider,
+its key variable and how to address it is on one page:
+[Models and providers](models.md).
 
 `ModelRoles.single("ollama/llama3.1")` on the base install, with a local Ollama,
 is a complete setup.

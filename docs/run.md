@@ -9,8 +9,9 @@ so a misspelt stage name is an error with a suggestion rather than a stage silen
 left as the pass-through.
 
 ```bash
-odke run examples/e2e/odke.yaml              # run it and write the graph
-odke run examples/e2e/odke.yaml --dry-run    # load, extract and ground; print what would be written
+odke run examples/e2e/odke.yaml                          # run it and write the graph
+odke run examples/e2e/odke.yaml --dry-run                # load, extract and ground; print what would be written
+odke run examples/e2e/odke.yaml --model ollama/llama3.1  # every role on one model, whatever the config says
 ```
 
 | Exit status | Means |
@@ -84,7 +85,16 @@ minted by the run.
 `extract`, `ground` and `infer` are each a model string or a full `ModelSpec`
 (`model`, `temperature`, `max_tokens`, `timeout`, `base_url`, `api_key_env`, `extra`); left out,
 a role takes its `ModelRoles` default. Keys never go in the file: a provider reads
-its own environment variable, or the one `api_key_env` names.
+its own environment variable, or the one `api_key_env` names. Which providers can
+be named, and which variable each reads, is
+[Models and providers](models.md) — or `odke models`, which also says whether the
+variable is set.
+
+**`--model` overrides the block for one run.** `odke run odke.yaml --model
+openai/gpt-5.5` puts every role on that model and prints which; `--model-provider
+openai` supplies the prefix when the string has none. Only the model string
+changes, so grounding keeps its smaller `max_tokens`. A per-role choice stays a
+config decision.
 
 **`temperature` is unset by default**, and then left out of the request entirely,
 so the provider's own applies. Which temperatures a model accepts is a per-model
