@@ -380,8 +380,10 @@ a table and a fact from prose are the same shape and merge by signature:
   ([DECISIONS #15](decisions.md)).
 - **Spans.** A span is checked with `Span.is_faithful` against the chunk and then
   against the document, which also catches a chunker whose text drifted from the
-  document it claims to slice. The evidence carries the document's URI, tier and
-  `retrieved_at` when the extractor has the document.
+  document it claims to slice. `Evidence.span` is the claim-bearing clause, since
+  a grounder is shown that span and nothing else
+  ([DECISIONS #23](decisions.md)). The evidence carries the document's URI, tier
+  and `retrieved_at` when the extractor has the document.
 - **Documents.** `Chunk` holds only offsets and text, so an extractor that needs a
   document's modality, tier or row looks it up in its `documents` mapping. Pass
   the documents you pass to `Pipeline.run`; `odke run` does this for you.
@@ -467,6 +469,15 @@ offset is checked, never trusted.**
   missing value and an unknown polarity. A polarity word it does not know is
   refused rather than read as asserted.
 
+The quote asked for is the **whole clause** that supports the fact, not the word
+that names the value, because the grounder is shown that span and nothing else:
+`Ireland` cannot support "Acme Cloud operates in Ireland", and a clause listing
+three regions can, three times. Where one clause states several facts, the model
+is asked for `mention` as well — the words that tell one of them from its
+siblings — and that narrower span is found inside the quote, checked the same
+way, and kept as `Evidence.mention` for highlighting. A mention the clause does
+not contain is dropped; the fact is not ([DECISIONS #23](decisions.md)).
+
 Nothing is paraphrased into place, and every span that survives has passed
 `Span.is_faithful`. A reply that is not the contract gets `repairs` (default 1)
 more attempts with a repair prompt, then is recorded as a `malformed reply`
@@ -485,7 +496,13 @@ reply = {
             "type": "Person",
             "name": "Grace Hopper",
             "facts": [
-                {"predicate": "born", "value": "1906", "quote": "born in 1906", "start": 3},
+                {
+                    "predicate": "born",
+                    "value": "1906",
+                    "quote": "born in 1906",
+                    "start": 3,
+                    "mention": "1906",
+                },
                 {"predicate": "employer", "value": "US Navy", "quote": "joined the US Navy"},
                 {"predicate": "born", "value": "1907", "quote": "born in 1907"},
                 {"predicate": "height", "value": "1.6", "quote": "Grace"},
@@ -497,6 +514,8 @@ extractor = LLMExtractor(client=ScriptedClient([reply]), documents=[note])
 facts = extractor.extract(passage, people)
 
 assert [(f.predicate, f.evidence[0].span.start) for f in facts] == [("born", 17), ("employer", 35)]
+born = facts[0].evidence[0]
+assert born.span.quote == "born in 1906" and born.mention.quote == "1906"
 for rejection in extractor.rejections:
     print(rejection.reason, "|", rejection.quote)
 # quote not in the passage | born in 1907

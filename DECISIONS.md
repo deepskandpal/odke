@@ -324,3 +324,36 @@ there is no shim: `import odke` fails.
 
 *Cost:* two names to explain — `pip install openodke`, then `odke run`. The
 README and the installation page say it once each.
+
+### 23. Evidence cites the claim-bearing clause, and carries the mention beside it
+
+The grounder is shown the cited span and nothing else, which is #3 working as
+intended: a span that does not support the claim on its own cannot be argued
+into supporting it. The extractor, left to choose, cited the narrowest text that
+distinguished one fact from its siblings — `Ireland` out of a clause listing
+three regions — and the grounder, asked whether "Acme Cloud operates in Ireland"
+follows from the text `Ireland`, correctly answered `not_found`. The first
+external run lost every enumerated fact this way: of nine facts, the seven
+narrow citations were all `not_found` at a median width of 8 characters and the
+two clause-width ones `supported` at a median of 64, with no overlap. The loss
+is invisible, because a `not_found` fact looks exactly like a fact that was
+properly refused.
+
+So `Evidence.span` is the clause that supports the claim, and `Evidence.mention`
+is the narrower span inside it that tells this fact from the others the same
+clause states. Both are checked with `Span.is_faithful`, and a mention that is
+not inside the clause is dropped rather than refused — a highlight is not worth
+a fact. The prompt and the structured-output contract ask for both. Nothing in
+the pipeline reads `mention`: the grounder still reads `span`, and the narrower
+span is there for a reader, a UI and anyone who wants the tightest citation.
+
+The alternative was a grounder that re-grounds against the enclosing sentence
+when a narrow span comes back `not_found`. That doubles the calls on exactly the
+facts a corpus has most of, and it repairs a citation after the fact instead of
+citing correctly. It remains the fallback if the prompt half of this proves
+unworkable.
+
+*Cost:* one more optional field on a frozen model, and a widening of what a
+citation means. A fact serialised by 0.1.0 still loads and still grounds exactly
+as it did, because `mention` defaults to `None` — but its `span` is a bare
+mention, and no migration can widen it after the fact.
