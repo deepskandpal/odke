@@ -43,6 +43,10 @@ base_install_is_self_sufficient () {
 # The wheel is `openodke`; it installs both commands, the short `odke` and
 # `openodke` (DECISIONS #22). Each must run from a clean environment and report
 # the distribution name, and the import package must be `openodke` alone.
+#
+# `odke models` runs here too: the promise is that a user can ask which providers
+# exist and which key each reads before installing an extra or holding a key, and
+# this is the environment where that is true.
 smoke_wheel () {
   local wheel out
   wheel=$(ls -t dist/openodke-*.whl 2>/dev/null | head -1) || return 1
@@ -54,6 +58,11 @@ smoke_wheel () {
       *) echo "$cmd --version printed: $out" >&2; return 1 ;;
     esac
   done
+  out=$(uv run --isolated --no-project --with "$wheel" odke models) || return 1
+  case "$out" in
+    *"OPENAI_API_KEY"*"ANTHROPIC_API_KEY"*"NOT installed"*) ;;
+    *) echo "odke models did not list the providers on a base install" >&2; return 1 ;;
+  esac
   uv run --isolated --no-project --with "$wheel" python -c "import openodke"
 }
 

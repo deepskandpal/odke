@@ -8,6 +8,7 @@ other lacks.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import typer
@@ -134,6 +135,24 @@ def ontology_diff(
     typer.echo(f"{_count(len(changes), 'change')}, {breaking} breaking")
     if breaking and fail_on_breaking:
         raise typer.Exit(1)
+
+
+@app.command("models")
+def models_command() -> None:
+    """List every provider openodke can address, and whether its key is set.
+
+    Which provider serves a model string, which environment variable that
+    provider reads, whether it is set here, and which client makes the call —
+    so "use OpenAI" is something to check rather than to infer. No value is
+    printed and no key is written anywhere: openodke reads the environment and
+    nothing else.
+    """
+    # Imported here so `odke --version` stays light. Nothing on this path imports
+    # a provider: the [llm] extra is looked for, never loaded.
+    from openodke.llm.providers import describe
+    from openodke.llm.registry import registered_providers
+
+    typer.echo(describe(os.environ, registered=registered_providers()))
 
 
 @app.command("run")

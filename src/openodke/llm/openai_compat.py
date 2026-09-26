@@ -21,31 +21,15 @@ from typing import Any
 
 from openodke.llm.base import Completion, Message, ModelSpec, ProviderError
 
-# Endpoints people actually run locally, so `ollama/llama3.1` needs no base_url.
-DEFAULT_BASE_URLS = {
-    "ollama": "http://localhost:11434/v1",
-    "vllm": "http://localhost:8000/v1",
-    "lmstudio": "http://localhost:1234/v1",
-    "llamacpp": "http://localhost:8080/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-    "together": "https://api.together.xyz/v1",
-    "groq": "https://api.groq.com/openai/v1",
-    "deepseek": "https://api.deepseek.com/v1",
-    "openai": "https://api.openai.com/v1",
-}
-
-DEFAULT_KEY_ENVS = {
-    "openai": "OPENAI_API_KEY",
-    "openrouter": "OPENROUTER_API_KEY",
-    "together": "TOGETHER_API_KEY",
-    "groq": "GROQ_API_KEY",
-    "deepseek": "DEEPSEEK_API_KEY",
-    # Local servers accept any key, or none.
-    "ollama": "",
-    "vllm": "",
-    "lmstudio": "",
-    "llamacpp": "",
-}
+# Re-exported from the provider table, which is the one place a provider's endpoint
+# and its key variable are written down: `ollama/llama3.1` needs no base_url, and
+# local servers take any key, or none.
+from openodke.llm.providers import (
+    DEFAULT_BASE_URLS,
+    DEFAULT_KEY_ENVS,
+    key_env_for,
+    require_key,
+)
 
 
 class OpenAICompatClient:
@@ -53,8 +37,10 @@ class OpenAICompatClient:
 
     def __init__(self, *, opener: Any = None) -> None:
         # Injected so the test suite can replay recorded responses without a
-        # network, rather than monkeypatching urllib globally.
+        # network, rather than monkeypatching urllib globally. An injected opener
+        # also owns its own authentication, so the key check below is skipped.
         self._opener = opener or urllib.request.urlopen
+        self._checks_key = opener is None
 
     def complete(
         self,
@@ -64,6 +50,8 @@ class OpenAICompatClient:
         schema: dict[str, Any] | None = None,
     ) -> Completion:
         provider = spec.provider
+        # Before anything else: a named variable beats a 401 the caller has to decode.
+        key = require_key(spec) if self._checks_key else _key(spec)
         base = spec.base_url or DEFAULT_BASE_URLS.get(provider)
         if not base:
             raise ProviderError(
@@ -90,8 +78,6 @@ class OpenAICompatClient:
             }
 
         headers = {"Content-Type": "application/json"}
-        key_env = spec.api_key_env or DEFAULT_KEY_ENVS.get(provider, "")
-        key = os.environ.get(key_env, "") if key_env else ""
         if key:
             headers["Authorization"] = f"Bearer {key}"
 
@@ -110,6 +96,12 @@ class OpenAICompatClient:
             raise ProviderError(f"could not reach {provider} at {base}: {exc.reason}") from exc
 
         return _to_completion(body, spec)
+
+
+def _key(spec: ModelSpec) -> str:
+    """The key if there is one, and no complaint if there is not: the injected-opener path."""
+    env = key_env_for(spec)
+    return os.environ.get(env, "") if env else ""
 
 
 def _to_completion(body: dict[str, Any], spec: ModelSpec) -> Completion:
