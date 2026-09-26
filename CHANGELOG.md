@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-09-26
+
+Five defects and one addition from the first use of the published package by
+someone who did not write it.
+
 ### Added
 
 - `odke eval spans` and `openodke.eval.evaluate_spans`: cited span width split by
@@ -55,8 +60,7 @@ All notable changes to this project are documented here. The format follows
 
 The v0.1 milestones now on `main`: the data model (M0), ontology I/O (M1),
 loaders and extraction (M2), grounding and corroboration (M3), the Neo4j sink and
-`odke run` (M4), and evaluation against your own labels (M6). Not yet on PyPI:
-the release (M7) waits on Trusted Publishing.
+`odke run` (M4), and evaluation against your own labels (M6). Published to PyPI on 14 September 2026.
 
 ### Added
 
