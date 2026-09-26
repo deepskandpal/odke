@@ -322,7 +322,9 @@ def _current_user() -> str:
 @app.command("eval")
 def eval_stage(
     stage: str = typer.Argument(
-        ..., help="route, extract, ground, resolve, score, validate, or ablation (with --config)."
+        ...,
+        help="route, extract, ground, resolve, score, validate, ablation (with --config), "
+        "or spans (with --facts, and no labels at all).",
     ),
     labels: Path | None = typer.Option(None, "--labels", help="Your labelled rows, as JSONL."),
     predictions: Path | None = typer.Option(
@@ -340,6 +342,9 @@ def eval_stage(
     config: Path | None = typer.Option(
         None, "--config", help="Run config, for ablation: the pipeline to run three ways."
     ),
+    facts: Path | None = typer.Option(
+        None, "--facts", help="For spans: a run's facts.jsonl, or the directory a sink wrote."
+    ),
     describe: bool = typer.Option(
         False, "--describe", help="Print what a label row and a prediction row are, and exit."
     ),
@@ -353,6 +358,10 @@ def eval_stage(
 
     `ablation` runs a whole config three ways — extraction alone, + grounding,
     + corroboration — over your labelled extraction set.
+
+    `spans` is the exception: it needs no labelled data. It reads a run's facts
+    and reports span width split by the grounder's verdict, which scores the
+    too-narrow-citation error with no gold set at all.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
     from openodke.eval.formats import describe as describe_formats
@@ -360,7 +369,27 @@ def eval_stage(
     from openodke.llm.base import ProviderError
 
     try:
-        if stage == "ablation":
+        if stage == "spans":
+            from openodke.eval.spans import DESCRIPTION, evaluate_spans, load_facts
+
+            if describe:
+                typer.echo(DESCRIPTION)
+                return
+            if labels is not None:
+                raise ValueError(
+                    "spans needs no labelled data; pass the run's facts as --facts instead"
+                )
+            # A facts file is what --predictions already means for the fact
+            # stages, so it is taken as --facts rather than refused.
+            source = facts if facts is not None else predictions
+            if any(v is not None for v in (run, ontology, documents, config)):
+                raise ValueError("spans reads a run's facts; it takes --facts and nothing else")
+            if source is None:
+                raise ValueError(
+                    "spans needs --facts: a run's facts.jsonl, or the directory a sink wrote"
+                )
+            report = evaluate_spans(load_facts(source))
+        elif stage == "ablation":
             from openodke.eval.ablation import DESCRIPTION, run_ablation
             from openodke.eval.formats import GoldFact, load_jsonl
             from openodke.run import load_config
@@ -370,7 +399,7 @@ def eval_stage(
                     f"{DESCRIPTION}\n\n{describe_formats('extract').split('--predictions')[0]}"
                 )
                 return
-            if any(v is not None for v in (predictions, run, ontology, documents)):
+            if any(v is not None for v in (predictions, run, ontology, documents, facts)):
                 raise ValueError("ablation runs the config itself; it takes --config and --labels")
             if config is None or labels is None:
                 raise ValueError("ablation needs --config and --labels (or --describe)")
@@ -383,6 +412,8 @@ def eval_stage(
                 raise ValueError("--labels is required (or --describe to see the format)")
             if config is not None:
                 raise ValueError("--config is for ablation")
+            if facts is not None:
+                raise ValueError("--facts is for spans")
             report = evaluate_files(
                 stage, labels, predictions, run=run, ontology=ontology, documents=documents
             )

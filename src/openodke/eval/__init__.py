@@ -20,6 +20,12 @@ so the subpackage adds no dependency to the base install (DECISIONS #1).
 
 Cost needs no labels: `CostMeter` wraps the `LLMClient` a stage was built
 with, so a run is measured without any stage Protocol changing.
+
+Neither does span width, and it is the one evaluator that scores a real error
+without them: `evaluate_spans` splits cited span width by the grounder's
+verdict. Where the narrow spans are the `not_found` ones, the citations are too
+narrow to carry their claims, and the `not_found` rate measures that with no
+gold set at all.
 """
 
 from openodke.eval.ablation import per_document, run_ablation
@@ -54,6 +60,7 @@ from openodke.eval.report import StageReport
 from openodke.eval.resolution import as_triples, evaluate_resolution, links_from_clusters
 from openodke.eval.routing import evaluate_routing, run_route
 from openodke.eval.sinks import assert_idempotent, check_idempotency, jsonl_counts
+from openodke.eval.spans import evaluate_spans, load_facts, span_width
 from openodke.eval.validation import evaluate_validation, run_validate
 
 __all__ = [
@@ -85,11 +92,13 @@ __all__ = [
     "evaluate_grounding",
     "evaluate_resolution",
     "evaluate_routing",
+    "evaluate_spans",
     "evaluate_validation",
     "grounding_ablation",
     "jsonl_counts",
     "kept",
     "links_from_clusters",
+    "load_facts",
     "load_jsonl",
     "match_extraction",
     "per_document",
@@ -99,4 +108,5 @@ __all__ = [
     "run_route",
     "run_score",
     "run_validate",
+    "span_width",
 ]

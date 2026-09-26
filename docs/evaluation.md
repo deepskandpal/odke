@@ -24,6 +24,10 @@ three things, and never a fourth:
 Brier, B-cubed and P/R/F1 are arithmetic, so `openodke.eval` adds no dependency to
 the base install.
 
+One evaluator is not BYOLD: [`odke eval spans`](#spans) needs **no labelled data
+at all**. It reads a run's own facts and reports cited span width split by the
+grounder's verdict, which scores the too-narrow-citation error directly.
+
 ## `StageReport`
 
 Every evaluator returns the same type:
@@ -53,6 +57,7 @@ wrong", which is a different and worse finding.
 | resolve | `PairLabel(a, b, same)` | `LinkRow(a, b, kind)` or an `EntityLink` | `evaluate_resolution`, `links_from_clusters` | pairwise P/R/F1 and B-cubed |
 | score | `CalibrationLabel(fact, true)` | `Fact` (optional) | `evaluate_calibration`, `run_score` | Brier (with its baseline), ten-bin reliability curve, ECE |
 | validate | `ValidationLabel(fact, action)` | `ValidationPrediction(id, action, reason)` | `evaluate_validation`, `run_validate` | agreement, Cohen's kappa, `wrongly_refused`, `wrongly_written`, `conflicts_missed` |
+| spans | **none** | a run's `facts.jsonl` | `evaluate_spans`, `odke eval spans` | span width per verdict — count, median, quartiles, min/max; `not_found_rate`, `median_gap` |
 | sink | none | none | `check_idempotency`, `assert_idempotent`, `jsonl_counts` | every count unchanged across writes |
 | cost | none | none | `CostMeter`, `CostReport`, `compare_costs` | calls, tokens, USD and latency per stage, per 1k documents |
 | ablation | `GoldFact(doc_id, fact)` | a run config, run three ways | `run_ablation`, `odke eval ablation` | precision, recall and F1, facts written and model calls for extraction alone, + grounding, + corroboration |
@@ -153,6 +158,73 @@ ablation = grounding_ablation(labels, grounded)
 print(ablation.notes[0])
 # grounding moved precision from 0.500 to 1.000, keeping 1 of 2 true facts
 ```
+
+## spans
+
+**This is the one evaluator that needs no labelled data at all.** Everything else
+on this page is BYOLD; `odke eval spans` reads a run's facts and nothing else.
+
+It exists because a citation too narrow to carry its claim is an extraction bug
+the grounder reports for free. Shown `Ireland` and asked whether
+`Acme operates_in Ireland` follows from it, a correct grounder answers
+`not_found` — the fact was true, the extraction was right, and the citation threw
+it away. The first external run measured the two distributions apart: `not_found`
+median 8 characters against `supported` 64, with no overlap.
+
+So where the widths separate like that, **the `not_found` rate is a usable proxy
+for citation quality with no gold set**: it scores the too-narrow-citation error
+directly, which is the error a span gold set would be built to find. The report
+is the width distribution per verdict — count, median, quartiles, min and max —
+plus the share of facts citing no span at all, and one summary line. The widths
+are of `Evidence.span`, the span the grounder is shown.
+
+```python
+from openodke.eval import evaluate_spans
+
+
+def cited(predicate, value, width, verdict):
+    """One fact whose citation is `width` characters wide."""
+    evidence = (Evidence(doc_id="d1", span=Span(doc_id="d1", start=0, end=width)),)
+    return Fact(
+        subject=ada,
+        predicate=predicate,
+        object_value=value,
+        evidence=evidence,
+        verdict=GroundingVerdict(verdict),
+    )
+
+
+facts = [
+    cited("supports_language", "German", 6, "not_found"),  # cited 'German'
+    cited("operates_in", "Ireland", 7, "not_found"),  # cited 'Ireland'
+    cited("operates_in", "Virginia", 8, "not_found"),
+    cited("operates_in", "Singapore", 9, "not_found"),
+    cited("uptime_commitment", 99.9, 12, "not_found"),
+    cited("performs", "on-call rotation", 46, "supported"),  # cited the clause
+    cited("performs", "data residency", 81, "supported"),
+]
+report = evaluate_spans(facts)
+
+print(report.notes[0])
+# not_found median 8 chars vs supported 63.5 — citations are too narrow
+assert report.metrics["not_found_rate"] == 5 / 7
+assert report.breakdown["not_found"]["max"] < report.breakdown["supported"]["min"]
+```
+
+The summary line names the gap only when the distributions really separate — the
+upper quartile of the `not_found` widths below the lower quartile of the
+`supported` ones. When they overlap it says so and nothing more: that is a
+finding about your corpus, not an alarm. And the numbers are the grounder's own
+verdicts rather than labels, so the gap is a diagnostic of the citations, not a
+score of the facts.
+
+```bash
+odke eval spans --facts out/facts.jsonl   # or --facts out/, the directory a sink wrote
+odke eval spans --describe
+```
+
+In process, `evaluate_spans(kg.facts)` takes a `KnowledgeGraph`'s facts, and
+`load_facts(path)` reads the JSONL.
 
 ## resolve
 
@@ -370,10 +442,13 @@ odke eval extract --labels gold.jsonl --run mypackage.extract:MyExtractor \
     --documents documents.jsonl --ontology schema.json
 odke eval validate --labels verdicts.jsonl --run mypackage.gate:MyValidator --ontology schema.json
 odke eval ablation --config examples/e2e/odke.yaml --labels examples/e2e/gold.jsonl
+odke eval spans --facts out/                        # no labels: width by verdict
 ```
 
 - The CLI covers route, extract, ground, resolve, score and validate, and the
   ablation, which takes `--config` and `--labels` and nothing else.
+- `spans` takes `--facts` and no labels: a run's `facts.jsonl`, or the directory
+  a sink wrote it into.
 - `--run package.module:Name` imports a stage and runs it over the labels. A class
   is instantiated with no arguments. Otherwise, point it at a module-level
   instance.

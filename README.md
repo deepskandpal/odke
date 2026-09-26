@@ -207,11 +207,14 @@ Bring your own labelled dataset.
 odke eval extract --describe                           # what to label
 odke eval extract --labels gold.jsonl --predictions out/facts.jsonl
 odke eval ablation --config config.yaml --labels gold.jsonl
+odke eval spans --facts out/                           # no labels at all
 ```
 
 There is an evaluator for routing, extraction, grounding, resolution, scoring
 (Brier, reliability, ECE) and validation, and `openodke.eval.CostMeter` measures
-tokens and USD per stage without touching a stage. The fixtures in the test
+tokens and USD per stage without touching a stage. One evaluator needs no labels:
+`odke eval spans` reports cited span width split by grounding verdict, which
+scores the too-narrow-citation error with no gold set. The fixtures in the test
 suite exercise the arithmetic and are not a benchmark.
 
 ## When the platform does a stage itself
