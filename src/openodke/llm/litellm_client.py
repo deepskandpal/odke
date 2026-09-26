@@ -21,15 +21,18 @@ from openodke.llm.base import (
     ProviderNotInstalled,
 )
 from openodke.llm.openai_compat import _maybe_json
+from openodke.llm.providers import require_key
 
 
 class LiteLLMClient:
     """A thin adapter. Anything clever belongs on one side of it or the other."""
 
     def __init__(self, *, completion_fn: Any = None) -> None:
+        self._checks_key = completion_fn is None
         if completion_fn is not None:
             # The test suite injects a recorded transport here, so the litellm
-            # path is executed in CI rather than skipped.
+            # path is executed in CI rather than skipped. An injected transport
+            # answers for itself, so it is not asked for a key.
             self._completion = completion_fn
             return
         try:
@@ -48,6 +51,10 @@ class LiteLLMClient:
         spec: ModelSpec,
         schema: dict[str, Any] | None = None,
     ) -> Completion:
+        # litellm reads the key from the environment itself; this only makes a
+        # missing one say which variable, before the request rather than after.
+        if self._checks_key:
+            require_key(spec)
         kwargs: dict[str, Any] = {
             "model": spec.model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],

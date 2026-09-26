@@ -17,17 +17,23 @@ Anything OpenAI-shaped — Ollama, vLLM, LM Studio, llama.cpp, OpenRouter, Groq,
 Together, DeepSeek, a LiteLLM proxy, a corporate gateway — works on the base
 install with no extra dependency. Everything else routes through litellm, which
 `pip install "openodke[llm]"` provides. Your own adapter is one `register()` call.
+
+`openodke.llm.providers` is the table behind that: every provider openodke can
+address, the variable each reads its key from, and who serves it. `odke models`
+prints it. Keys come from the environment and are never stored or printed.
 """
 
 from openodke.llm.base import (
     Completion,
     LLMClient,
     Message,
+    MissingAPIKey,
     ModelSpec,
     ProviderError,
     ProviderNotInstalled,
 )
 from openodke.llm.openai_compat import DEFAULT_BASE_URLS, OpenAICompatClient
+from openodke.llm.providers import PROVIDERS, Provider, key_env_for, qualify, require_key
 from openodke.llm.registry import register, registered_providers, resolve, unregister
 from openodke.llm.roles import ModelRoles
 from openodke.llm.testing import (
@@ -40,21 +46,27 @@ from openodke.llm.testing import (
 
 __all__ = [
     "DEFAULT_BASE_URLS",
+    "PROVIDERS",
     "Cassette",
     "Completion",
     "LLMClient",
     "Message",
+    "MissingAPIKey",
     "ModelRoles",
     "ModelSpec",
     "OpenAICompatClient",
+    "Provider",
     "ProviderError",
     "ProviderNotInstalled",
     "RecordedClient",
     "RecordingClient",
     "ReplayClient",
     "ScriptedClient",
+    "key_env_for",
+    "qualify",
     "register",
     "registered_providers",
+    "require_key",
     "resolve",
     "unregister",
 ]

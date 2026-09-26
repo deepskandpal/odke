@@ -38,7 +38,7 @@ class ModelSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     # "provider/model" — anthropic/claude-sonnet-5, openai/gpt-4.1,
-    # ollama/llama3.1, azure/my-deployment, openrouter/…, bedrock/…, vertex/…
+    # ollama/llama3.1, azure/my-deployment, openrouter/…, bedrock/…, vertex_ai/…
     model: str
     # None omits the parameter from the request entirely. Which temperatures a
     # model accepts is a per-model fact this library does not track — some accept
@@ -104,10 +104,20 @@ class ProviderNotInstalled(ProviderError):
     """The adapter for this provider needs a package that is not installed."""
 
 
+class MissingAPIKey(ProviderError):
+    """The provider needs a key and the environment variable holding it is unset.
+
+    Its own error class so that it is never retried as if it were a rate limit,
+    and so a caller can tell "you have not configured this" from "the provider
+    said no".
+    """
+
+
 __all__ = [
     "Completion",
     "LLMClient",
     "Message",
+    "MissingAPIKey",
     "ModelSpec",
     "ProviderError",
     "ProviderNotInstalled",
