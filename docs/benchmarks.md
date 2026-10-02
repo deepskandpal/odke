@@ -35,6 +35,13 @@ odke bench run text2kgbench runs/movie
   It calls no model. `--limit` keeps the first N documents for a cheap pilot.
   `--paper` configures [the paper's own grounder and gate](grounding.md#paper-mode-the-odke-grounder-as-written).
 - `run` runs the config three ways and prints the table; `--json` for the report.
+  Each row carries calls and tokens; the notes give the grounder's verdicts on
+  the candidates, because the gate lets an unchecked fact through and a row that
+  drops nothing must say whether the grounder confirmed everything or failed.
+
+The prepared config extracts with `structured: false` — no response schema, as
+the paper prompts — and gives the extractor 16,000 tokens of room for a
+reasoning model's thinking.
 
 From Python: `openodke.eval.datasets.text2kgbench.fetch / prepare / run / score`,
 and the same for `redocred`. `score` takes triples from any system, which is how

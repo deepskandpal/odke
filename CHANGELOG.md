@@ -23,9 +23,18 @@ All notable changes to this project are documented here. The format follows
   Text2KGBench's hallucination metrics.
 - `openodke.eval.ablation.ablate` returns the three configurations' facts before
   anything scores them; `run_ablation` is now that plus your labels.
+- `LLMExtractor(structured=False)` sends no response schema: the prompt holds the
+  model to the JSON shape and the parser and repair loop do the rest, as the
+  ODKE+ paper prompts. `odke bench` configs use it.
 
 ### Fixed
 
+- **Anthropic rejected the extraction schema** of any ontology past a few
+  predicates: strict structured output caps optional keys (24) and union-typed
+  ones (16), and the schema had three optional keys per predicate. Every key is
+  now required and none is nullable; "nothing" is `""`, which the parser already
+  read as missing. A typed schema for an ontology much past a dozen types can
+  still exceed Anthropic's grammar-size limit; use `structured: false` there.
 - The grounder's module docstring credited the paper's precision to "one fact,
   one span"; the paper's grounder judges against the context, not a span.
 

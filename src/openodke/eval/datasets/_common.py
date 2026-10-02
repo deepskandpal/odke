@@ -7,6 +7,7 @@ import re
 import shutil
 import tempfile
 import urllib.request
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -117,7 +118,9 @@ def run_config(
         "ontology": "ontology.json",
         "inputs": [{"path": "docs", "loader": "directory"}],
         "stages": {
-            "extractor": "llm",
+            # No response schema, as the paper prompts (App. A); also the way
+            # round Anthropic's grammar limits on a typed multi-type schema.
+            "extractor": {"use": "llm", "structured": False},
             "grounder": grounder,
             "normalizer": "value",
             "corroborator": "signature",
@@ -125,7 +128,13 @@ def run_config(
             "validator": validator,
         },
     }
-    models = {k: v for k, v in (("extract", extract_model), ("ground", ground_model)) if v}
+    models: dict[str, Any] = {}
+    if extract_model:
+        # Room for a reasoning model's thinking, which counts against max_tokens;
+        # only the tokens used are billed.
+        models["extract"] = {"model": extract_model, "max_tokens": 16000}
+    if ground_model:
+        models["ground"] = ground_model
     if models:
         config["models"] = models
     return config
@@ -178,6 +187,8 @@ def report(
             **row,
             "facts": facts,
             "model_calls": cost.calls,
+            "prompt_tokens": cost.prompt_tokens,
+            "completion_tokens": cost.completion_tokens,
             "cost_usd": cost.cost_usd,
         }
     summary: dict[str, Metric] = {}
@@ -187,6 +198,18 @@ def report(
         for key in ("precision", "recall", "f1"):
             summary[f"{key}_{label}"] = breakdown[name].get(key)
     return StageReport(stage=stage, n=n, metrics=summary, breakdown=breakdown, notes=tuple(notes))
+
+
+def verdicts(facts: Iterable[Fact]) -> str:
+    """How the grounder judged the candidates: `supported 60, not_found 4, unchecked 0`.
+
+    The gate lets an unchecked fact through, so a row that drops nothing could
+    be a grounder that confirmed everything or one whose calls all failed. This
+    says which.
+    """
+    counts = Counter(f.verdict.value for f in facts)
+    order = ("supported", "not_found", "contradicted", "unchecked")
+    return ", ".join(f"{v} {counts.get(v, 0)}" for v in order)
 
 
 def change(before: float, after: float) -> str:

@@ -39,6 +39,7 @@ from openodke.eval.datasets._common import (
     run_config,
     snake,
     triples_by_doc,
+    verdicts,
     write_documents,
     write_json,
     write_jsonl,
@@ -347,6 +348,7 @@ def score_run(
         f"{change(before, after)} (ODKE+ reports -35%)",
         f"precision: {precisions} (extracted, after the gate, after corroboration;"
         " ODKE+ reports 91% raw, 98.8% ranked)",
+        f"grounder verdicts on the candidates: {verdicts(ablation.grounded)}",
         *ablation.notes,
     ]
     return report(f"{NAME}:{meta['split']}", len(gold), rows, notes)

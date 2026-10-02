@@ -45,6 +45,7 @@ from openodke.eval.datasets._common import (
     run_config,
     snake,
     triples_by_doc,
+    verdicts,
     write_documents,
     write_json,
     write_jsonl,
@@ -366,6 +367,7 @@ def _notes(scored: Mapping[str, Mapping[str, Metric]], ablation: AblationRun) ->
         f"precision: {_pct(raw['precision'])} extracted, {_pct(gated['precision'])} after the gate,"
         f" {_pct(full['precision'])} after corroboration (ODKE+ reports 91% raw, 98.8% ranked)",
     ]
+    notes.append(f"grounder verdicts on the candidates: {verdicts(ablation.grounded)}")
     return notes + list(ablation.notes)
 
 
