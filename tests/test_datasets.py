@@ -70,6 +70,26 @@ def test_the_benchmark_ontology_loads_as_an_openodke_ontology() -> None:
     assert labels["publication_date"] == "publication date"
 
 
+def test_a_label_listed_twice_is_one_predicate_with_both_domains() -> None:
+    raw = {
+        "id": "ont_3_sport",
+        "concepts": [
+            {"qid": "Q1", "label": "sports team"},
+            {"qid": "Q2", "label": "athlete"},
+            {"qid": "Q3", "label": "sports league"},
+        ],
+        "relations": [
+            {"pid": "P118", "label": "league", "domain": "Q1", "range": "Q3"},
+            {"pid": "P118", "label": "league", "domain": "Q2", "range": "Q3"},
+        ],
+    }
+    data, labels = text2kgbench.to_ontology(raw)
+    ontology = Ontology.model_validate(data)
+    assert list(ontology.predicates) == ["league"]
+    assert ontology.predicates["league"].domain == ("SportsTeam", "Athlete")
+    assert labels == {"league": "league"}
+
+
 def test_score_is_the_benchmarks_own_arithmetic() -> None:
     predicted = {
         # one right, one wrong object, one relation the gold never uses (filtered from P/R)

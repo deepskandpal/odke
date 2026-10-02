@@ -133,7 +133,8 @@ def to_ontology(raw: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]
 
     Concepts become types (`film production company` -> `FilmProductionCompany`);
     relations become predicates (`cast member` -> `cast_member`) with the domain
-    and range the benchmark gives. A range that is no concept is a literal type,
+    and range the benchmark gives; a label listed twice is one predicate with
+    both domains. A range that is no concept is a literal type,
     or, if it is not one of those either (DBpedia's `Party`), a type of its own.
     """
     concepts = {c["qid"]: pascal(c["label"]) for c in raw["concepts"]}
@@ -152,12 +153,17 @@ def to_ontology(raw: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]
     labels: dict[str, str] = {}
     for rel in raw["relations"]:
         name = snake(rel["label"])
-        while name in predicates:
-            name += "_"
+        domain = [as_type(rel["domain"])] if rel.get("domain") else []
+        if name in predicates:
+            # The same label twice with another domain (`league` for a team and
+            # for an athlete) is one relation: the benchmark scores by label.
+            known = predicates[name]["domain"]
+            known.extend(d for d in domain if d not in known)
+            continue
         literal = LITERALS.get(str(rel.get("range", "")).strip().lower())
         predicates[name] = {
             "description": f"{rel['label']} ({rel['pid']})",
-            "domain": [as_type(rel["domain"])] if rel.get("domain") else [],
+            "domain": domain,
             "range": literal if literal is not None else as_type(rel["range"]),
             "aliases": [rel["label"]],
         }
