@@ -7,6 +7,28 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 
+### Added
+
+- **Paper mode for the grounder.** `LLMGrounder(context="document",
+  verdicts="binary")` asks about the whole document with the ODKE+ paper's own
+  prompt and `<subject, predicate, object>` triple, reading True as `supported`
+  and False as `not_found`. With `VerdictValidator(refuse_not_found=True)` it is
+  the paper's grounder and gate as written. Defaults are unchanged.
+- **`odke bench`: public benchmarks.** `fetch`, `prepare` and `run` for
+  Text2KGBench (the benchmark's own metrics, checked against its scorer) and
+  Re-DocRED. A run is the ablation — extraction alone, + grounding,
+  + corroboration — scored with the dataset's metrics, with the paper's two
+  published numbers beside yours. `openodke.eval.datasets` is the Python side;
+  `score` takes triples from any system. The `bench` extra adds NLTK for
+  Text2KGBench's hallucination metrics.
+- `openodke.eval.ablation.ablate` returns the three configurations' facts before
+  anything scores them; `run_ablation` is now that plus your labels.
+
+### Fixed
+
+- The grounder's module docstring credited the paper's precision to "one fact,
+  one span"; the paper's grounder judges against the context, not a span.
+
 ### Changed
 
 - The documentation site moved to <https://openodke.dev>. The old

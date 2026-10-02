@@ -77,4 +77,5 @@ nav:
       - Neo4j: neo4j.md
   - "odke run": run.md
   - "Evaluation (BYOLD)": evaluation.md
+  - Benchmarks: benchmarks.md
   - Decisions: decisions.md
