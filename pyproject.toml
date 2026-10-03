@@ -51,7 +51,10 @@ yaml = ["pyyaml>=6,<7"]
 # Columnar records. pyarrow is large, so reading Parquet is opt-in; the loader
 # imports it on first use and names this extra when it is missing.
 parquet = ["pyarrow>=15"]
-all = ["openodke[llm,neo4j,rdf,networkx,docs,pdf,docx,yaml,parquet]"]
+# `odke bench`: Text2KGBench's hallucination metrics stem with NLTK, as the
+# benchmark's own scorer does. Imported on first use; the rest of a run needs nothing.
+bench = ["nltk>=3.8,<4"]
+all = ["openodke[llm,neo4j,rdf,networkx,docs,pdf,docx,yaml,parquet,bench]"]
 
 [project.urls]
 Homepage = "https://github.com/deepskandpal/odke"
@@ -116,3 +119,8 @@ python_version = "3.11"
 strict = false
 warn_unused_ignores = true
 disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# NLTK ships no type information; `odke bench` imports two names from it.
+module = ["nltk", "nltk.*"]
+ignore_missing_imports = true

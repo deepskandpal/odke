@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 import typer
 
@@ -473,6 +474,115 @@ def eval_stage(
             report = evaluate_files(
                 stage, labels, predictions, run=run, ontology=ontology, documents=documents
             )
+    except (ValueError, OSError, ImportError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    except ProviderError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(report.model_dump_json(indent=2) if as_json else report.render())
+
+
+# --------------------------------------------------------------------------- #
+# odke bench — public benchmarks
+# --------------------------------------------------------------------------- #
+
+bench_app = typer.Typer(
+    help="Public benchmarks: fetch a dataset, prepare a run, run it three ways and score it.",
+    no_args_is_help=True,
+)
+app.add_typer(bench_app, name="bench")
+
+
+def _dataset(name: str) -> Any:
+    from openodke.eval.datasets import DATASETS
+
+    if name not in DATASETS:
+        typer.echo(f"error: unknown dataset {name!r}; one of {', '.join(DATASETS)}", err=True)
+        raise typer.Exit(2)
+    return DATASETS[name]
+
+
+@bench_app.command("fetch")
+def bench_fetch(
+    dataset: str = typer.Argument(..., help="text2kgbench or redocred."),
+    dest: Path = typer.Argument(..., help="Directory to download into."),
+    source: str = typer.Option(
+        "wikidata_tekgen", help="text2kgbench only: wikidata_tekgen or dbpedia_webnlg."
+    ),
+    ontology: list[str] | None = typer.Option(
+        None, "--ontology", help="text2kgbench only: an ontology id, repeatable (default: all)."
+    ),
+    split: list[str] | None = typer.Option(
+        None, "--split", help="redocred only: dev, test or train, repeatable (default: dev, test)."
+    ),
+) -> None:
+    """Download a dataset's official files. Nothing is redistributed by openodke."""
+    module = _dataset(dataset)
+    try:
+        if dataset == "text2kgbench":
+            module.fetch(dest, source=source, ontologies=ontology or None)
+        else:
+            module.fetch(dest, splits=tuple(split or ("dev", "test")))
+    except (ValueError, OSError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(f"fetched {dataset} into {dest}")
+
+
+@bench_app.command("prepare")
+def bench_prepare(
+    dataset: str = typer.Argument(..., help="text2kgbench or redocred."),
+    root: Path = typer.Argument(..., help="Where `odke bench fetch` downloaded it."),
+    out: Path = typer.Option(..., "--out", help="Directory to write the runnable set into."),
+    ontology: str | None = typer.Option(
+        None, "--ontology", help="text2kgbench only: the ontology id, e.g. ont_1_movie."
+    ),
+    source: str = typer.Option(
+        "wikidata_tekgen", help="text2kgbench only: wikidata_tekgen or dbpedia_webnlg."
+    ),
+    split: str = typer.Option("test", help="redocred only: dev, test or train."),
+    limit: int | None = typer.Option(None, help="Keep the first N documents (a cheap pilot)."),
+    extract_model: str | None = typer.Option(None, "--extract-model", help="e.g. anthropic/..."),
+    ground_model: str | None = typer.Option(None, "--ground-model", help="e.g. anthropic/..."),
+    paper: bool = typer.Option(
+        False,
+        "--paper",
+        help="ODKE+'s own grounder and gate: the whole context, True/False, affirmed facts only.",
+    ),
+) -> None:
+    """Write documents, ontology, gold and an `odke.json` run config. Calls no model."""
+    module = _dataset(dataset)
+    models = {"extract_model": extract_model, "ground_model": ground_model, "paper": paper}
+    try:
+        if dataset == "text2kgbench":
+            if ontology is None:
+                raise ValueError("text2kgbench needs --ontology, e.g. ont_1_movie")
+            module.prepare(root, ontology, out, source=source, limit=limit, **models)
+        else:
+            module.prepare(root, out, split=split, limit=limit, **models)
+    except (ValueError, OSError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(f"prepared {out}; run it with: odke bench run {dataset} {out}")
+
+
+@bench_app.command("run")
+def bench_run(
+    dataset: str = typer.Argument(..., help="text2kgbench or redocred."),
+    prepared: Path = typer.Argument(..., help="A directory `odke bench prepare` wrote."),
+    as_json: bool = typer.Option(False, "--json", help="The report as JSON."),
+) -> None:
+    """Run the prepared config three ways and score each row. Calls the models it names.
+
+    Extraction and grounding are each called once; + grounding and + corroboration
+    replay them, so the bill is one run's, not three.
+    """
+    from openodke.llm.base import ProviderError
+
+    module = _dataset(dataset)
+    try:
+        report = module.run(prepared)
     except (ValueError, OSError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from exc

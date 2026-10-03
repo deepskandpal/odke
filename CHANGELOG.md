@@ -7,6 +7,42 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 
+### Added
+
+- **Paper mode for the grounder.** `LLMGrounder(context="document",
+  verdicts="binary")` asks about the whole document with the ODKE+ paper's own
+  prompt and `<subject, predicate, object>` triple, reading True as `supported`
+  and False as `not_found`. With `VerdictValidator(refuse_not_found=True)` it is
+  the paper's grounder and gate as written. Defaults are unchanged.
+- **`odke bench`: public benchmarks.** `fetch`, `prepare` and `run` for
+  Text2KGBench (the benchmark's own metrics, checked against its scorer) and
+  Re-DocRED. A run is the ablation — extraction alone, + grounding,
+  + corroboration — scored with the dataset's metrics, with the paper's two
+  published numbers beside yours. `openodke.eval.datasets` is the Python side;
+  `score` takes triples from any system. The `bench` extra adds NLTK for
+  Text2KGBench's hallucination metrics.
+- `openodke.eval.ablation.ablate` returns the three configurations' facts before
+  anything scores them; `run_ablation` is now that plus your labels.
+- `odke bench` saves each run's predicted triples per configuration under
+  `predictions/`, for auditing "false positives" the gold missed. Prepared configs
+  run without the value normalizer (both datasets' gold is in the source's words),
+  and Re-DocRED's predicates are ranked by how often the dev split uses them — the
+  paper's ranked property generation — instead of alphabetically.
+- `LLMExtractor(structured=False)` sends no response schema: the prompt holds the
+  model to the JSON shape and the parser and repair loop do the rest, as the
+  ODKE+ paper prompts. `odke bench` configs use it.
+
+### Fixed
+
+- **Anthropic rejected the extraction schema** of any ontology past a few
+  predicates: strict structured output caps optional keys (24) and union-typed
+  ones (16), and the schema had three optional keys per predicate. Every key is
+  now required and none is nullable; "nothing" is `""`, which the parser already
+  read as missing. A typed schema for an ontology much past a dozen types can
+  still exceed Anthropic's grammar-size limit; use `structured: false` there.
+- The grounder's module docstring credited the paper's precision to "one fact,
+  one span"; the paper's grounder judges against the context, not a span.
+
 ### Changed
 
 - The documentation site moved to <https://openodke.dev>. The old

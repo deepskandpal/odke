@@ -172,6 +172,28 @@ order; and a failed call leaves only its own fact `UNCHECKED`. The client must b
 thread-safe. Both built-in clients are. `ScriptedClient` answers by position and
 is not, which is what `RecordedClient` (answers by matching the prompt) is for.
 
+### Paper mode: the ODKE+ grounder as written
+
+openodke's default grounder differs from the paper's on purpose: it is shown the
+cited span, answers in three ways, and drops nothing. The paper's (ODKE+ §3.3.1,
+App. B) is shown the whole context, answers True or False, and only affirmed
+facts are kept. Two options and a gate setting reproduce it, so the paper's
+claims can be tested as written (see [Benchmarks](benchmarks.md)):
+
+```yaml
+stages:
+  grounder: {use: llm, context: document, verdicts: binary}
+  validator: {use: verdict, refuse_not_found: true}
+```
+
+`verdicts: binary` sends the paper's own prompt and its
+`<subject, predicate(qualifier: value), object>` triple. "True" is read as
+`supported` and "False" as `not_found`: the paper's "No" merges a context that
+contradicts the triple with one that is silent about it, so a binary run cannot
+tell them apart. The free span check still runs first, so a fact whose quote is
+not in the document is settled before any call — the one step of openodke's
+that paper mode keeps.
+
 ## Grounding is a stamp; the validator is the gate
 
 The pipeline drops only what a validator refuses. To keep ungrounded facts out of

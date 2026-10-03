@@ -2,15 +2,20 @@
 
 Locatability is not verification. A model can cite a span that genuinely exists
 and does not support the fact it was attached to, and only a second reading
-catches that. This is where the paper's precision comes from — one fact, one
-span, one verdict from a small model (DECISIONS #7a: the `ground` role defaults
-to a cheaper model than `extract`, because if this pass cost what extraction
-costs, people would turn it off).
+catches that. One fact, one verdict from a small model (DECISIONS #7a: the
+`ground` role defaults to a cheaper model than `extract`, because if this pass
+cost what extraction costs, people would turn it off).
+
+By default the model sees the cited span and answers in three ways. The paper's
+own grounder (ODKE+ §3.3.1, App. B) is different: it sees the whole context and
+answers True or False, and only affirmed facts are kept. `context="document"`,
+`verdicts="binary"` and `VerdictValidator(refuse_not_found=True)` together
+reproduce it, so the paper's claims can be tested as written.
 
 The span check runs first, inside this grounder, every time. The model is only
-shown a span that really resolves in the document, and is never asked about a
-fact the free check already settled. It sets `Fact.verdict` and nothing else:
-`confidence` belongs to the scorer.
+asked about a fact whose citation really resolves in the document, and never
+about one the free check already settled. It sets `Fact.verdict` and nothing
+else: `confidence` belongs to the scorer.
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, Literal
 
 from openodke.ground.retry import RetryPolicy, call_with_retry
 from openodke.ground.span import Counts, SpanGrounder, located
@@ -54,6 +59,28 @@ GROUNDING_SCHEMA: dict[str, Any] = {
     "required": ["verdict"],
     "additionalProperties": False,
 }
+
+# The paper's grounder prompt (ODKE+ App. B), verbatim but for its worked example.
+# "False" is read as NOT_FOUND: the paper's "No" merges a context that contradicts
+# the triple with one that is silent about it, so a binary run cannot tell them apart.
+PAPER_PROMPT = (
+    "Given a context about a subject and a triple in the format of "
+    "<subject, predicate(qualifier: optional), object>, your task is to verify if the "
+    "given triple can be found from or grounded in the context and only respond with "
+    "True or False. For some object, they may have been listed there in form of a list "
+    "of object, not single."
+)
+
+BINARY_SCHEMA: dict[str, Any] = {
+    "title": "GroundingJudgement",
+    "type": "object",
+    "properties": {"verdict": {"type": "boolean"}},
+    "required": ["verdict"],
+    "additionalProperties": False,
+}
+
+Context = Literal["span", "document"]
+Verdicts = Literal["three_way", "binary"]
 
 
 def render_claim(fact: Fact) -> str:
@@ -88,19 +115,56 @@ def render_claim(fact: Fact) -> str:
     return f"{claim}."
 
 
-def build_messages(fact: Fact, passage: str) -> list[Message]:
-    """Exactly what the model is sent: the claim and the cited passage, nothing more.
+def render_triple(fact: Fact) -> str:
+    """The fact in the paper's grounder shape: `<subject, predicate(qualifier: value), object>`.
 
-    Not the whole document. The question is whether *this span* supports the
-    claim; showing more would answer a different, dearer question.
+    Labels rather than typed mentions and bare strings rather than JSON, as in the
+    paper's worked example (`<Felton Ross, Date of Birth, May 9, 1927>`). The paper
+    has no polarity; a denial is spelled into the predicate so it is not asked as
+    an assertion.
     """
+    subject = fact.subject.label or fact.subject.key
+    predicate = fact.predicate.replace("_", " ")
+    scoped = [
+        f"{key}: {_bare(fact.qualifiers[key])}"
+        for key in fact.identity_keys
+        if key in fact.qualifiers
+    ]
+    if scoped:
+        predicate += f"({', '.join(scoped)})"
+    if fact.polarity is Polarity.DENIED:
+        predicate = f"not {predicate}"
+    elif fact.polarity is Polarity.PARTIAL:
+        predicate = f"partially {predicate}"
+    obj = (
+        fact.object_entity.label or fact.object_entity.key
+        if fact.object_entity is not None
+        else _bare(fact.object_value)
+    )
+    return f"<{subject}, {predicate}, {obj}>"
+
+
+def build_messages(fact: Fact, passage: str, *, binary: bool = False) -> list[Message]:
+    """Exactly what the model is sent: the claim and the passage, nothing more.
+
+    By default the passage is the cited span — the question is whether *this
+    span* supports the claim. `binary=True` sends the paper's prompt and triple
+    instead; which passage it is asked against is the grounder's `context`.
+    """
+    if binary:
+        return [
+            Message(role="system", content=PAPER_PROMPT),
+            Message(
+                role="user", content=f"**Context:\n{passage}\n**triple:\n{render_triple(fact)}"
+            ),
+        ]
     return [
         Message(role="system", content=SYSTEM_PROMPT),
         Message(role="user", content=f"Claim: {render_claim(fact)}\n\nPassage:\n{passage}"),
     ]
 
 
-def parse_verdict(completion: Completion) -> GroundingVerdict | None:
+def parse_verdict(completion: Completion, *, binary: bool = False) -> GroundingVerdict | None:
     """The verdict in a completion, or None when there is not exactly one to read.
 
     Structured output is the normal path. A model that ignored the schema and
@@ -109,6 +173,8 @@ def parse_verdict(completion: Completion) -> GroundingVerdict | None:
     failed answer rather than a guess.
     """
     value: object = completion.parsed.get("verdict") if completion.parsed else None
+    if binary:
+        return _parse_binary(value, completion.text)
     if not isinstance(value, str):
         match = _BARE_WORD.match(completion.text)
         value = match.group(1) if match else None
@@ -119,10 +185,26 @@ def parse_verdict(completion: Completion) -> GroundingVerdict | None:
 
 
 _BARE_WORD = re.compile(r"^\W*(supported|contradicted|not[\s_-]?found)\W*$", re.IGNORECASE)
+_BARE_BOOL = re.compile(r"^\W*(true|false|yes|no)\W*$", re.IGNORECASE)
+
+
+def _parse_binary(value: object, text: str) -> GroundingVerdict | None:
+    """True is SUPPORTED, False is NOT_FOUND; anything else is unreadable."""
+    if not isinstance(value, bool):
+        word = value if isinstance(value, str) else None
+        match = _BARE_BOOL.match(word if word is not None else text)
+        if match is None:
+            return None
+        value = match.group(1).lower() in ("true", "yes")
+    return GroundingVerdict.SUPPORTED if value else GroundingVerdict.NOT_FOUND
 
 
 def _mention(entity: Entity) -> str:
     return f"{entity.label or entity.key} ({entity.type})"
+
+
+def _bare(value: object) -> str:
+    return value if isinstance(value, str) else json.dumps(value, default=str, ensure_ascii=False)
 
 
 def _literal(value: object) -> str:
@@ -160,9 +242,17 @@ class LLMGrounder:
         max_workers: int = 8,
         retry: RetryPolicy | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        context: Context = "span",
+        verdicts: Verdicts = "three_way",
     ) -> None:
         if max_workers < 1:
             raise ValueError(f"max_workers must be at least 1, got {max_workers}")
+        if context not in ("span", "document"):
+            raise ValueError(f"context must be 'span' or 'document', got {context!r}")
+        if verdicts not in ("three_way", "binary"):
+            raise ValueError(f"verdicts must be 'three_way' or 'binary', got {verdicts!r}")
+        self.context: Context = context
+        self.binary = verdicts == "binary"
         self.roles = roles if roles is not None else ModelRoles()
         self.spec: ModelSpec = self.roles.ground
         self.client: LLMClient = client if client is not None else self.roles.client_for("ground")
@@ -234,10 +324,12 @@ class LLMGrounder:
         # so this guard is for the type checker, not a path that runs.
         if evidence is None or evidence.span is None:  # pragma: no cover
             return checked, None
+        if self.context == "document":
+            return checked, doc.text
         return checked, evidence.span.resolve(doc)
 
     def _ask(self, fact: Fact, passage: str) -> Fact:
-        messages = build_messages(fact, passage)
+        messages = build_messages(fact, passage, binary=self.binary)
 
         def on_retry(attempt: int, exc: BaseException, wait: float) -> None:
             self._counts.bump("retries")
@@ -261,7 +353,7 @@ class LLMGrounder:
             log.warning("grounding call failed for fact %s, left unchecked: %s", fact.id, exc)
             return fact
         self._account(completion)
-        verdict = parse_verdict(completion)
+        verdict = parse_verdict(completion, binary=self.binary)
         if verdict is None:
             self._counts.bump("unparseable")
             log.warning(
@@ -274,7 +366,8 @@ class LLMGrounder:
     def _complete(self, messages: list[Message]) -> Completion:
         with self._slots:
             self._counts.bump("calls")
-            return self.client.complete(messages, spec=self.spec, schema=GROUNDING_SCHEMA)
+            schema = BINARY_SCHEMA if self.binary else GROUNDING_SCHEMA
+            return self.client.complete(messages, spec=self.spec, schema=schema)
 
     def _account(self, completion: Completion) -> None:
         self._counts.bump("prompt_tokens", completion.prompt_tokens)
@@ -294,11 +387,14 @@ class LLMGrounder:
 
 
 __all__ = [
+    "BINARY_SCHEMA",
     "GROUNDING_SCHEMA",
+    "PAPER_PROMPT",
     "SYSTEM_PROMPT",
     "VERDICTS",
     "LLMGrounder",
     "build_messages",
     "parse_verdict",
     "render_claim",
+    "render_triple",
 ]
