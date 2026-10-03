@@ -23,6 +23,11 @@ All notable changes to this project are documented here. The format follows
   Text2KGBench's hallucination metrics.
 - `openodke.eval.ablation.ablate` returns the three configurations' facts before
   anything scores them; `run_ablation` is now that plus your labels.
+- `odke bench` saves each run's predicted triples per configuration under
+  `predictions/`, for auditing "false positives" the gold missed. Prepared configs
+  run without the value normalizer (both datasets' gold is in the source's words),
+  and Re-DocRED's predicates are ranked by how often the dev split uses them — the
+  paper's ranked property generation — instead of alphabetically.
 - `LLMExtractor(structured=False)` sends no response schema: the prompt holds the
   model to the JSON shape and the parser and repair loop do the rest, as the
   ODKE+ paper prompts. `odke bench` configs use it.

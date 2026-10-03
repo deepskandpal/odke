@@ -21,6 +21,7 @@ test split's are never looked at to build the schema.
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -37,6 +38,7 @@ from openodke.eval.datasets._common import (
     read_jsonl,
     report,
     run_config,
+    save_predictions,
     snake,
     triples_by_doc,
     verdicts,
@@ -180,6 +182,9 @@ def to_ontology(documents: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     A relation's domain is every head type it was seen with; its range is the
     tail type it was seen with most. TIME and NUM ranges become date and number
     literals. A relation never seen keeps an open domain and a string range.
+    Importance is how often it was seen, log-scaled — the paper's ranked property
+    generation — so a type's 25-predicate snippet keeps its most used relations
+    rather than the first 25 alphabetically.
     """
     heads: dict[str, Counter[str]] = {r: Counter() for r in RELATIONS}
     tails: dict[str, Counter[str]] = {r: Counter() for r in RELATIONS}
@@ -190,15 +195,20 @@ def to_ontology(documents: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                 heads[label["r"]][clusters[label["h"]][0]["type"]] += 1
                 tails[label["r"]][clusters[label["t"]][0]["type"]] += 1
     entity_types = {name for name in TYPES.values() if name[:1].isupper()}
+    most = max((sum(c.values()) for c in heads.values()), default=0) or 1
     predicates: dict[str, dict[str, Any]] = {}
     for pid, label in RELATIONS.items():
         domain = sorted({TYPES[t] for t in heads[pid] if TYPES.get(t, "") in entity_types})
         tail = tails[pid].most_common(1)[0][0] if tails[pid] else ""
+        seen = sum(heads[pid].values())
         predicates[snake(label)] = {
             "description": f"{label} ({pid})",
             "domain": domain,
             "range": TYPES.get(tail, "string"),
             "aliases": [label],
+            # The paper's ranked property generation: how often the relation is
+            # used, log-scaled, so a type's snippet leads with what it mostly has.
+            "importance": round(0.05 + 0.95 * math.log1p(seen) / math.log1p(most), 4),
         }
     return {
         "name": "redocred",
@@ -321,21 +331,30 @@ def run(prepared: str | Path) -> StageReport:
     folder = Path(prepared)
     meta = json.loads((folder / "dataset.json").read_text(encoding="utf-8"))
     gold = read_jsonl(folder / "gold.jsonl")
-    return score_run(ablate(load_config(folder / "odke.json")), gold, meta)
+    return score_run(ablate(load_config(folder / "odke.json")), gold, meta, save_to=folder)
 
 
 def score_run(
-    ablation: AblationRun, gold: Sequence[Mapping[str, Any]], meta: Mapping[str, Any]
+    ablation: AblationRun,
+    gold: Sequence[Mapping[str, Any]],
+    meta: Mapping[str, Any],
+    *,
+    save_to: Path | None = None,
 ) -> StageReport:
     """Score an `AblationRun` already made — `run` without the model calls."""
     labels: Mapping[str, str] = meta["relation_labels"]
     names = doc_names(ablation.documents)
     rows = []
     scored: dict[str, dict[str, Metric]] = {}
+    predictions = {}
     for name, facts, calls in ablation.configurations():
-        metrics = score(gold, triples_by_doc(facts, names, lambda p: labels.get(p, p)))
+        predicted = triples_by_doc(facts, names, lambda p: labels.get(p, p))
+        predictions[name] = predicted
+        metrics = score(gold, predicted)
         scored[name] = metrics
         rows.append((name, metrics, calls, len(facts)))
+    if save_to is not None:
+        save_predictions(save_to, predictions)
     raw, gated, full = (scored[n] for n, _, _ in ablation.configurations())
     before = float(raw["hallucinated_triples"] or 0)
     after = float(gated["hallucinated_triples"] or 0)

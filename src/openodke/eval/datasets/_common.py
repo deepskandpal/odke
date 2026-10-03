@@ -106,7 +106,8 @@ def run_config(
     """The run config a prepared dataset ships: text in, nothing written out.
 
     No chunker, so each document reaches the extractor whole — the paper's unit
-    is a page. `paper=True` is ODKE+'s own grounder and gate: the whole context,
+    is a page — and no value normalizer, so values stay in the words the gold
+    uses. `paper=True` is ODKE+'s own grounder and gate: the whole context,
     True or False, and only affirmed facts kept.
     """
     grounder: dict[str, Any] = {"use": "llm"}
@@ -122,7 +123,10 @@ def run_config(
             # round Anthropic's grammar limits on a typed multi-type schema.
             "extractor": {"use": "llm", "structured": False},
             "grounder": grounder,
-            "normalizer": "value",
+            # No value normalizer: both datasets' gold is in the source's own words,
+            # and "13 March 1963" rewritten to "1963-03-13" scores as wrong. The
+            # corroborator still merges, scores and gates. (The paper's corroborator
+            # does normalise; on these datasets that would only measure the scorer.)
             "corroborator": "signature",
             "scorer": "evidence",
             "validator": validator,
@@ -210,6 +214,20 @@ def verdicts(facts: Iterable[Fact]) -> str:
     counts = Counter(f.verdict.value for f in facts)
     order = ("supported", "not_found", "contradicted", "unchecked")
     return ", ".join(f"{v} {counts.get(v, 0)}" for v in order)
+
+
+def save_predictions(folder: Path, predicted: Mapping[str, Mapping[str, Sequence[Triple]]]) -> None:
+    """`folder/predictions/<row>.jsonl`: each document's triples, per configuration.
+
+    What an audit reads: a precision is only an error rate once someone has looked
+    at the "false positives" the gold missed.
+    """
+    for row, by_doc in predicted.items():
+        slug = re.sub(r"[^a-z0-9]+", "-", row.lower()).strip("-")
+        rows = [
+            {"id": doc, "triples": [list(t) for t in triples]} for doc, triples in by_doc.items()
+        ]
+        write_jsonl(folder / "predictions" / f"{slug}.jsonl", rows)
 
 
 def change(before: float, after: float) -> str:

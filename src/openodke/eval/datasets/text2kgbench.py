@@ -43,6 +43,7 @@ from openodke.eval.datasets._common import (
     read_jsonl,
     report,
     run_config,
+    save_predictions,
     snake,
     triples_by_doc,
     verdicts,
@@ -339,7 +340,7 @@ def run(prepared: str | Path, *, hallucination: bool = True) -> StageReport:
     meta = json.loads((folder / "dataset.json").read_text(encoding="utf-8"))
     gold = read_jsonl(folder / "gold.jsonl")
     ablation = ablate(load_config(folder / "odke.json"))
-    return score_run(ablation, gold, meta, hallucination=hallucination)
+    return score_run(ablation, gold, meta, hallucination=hallucination, save_to=folder)
 
 
 def score_run(
@@ -348,17 +349,22 @@ def score_run(
     meta: Mapping[str, Any],
     *,
     hallucination: bool = True,
+    save_to: Path | None = None,
 ) -> StageReport:
     """Score an `AblationRun` already made — `run` without the model calls."""
     labels: Mapping[str, str] = meta["relation_labels"]
     names = doc_names(ablation.documents)
     rows = []
     scored: dict[str, dict[str, Metric]] = {}
+    predictions = {}
     for name, facts, calls in ablation.configurations():
         predicted = triples_by_doc(facts, names, lambda p: labels.get(p, p))
+        predictions[name] = predicted
         metrics = score(gold, predicted, meta["ontology"], hallucination=hallucination)
         scored[name] = metrics
         rows.append((name, metrics, calls, len(facts)))
+    if save_to is not None:
+        save_predictions(save_to, predictions)
     return report(f"{NAME}:{meta['ontology_id']}", len(gold), rows, _notes(scored, ablation))
 
 
