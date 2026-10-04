@@ -27,7 +27,7 @@ from statistics import median, quantiles
 
 from openodke.eval.formats import load_jsonl
 from openodke.eval.report import Metric, StageReport, ratio
-from openodke.types import Fact, GroundingVerdict, KnowledgeGraph
+from openodke.types import Fact, GroundingVerdict, KnowledgeGraph, SpanOrigin
 
 # The order the report reads in: what grounding kept, what it rejected, and
 # what it never saw.
@@ -44,7 +44,9 @@ odke eval spans --facts FACTS
 
 Needs no labelled data — the only evaluator here that does not. It reads a
 run's facts and reports span width split by the grounder's verdict: count,
-median, quartiles, min and max, plus the share of facts citing no span at all.
+median, quartiles, min and max, plus the share of facts citing no span of their
+own (a fact grounded against its whole text, because its extractor cited
+nothing, is one of those).
 Where the not_found widths sit below the supported ones, the not_found rate is
 a proxy for citation quality with no gold set: a citation too narrow to carry
 its claim is grounded away, and the grounder reports that error for free.
@@ -59,10 +61,14 @@ def span_width(fact: Fact) -> int | None:
     The first evidence carrying a span, because that is the one the grounder
     reads: `Evidence.span`, never a narrower mention span beside it, since a
     mention is what a highlight points at and not what grounding is asked
-    about. A fact citing a document and no offsets has no width.
+    about. A fact citing a document and no offsets has no width, and neither
+    does one whose span is only the text it came from (`SpanOrigin.CONTEXT`):
+    nobody chose that span, so its width says nothing about a citation.
     """
-    span = next((e.span for e in fact.evidence if e.span is not None), None)
-    return span.end - span.start if span is not None else None
+    evidence = next((e for e in fact.evidence if e.span is not None), None)
+    if evidence is None or evidence.span is None or evidence.span_origin is SpanOrigin.CONTEXT:
+        return None
+    return evidence.span.end - evidence.span.start
 
 
 def load_facts(path: str | Path) -> list[Fact]:
@@ -172,7 +178,7 @@ def _notes(
         )
     notes = [first]
     if no_span:
-        notes.append(f"{no_span} of {n} fact(s) cite no span at all and have no width")
+        notes.append(f"{no_span} of {n} fact(s) cite no span of their own and have no width")
     notes.append(
         "no labels were used: these are the grounder's own verdicts, so the gap is a "
         "diagnostic of the citations and not a score of the facts"

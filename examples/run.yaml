@@ -54,7 +54,7 @@ stages:
   # loader:       directory (the default for bare input paths)
   chunker: {use: sentence, max_words: 120}       # or passthrough: one chunk per document
   # router:       passthrough — or your own, to skip marketing and policy text
-  extractor:                                     # required; pattern, llm or hybrid
+  extractor:                                     # required; pattern, llm, hybrid or triples
     use: hybrid
     llm: {snippet_limit: 25, repairs: 1}         # options for the model path, or false
     pattern: {}                                  # e.g. mappings: [{subject_type: ..., predicates: {...}}]

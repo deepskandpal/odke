@@ -9,6 +9,18 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **The triples input format (#95).** Any extractor's output, one triple per
+  JSON Lines row, checked by openodke: `openodke.interop` has `TripleRow`, the
+  format; `read_triples`; `to_fact`; and `TriplesExtractor`, the extract stage
+  that replays them, named `triples` in `odke run`. A row with offsets or a
+  quote is a citation. A row with neither is grounded against its whole text,
+  so extractors that cite nothing (LangChain's `LLMGraphTransformer`,
+  neo4j-graphrag) can be checked too. Documented in `docs/triples.md`, with a
+  worked example in `examples/triples/`.
+- `Evidence.span_origin` (`cited`, `located` or `context`) says who chose a
+  span. `odke eval spans` no longer counts a whole-text stand-in as a citation.
+  It defaults to `cited`, so facts written before it load as they were
+  (DECISIONS #25).
 - **Paper mode for the grounder.** `LLMGrounder(context="document",
   verdicts="binary")` asks about the whole document with the ODKE+ paper's own
   prompt and `<subject, predicate, object>` triple, reading True as `supported`

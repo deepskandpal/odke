@@ -423,3 +423,34 @@ Nothing is removed, so it is not a reason for a major version.
 
 The multi-source benchmark and the refusal audit exist to settle both. The
 README says so until they do.
+
+### 25. A span says who chose it
+
+Most extractors outside this package cite nothing. LangChain's
+`LLMGraphTransformer` and neo4j-graphrag emit bare triples. The layer still has
+to ground them (#24), and the free span check refuses a fact with no located
+span. So a triple with no citation is given the whole text it came from as its
+span. That is what the ODKE+ grounder reads anyway: the whole context against
+one triple.
+
+But that span is not a citation, and nothing on `Evidence` could say so. Left
+unmarked, `odke eval spans` would count every uncited fact as one very wide,
+well-supported citation, and the width diagnostic (#23) would drift towards
+"citations are fine" in exact proportion to how little the extractor cited.
+
+So `Evidence.span_origin` records who chose the span:
+- `cited`: the extractor chose it;
+- `located`: openodke found it for a fact that cited nothing, which is the span
+  locator (issue #112);
+- `context`: nobody chose it, and it is the text the fact came from.
+
+The grounder reads every kind the same way. Only the diagnostics, and a reader,
+need to tell them apart.
+
+It is a field, not a qualifier, because it describes the evidence and not the
+claim. A fact merged from two sources can hold one cited span and one context
+span.
+
+*Cost:* one more optional field on a frozen model. It defaults to `cited`,
+because every extractor in this package cites, so a fact serialised by 0.2.x
+loads as exactly what it was.

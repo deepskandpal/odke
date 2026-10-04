@@ -70,6 +70,7 @@ nav:
       - "Loading, validating, importing": ontology.md
       - Inference: inference.md
   - "Loaders & extraction": loaders-and-extraction.md
+  - "Triples from any extractor": triples.md
   - Grounding: grounding.md
   - "Resolution & corroboration": resolution-and-corroboration.md
   - Sinks:

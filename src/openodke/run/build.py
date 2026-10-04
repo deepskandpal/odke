@@ -42,6 +42,7 @@ from openodke.corroborate import (
 from openodke.eval.cost import CostMeter
 from openodke.extract import HybridExtractor, LLMExtractor, PatternExtractor, RecordMapping
 from openodke.ground import LLMGrounder, RetryPolicy, SpanGrounder
+from openodke.interop import TriplesExtractor
 from openodke.llm.base import LLMClient
 from openodke.llm.registry import resolve as resolve_client
 from openodke.llm.roles import ModelRoles
@@ -296,6 +297,22 @@ def _llm_extractor(options: dict[str, Any], ctx: Context, where: str) -> LLMExtr
     return extractor
 
 
+def _triples(options: dict[str, Any], ctx: Context, where: str) -> TriplesExtractor:
+    if "triples" in options:
+        raise ConfigError(f"{where}.triples: name the file with path")
+    path = options.get("path")
+    if not isinstance(path, str):
+        raise ConfigError(f"{where}.path: the JSON Lines file of triples to replay")
+    rest = {k: v for k, v in options.items() if k != "path"}
+    triples: TriplesExtractor = construct(
+        TriplesExtractor,
+        {**rest, "triples": ctx.config.resolve(path)},
+        where,
+        reserved=("documents",),
+    )
+    return triples
+
+
 def _hybrid(options: dict[str, Any], ctx: Context, where: str) -> HybridExtractor:
     unknown = sorted(set(options) - {"llm", "pattern"})
     if unknown:
@@ -376,7 +393,12 @@ BUILTINS: dict[str, dict[str, Factory]] = {
     },
     "chunker": {"sentence": _plain(SentenceChunker)},
     "router": {},
-    "extractor": {"pattern": _pattern, "llm": _llm_extractor, "hybrid": _hybrid},
+    "extractor": {
+        "pattern": _pattern,
+        "llm": _llm_extractor,
+        "hybrid": _hybrid,
+        "triples": _triples,
+    },
     "grounder": {"span": _plain(SpanGrounder), "llm": _llm_grounder},
     "normalizer": {"value": _with_ontology(ValueNormalizer)},
     "resolver": {"native": _plain(NativeResolver)},
