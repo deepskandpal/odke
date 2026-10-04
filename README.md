@@ -4,25 +4,28 @@ An open implementation of ODKE+ (Apple, [arXiv:2509.04696](https://arxiv.org/abs
 
 [PyPI](https://pypi.org/project/openodke/) · [Documentation](https://openodke.dev/) · [Changelog](CHANGELOG.md) — `pip install openodke`
 
-**The seam between text and any graph store.** openodke turns documents — prose,
-tables, records — into a knowledge graph held to your ontology, and writes it to
-Neo4j, to JSON Lines, or to a store of your own. It is the only pipeline that
-asks a second model whether the cited span supports the claim, and records the
-verdict on every fact.
+<!-- TAGLINE: the maintainer's to write (DECISIONS #24, #100). It replaces the bold sentence below. -->
+**The verification layer between any extractor and your graph store.** It doesn't
+matter what produced your triples: LangChain's `LLMGraphTransformer`,
+neo4j-graphrag, LangExtract, patterns over a table, or openodke's own extractor.
+openodke checks each fact against the text it came from, links its entities,
+counts the independent sources behind it and measures the result. Then it writes
+the graph to Neo4j, RDF or JSON Lines with the evidence attached.
 
 Every fact carries the document, the character span, the source tier and the
-grounding verdict that produced it, so *why is this edge in my graph?* is a query,
-not an investigation.
+grounding verdict, so *why is this edge in my graph?* is a query, not an
+investigation.
 
-> **Status: 0.2.1, on [PyPI](https://pypi.org/project/openodke/).** Every
-> milestone in [ROADMAP.md](ROADMAP.md) has shipped: the data model, ontology
-> I/O, import and inference, loaders (text, Markdown, records, HTML, PDF, DOCX)
-> and extraction, grounding and corroboration, the Neo4j, RDF, NetworkX and bulk
-> sinks, `odke run`, and the evaluation harness. 0.1.1 came out of the first use
-> by someone who had not written it: the extractor now cites the clause that
-> supports a claim rather than the bare mention, empty extractions are counted
-> instead of silent, `odke eval spans` scores citation width, and confidence
-> follows the grounding verdict. See [CHANGELOG.md](CHANGELOG.md).
+> **Status: 0.2.1 on [PyPI](https://pypi.org/project/openodke/); 0.3.0 in
+> progress.** The direction changed in October 2026
+> ([DECISIONS #24](DECISIONS.md)). In the first public benchmark, openodke's
+> grounder removed 13–19% of the wrong triples three different extractors wrote
+> from documents, while openodke's own extractor trailed LangChain's on recall.
+>
+> What ships today runs the layer in two places: inside openodke's own pipeline
+> (`odke run`), and over other libraries' triples through the scripts in
+> [`bench/`](bench/README.md). The adapters and the `odke ground` command, which
+> make it one step on any graph, are 0.3.0 work. See [ROADMAP.md](ROADMAP.md).
 
 ## Quickstart
 
@@ -78,7 +81,8 @@ labelled facts:
 The responses and the labels were written for the example, so the table shows
 what the harness reports, not how well any model does. On that fixture,
 grounding caught one of four wrong candidates, and normalisation did more for
-precision than grounding. No number from real model runs exists yet. The paper's
+precision than grounding. Real-model numbers from public datasets are in
+[DECISIONS #24](DECISIONS.md), and [#104](https://github.com/deepskandpal/odke/issues/104) will publish them in full. The paper's
 98.8% is neither reproduced nor claimed. [What the example shows, and does not](examples/e2e/README.md#5-the-ablation-on-this-example).
 
 The harness is the point: run the same command on a slice of your own corpus
