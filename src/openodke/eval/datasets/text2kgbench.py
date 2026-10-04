@@ -221,7 +221,12 @@ def prepare(
     )
     write_json(
         target / "odke.json",
-        run_config(extract_model=extract_model, ground_model=ground_model, paper=paper),
+        run_config(
+            extract_model=extract_model,
+            ground_model=ground_model,
+            paper=paper,
+            relations=len(ontology["predicates"]),
+        ),
     )
     return target
 

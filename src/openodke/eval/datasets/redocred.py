@@ -183,8 +183,8 @@ def to_ontology(documents: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     tail type it was seen with most. TIME and NUM ranges become date and number
     literals. A relation never seen keeps an open domain and a string range.
     Importance is how often it was seen, log-scaled — the paper's ranked property
-    generation — so a type's 25-predicate snippet keeps its most used relations
-    rather than the first 25 alphabetically.
+    generation — so a type's snippet leads with its most used relations. The run
+    config shows the extractor all of them (`snippet_limit`), as the competitors are.
     """
     heads: dict[str, Counter[str]] = {r: Counter() for r in RELATIONS}
     tails: dict[str, Counter[str]] = {r: Counter() for r in RELATIONS}
@@ -260,7 +260,12 @@ def prepare(
     )
     write_json(
         target / "odke.json",
-        run_config(extract_model=extract_model, ground_model=ground_model, paper=paper),
+        run_config(
+            extract_model=extract_model,
+            ground_model=ground_model,
+            paper=paper,
+            relations=len(RELATIONS),
+        ),
     )
     return target
 

@@ -21,6 +21,9 @@ All notable changes to this project are documented here. The format follows
   published numbers beside yours. `openodke.eval.datasets` is the Python side;
   `score` takes triples from any system. The `bench` extra adds NLTK for
   Text2KGBench's hallucination metrics.
+- Prepared bench configs show the extractor the whole ontology (`snippet_limit`
+  set to its size), not the default 25-predicate snippet, so a comparison with
+  a system given the dataset's schema is like for like.
 - `openodke.eval.ablation.ablate` returns the three configurations' facts before
   anything scores them; `run_ablation` is now that plus your labels.
 - `odke bench` saves each run's predicted triples per configuration under

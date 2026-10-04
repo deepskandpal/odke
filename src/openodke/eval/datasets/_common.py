@@ -102,13 +102,16 @@ def run_config(
     extract_model: str | None,
     ground_model: str | None,
     paper: bool,
+    relations: int,
 ) -> dict[str, Any]:
     """The run config a prepared dataset ships: text in, nothing written out.
 
     No chunker, so each document reaches the extractor whole — the paper's unit
     is a page — and no value normalizer, so values stay in the words the gold
     uses. `paper=True` is ODKE+'s own grounder and gate: the whole context,
-    True or False, and only affirmed facts kept.
+    True or False, and only affirmed facts kept. `relations` is the ontology's
+    size: the extractor is shown every relation a type can take, as a
+    competitor given the same schema is, not the default 25-predicate snippet.
     """
     grounder: dict[str, Any] = {"use": "llm"}
     validator: dict[str, Any] = {"use": "verdict"}
@@ -121,7 +124,7 @@ def run_config(
         "stages": {
             # No response schema, as the paper prompts (App. A); also the way
             # round Anthropic's grammar limits on a typed multi-type schema.
-            "extractor": {"use": "llm", "structured": False},
+            "extractor": {"use": "llm", "structured": False, "snippet_limit": relations},
             "grounder": grounder,
             # No value normalizer: both datasets' gold is in the source's own words,
             # and "13 March 1963" rewritten to "1963-03-13" scores as wrong. The
