@@ -357,3 +357,69 @@ unworkable.
 citation means. A fact serialised by 0.1.0 still loads and still grounds exactly
 as it did, because `mention` defaults to `None` — but its `span` is a bare
 mention, and no migration can widen it after the fact.
+
+### 24. openodke is the verification layer between any extractor and the store
+
+Until 0.2.x the package led with extraction (*text in, a grounded graph out*)
+and treated other extractors' output as on-ramps into its own pipeline. The
+first public benchmark (PR #105) changed that. It ran on Text2KGBench and
+Re-DocRED, with the same model and schema for every system. The extraction half
+is not where openodke is strongest; the checking half is.
+
+- **openodke's extractor trailed LangChain's LLMGraphTransformer on recall and
+  F1:** 14.4% against 25.1% recall on Re-DocRED, and 42.4 against 47.3 F1 on
+  Text2KGBench. On documents it was the most precise system, and it found the
+  fewest facts.
+- **The grounder ran unchanged over two other libraries' triples.** On documents
+  it removed 13–19% of every system's wrong triples, at a tenth to a fifth of
+  what extraction cost.
+- **LLMGraphTransformer followed by openodke's grounder gave the best
+  precision–recall balance measured:** 60.2% precision at 24.0% recall.
+
+So the package becomes the piece between an extractor and the graph store. The
+extractor can be a model, patterns, both, or openodke's own. The layer grounds,
+resolves, corroborates and evaluates. It also reconciles: the corroborator owns
+each fact's support, so when a source changes or disappears, it retracts that
+source and retires the facts left with none. Grounding and corroboration are
+ODKE+'s own stages, so the name keeps its meaning (#22).
+
+Four calls come with it.
+
+**Resolution is in, and limited.** Corroboration counts sources per fact
+signature, and a signature is only as good as its entity keys; without
+resolution no claim ever repeats. So resolution stays, with limits:
+- it works within a batch, and against what the store already holds through a
+  lookup rather than a loaded copy;
+- it matches within one type only;
+- on proof, the incoming fact takes the store's key; anything weaker is a link
+  (#16);
+- there is no learned linker to external identifiers.
+
+**Retrieval is out.** It happens at question time, for different users, with a
+different measure of success, and the space is crowded. The layer's part in it
+is provenance: every fact keeps the evidence it was checked against, so any
+retriever can cite it.
+
+**The extractor stays, as a reference.** `LLMExtractor`, `PatternExtractor` and
+`HybridExtractor` keep working and keep getting bug fixes, so someone with no
+extractor still has *text in, verified graph out*. Work that would extend them
+(enumeration recall, coverage, cross-sentence evidence) is parked. Grounded
+retry comes back as a hook that hands a refusal to whichever extractor produced
+the fact.
+
+**Scope is capped.** There are two pushes: the layer (0.3.0), then the numbers
+(0.5.0), which show every extractor with and without the layer, losses included.
+Resolution, support lists and the reconciler (0.4.0) are built as far as those
+numbers need, and no further.
+
+The published 0.2.x API does not change for this; only the emphasis does.
+Nothing is removed, so it is not a reason for a major version.
+
+*Cost:* the package now leads with a claim the experiment only partly supports.
+- **Grounding helped on documents,** but on single sentences it removed more
+  facts the gold called right than wrong.
+- **Corroboration has not been measured at all,** because every fact in both
+  datasets has one source.
+
+The multi-source benchmark and the refusal audit exist to settle both. The
+README says so until they do.
