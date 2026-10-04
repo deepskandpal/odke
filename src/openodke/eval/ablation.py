@@ -30,9 +30,10 @@ from __future__ import annotations
 
 import math
 from collections.abc import Collection, Iterable, Sequence
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from openodke.eval.cost import StageCost
+from openodke.eval.cost import CallRecord, StageCost
 from openodke.eval.extraction import evaluate_extraction, match_extraction
 from openodke.eval.formats import GoldFact, GroundingLabel
 from openodke.eval.grounding import DROPPED, grounding_ablation
@@ -111,8 +112,38 @@ def per_document(facts: Iterable[Fact]) -> list[Fact]:
     return out
 
 
-def run_ablation(config: RunConfig, gold: Sequence[GoldFact]) -> StageReport:
-    """The three configurations of `config`, scored against `gold`. Writes nothing."""
+@dataclass(frozen=True)
+class AblationRun:
+    """The three configurations' facts, before anything scores them.
+
+    `run_ablation` scores them against your `GoldFact` labels; a public benchmark
+    scores the same three sets with its own metrics (`openodke.eval.datasets`).
+    `grounded` is every candidate with its verdict; `gated` is what the gate let
+    through, which is the "+ grounding" row.
+    """
+
+    documents: list[Document]
+    ontology: Ontology
+    candidates: list[Fact]
+    grounded: list[Fact]
+    gated: list[Fact]
+    corroborated: list[Fact]
+    extraction_calls: list[CallRecord]
+    all_calls: list[CallRecord]
+    gate: Any
+    notes: list[str] = field(default_factory=list)
+
+    def configurations(self) -> list[tuple[str, list[Fact], list[CallRecord]]]:
+        """Each configuration's name, its facts, and the calls it took to get them."""
+        return [
+            (EXTRACTION, self.candidates, self.extraction_calls),
+            (GROUNDING, self.gated, self.all_calls),
+            (CORROBORATION, self.corroborated, self.all_calls),
+        ]
+
+
+def ablate(config: RunConfig) -> AblationRun:
+    """Run `config` three ways and keep the facts. Extraction and grounding run once."""
     # Imported here: `openodke.run` imports `openodke.eval.cost`, and so this package.
     from openodke.run.build import build
     from openodke.run.execute import register_documents
@@ -149,13 +180,28 @@ def run_ablation(config: RunConfig, gold: Sequence[GoldFact]) -> StageReport:
         extractor=_Replaying(recording.found), grounder=_Stamped(grounded), validator=gate
     )
     corroborated = list(full.run(docs).facts)
+    return AblationRun(
+        documents=list(docs),
+        ontology=ontology,
+        candidates=candidates,
+        grounded=grounded,
+        gated=gated,
+        corroborated=corroborated,
+        extraction_calls=extraction_calls,
+        all_calls=all_calls,
+        gate=gate,
+        notes=notes,
+    )
+
+
+def run_ablation(config: RunConfig, gold: Sequence[GoldFact]) -> StageReport:
+    """The three configurations of `config`, scored against `gold`. Writes nothing."""
+    run = ablate(config)
+    notes = list(run.notes)
+    candidates, grounded, docs, gate = run.candidates, run.grounded, run.documents, run.gate
 
     breakdown: dict[str, dict[str, Metric]] = {}
-    for name, facts, calls in (
-        (EXTRACTION, candidates, extraction_calls),
-        (GROUNDING, gated, all_calls),
-        (CORROBORATION, corroborated, all_calls),
-    ):
+    for name, facts, calls in run.configurations():
         scored = evaluate_extraction(gold, per_document(facts))
         cost = StageCost.of(name, calls)
         breakdown[name] = {
@@ -267,4 +313,4 @@ def _fmt(value: Metric) -> str:
     return "—" if value is None else f"{value:.3f}"
 
 
-__all__ = ["CONFIGURATIONS", "DESCRIPTION", "per_document", "run_ablation"]
+__all__ = ["CONFIGURATIONS", "DESCRIPTION", "AblationRun", "ablate", "per_document", "run_ablation"]

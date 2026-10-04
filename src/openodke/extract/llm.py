@@ -56,7 +56,8 @@ that supports the fact, not just the word naming the value; where one clause \
 states several facts, quote it in full for each and put the words that tell this \
 one apart in "mention". A fact whose quote is not in the passage is discarded. \
 Give "start", the character offset where the quote begins (the passage's first \
-character is 0), if you can.
+character is 0); your best count is fine. "mention" is "" when there is nothing \
+to tell the fact apart, and a qualifier the passage does not state is "".
 
 "polarity" is "denied" when the passage says the fact is not so, "partial" when \
 it holds only with a limitation the passage states, and "asserted" otherwise. \
@@ -132,27 +133,34 @@ def response_schema(snippets: Sequence[OntologySnippet]) -> dict[str, Any]:
         facts: list[dict[str, Any]] = []
         for predicate in snippet.predicates:
             value = values[predicate.name]
+            # Every key is required and none is nullable. Strict structured
+            # output caps both: Anthropic at 24 optional keys and 16 union-typed
+            # ones per schema, which a 15-predicate snippet passes at two or three
+            # per predicate; OpenAI's strict mode allows no optional key at all.
+            # So "nothing" is spelled "": the parser reads "" exactly as it reads
+            # a missing key, and `start` is a hint `_locate` checks, never trusts.
             properties: dict[str, Any] = {
                 "predicate": {"const": predicate.name},
                 "value": value["items"] if value.get("type") == "array" else value,
                 "quote": {"type": "string", "minLength": 1},
                 "start": {"type": "integer", "minimum": 0},
-                # The distinguishing words inside the quote. Optional: a clause
+                # The distinguishing words inside the quote, or "": a clause
                 # that states one fact has nothing to tell it apart from.
-                "mention": {"type": "string", "minLength": 1},
+                "mention": {"type": "string"},
                 "polarity": {"enum": [p.value for p in Polarity]},
             }
             if predicate.qualifiers:
                 properties["qualifiers"] = {
                     "type": "object",
                     "properties": {name: {"type": "string"} for name in predicate.qualifiers},
+                    "required": list(predicate.qualifiers),
                     "additionalProperties": False,
                 }
             facts.append(
                 {
                     "type": "object",
                     "properties": properties,
-                    "required": ["predicate", "value", "quote"],
+                    "required": list(properties),
                     "additionalProperties": False,
                 }
             )
@@ -190,6 +198,12 @@ class LLMExtractor:
     prompt, then is recorded as a rejection rather than raised — one bad reply
     should not end a ten-thousand-chunk run. Provider errors still raise.
 
+    `structured=False` sends no response schema: the model is held to the JSON
+    shape by the prompt alone, and the parser and repair loop do the rest. That
+    is how the ODKE+ paper prompts (App. A), and the way round a provider's
+    grammar limits — Anthropic's structured output refuses the typed schema of
+    an ontology much past a dozen types.
+
     `confidence` is a prior, not a probability: the scorer calibrates it (M3).
     `calls`, `rejections`, `empty_extractions` and `malformed` accumulate across
     chunks, so cost, drop rate and silence are counts a caller can read after a
@@ -211,8 +225,10 @@ class LLMExtractor:
         snippet_limit: int = 25,
         confidence: float = 0.5,
         repairs: int = 1,
+        structured: bool = True,
     ) -> None:
         self.spec = spec if spec is not None else (roles or ModelRoles()).extract
+        self.structured = structured
         self._client = client
         self.types = list(types) if types is not None else None
         self.documents = index_documents(documents)
@@ -254,7 +270,7 @@ class LLMExtractor:
         snippets = self.snippets(ontology)
         if not snippets:
             return []
-        schema = response_schema(snippets)
+        schema = response_schema(snippets) if self.structured else None
         messages = self.messages(chunk, snippets)
         data: dict[str, Any] | None = None
         replies: list[str] = []
