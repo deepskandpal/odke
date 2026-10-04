@@ -7,8 +7,9 @@ openodke on the public datasets `odke bench` prepares.
 ## The comparison
 
 Three extractors on the same prepared sets — the same documents, whole; the same
-schema; the same model (`claude-sonnet-5-5`, 16,000 tokens of room); and each one
-run three ways:
+schema, every relation shown to every system; and the same model with the same
+output room, whichever LiteLLM model string the sets were prepared with — and
+each one run three ways:
 
 | Configuration | What it is |
 |---|---|
@@ -28,34 +29,52 @@ Both competitors are held to the schema the way LLMGraphTransformer's strict mod
 does it. Their triples reach openodke through `replay:Replayed`, an extractor stage
 that cites the whole document — they quote nothing — so grounding runs in the
 paper's own mode: the whole context, True or False, affirmed facts kept
-(`odke bench prepare --paper`; Haiku 4.5 grounds).
+(`odke bench prepare --paper`; the set's ground model grounds).
 
 Microsoft GraphRAG is not here: its extraction writes free-text entity and
 relationship descriptions for community summaries, with no ontology, so it cannot
 be scored against a dataset's relations without inventing a mapping.
 
-### Two shims
+### One model string for all three
 
-Claude Sonnet 5.5 answers with a thinking block before its text, and neither
-competitor reads that as shipped: neo4j-graphrag's `AnthropicLLM` reads only the
-first block and raises; LLMGraphTransformer without tool calling hands the block
-list to its JSON parser. `competitors.py` gives each the reply's text — nothing
-about what the model is asked changes. Tool calling is not an option on this
-model (forced `tool_choice` is refused), and both libraries' structured paths
-force it.
+openodke calls its model through LiteLLM, and so do the competitors here:
+LLMGraphTransformer gets a runnable that calls LiteLLM, neo4j-graphrag an
+`LLMInterface` that does. So any provider LiteLLM supports runs the whole
+comparison — `openai/…`, `anthropic/…`, `gemini/…`, `ollama/…` — and a reasoning
+model's thinking never reaches either library's parser: LiteLLM returns the
+reply's text. Nothing about what the model is asked changes. Both libraries run
+their prompt-and-parse paths, not their structured ones, which force a tool choice
+some reasoning models refuse.
 
 ## Running it
 
 ```bash
 uv venv --python 3.12 bench/.venv
 uv pip install --python bench/.venv/bin/python -e ".[llm,bench]" \
-    langchain-experimental langchain-anthropic "neo4j-graphrag[anthropic]"
+    langchain-experimental json-repair neo4j-graphrag
 
-# prepare sets with `odke bench prepare ... --paper` under $CMP/t2k/ont_* and $CMP/redocred
+# prepare the sets under $CMP/t2k/ont_* and $CMP/redocred, naming the models once:
+odke bench prepare text2kgbench data/t2k --ontology ont_1_movie --out "$CMP/t2k/ont_1_movie" \
+    --extract-model openai/gpt-5 --ground-model openai/gpt-5-mini --paper
+# (a model with a smaller output cap: add --max-tokens 4000)
+
 CMP=runs/cmp bench/run_all.sh          # openodke + both competitors, then verification
-python bench/tables.py runs/cmp        # the tables
+python bench/tables.py runs/cmp        # the tables, priced from LiteLLM's table
+
+# a smoke test of one competitor on three documents:
+bench/.venv/bin/python bench/competitors.py extract lgt "$CMP/t2k/ont_1_movie" --limit 3
 ```
 
-`ANTHROPIC_API_KEY` must be set. Each competitor directory keeps its triples
-(`facts.jsonl`), its token usage (`usage.json`) and its report; every run keeps
-its predictions per configuration (`predictions/`), which is what an audit reads.
+Keys come from the environment, under the names LiteLLM reads
+(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …); `ODKE_ENV_FILE`, or `--env-file` on
+`competitors.py`, names a file of `KEY=value` lines to load first. `--model` on
+`competitors.py` overrides the set's extraction model, for a deliberate
+cross-model comparison.
+
+Each competitor directory keeps its triples (`facts.jsonl`), its model and token
+usage (`usage.json`) and its report; every run keeps its predictions per
+configuration (`predictions/`), which is what an audit reads.
+
+The published comparison (PR #105) ran on `anthropic/claude-sonnet-5-5`
+extracting and `anthropic/claude-haiku-4-5` grounding. No other provider has run
+it end to end yet.

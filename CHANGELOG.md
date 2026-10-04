@@ -21,6 +21,11 @@ All notable changes to this project are documented here. The format follows
   published numbers beside yours. `openodke.eval.datasets` is the Python side;
   `score` takes triples from any system. The `bench` extra adds NLTK for
   Text2KGBench's hallucination metrics.
+- `odke bench prepare --max-tokens` sets the extractor's output room (16,000 by
+  default), for a model whose output cap is smaller.
+- The comparison harness in `bench/` is provider-neutral: both competitors call
+  their model through LiteLLM, as openodke does, so one model string — the set's
+  `--extract-model` — runs all three, and costs come from LiteLLM's price table.
 - Prepared bench configs show the extractor the whole ontology (`snippet_limit`
   set to its size), not the default 25-predicate snippet, so a comparison with
   a system given the dataset's schema is like for like.

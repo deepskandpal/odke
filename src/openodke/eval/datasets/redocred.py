@@ -237,6 +237,7 @@ def prepare(
     extract_model: str | None = None,
     ground_model: str | None = None,
     paper: bool = False,
+    max_tokens: int = 16000,
 ) -> Path:
     """A runnable directory for `split`: `out/docs/`, `ontology.json`, `gold.jsonl`, `odke.json`."""
     base = Path(root)
@@ -265,6 +266,7 @@ def prepare(
             ground_model=ground_model,
             paper=paper,
             relations=len(RELATIONS),
+            max_tokens=max_tokens,
         ),
     )
     return target

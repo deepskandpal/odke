@@ -2,9 +2,11 @@
 # The comparison: openodke and two competitors on every prepared set under $CMP,
 # then openodke's grounding and corroboration on each competitor's triples.
 #   CMP=/path/to/runs/cmp bench/run_all.sh
+# Every system uses the model each set was prepared with (`--extract-model`).
 set -u
 cd "$(dirname "$0")/.."
-[ -f /root/.config/odke-bench.env ] && { set -a; . /root/.config/odke-bench.env; set +a; }
+# Keys come from the environment; ODKE_ENV_FILE names a KEY=value file to load first.
+[ -n "${ODKE_ENV_FILE:-}" ] && [ -f "$ODKE_ENV_FILE" ] && { set -a; . "$ODKE_ENV_FILE"; set +a; }
 CMP=${CMP:?set CMP to the directory holding t2k/ont_* and redocred}
 dataset () { case "$1" in *redocred*) echo redocred ;; *) echo text2kgbench ;; esac; }
 odke_run () {

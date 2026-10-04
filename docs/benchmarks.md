@@ -33,6 +33,9 @@ odke bench run text2kgbench runs/movie
   `docs/` (one text file per document), `ontology.json` (the dataset's schema in
   openodke's form), `gold.jsonl`, `dataset.json` and `odke.json`, the run config.
   It calls no model. `--limit` keeps the first N documents for a cheap pilot.
+  `--extract-model` and `--ground-model` take any LiteLLM model string
+  (`openai/gpt-5`, `gemini/…`, `ollama/llama3.1`, `anthropic/…`); give the
+  grounder the smaller one. `--max-tokens` sets the extractor's output room.
   `--paper` configures [the paper's own grounder and gate](grounding.md#paper-mode-the-odke-grounder-as-written).
 - `run` runs the config three ways and prints the table; `--json` for the report.
   Each row carries calls and tokens; the notes give the grounder's verdicts on
@@ -41,7 +44,8 @@ odke bench run text2kgbench runs/movie
 
 The prepared config extracts with `structured: false` — no response schema, as
 the paper prompts — gives the extractor 16,000 tokens of room for a
-reasoning model's thinking, and sets `snippet_limit` to the ontology's size, so
+reasoning model's thinking (lower it with `--max-tokens` for a model whose
+output cap is smaller), and sets `snippet_limit` to the ontology's size, so
 every relation a type can take is in the prompt. The default snippet of 25 would
 hide most of Re-DocRED's 96 relations, and another system given the dataset's
 schema sees all of them.

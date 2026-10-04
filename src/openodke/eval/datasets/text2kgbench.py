@@ -188,6 +188,7 @@ def prepare(
     extract_model: str | None = None,
     ground_model: str | None = None,
     paper: bool = False,
+    max_tokens: int = 16000,
 ) -> Path:
     """A runnable directory for one ontology's test sentences.
 
@@ -226,6 +227,7 @@ def prepare(
             ground_model=ground_model,
             paper=paper,
             relations=len(ontology["predicates"]),
+            max_tokens=max_tokens,
         ),
     )
     return target

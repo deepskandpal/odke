@@ -103,6 +103,7 @@ def run_config(
     ground_model: str | None,
     paper: bool,
     relations: int,
+    max_tokens: int = 16000,
 ) -> dict[str, Any]:
     """The run config a prepared dataset ships: text in, nothing written out.
 
@@ -112,6 +113,8 @@ def run_config(
     True or False, and only affirmed facts kept. `relations` is the ontology's
     size: the extractor is shown every relation a type can take, as a
     competitor given the same schema is, not the default 25-predicate snippet.
+    `max_tokens` is the extractor's output room: 16,000 leaves a reasoning
+    model space to think; lower it for a model with a smaller output cap.
     """
     grounder: dict[str, Any] = {"use": "llm"}
     validator: dict[str, Any] = {"use": "verdict"}
@@ -139,7 +142,7 @@ def run_config(
     if extract_model:
         # Room for a reasoning model's thinking, which counts against max_tokens;
         # only the tokens used are billed.
-        models["extract"] = {"model": extract_model, "max_tokens": 16000}
+        models["extract"] = {"model": extract_model, "max_tokens": max_tokens}
     if ground_model:
         models["ground"] = ground_model
     if models:

@@ -3,8 +3,9 @@
     python bench/tables.py /path/to/runs/cmp
 
 Text2KGBench rows average the per-ontology scores (each ontology has the same
-number of sentences); counts are summed. Costs are at list price per million
-tokens: Sonnet 5.5 extracting ($2 in, $10 out) and Haiku 4.5 grounding ($1, $5).
+number of sentences); counts are summed. Costs are at list price, from LiteLLM's
+price table for whichever models each set ran (its `odke.json`, and a competitor's
+`usage.json`); a model LiteLLM has no price for shows its tokens instead.
 """
 
 from __future__ import annotations
@@ -21,7 +22,6 @@ SYSTEMS = (
     ("LLMGraphTransformer", "competitors/lgt"),
     ("neo4j-graphrag", "competitors/neo4j"),
 )
-EXTRACT, GROUND = (2.0, 10.0), (1.0, 5.0)
 
 
 def load(path: Path) -> dict[str, Any] | None:
@@ -43,20 +43,58 @@ def rejected(report: dict[str, Any]) -> int:
     return int(found.group(1)) if found else 0
 
 
-def cost(report: dict[str, Any], folder: Path, system_dir: str) -> tuple[float, float]:
+def models(folder: Path) -> tuple[str | None, str | None]:
+    """The extraction and grounding model strings a set's config names."""
+    config = load(folder / "odke.json") or {}
+    spec = config.get("models", {})
+    extract = spec.get("extract")
+    if isinstance(extract, dict):
+        extract = extract.get("model")
+    ground = spec.get("ground")
+    if isinstance(ground, dict):
+        ground = ground.get("model")
+    return extract, ground
+
+
+def price(model: str | None, prompt: float, completion: float) -> float | None:
+    """List price of the tokens, from LiteLLM's table; None when it has no price."""
+    if not model or not (prompt or completion):
+        return 0.0 if model else None
+    try:
+        import litellm
+
+        p, c = litellm.cost_per_token(
+            model=model, prompt_tokens=int(prompt), completion_tokens=int(completion)
+        )
+    except Exception:
+        return None
+    return p + c
+
+
+def cost(
+    report: dict[str, Any], folder: Path, system_dir: str
+) -> tuple[float | None, float | None]:
     e, g = report["breakdown"][ROWS[0]], report["breakdown"][ROWS[1]]
+    extract_model, ground_model = models(folder)
     if system_dir:
         usage = load(folder / "usage.json") or {}
-        extract = (
-            usage.get("input_tokens", 0) * EXTRACT[0] / 1e6
-            + usage.get("output_tokens", 0) * EXTRACT[1] / 1e6
+        extract = price(
+            usage.get("model") or extract_model,
+            usage.get("input_tokens", 0),
+            usage.get("output_tokens", 0),
         )
     else:
-        extract = e["prompt_tokens"] * EXTRACT[0] / 1e6 + e["completion_tokens"] * EXTRACT[1] / 1e6
-    ground = (g["prompt_tokens"] - e["prompt_tokens"]) * GROUND[0] / 1e6 + (
-        g["completion_tokens"] - e["completion_tokens"]
-    ) * GROUND[1] / 1e6
+        extract = price(extract_model, e["prompt_tokens"], e["completion_tokens"])
+    ground = price(
+        ground_model,
+        g["prompt_tokens"] - e["prompt_tokens"],
+        g["completion_tokens"] - e["completion_tokens"],
+    )
     return extract, ground
+
+
+def dollars(values: list[float | None]) -> str:
+    return "n/a" if any(v is None for v in values) else f"${sum(v or 0 for v in values):.2f}"
 
 
 def pct(v: Any) -> str:
@@ -69,7 +107,7 @@ def table(title: str, sets: list[Path], keys: list[str], counts: list[str]) -> l
         "| System | Configuration | " + " | ".join(keys + counts) + " | rejected by grounder |"
     )
     out.append("|---" * (len(keys) + len(counts) + 3) + "|")
-    spend: dict[str, tuple[float, float]] = {}
+    spend: dict[str, tuple[str, str]] = {}
     for system, sub in SYSTEMS:
         reports = [(d / sub, r) for d in sets if (r := load(d / sub / "report.json")) is not None]
         if not reports:
@@ -91,7 +129,7 @@ def table(title: str, sets: list[Path], keys: list[str], counts: list[str]) -> l
                 + f" | {rej if row != ROWS[0] else '–'} |"
             )
         costs = [cost(r, f, sub) for f, r in reports]
-        spend[system] = (sum(c[0] for c in costs), sum(c[1] for c in costs))
+        spend[system] = (dollars([c[0] for c in costs]), dollars([c[1] for c in costs]))
         missing = len(sets) - len(reports)
         if missing:
             out.append(
@@ -100,8 +138,7 @@ def table(title: str, sets: list[Path], keys: list[str], counts: list[str]) -> l
             )
     out.append("")
     out.append(
-        "Cost: "
-        + "; ".join(f"{s} extraction ${e:.2f} + grounding ${g:.2f}" for s, (e, g) in spend.items())
+        "Cost: " + "; ".join(f"{s} extraction {e} + grounding {g}" for s, (e, g) in spend.items())
     )
     out.append("")
     return out

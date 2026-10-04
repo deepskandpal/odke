@@ -543,8 +543,17 @@ def bench_prepare(
     ),
     split: str = typer.Option("test", help="redocred only: dev, test or train."),
     limit: int | None = typer.Option(None, help="Keep the first N documents (a cheap pilot)."),
-    extract_model: str | None = typer.Option(None, "--extract-model", help="e.g. anthropic/..."),
-    ground_model: str | None = typer.Option(None, "--ground-model", help="e.g. anthropic/..."),
+    extract_model: str | None = typer.Option(
+        None,
+        "--extract-model",
+        help="Any LiteLLM model string: openai/gpt-5, anthropic/..., ollama/llama3.1.",
+    ),
+    ground_model: str | None = typer.Option(
+        None, "--ground-model", help="Any LiteLLM model string; a smaller one than the extractor."
+    ),
+    max_tokens: int = typer.Option(
+        16000, "--max-tokens", help="The extractor's output room; lower it for a small model."
+    ),
     paper: bool = typer.Option(
         False,
         "--paper",
@@ -553,7 +562,12 @@ def bench_prepare(
 ) -> None:
     """Write documents, ontology, gold and an `odke.json` run config. Calls no model."""
     module = _dataset(dataset)
-    models = {"extract_model": extract_model, "ground_model": ground_model, "paper": paper}
+    models = {
+        "extract_model": extract_model,
+        "ground_model": ground_model,
+        "paper": paper,
+        "max_tokens": max_tokens,
+    }
     try:
         if dataset == "text2kgbench":
             if ontology is None:
