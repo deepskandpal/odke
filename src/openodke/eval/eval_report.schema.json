@@ -49,8 +49,8 @@
       "items": {"type": "object"}
     },
     "comparison": {
-      "description": "Reserved for #142: this run against a baseline.",
-      "anyOf": [{"type": "null"}, {"type": "object"}]
+      "description": "This run against a baseline: odke eval compare's block, as --json prints it (#142).",
+      "anyOf": [{"type": "null"}, {"$ref": "#/$defs/comparison"}]
     },
     "calibration": {
       "type": "array",
@@ -231,6 +231,74 @@
         "hallucination": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/hallucination"}]},
         "cost": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/cost"}]},
         "latency": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/latency"}]}
+      }
+    },
+    "interval": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {"type": "number"}
+    },
+    "paired": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "a",
+        "b",
+        "difference",
+        "interval",
+        "a_interval",
+        "b_interval",
+        "flips",
+        "flip_share",
+        "detection_limit",
+        "verdict",
+        "level",
+        "resamples",
+        "seed"
+      ],
+      "properties": {
+        "items": {"$ref": "#/$defs/count"},
+        "a": {"type": "number"},
+        "b": {"type": "number"},
+        "difference": {"type": "number", "description": "B minus A."},
+        "interval": {"$ref": "#/$defs/interval"},
+        "a_interval": {"$ref": "#/$defs/interval"},
+        "b_interval": {"$ref": "#/$defs/interval"},
+        "flips": {"$ref": "#/$defs/count"},
+        "flip_share": {"type": "number"},
+        "detection_limit": {"type": ["number", "null"]},
+        "verdict": {"enum": ["better", "worse", "inconclusive"]},
+        "level": {"type": "number"},
+        "resamples": {"$ref": "#/$defs/count"},
+        "seed": {"type": "integer"}
+      }
+    },
+    "mcnemar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "gained", "lost", "p_value"],
+      "properties": {
+        "items": {"$ref": "#/$defs/count"},
+        "gained": {"$ref": "#/$defs/count"},
+        "lost": {"$ref": "#/$defs/count"},
+        "p_value": {"type": "number"}
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["a", "b", "unit", "metric", "primary", "guardrails", "mcnemar", "notes"],
+      "properties": {
+        "a": {"type": "string"},
+        "b": {"type": "string"},
+        "unit": {"enum": ["document", "item"]},
+        "metric": {"type": "string"},
+        "primary": {"$ref": "#/$defs/paired"},
+        "guardrails": {"type": "object", "additionalProperties": {"$ref": "#/$defs/paired"}},
+        "mcnemar": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/mcnemar"}]},
+        "notes": {"type": "array", "items": {"type": "string"}}
       }
     },
     "stage_report": {
