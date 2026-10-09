@@ -7,14 +7,28 @@ exceeded, none more may.
 
 from __future__ import annotations
 
+import json
 import math
 import threading
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from openodke.ground import is_transient
+from openodke import (
+    Chunk,
+    Document,
+    Entity,
+    Evidence,
+    Fact,
+    GroundingVerdict,
+    Ontology,
+    Pipeline,
+    Span,
+)
+from openodke.extract import LLMExtractor
+from openodke.ground import LLMGrounder, RetryPolicy, is_transient
 from openodke.llm import (
     Budget,
     BudgetExceeded,
@@ -22,13 +36,17 @@ from openodke.llm import (
     Completion,
     Ledger,
     Message,
+    ModelRoles,
     ModelSpec,
     ProviderError,
+    RecordedClient,
 )
 from openodke.llm.budget import estimate_tokens
+from openodke.sinks.jsonl import JsonlSink
 
 SPEC = ModelSpec(model="test/model", max_tokens=64)
 MESSAGES = [Message(role="system", content="Judge."), Message(content="Claim: x. Passage: y.")]
+ROLES = ModelRoles.single("test/model")
 
 
 class _Counting:
@@ -215,3 +233,123 @@ def test_a_cached_answer_costs_nothing_against_the_budget() -> None:
     for _ in range(5):
         client.complete(MESSAGES, spec=SPEC)
     assert inner.calls == ledger.spent.calls == 1
+
+
+# --------------------------------------------------------------------------- #
+# The pipeline keeps what it has
+# --------------------------------------------------------------------------- #
+
+
+def _documents(n: int) -> list[Document]:
+    return [Document(id=f"d{i}", text=f"Item {i} is numbered {i}.") for i in range(n)]
+
+
+def _fact(doc: Document) -> Fact:
+    span = Span(doc_id=doc.id, start=0, end=len(doc.text), quote=doc.text)
+    return Fact(
+        subject=Entity(key=f"item:{doc.id}", type="Thing", label=f"Item {doc.id}"),
+        predicate="numbered",
+        object_value=doc.id,
+        evidence=(Evidence(doc_id=doc.id, span=span),),
+    )
+
+
+class _Given:
+    """An extractor that hands back one fact per document, no model involved."""
+
+    def extract(self, chunk: Chunk, ontology: Ontology) -> list[Fact]:
+        return [_fact(Document(id=chunk.doc_id, text=chunk.text))]
+
+
+def test_a_stop_mid_grounding_keeps_every_verdict_and_counts_the_rest(tmp_path: Path) -> None:
+    docs = _documents(40)
+    inner = _Counting()
+    grounder = LLMGrounder(ROLES, client=Ledger(Budget(calls=17)).client(inner), max_workers=8)
+    kg = Pipeline(Ontology(), _Given(), grounder=grounder, sinks=[JsonlSink(tmp_path)]).run(docs)
+
+    # Thread pool or not, exactly the budget's calls went out.
+    assert inner.calls == 17
+    verdicts = [f.verdict for f in kg.facts]
+    assert verdicts.count(GroundingVerdict.SUPPORTED) == 17
+    assert verdicts.count(GroundingVerdict.UNCHECKED) == 23
+    stopped = kg.stats["stopped"]
+    assert (stopped["reason"], stopped["limit"], stopped["stage"]) == ("budget", "calls", "ground")
+    assert (stopped["unchecked"], stopped["unextracted"]) == (23, 0)
+    assert stopped["budget"] == {"calls": 17} and stopped["spent"]["calls"] == 17
+    assert grounder.stats["unasked"] == 23 and grounder.stats["failed"] == 0
+
+    # The sink wrote what was kept, and it reads back.
+    lines = (tmp_path / "facts.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len([json.loads(line) for line in lines]) == 40
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["stats"]["stopped"]["unchecked"] == 23
+
+
+def test_a_stop_mid_extraction_keeps_the_chunks_done_and_grounds_nothing_more(
+    people: Ontology,
+) -> None:
+    docs = [Document(id=f"d{i}", text=f"Person {i} was born in {1800 + i}.") for i in range(6)]
+    reply = {
+        "entities": [
+            {
+                "type": "Person",
+                "name": "Someone",
+                "facts": [{"predicate": "birth_date", "value": "1800", "quote": "was born in"}],
+            }
+        ]
+    }
+    inner = RecordedClient(
+        [
+            {"match": "Claim:", "response": {"verdict": "supported"}},
+            {"match": "born", "response": reply},
+        ]
+    )
+    ledger = Ledger(Budget(calls=2))
+    extractor = LLMExtractor(
+        client=ledger.client(inner), spec=SPEC, types=["Person"], max_workers=1
+    )
+    grounder = LLMGrounder(ROLES, client=ledger.client(inner))
+    kg = Pipeline(people, extractor, grounder=grounder).run(docs)
+
+    stopped = kg.stats["stopped"]
+    assert (stopped["stage"], stopped["unextracted"], stopped["unchecked"]) == ("extract", 4, 2)
+    assert len(inner.calls) == 2
+    assert [f.verdict for f in kg.facts] == [GroundingVerdict.UNCHECKED] * 2
+
+
+def test_the_extractor_s_pool_stops_at_the_budget_and_keeps_the_chunks_it_finished(
+    people: Ontology,
+) -> None:
+    chunks = [
+        Chunk(doc_id=f"d{i}", index=0, text=f"Person {i} was born in 18{i:02}.", start=0, end=27)
+        for i in range(20)
+    ]
+    inner = RecordedClient([{"match": "born", "response": {"entities": []}}])
+    extractor = LLMExtractor(
+        client=Ledger(Budget(calls=7)).client(inner), spec=SPEC, types=["Person"], max_workers=8
+    )
+    with pytest.raises(BudgetExceeded) as stopped:
+        extractor.extract_many(chunks, people)
+    partial = stopped.value.partial
+    assert len(inner.calls) == len(extractor.calls) == 7
+    assert sum(row is not None for row in partial) == 7 and len(partial) == 20
+
+
+def test_a_run_inside_its_budget_reports_no_stop() -> None:
+    docs = _documents(3)
+    grounder = LLMGrounder(ROLES, client=Ledger(Budget(calls=3)).client(_Counting()))
+    kg = Pipeline(Ontology(), _Given(), grounder=grounder).run(docs)
+    assert "stopped" not in kg.stats
+    assert {f.verdict for f in kg.facts} == {GroundingVerdict.SUPPORTED}
+
+
+def test_a_retry_policy_never_spends_a_stopped_budget() -> None:
+    inner = _Counting()
+    ledger = Ledger(Budget(calls=1))
+    grounder = LLMGrounder(
+        ROLES, client=ledger.client(inner), retry=RetryPolicy(attempts=5), sleep=lambda s: None
+    )
+    docs = _documents(3)
+    kg = Pipeline(Ontology(), _Given(), grounder=grounder).run(docs)
+    assert inner.calls == 1 and grounder.stats["retries"] == 0
+    assert kg.stats["stopped"]["unchecked"] == 2

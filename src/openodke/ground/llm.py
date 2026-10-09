@@ -43,6 +43,7 @@ from openodke.llm.base import (
     ModelSpec,
     ProviderNotInstalled,
 )
+from openodke.llm.budget import BudgetExceeded
 from openodke.llm.roles import ModelRoles
 from openodke.prompts import Prompt
 from openodke.prompts import get as get_prompt
@@ -236,6 +237,10 @@ class LLMGrounder:
     picks up, because a verdict already on a fact stands and costs no call. A
     missing key or adapter is not a provider failure but configuration: it fails
     every call alike, so it raises instead of leaving the whole run `UNCHECKED`.
+    So does a budget stop (`openodke.llm.budget`), once the batch has finished:
+    every fact the stop reached first stays `UNCHECKED`, is counted under
+    `"unasked"`, and the batch's facts go with the `BudgetExceeded` as its
+    `partial`.
 
     `locate=True` runs `SpanLocator` after the span check: a fact whose span is
     the whole text it came from (`SpanOrigin.CONTEXT`) is asked about the one
@@ -335,7 +340,11 @@ class LLMGrounder:
         must be thread-safe — both built-in clients are; `ScriptedClient`
         answers by position and is not, which is what `RecordedClient` is for.
         """
-        return self.ground_documents([(facts, doc)])[0]
+        try:
+            return self.ground_documents([(facts, doc)])[0]
+        except BudgetExceeded as stop:
+            stop.partial = stop.partial[0] if isinstance(stop.partial, list) else None
+            raise
 
     def ground_documents(
         self, batches: Sequence[tuple[Sequence[Fact], Document]]
@@ -356,15 +365,35 @@ class LLMGrounder:
                 if passage is not None:
                     pending.append((at, index, prepared, passage, doc))
             out.append(row)
+        stopped: list[BudgetExceeded] = []
         if len(pending) == 1:
             at, index, fact, passage, doc = pending[0]
-            out[at][index] = self._ask(fact, passage, doc)
+            try:
+                out[at][index] = self._ask(fact, passage, doc)
+            except BudgetExceeded as exc:
+                stopped.append(exc)
+                if isinstance(exc.partial, Fact):
+                    out[at][index] = exc.partial
         elif pending:
             workers = min(self.max_workers, len(pending))
             with ThreadPoolExecutor(workers, thread_name_prefix="openodke-ground") as pool:
                 futures = [(a, i, pool.submit(self._ask, f, p, d)) for a, i, f, p, d in pending]
                 for at, index, future in futures:
-                    out[at][index] = future.result()
+                    try:
+                        out[at][index] = future.result()
+                    except BudgetExceeded as exc:
+                        # The fact stays as the span check left it, UNCHECKED, and
+                        # the rest of the batch still finishes: a cached answer is
+                        # free, and every other call is refused without being made.
+                        stopped.append(exc)
+                        if isinstance(exc.partial, Fact):
+                            out[at][index] = exc.partial
+        if stopped:
+            # Facts the stop reached before their call: left UNCHECKED, and counted.
+            self._counts.bump("unasked", sum(not isinstance(e.partial, Fact) for e in stopped))
+            stop = stopped[0]
+            stop.partial = out
+            raise stop
         return out
 
     def _prepare(self, fact: Fact, doc: Document) -> tuple[Fact, str | None]:
@@ -393,7 +422,13 @@ class LLMGrounder:
         if verdict is None:
             return fact
         if verdict is GroundingVerdict.NOT_FOUND and self.widen:
-            retried = self._retry_wider(fact, doc)
+            try:
+                retried = self._retry_wider(fact, doc)
+            except BudgetExceeded as stop:
+                # The first answer was paid for: it stands, and the run still stops.
+                self._counts.bump(verdict.value)
+                stop.partial = fact.model_copy(update={"verdict": verdict})
+                raise
             if retried is not None:
                 return retried
         self._counts.bump(verdict.value)
@@ -451,9 +486,10 @@ class LLMGrounder:
                 sleep=self._sleep,
                 on_retry=on_retry,
             )
-        except (MissingAPIKey, ProviderNotInstalled):
+        except (MissingAPIKey, ProviderNotInstalled, BudgetExceeded):
             # Not one fact's problem: every call would fail the same way, and a
             # gate that accepts UNCHECKED would write the run as if it were checked.
+            # A budget stop is the run's, and the batch hands back what it finished.
             raise
         except Exception as exc:  # isolation: one failed call never fails the batch
             counts.bump("failed")
@@ -471,12 +507,23 @@ class LLMGrounder:
 
     def _complete(self, messages: list[Message], *, widened: bool = False) -> Completion:
         with self._slots:
-            self._counts.bump("calls")
-            if widened:
-                self._widened.bump("calls")
             schema = BINARY_SCHEMA if self.binary else GROUNDING_SCHEMA
             client = self.widen_client if widened else self.client
-            return client.complete(messages, spec=self.spec, schema=schema)
+            try:
+                completion = client.complete(messages, spec=self.spec, schema=schema)
+            except BudgetExceeded:
+                # Refused before it was made: not a call.
+                raise
+            except BaseException:
+                self._count_call(widened)
+                raise
+            self._count_call(widened)
+            return completion
+
+    def _count_call(self, widened: bool) -> None:
+        self._counts.bump("calls")
+        if widened:
+            self._widened.bump("calls")
 
     def _account(self, completion: Completion, *, widened: bool = False) -> None:
         for counts in (self._counts, self._widened) if widened else (self._counts,):

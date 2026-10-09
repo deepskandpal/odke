@@ -23,6 +23,12 @@ round, on the same evidence, marked `odke.derived` (DECISIONS #28). It is a
 step rather than a fourteenth stage, because the ontology decides everything it
 does; `inverses=False` turns it off.
 
+A budget stop (`openodke.llm.budget.BudgetExceeded`) ends the model calls,
+not the run. What was extracted and grounded before it is kept, a fact the stop
+reached first stays `UNCHECKED`, the deterministic stages run as usual, the
+sinks write, and `stats["stopped"]` says where and why. Any other error a stage
+raises still fails the run.
+
 Two of the thirteen stages are not on the `run()` path. `Constrainer` compiles
 the ontology into the store's own constraints and is exposed as `constraints()`
 for a sink to apply before its first write. `Inferrer` is a bootstrap, not a
@@ -32,6 +38,7 @@ in here.
 
 from __future__ import annotations
 
+import logging
 import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
@@ -40,6 +47,7 @@ from openodke._renamed import Renamed, deprecated, module_getattr
 from openodke.corroborate.inverses import partners
 from openodke.coverage import measure as measure_coverage
 from openodke.coverage import offered_by
+from openodke.llm.budget import BudgetExceeded
 from openodke.ontology import Ontology
 from openodke.reextract import Reextract, hook_for
 from openodke.reextract import reextract as reextract_gaps
@@ -70,7 +78,9 @@ from openodke.stages import (
     Scorer,
     Sink,
 )
-from openodke.types import Chunk, Document, Entity, Fact, KnowledgeGraph
+from openodke.types import Chunk, Document, Entity, Fact, GroundingVerdict, KnowledgeGraph
+
+log = logging.getLogger("openodke.pipeline")
 
 
 class DoubleStageWarning(UserWarning):
@@ -226,17 +236,37 @@ class Pipeline:
             routed.append((doc, chunks))
 
         # Every chunk of the run at once, so the model calls are not one at a time.
-        found = iter(_extract(self.extractor, [c for _, cs in routed for c in cs], self.ontology))
+        everything = [c for _, cs in routed for c in cs]
+        stop: BudgetExceeded | None = None
+        stage = ""
+        try:
+            done: list[list[Fact] | None] = list(
+                _extract(self.extractor, everything, self.ontology)
+            )
+        except BudgetExceeded as exc:
+            stop, stage = exc, "extract"
+            done = _rows(exc.partial, len(everything), lambda i: None)
+        found = iter(done)
+        unextracted = 0
         batches: list[tuple[list[Fact], Document]] = []
         for doc, chunks in routed:
             candidates: list[Fact] = []
             for _ in chunks:
                 extracted = next(found)
+                if extracted is None:
+                    unextracted += 1
+                    continue
                 if not extracted:
                     stats["empty_extractions"] += 1
                 candidates.extend(extracted)
             batches.append((candidates, doc))
-        grounded = _ground(self.grounder, batches)
+        # After a stop too: the free checks cost nothing, a cached answer is
+        # free, and every other call is refused without being made.
+        try:
+            grounded = _ground(self.grounder, batches)
+        except BudgetExceeded as exc:
+            stop, stage = stop or exc, stage or "ground"
+            grounded = _rows(exc.partial, len(batches), lambda i: list(batches[i][0]))
         if self.coverage or self._hook is not None:
             # What extraction left behind, before anything merges or refuses.
             report = measure_coverage(
@@ -248,17 +278,38 @@ class Pipeline:
             )
             if self.coverage:
                 stats["coverage"] = report.stats()
-            if self.reextract is not None and self._hook is not None:
+            if self.reextract is not None and self._hook is not None and stop is None:
                 # The gaps go back to the extractor; what returns is grounded here.
-                grounded, stats["reextract"] = reextract_gaps(
-                    self.reextract,
-                    self._hook,
-                    lambda more: _ground(self.grounder, more),
-                    self.ontology,
-                    routed,
-                    grounded,
-                    report,
-                )
+                try:
+                    grounded, stats["reextract"] = reextract_gaps(
+                        self.reextract,
+                        self._hook,
+                        lambda more: _ground(self.grounder, more),
+                        self.ontology,
+                        routed,
+                        grounded,
+                        report,
+                    )
+                except BudgetExceeded as exc:
+                    # What the first pass grounded stands; the gap pass is dropped.
+                    stop, stage = exc, "reextract"
+        if stop is not None:
+            unchecked = sum(
+                f.verdict is GroundingVerdict.UNCHECKED for row in grounded for f in row
+            )
+            stats["stopped"] = {
+                **stop.report(),
+                "stage": stage,
+                "unextracted": unextracted,
+                "unchecked": unchecked,
+            }
+            log.warning(
+                "%s, during %s; kept what was done: %d chunks not extracted, %d facts unchecked",
+                stop,
+                stage,
+                unextracted,
+                unchecked,
+            )
         facts = [self.normalizer.normalize(fact) for row in grounded for fact in row]
 
         resolved, links = self.resolver.resolve(facts, _entities_of(facts))
@@ -305,7 +356,14 @@ def _extract(extractor: Extractor, chunks: list[Chunk], ontology: Ontology) -> l
     """
     many = getattr(extractor, "extract_many", None)
     if not callable(many) or not chunks:
-        return [list(extractor.extract(c, ontology)) for c in chunks]
+        done: list[list[Fact]] = []
+        for chunk in chunks:
+            try:
+                done.append(list(extractor.extract(chunk, ontology)))
+            except BudgetExceeded as stop:
+                stop.partial = [*done, *([None] * (len(chunks) - len(done)))]
+                raise
+        return done
     found = [list(facts) for facts in many(chunks, ontology)]
     if len(found) != len(chunks):
         raise ValueError(
@@ -328,12 +386,27 @@ def _ground(grounder: Grounder, batches: list[tuple[list[Fact], Document]]) -> l
     work = [(facts, doc) for facts, doc in batches if facts]
     documents = getattr(grounder, "ground_documents", None)
     many = getattr(grounder, "ground_many", None)
-    if callable(documents):
-        method, answered = "ground_documents", [list(g) for g in documents(work)] if work else []
-    elif callable(many):
-        method, answered = "ground_many", [list(many(facts, doc)) for facts, doc in work]
-    else:
-        method, answered = "ground", [[grounder.ground(f, doc) for f in fs] for fs, doc in work]
+    method = (
+        "ground_documents" if callable(documents) else "ground_many" if callable(many) else "ground"
+    )
+    stop: BudgetExceeded | None = None
+    answered: list[list[Fact]] = []
+    try:
+        if callable(documents):
+            answered = [list(g) for g in documents(work)] if work else []
+        elif callable(many):
+            for facts, doc in work:
+                answered.append(list(many(facts, doc)))
+        else:
+            for facts, doc in work:
+                row: list[Fact] = []
+                answered.append(row)
+                for fact in facts:
+                    row.append(grounder.ground(fact, doc))
+    except BudgetExceeded as exc:
+        # What the grounder finished, and the rest as it came in: UNCHECKED.
+        stop = exc
+        answered = _finished(exc.partial, method, answered, work)
     rows = iter(answered)
     out: list[list[Fact]] = []
     for facts, _ in batches:
@@ -344,7 +417,43 @@ def _ground(grounder: Grounder, batches: list[tuple[list[Fact], Document]]) -> l
                 f"{len(facts)}; a grounder stamps a verdict, it never drops a fact"
             )
         out.append(grounded)
+    if stop is not None:
+        stop.partial = out
+        raise stop
     return out
+
+
+def _finished(
+    partial: Any, method: str, answered: list[list[Fact]], work: list[tuple[list[Fact], Document]]
+) -> list[list[Fact]]:
+    """One row per document of `work` after a budget stop: what was grounded, then the rest.
+
+    A batching grounder hands back its batch as the stop's `partial`; any other
+    is read from what came back before the stop, with the fact it was asking
+    about, when it says, in that fact's place.
+    """
+    if method == "ground_documents":
+        return _rows(partial, len(work), lambda i: list(work[i][0]))
+    rows = [list(row) for row in answered]
+    at = len(rows)
+    if method == "ground_many" and at < len(work):
+        facts = work[at][0]
+        rows.append(
+            list(partial) if isinstance(partial, list) and len(partial) == len(facts) else facts
+        )
+    elif rows and len(rows[-1]) < len(work[at - 1][0]):
+        row, facts = rows[-1], work[at - 1][0]
+        row.append(partial if isinstance(partial, Fact) else facts[len(row)])
+        row.extend(facts[len(row) :])
+    rows.extend(list(facts) for facts, _ in work[len(rows) :])
+    return rows
+
+
+def _rows(partial: Any, length: int, default: Any) -> list[Any]:
+    """`partial` when it is a list of `length` rows, else `default(i)` for each row."""
+    if isinstance(partial, list) and len(partial) == length:
+        return [default(i) if row is None else row for i, row in enumerate(partial)]
+    return [default(i) for i in range(length)]
 
 
 def _is_odkes_own(stage: object, default: type) -> bool:
