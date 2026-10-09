@@ -408,7 +408,8 @@ coverage      1 of 3 sentences naming two known entities uncovered, 1 entities i
 ```
 
 These are gaps, not errors: a sentence naming two entities may relate them in
-no way the ontology has. They are what the re-extract hook (#102) hands back.
+no way the ontology has. They are what [the re-extract hook](#handing-a-gap-back-the-re-extract-hook)
+hands back.
 
 ```python
 from openodke import Document, Entity, Evidence, Fact, Ontology, Span
@@ -426,4 +427,73 @@ fact = Fact(
 (record,) = measure([doc], [fact], Ontology()).documents
 assert record.sentences == 2  # "She wrote to Babbage" names one known entity
 assert [s.quote for s in record.uncovered] == ["Ada Lovelace met Babbage in 1834."]
+```
+
+## Handing a gap back: the re-extract hook
+
+The coverage report's gaps can go back to the extractor, and what returns is
+grounded like any other fact. The idea is the "gleaning" pass of Microsoft
+GraphRAG (Edge et al. 2024, [arXiv 2404.16130](https://arxiv.org/abs/2404.16130)),
+which asks the model again what it missed. Here it is scoped to one window,
+aimed by a report that costs no model, and checked by the grounder afterwards.
+Off by default: `Pipeline(reextract=Reextract())`, or `reextract: true` (or
+`{windows: N}`) in an `odke run` config.
+
+- **Windows.** Each uncovered sentence, then each sentence holding a missed
+  entity, in document order, at most `windows` per document (default 3). Each
+  is asked once per run. A chunk the router skipped holds none.
+- **The hook** is one method, so any extractor can take part:
+  `reextract(window: Chunk, relations: list[str], already: list[Fact], ontology) -> list[Fact]`.
+  `relations` are the predicates whose domain fits an entity the window names
+  and whose range is another one's type or a literal. `already` are the facts
+  cited in the window or naming an entity it names. `Reextract(hook=...)`
+  names a hook; left out, it is the pipeline's extractor, which must have one.
+- **`LLMExtractor`** implements it with the registered prompt
+  [`reextract@1`](models.md#prompts): extract@1's rules unchanged, the flagged
+  properties' snippets (past `snippet_limit` too), the `already` facts rendered
+  as the grounder renders claims, and the window. The reply is parsed and its
+  quotes checked exactly as extraction's are. `HybridExtractor` passes it to its
+  model path.
+- **What returns** repeats nothing already held: a fact with the signature of
+  one the document has is dropped and counted. The rest are stamped
+  `qualifiers["odke.reextract"] = {"window": [start, end]}`, grounded by the
+  pipeline's grounder, and join the document's facts before normalisation.
+- **Counted** in `stats["reextract"]`: `windows` asked, facts `returned`,
+  `duplicates`, `kept`, and `refused` by grounding (`contradicted` or
+  `not_found`), with the `verdicts`. The gate still decides what is written.
+  `odke run` prints one line:
+
+```
+reextract     1 windows asked, 1 facts returned (0 already held), 1 kept and 0 refused by grounding
+```
+
+```python
+from openodke import Pipeline
+from openodke.reextract import Reextract
+
+
+class Gleaner:
+    """Finds the first sentence's fact, and the gap's when asked again."""
+
+    def extract(self, chunk, ontology):
+        return [fact]
+
+    def reextract(self, window, relations, already, ontology):
+        start = text.index(window.text)
+        span = Span(doc_id="d1", start=start, end=start + len(window.text), quote=window.text)
+        cited = (Evidence(doc_id="d1", span=span),)
+        return [fact.model_copy(update={"predicate": "met", "evidence": cited})]
+
+
+people = Ontology.from_dict(
+    {
+        "types": {"Person": {}},
+        "predicates": {
+            name: {"domain": ["Person"], "range": "Person"} for name in ("collaborator", "met")
+        },
+    }
+)
+kg = Pipeline(people, Gleaner(), reextract=Reextract()).run([doc])
+assert kg.stats["reextract"]["windows"] == kg.stats["reextract"]["returned"] == 1
+assert [f.predicate for f in kg.facts] == ["collaborator", "met"]
 ```
