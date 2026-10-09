@@ -45,6 +45,7 @@ what it did under one reserved key, instead of discarding what it replaced:
 | `odke.score` | `SCORE` | `Fact.qualifiers` | `EvidenceScorer` | the scorer's inputs: `extractor`, `prior_used`, `verdict`, `support`, `conflict` |
 | `odke.derived` | `DERIVED` | `Fact.qualifiers` | the pipeline's [inverse step](concepts.md#inverse-and-symmetric-partners) | `rule` (`inverse` or `symmetric`) and `of`, the signature of the stated fact this one was derived from |
 | `odke.widen` | `WIDEN` | `Fact.qualifiers` | `LLMGrounder(widen=True)` | one [widen-and-retry](grounding.md#widen-and-retry) attempt: `from` and `to` as `[start, end]`, and the retry's `verdict`; the span is the wider one only when that verdict is `supported` |
+| `odke.near_duplicates` | `NEAR_DUPLICATES` | `Fact.qualifiers` | `SignatureCorroborator` | the groups of evidence documents found to be [near-duplicates](#near-duplicate-sources), each a sorted tuple of document ids; each group counts as one source |
 
 The conflict and score stamps are functions of the batch they were computed in.
 Running either stage again over its own output starts from the extractor's
@@ -245,7 +246,8 @@ registration number on as its `external_id` and then hand over to
 ## Corroborate
 
 `SignatureCorroborator(ontology=None, *, source=source_of, half_life_days=365.0,
-freshness_floor=0.5, intervals=DEFAULT_INTERVALS)` does two jobs, in order.
+freshness_floor=0.5, intervals=DEFAULT_INTERVALS, documents=None,
+near_duplicates=0.9)` does two jobs, in order.
 
 ### Merge by signature
 
@@ -270,6 +272,22 @@ reconciled:
 - **`verdict`** is the most informative among the members: one supporting span
   supports the claim, and otherwise a contradiction outweighs silence.
 - **`confidence`** is the members' maximum, and `extractor` joins their names.
+
+#### Near-duplicate sources
+
+A page copied to another host, or a document re-saved with a few words changed,
+is not a second source, so it counts once toward `support`. Given the texts
+(`documents=`, by `Document.id`), the corroborator compares the documents behind
+each claim: two from different sources are one when the Jaccard similarity of
+their 5-word shingle sets is at least `near_duplicates` (0.9; `None` turns it
+off). One changed word in 200 scores 0.95, and two articles that share a quoted
+sentence score near zero. Only documents that back the same claim are compared,
+each pair once, so the check never runs over all pairs in the batch. Every
+document's evidence is kept, and `odke.near_duplicates` names the group. A
+group's trust is its best member's tier, because trust is the maximum over the
+evidence. The scorer reads the same count. `odke run` and the Validator hand
+the corroborator the texts they load, and `stats["near_duplicates"]` counts the
+pairs compared and found.
 
 ### Contest
 
