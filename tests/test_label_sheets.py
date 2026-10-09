@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from openodke.eval import GroundingLabel, load_jsonl
+from openodke.eval import GroundingLabel, PairLabel, load_jsonl
 from openodke.eval.sheets import SheetError, make_sheets, quote, read_sheets
 
 ADA = "Ada Lovelace was born in London in 1815."
@@ -25,6 +25,18 @@ def _grounding(n: int, text: str = ADA, *, span: tuple[int, int] | None = (0, 22
         start, end = span
         fact["evidence"] = [{"doc_id": "d1", "span": {"doc_id": "d1", "start": start, "end": end}}]
     return {"text": text, "fact": fact}
+
+
+def _pair(n: int) -> dict:
+    return {
+        "a": {
+            "key": f"acme-{n}",
+            "type": "Company",
+            "label": "Acme Inc.",
+            "context": "ACME INC. opened an office in Dublin.",
+        },
+        "b": {"key": f"acme-gmbh-{n}", "type": "Company", "label": "Acme GmbH"},
+    }
 
 
 def _jsonl(path: Path, rows: list[dict]) -> Path:
@@ -290,3 +302,67 @@ def test_a_sheet_without_its_sidecar_is_refused(tmp_path: Path) -> None:
     sheet.with_suffix(".items.jsonl").unlink()
     with pytest.raises(SheetError, match="sheet-01.items.jsonl: missing"):
         read_sheets(sheet)
+
+
+# --------------------------------------------------------------------------- #
+# pairs
+# --------------------------------------------------------------------------- #
+
+
+def test_a_pair_item_shows_both_mentions_in_context(tmp_path: Path) -> None:
+    items = _jsonl(tmp_path / "pairs.jsonl", [_pair(0)])
+    (sheet,) = make_sheets("pair", items, tmp_path / "s").sheets
+
+    assert sheet.read_text(encoding="utf-8").startswith(
+        "# Pair sheet 01\n\nP-0001 to P-0001: do A and B name the same thing?\n"
+    )
+    assert _item(sheet, "P-0001") == (
+        "\n"
+        "A: Acme Inc. (Company)\n"
+        "\n"
+        "> **ACME INC.** opened an office in Dublin.\n"
+        "\n"
+        "B: Acme GmbH (Company)\n"
+        "\n"
+        "- [ ] same\n"
+        "- [ ] different\n"
+        "- [ ] unsure\n"
+        "\n"
+        "note:\n"
+    )
+
+
+def test_pairs_read_back_as_pair_labels_and_unsure_goes_apart(tmp_path: Path) -> None:
+    rows = [_pair(n) for n in range(4)]
+    (sheet,) = make_sheets("pair", _jsonl(tmp_path / "p.jsonl", rows), tmp_path / "s").sheets
+    _tick(sheet, "P-0001", "same")
+    _tick(sheet, "P-0002", "unsure")
+    _tick(sheet, "P-0003", "different")
+
+    reading = read_sheets(tmp_path / "s")
+    written = dict(reading.write(tmp_path / "labels.jsonl"))
+
+    assert written == {
+        tmp_path / "labels.jsonl": 2,
+        tmp_path / "labels.unsure.jsonl": 1,
+        tmp_path / "labels.notes.jsonl": 0,
+    }
+    assert load_jsonl(tmp_path / "labels.jsonl", PairLabel) == [
+        PairLabel(a="acme-0", b="acme-gmbh-0", same=True),
+        PairLabel(a="acme-2", b="acme-gmbh-2", same=False),
+    ]
+    unsure = (tmp_path / "labels.unsure.jsonl").read_text(encoding="utf-8")
+    assert unsure == json.dumps(rows[1]) + "\n"
+    assert reading.summary().endswith("3 labelled, 1 unlabelled\nsame 1, different 1, unsure 1")
+    # The unsure rows are a pairs file again, ready for another sitting.
+    again = make_sheets("pair", tmp_path / "labels.unsure.jsonl", tmp_path / "again")
+    assert again.items == 1
+
+
+def test_grounding_and_pair_sheets_are_not_read_together(tmp_path: Path) -> None:
+    make_sheets("grounding", _jsonl(tmp_path / "g.jsonl", [_grounding(0)]), tmp_path / "s")
+    make_sheets("pair", _jsonl(tmp_path / "p.jsonl", [_pair(0)]), tmp_path / "p")
+    for suffix in (".md", ".items.jsonl"):
+        (tmp_path / "p" / f"sheet-01{suffix}").rename(tmp_path / "s" / f"sheet-02{suffix}")
+    with pytest.raises(SheetError, match="mixes grounding and pair sheets"):
+        read_sheets(tmp_path / "s")

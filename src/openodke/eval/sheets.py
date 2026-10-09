@@ -7,6 +7,9 @@ sitting. Everything an item needs to become a label row is kept in a sidecar,
 `<sheet>.items.jsonl`, beside the sheet; the markdown carries only what a
 person adds to it, which is one tick per item and an optional note.
 
+Two kinds: `grounding` sheets read back as `GroundingLabel` rows, and `pair`
+sheets as `PairLabel` rows, with every pair answered `unsure` kept out of them.
+
 The sheet shows a grounding claim exactly as `render_claim` puts it to the
 grounder, so the person judges what the model judged. Passage text is escaped
 so that markdown cannot hide or restyle it: a `$` stays a dollar sign rather
@@ -30,7 +33,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from openodke.eval.formats import GroundingLabel
+from openodke.eval.formats import GroundingLabel, PairLabel
 from openodke.ground.llm import render_claim
 from openodke.ground.span import located
 from openodke.types import Document, Fact, Frozen
@@ -139,7 +142,68 @@ GROUNDING = Kind(
     output=GroundingLabel,
     label=lambda row, answer: {**row, "verdict": answer},
 )
-KINDS = {kind.name: kind for kind in (GROUNDING,)}
+
+
+class Mention(Frozen):
+    """One side of a pair: an entity key and its type, and how and where it was written.
+
+    `label` is the name as the text has it (the key is shown when it is
+    absent); `context` is the passage it appeared in.
+    """
+
+    key: str
+    type: str
+    label: str | None = None
+    context: str | None = None
+
+
+class PairItem(Frozen):
+    """One row of `odke label make pair`: two mentions, one entity or two?
+
+    `same` and `different` read back as a `PairLabel` on the two keys.
+    `unsure` never does: those rows go to a file of their own, in this shape,
+    ready to be made into a sheet again.
+    """
+
+    a: Mention
+    b: Mention
+
+
+def _side(name: str, mention: Mention) -> list[str]:
+    shown = mention.label or mention.key
+    lines = [plain(f"{name}: {shown} ({mention.type})")]
+    if mention.context:
+        found = re.search(re.escape(shown), mention.context, re.IGNORECASE)
+        span = (found.start(), found.end()) if found else (None, None)
+        lines += ["", *quote(mention.context, *span)]
+    return lines
+
+
+def _pair(item: PairItem) -> list[str]:
+    return [*_side("A", item.a), "", *_side("B", item.b)]
+
+
+PAIR = Kind(
+    name="pair",
+    prefix="P",
+    title="Pair sheet",
+    item=PairItem,
+    question="do A and B name the same thing?",
+    explain=(
+        "same: one thing in the world. different: two things.",
+        "unsure: cannot tell. Kept apart, never a label.",
+    ),
+    boxes={"same": "same", "different": "different", "unsure": "unsure"},
+    render=_pair,
+    output=PairLabel,
+    label=lambda row, answer: {
+        "a": row["a"]["key"],
+        "b": row["b"]["key"],
+        "same": answer == "same",
+    },
+    apart="unsure",
+)
+KINDS = {kind.name: kind for kind in (GROUNDING, PAIR)}
 
 
 def _kind(name: str) -> Kind:
@@ -432,9 +496,12 @@ def read_sheets(path: Path) -> Reading:
 __all__ = [
     "GROUNDING",
     "KINDS",
+    "PAIR",
     "GroundingItem",
     "Kind",
     "Made",
+    "Mention",
+    "PairItem",
     "Reading",
     "SheetError",
     "make_sheets",
