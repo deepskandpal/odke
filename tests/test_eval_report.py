@@ -16,6 +16,7 @@ import pytest
 
 from openodke import Entity, Evidence, Fact, Ontology
 from openodke.eval import evaluate_extraction, item_rows, load_jsonl
+from openodke.eval.compare import Comparison, ItemRow, compare_items
 from openodke.eval.eval_report import (
     SCHEMA_PATH,
     SCHEMA_VERSION,
@@ -30,6 +31,7 @@ from openodke.eval.eval_report import (
 )
 from openodke.eval.extraction import document_counts
 from openodke.eval.formats import GoldFact
+from openodke.eval.stats import McNemar, Paired
 
 FIXTURES = Path(__file__).parent / "fixtures" / "eval"
 
@@ -274,3 +276,35 @@ def test_render_keeps_a_stage_s_own_table_when_it_is_not_the_rows() -> None:
     # The per-predicate table and the four-way split are still there.
     assert "employer" in text and "wrong_entity" in text
     assert "F1 is zero for: employer, field" in text
+
+
+# --------------------------------------------------------------------------- #
+# The comparison section
+# --------------------------------------------------------------------------- #
+
+
+def _comparison() -> Comparison:
+    a = [ItemRow(id=f"d{i}", tp=3, fp=i % 2, fn=1) for i in range(12)]
+    b = [ItemRow(id=f"d{i}", tp=3 + i % 3, fp=0, fn=1) for i in range(12)]
+    return compare_items(a, b, resamples=300, seed=1, a_name="a.items", b_name="b.items")
+
+
+def test_compare_s_block_is_the_comparison_section_unchanged(tmp_path: Path) -> None:
+    comparison = _comparison()
+    report = EvalReport(title="compare", n=12, comparison=comparison)
+    data = report.model_dump(mode="json")
+    assert data["comparison"] == json.loads(comparison.model_dump_json())
+    assert check_report(data) == []
+    assert read_report(report.write(tmp_path / "r.json")).comparison == comparison
+    assert comparison.render() in report.render()
+
+
+def test_the_schema_names_every_field_of_the_comparison() -> None:
+    """The schema and the models it describes cannot drift: same fields, all required."""
+    defs = schema()["$defs"]
+    for name, model in (("comparison", Comparison), ("paired", Paired), ("mcnemar", McNemar)):
+        assert set(defs[name]["properties"]) == set(model.model_fields), name
+        assert set(defs[name]["required"]) == set(model.model_fields), name
+    data = EvalReport(title="compare", n=12, comparison=_comparison()).model_dump(mode="json")
+    data["comparison"]["primary"]["interval"] = [0.1]
+    assert check_report(data) == ["$.comparison.primary.interval: fewer than 2 items"]

@@ -39,6 +39,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED, Range, bootstrap
+from openodke.eval.compare import Comparison
 from openodke.eval.cost import CallRecord, StageCost
 from openodke.eval.extraction import document_counts
 from openodke.eval.formats import GoldFact
@@ -227,12 +228,12 @@ class EvalReport(Frozen):
     rows: tuple[Row, ...] = ()
     stages: tuple[StageReport, ...] = ()
     notes: tuple[str, ...] = ()
-    # Reserved, typed and empty until filled: every miss in one cause bucket (#140),
+    # Typed, and empty until filled: every miss in one cause bucket (#140),
     diagnosis: tuple[dict[str, Any], ...] = ()
     # ranked fixes with their expected gain (#141),
     fixes: tuple[dict[str, Any], ...] = ()
-    # this run against a baseline (#142),
-    comparison: dict[str, Any] | None = None
+    # this run against a baseline: `odke eval compare`'s block, as `--json` prints it (#142),
+    comparison: Comparison | None = None
     # and the grounder's calibration cards (#135).
     calibration: tuple[dict[str, Any], ...] = ()
 
@@ -276,6 +277,8 @@ class EvalReport(Frozen):
                 lines += ["", *body]
         if self.notes:
             lines += ["", *(f"  - {note}" for note in self.notes)]
+        if self.comparison is not None:
+            lines += ["", *self.comparison.render().splitlines()]
         lines += ["", *_provenance(self)]
         return "\n".join(lines)
 
@@ -458,9 +461,10 @@ def check_report(data: Any) -> list[str]:
     """Every way `data` departs from the schema, as `path: problem` lines; none when it fits.
 
     Plain Python over the subset of JSON Schema the schema file uses: `type`,
-    `properties`, `required`, `additionalProperties`, `items`, `enum`, `const`,
-    `minimum`, `pattern`, `anyOf` and local `$ref`s. No dependency, so a
-    report can be checked wherever the package is installed.
+    `properties`, `required`, `additionalProperties`, `items`, `minItems`,
+    `maxItems`, `enum`, `const`, `minimum`, `pattern`, `anyOf` and local
+    `$ref`s. No dependency, so a report can be checked wherever the package is
+    installed.
     """
     root = schema()
     return list(_problems(data, root, root, "$"))
@@ -509,8 +513,11 @@ def _problems(
         yield from _problems(value, target, root, at)
         return
     if "anyOf" in node:
-        if not any(not list(_problems(value, option, root, at)) for option in node["anyOf"]):
-            yield f"{at}: matches none of the allowed shapes"
+        found = [list(_problems(value, option, root, at)) for option in node["anyOf"]]
+        if all(found):
+            # One option of the right type is the shape meant: say what is wrong inside it.
+            near = [f for f in found if not f[0].startswith(f"{at}: expected ")]
+            yield from near[0] if len(near) == 1 else [f"{at}: matches none of the allowed shapes"]
         return
     expected = node.get("type")
     if expected is not None:
@@ -540,8 +547,12 @@ def _problems(
                 yield f"{at}: unexpected {name!r}"
             elif isinstance(extra, Mapping):
                 yield from _problems(item, extra, root, where)
-    if isinstance(value, list | tuple) and "items" in node:
-        for index, item in enumerate(value):
+    if isinstance(value, list | tuple):
+        if "minItems" in node and len(value) < node["minItems"]:
+            yield f"{at}: fewer than {node['minItems']} items"
+        if "maxItems" in node and len(value) > node["maxItems"]:
+            yield f"{at}: more than {node['maxItems']} items"
+        for index, item in enumerate(value if "items" in node else ()):
             yield from _problems(item, node["items"], root, f"{at}[{index}]")
 
 

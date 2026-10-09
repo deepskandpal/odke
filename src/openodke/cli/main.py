@@ -926,7 +926,7 @@ def eval_stage(
     from openodke.eval.runner import load_inputs, report_inputs
     from openodke.llm.base import ProviderError
 
-    inputs = (labels, predictions, run, ontology, documents, config, facts, items, report_to)
+    inputs = (labels, predictions, run, ontology, documents, config, facts, items)
     compare_flags = [
         flag
         for flag, used in (
@@ -945,6 +945,15 @@ def eval_stage(
             comparison = _eval_compare(runs or [], describe, as_json, metric, resamples, seed)
             if comparison is None:
                 return
+            if report_to is not None:
+                from openodke.eval.eval_report import EvalReport
+
+                items_compared = comparison.primary.items
+                EvalReport(title="compare", n=items_compared, comparison=comparison).write(
+                    report_to
+                )
+                if not as_json:
+                    typer.echo(f"wrote {report_to}")
             reasons = gate(
                 comparison, fail_under=fail_under, fail_on_inconclusive=fail_on_inconclusive
             )

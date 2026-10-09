@@ -322,3 +322,17 @@ def test_odke_eval_spans_and_ablation_write_a_report(tmp_path: Path, example: Pa
     result = runner.invoke(app, args)
     assert result.exit_code == 0, result.output
     assert len(read_report(out).rows) == 3
+
+
+def test_odke_eval_compare_writes_its_block_into_a_report(tmp_path: Path) -> None:
+    for name, extra in (("a", 0), ("b", 1)):
+        rows = [{"id": f"d{i}", "tp": 3 + (extra and i % 2), "fp": 1, "fn": 1} for i in range(10)]
+        (tmp_path / f"{name}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    out = tmp_path / "report.json"
+    args = ["eval", "compare", str(tmp_path / "a.jsonl"), str(tmp_path / "b.jsonl")]
+    result = runner.invoke(app, [*args, "--report", str(out)])
+    assert result.exit_code == 0, result.output
+    assert result.output.rstrip().endswith(f"wrote {out}")
+    report = read_report(out)
+    assert report.comparison is not None and report.comparison.metric == "f1"
+    assert (report.title, report.n, report.rows) == ("compare", 10, ())
