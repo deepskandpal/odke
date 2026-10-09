@@ -33,6 +33,7 @@ from typing import Any, NamedTuple
 
 from pydantic import Field
 
+from openodke._batch import failed_summary
 from openodke.eval.report import StageReport
 from openodke.eval.spans import evaluate_spans
 from openodke.ground.checks import REASONS, VERDICTS, CheckedGrounder, refusals
@@ -89,11 +90,15 @@ class GroundSummary(Frozen):
     spans: StageReport
     # Where a budget stopped the grounding, and why: the pipeline's `stats["stopped"]`.
     stopped: dict[str, Any] | None = None
+    # Texts left out because grounding failed for them alone, with why (#162).
+    failed: dict[str, str] = Field(default_factory=dict)
 
     def render(self) -> str:
         lines = ["odke ground — dry run, no model called" if self.dry_run else "odke ground"]
         if self.stopped is not None:
             lines.append(_row("stopped", stopped_summary(self.stopped)))
+        if self.failed:
+            lines.append(_row("failed", failed_summary(self.failed, noun="text")))
         unmatched = (
             f"; {self.unmatched_rows} name a text that was not given" if self.unmatched_rows else ""
         )
@@ -182,6 +187,8 @@ def ground_graph(
     )
     if isinstance(stopped := kg.stats.get("stopped"), Mapping):
         summary = summary.model_copy(update={"stopped": dict(stopped)})
+    if isinstance(failed := kg.stats.get("failed"), Mapping) and failed:
+        summary = summary.model_copy(update={"failed": dict(failed)})
     return GroundedGraph(facts, summary)
 
 

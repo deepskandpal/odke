@@ -8,11 +8,13 @@ rest go on. A configuration error still stops the run. No model is called.
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
 import pytest
+from typer.testing import CliRunner
 
 from openodke import (
     Chunk,
@@ -26,6 +28,7 @@ from openodke import (
     Span,
 )
 from openodke.chunking import SentenceChunker
+from openodke.cli.main import app
 from openodke.extract import HybridExtractor, LLMExtractor
 from openodke.ground import LLMGrounder, RetryPolicy
 from openodke.llm import (
@@ -39,7 +42,10 @@ from openodke.llm import (
     RecordedClient,
 )
 from openodke.sinks.jsonl import JsonlSink
+from test_run import EXTRACT, NOTES, PEOPLE, _config, _write
+from test_run import GROUND as VERDICTS
 
+runner = CliRunner()
 SPEC = ModelSpec(model="test/model")
 ONCE = RetryPolicy(attempts=1)
 
@@ -174,6 +180,19 @@ def test_a_hybrid_extractor_isolates_a_chunk_its_model_path_failed_on(people: On
     assert {f.evidence[0].doc_id for f in kg.facts} == {"d0", "d2", "d3"}
 
 
+def test_the_validator_reports_the_text_it_left_out(people: Ontology) -> None:
+    from openodke import Validator
+
+    docs = _documents(3)
+    rows = [
+        {"subject": f"Person {i}", "predicate": "birth_date", "object": str(1800 + i), "doc": d.id}
+        for i, d in enumerate(docs)
+    ]
+    kg, report = Validator(people, grounder=_Grounder()).validate(rows, docs)
+    assert list(report.failed) == ["d2"] and len(kg.facts) == 2
+    assert "failed        1 of 3 texts left out: d2 (ground: ValueError:" in report.render()
+
+
 @pytest.mark.parametrize(
     "error",
     [
@@ -213,6 +232,43 @@ def test_the_extractor_s_own_batch_says_which_chunks_failed(people: Ontology) ->
 # --------------------------------------------------------------------------- #
 # odke run
 # --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def project(tmp_path: Path, people: Ontology) -> Path:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "notes.md").write_text(NOTES, encoding="utf-8")
+    (corpus / "people.csv").write_text(PEOPLE, encoding="utf-8")
+    (tmp_path / "ontology.json").write_text(people.model_dump_json(), encoding="utf-8")
+    broken = {**EXTRACT, "interactions": []}
+    (tmp_path / "extract.json").write_text(json.dumps(broken), encoding="utf-8")
+    (tmp_path / "ground.json").write_text(json.dumps(VERDICTS), encoding="utf-8")
+    return tmp_path
+
+
+def test_odke_run_names_the_failed_document_and_writes_the_rest(project: Path) -> None:
+    # No recording answers the note, so its extraction fails; the CSV row needs no model.
+    config = _config(stages__extractor={"use": "hybrid", "llm": {"retry": {"attempts": 1}}})
+    result = runner.invoke(app, ["run", str(_write(project, config))])
+    assert result.exit_code == 0, result.output
+    assert "failed        1 of 2 documents left out: corpus/notes.md (extract: ProviderError:" in (
+        result.output
+    )
+    stats = json.loads((project / "out" / "manifest.json").read_text(encoding="utf-8"))["stats"]
+    assert list(stats["failed"]) == ["corpus/notes.md"]
+    facts = (project / "out" / "facts.jsonl").read_text(encoding="utf-8").splitlines()
+    assert {json.loads(f)["evidence"][0]["doc_id"] for f in facts} == {"corpus/people.csv#L2"}
+
+
+def test_odke_run_exits_1_when_every_document_failed(project: Path) -> None:
+    shutil.rmtree(project / "corpus")
+    (project / "corpus").mkdir()
+    (project / "corpus" / "notes.md").write_text(NOTES, encoding="utf-8")
+    config = _config(stages__extractor={"use": "hybrid", "llm": {"retry": {"attempts": 1}}})
+    result = runner.invoke(app, ["run", str(_write(project, config))])
+    assert result.exit_code == 1
+    assert "every document failed" in result.output
 
 
 def test_a_failed_gap_window_costs_that_window_and_the_first_pass_stands() -> None:

@@ -21,6 +21,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from openodke._batch import failed_summary
 from openodke.corroborate.provenance import CONFLICT
 from openodke.coverage import summary as coverage_summary
 from openodke.llm.budget import budget_summary, stopped_summary
@@ -291,6 +292,8 @@ def render(result: RunResult) -> str:
     lines = ["odke run — dry run, nothing written" if result.dry_run else "odke run"]
     if isinstance(stopped := stats.get("stopped"), Mapping):
         lines.append(_row("stopped", stopped_summary(stopped)))
+    if isinstance(failed := stats.get("failed"), Mapping) and failed:
+        lines.append(_row("failed", failed_summary(failed, of=int(stats.get("documents", 0)))))
     lines.append(
         _row(
             "documents",
