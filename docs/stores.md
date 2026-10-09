@@ -222,6 +222,8 @@ print(check)
 |---|---|
 | `fact_id`, `signature`, `polarity`, `identity_keys` | the fact's own fields; `signature` is a SHA-256 of `Fact.signature` |
 | `extractor`, `verdict`, `confidence`, `support` | what the stages decided |
+| `support_sources`, `support_tiers`, `support_retrieved_at` | the [support list](resolution-and-corroboration.md#support-lists) as parallel lists, one position per independent source; `support` is their length when they are filled |
+| `support_doc_ids`, `support_doc_sources` | each source's documents, flattened: a document, and the source it belongs to. `support_from(props)` reads the list back ([DECISIONS #33](decisions.md#33)) |
 | `valid_from`, `valid_to` | when the claim was true |
 | `retrieved_at` | the newest evidence's retrieval time |
 | `extracted_at` | `KnowledgeGraph.created_at` |
@@ -275,7 +277,10 @@ assert (out / "import" / "import.args").is_file()
 ## RDF
 
 `RdfSink(path, *, format=None, base="https://example.org/odke/", schema=None, ontology=None)`
-writes each fact as a reified `rdf:Statement` carrying its provenance. The plain
+writes each fact as a reified `rdf:Statement` carrying its provenance, with an
+`odke:evidence` node per piece of evidence and an `odke:supported_by` node per
+independent source (`odke:source`, `odke:doc_id`, `odke:tier`,
+`odke:retrieved_at`). The plain
 triple `<s> <predicate> <o>` is written only for an asserted fact with no
 identity-bearing qualifier that did not lose a conflict, so a denial or a scoped
 value asserts nothing. openodke's own terms

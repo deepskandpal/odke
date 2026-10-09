@@ -357,6 +357,7 @@ reconciled:
   has one, and otherwise its document. Forty pages from one scraper are one
   source, and two chunks of one document are one. Pass `source=` to decide
   differently.
+- **`supported_by`** names those sources: the [support list](#support-lists).
 - **Reconcilable qualifiers** either agree, or take the interval union for the
   keys in `intervals` (`start_time` and `start` the earliest, `end_time` and `end`
   the latest), or take the best-ranked source's value. Every `odke.source_form`
@@ -382,6 +383,61 @@ group's trust is its best member's tier, because trust is the maximum over the
 evidence. The scorer reads the same count. `odke run` and the Validator hand
 the corroborator the texts they load, and `stats["near_duplicates"]` counts the
 pairs compared and found.
+
+#### Support lists
+
+`Fact.supported_by` is a tuple of `Support`, one per independent source, so
+`support == len(supported_by)` whenever it is filled
+([DECISIONS #33](decisions.md#33)). A reconciler reads it when a source changes or
+disappears: which facts lose support, and whether anything is left.
+
+| `Support` field | Holds |
+|---|---|
+| `source` | the key the corroborator grouped on: a host, `doc:<id>` for a document with no URI, or a near-duplicate group's least key |
+| `doc_ids` | that source's documents the fact cites, sorted |
+| `tier` | the best tier among their evidence |
+| `retrieved_at` | the newest clock among their evidence: the last time this source confirmed the claim |
+
+- **The list is the evidence, counted.** `support_of(evidence, groups, source)`
+  gives it, by the same rules as `support`. A group of near-duplicates is one
+  entry naming every copy. Entries are sorted by `source`.
+- **A derived fact shares its parent's list.** It cites the same evidence, so
+  it names the same sources and adds none ([DECISIONS #28](decisions.md#28)).
+- **A source that cannot be named empties the list.** A claim with a member
+  that cites nothing keeps its count, and `supported_by` stays empty rather
+  than name some sources and not others. So does a fact no corroborator
+  merged, and one serialised by 0.2.x, which still loads.
+- **The scorer keeps a listed count.** `EvidenceScorer` recounts `support`
+  only for a fact with no list.
+
+```python
+from openodke import Support
+
+two = [
+    Fact(
+        subject=ada,
+        predicate="born",
+        object_value="1815-12-10",
+        evidence=(Evidence(doc_id=doc, uri=uri, retrieved_at=datetime(2026, 9, day, tzinfo=UTC)),),
+    )
+    for doc, uri, day in (
+        ("bio.md", "https://www.example.org/ada", 1),
+        ("register.csv#L2", None, 2),
+    )
+]
+(born,) = SignatureCorroborator().corroborate(two)
+for entry in born.supported_by:
+    print(entry.source, entry.doc_ids, entry.retrieved_at.date())
+# doc:register.csv#L2 ('register.csv#L2',) 2026-09-02
+# example.org ('bio.md',) 2026-09-01
+assert born.support == len(born.supported_by) == 2
+assert isinstance(born.supported_by[0], Support)
+```
+
+Every sink writes the list. JSONL keeps it as it is; Neo4j, the bulk sinks and
+NetworkX as parallel `support_*` properties on the relationship, which
+`openodke.sinks.neo4j.support_from(props)` reads back; RDF as an `odke:Support`
+node per source ([Provenance on every fact](stores.md#provenance-on-every-fact)).
 
 ### Contest
 

@@ -748,3 +748,44 @@ config (2) without parsing the report.
 gate that accepts `unchecked` writes them to the store. The output estimate
 wastes room: a call that would have returned 50 tokens is refused for its
 `max_tokens`. And a provider that reports no cost never reaches a USD limit.
+
+### 33. A support list names each source, and Neo4j keeps it as parallel lists
+
+`Fact.support` was a count. The corroborator already worked out which
+independent sources back a claim, then kept only the number. A reconciler
+needs the names (#115, #116): when a source changes or disappears, which facts
+lose support, and is anything left? So `Fact.supported_by` names them, one
+`Support` per source: the key the corroborator grouped on, the documents, the
+best tier and the newest clock. `support` is its length whenever it is filled,
+and the suite checks that on every fact it makes. The list is empty on a fact
+no corroborator merged, and on a fact serialised by 0.2.x, which still loads
+(#4).
+
+Three calls come with it.
+
+**The list is the evidence, counted.** It comes from the merged evidence by
+the rules `support` already used. A host is one source, and a group of
+near-duplicate documents is one entry under its least key (#154). A derived
+fact cites its parent's evidence, so it carries the same list and adds no
+entry (#28). A claim with a member that cites nothing keeps its count and
+names no source. A list naming some sources and not others would be wrong
+about which facts a retraction leaves with none.
+
+**In Neo4j, parallel lists on the relationship, not support nodes.** A fact
+is a relationship, and a relationship cannot have relationships. Support
+nodes would need every edge reified as a node, which changes the shape of
+every query on the graph for one property. Evidence is already parallel lists
+on the relationship, for the same reason. A list holds no lists, so the
+documents are flattened into `support_doc_ids`, each beside its source in
+`support_doc_sources`. The bulk sinks and NetworkX write the same properties
+from the same `provenance_of`. RDF has nodes to spare, so it gives each source
+an `odke:Support` node in the evidence's vocabulary.
+
+**The scorer keeps a listed count.** `EvidenceScorer` recounts `support` only
+on a fact with no list, so a scorer configured with another `source` cannot
+leave a count its list disagrees with.
+
+*Cost:* five more properties on every relationship, read back with
+`support_from` rather than as one property. And the list can be recounted
+from the evidence, yet is kept beside it, so a store can be reconciled without
+the `source` function that made it.
