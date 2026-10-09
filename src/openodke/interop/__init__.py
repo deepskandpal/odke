@@ -9,6 +9,7 @@ the library.
 from __future__ import annotations
 
 from openodke.interop.langchain import from_graph_documents
+from openodke.interop.langextract import attribute_triples, from_langextract
 from openodke.interop.triples import (
     LITERAL_TYPES,
     THING,
@@ -23,7 +24,9 @@ __all__ = [
     "THING",
     "TripleRow",
     "TriplesExtractor",
+    "attribute_triples",
     "from_graph_documents",
+    "from_langextract",
     "read_triples",
     "to_fact",
 ]
