@@ -327,3 +327,71 @@ def test_the_cli_names_the_datasets_and_refuses_an_unknown_one(tmp_path: Path) -
     result = CliRunner().invoke(app, ["bench", "prepare", "nothing", str(tmp_path), "--out", "x"])
     assert result.exit_code == 2
     assert "unknown dataset" in result.output
+
+
+# --------------------------------------------------------------------------- #
+# The eval report (#139)
+# --------------------------------------------------------------------------- #
+
+
+def test_text2kgbench_score_is_the_mean_of_its_sentences() -> None:
+    predicted = {"ont_1_movie_test_1": [("Bleach: Hell Verse", "director", "Noriyuki Abe")]}
+    units = text2kgbench.sentences(GOLD, predicted, ONTOLOGY)
+    assert [u["f1"] for u in units] == [pytest.approx(2 / 3), 0.0]
+    assert [(u["hits"], u["over"], u["under"]) for u in units] == [(1, 0, 1), (0, 0, 1)]
+    assert text2kgbench.aggregate(units) == text2kgbench.score(GOLD, predicted, ONTOLOGY)
+
+
+def test_a_text2kgbench_row_is_the_benchmark_s_metrics_with_ranges() -> None:
+    right = _fact("d1", "Bleach : Hell Verse", "director", "Noriyuki Abe")
+    wrong = _fact("d1", "Bleach : Hell Verse", "publication_date", "2011")
+    off = _fact("d2", "Keyboard Cat", "made_up", "Charlie Schmidt")
+    names = {"d1": "ont_1_movie_test_1", "d2": "ont_1_movie_test_2"}
+    run = _run(names, [right, wrong, off], [right])
+    _, labels = text2kgbench.to_ontology(ONTOLOGY)
+    meta = {"ontology_id": "ont_1_movie", "relation_labels": labels, "ontology": ONTOLOGY}
+    report = text2kgbench.report_run(run, GOLD, meta)
+    (stage,) = report.stages
+    assert stage == text2kgbench.score_run(run, GOLD, meta)
+    for row in report.rows:
+        line = stage.breakdown[row.name]
+        assert row.performance.average == "macro"
+        assert row.performance.precision.value == line["precision"]
+        assert row.performance.f1.value == line["f1"]
+        assert row.conformance is not None and row.conformance.rate == line["onto_conf"]
+        assert row.hallucination is not None
+        assert row.hallucination.hallucinated == line["hallucinated_triples"]
+        assert row.hallucination.subject == line["sub_halluc"]
+    extracted = report.rows[0]
+    # Sentence 1: a hit and a wrong date (one over, one under); sentence 2: its
+    # director missed, and `made_up` unscored, because its gold never uses it.
+    c = extracted.counts
+    assert (c.hits, c.over_extraction, c.under_extraction, c.unscored) == (1, 1, 2, 1)
+    assert extracted.conformance is not None
+    assert (extracted.conformance.conformant, extracted.conformance.facts) == (2, 3)
+    assert report.bootstrap is not None and report.bootstrap.units == 2
+    assert report.run.dataset is not None and report.run.dataset.labels == 3
+
+
+def test_redocred_score_is_its_documents_pooled() -> None:
+    gold = [
+        {
+            "id": "d",
+            "text": "Rihanna was born in Saint Michael, Barbados.",
+            "entities": [["Rihanna"], ["Saint Michael"], ["Barbados"]],
+            "facts": [[0, "place of birth", 1], [1, "country", 2]],
+        }
+    ]
+    predicted = {"d": [("Rihanna", "place of birth", "Saint Michael"), ("x", "country", "y")]}
+    (unit,) = redocred.documents(gold, predicted)
+    assert (unit["tp"], unit["predicted"], unit["gold"], unit["hallucinated"]) == (1, 2, 2, 1)
+    assert redocred.aggregate([unit]) == redocred.score(gold, predicted)
+    triples = {"d": [("Rihanna", "place of birth", "Saint Michael")]}
+    fact = _fact("d1", "Rihanna", "place_of_birth", "Saint Michael")
+    run = _run({"d1": "d"}, [fact], [fact])
+    meta = {"split": "test", "relation_labels": {"place_of_birth": "place of birth"}}
+    report = redocred.report_run(run, gold, meta)
+    row = report.rows[0]
+    assert redocred.score(gold, triples)["precision"] == row.performance.precision.value == 1.0
+    assert (row.counts.hits, row.counts.under_extraction) == (1, 1)
+    assert row.performance.average == "micro"
