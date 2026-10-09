@@ -6,6 +6,7 @@ libraries, so these load the scripts by path and test what runs without them.
 
 from __future__ import annotations
 
+import importlib.metadata
 import importlib.util
 import json
 import os
@@ -99,6 +100,26 @@ def test_a_competitor_run_that_lost_documents_fails(
     assert "sk-never-printed" not in message
     usage = json.loads((tmp_path / "competitors" / "lgt" / "usage.json").read_text())
     assert usage["failed_documents"] == 2
+
+
+def test_usage_records_the_competitor_libraries_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A published number names the library versions that made it; one not installed is None."""
+    for key in competitors.USAGE:
+        monkeypatch.setitem(competitors.USAGE, key, 0)
+
+    async def nothing_found(docs: list[tuple[str, str]], *args: Any) -> list[dict]:
+        return []
+
+    monkeypatch.setitem(competitors.SYSTEMS, "lgt", nothing_found)
+    monkeypatch.setattr(competitors, "LIBRARIES", ("litellm", "odke-no-such-library"))
+    out = competitors.extract("lgt", _prepared(tmp_path))
+    usage = json.loads((out / "usage.json").read_text())
+    assert usage["versions"] == {
+        "litellm": importlib.metadata.version("litellm"),
+        "odke-no-such-library": None,
+    }
 
 
 # --------------------------------------------------------------------------- #
