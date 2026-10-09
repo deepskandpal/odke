@@ -20,6 +20,7 @@ from openodke.corroborate import (
     independent_sources,
 )
 from openodke.corroborate.duplicates import jaccard, shingles
+from openodke.validator import Validator
 
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
 HALDEN = Entity(key="c:halden", type="Company", label="Halden Robotics")
@@ -161,6 +162,36 @@ def test_a_threshold_outside_zero_to_one_is_refused() -> None:
         SignatureCorroborator(near_duplicates=0.0)
     with pytest.raises(ValueError, match="near_duplicates"):
         SignatureCorroborator(near_duplicates=1.5)
+
+
+def test_the_validator_hands_its_texts_to_the_corroborator() -> None:
+    rows = [
+        {"doc": d, "subject": "Halden Robotics", "predicate": "headquarters", "object": "Leeds",
+         "quote": CLAIM}
+        for d in ("page", "copy")
+    ]  # fmt: skip
+    kg, report = Validator().validate(rows, DOCS.values(), dry_run=True)
+    (fact,) = kg.facts
+    assert fact.support == 1
+    assert fact.qualifiers[NEAR_DUPLICATES] == (("copy", "page"),)
+    assert kg.stats["stages"]["corroborator"]["near_duplicates"] == {"compared": 1, "found": 1}
+
+
+def test_odke_run_takes_the_threshold_and_hands_over_the_texts() -> None:
+    from types import SimpleNamespace
+
+    from openodke.run import ConfigError
+    from openodke.run.build import BUILTINS
+    from openodke.run.execute import register_documents
+
+    factory = BUILTINS["corroborator"]["signature"]
+    context = SimpleNamespace(ontology=Ontology())
+    corroborator = factory({"near_duplicates": 0.95}, context, "stages.corroborator")
+    assert corroborator.near_duplicates == 0.95
+    register_documents(corroborator, list(DOCS.values()))
+    assert set(corroborator.documents) == {"page", "copy", "quotes"}
+    with pytest.raises(ConfigError, match="documents: set by odke run"):
+        factory({"documents": []}, context, "stages.corroborator")
 
 
 def test_a_group_is_decided_again_when_its_texts_are_in_hand() -> None:

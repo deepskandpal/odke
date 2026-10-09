@@ -421,7 +421,7 @@ BUILTINS: dict[str, dict[str, Factory]] = {
     "grounder": {"span": _plain(SpanGrounder), "llm": _llm_grounder},
     "normalizer": {"value": _with_ontology(ValueNormalizer)},
     "resolver": {"native": _plain(NativeResolver)},
-    "corroborator": {"signature": _with_ontology(SignatureCorroborator, "source")},
+    "corroborator": {"signature": _with_ontology(SignatureCorroborator, "source", "documents")},
     "scorer": {"evidence": _scorer},
     "gate": {"verdict": _plain(VerdictGate)},
     "constrainer": {"neo4j": _plain(Neo4jConstrainer)},

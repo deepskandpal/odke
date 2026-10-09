@@ -98,6 +98,7 @@ def run_built(built: Built, *, dry_run: bool = False) -> RunResult:
 
         docs = built.documents()
         register_documents(built.stages["extractor"], docs)
+        register_documents(built.stages.get("corroborator"), docs)
         kg = pipeline.run(docs)
         kg = kg.model_copy(update={"stats": collect_stats(built, kg)})
 
@@ -132,9 +133,13 @@ def _bootstrap(built: Built, opened: list[Sink]) -> list[str]:
     return applied
 
 
-def register_documents(extractor: Any, docs: list[Document]) -> None:
-    """Hand the loaded documents to an extractor that looks them up (DECISIONS #19)."""
-    lookup = getattr(extractor, "documents", None)
+def register_documents(stage: Any, docs: list[Document]) -> None:
+    """Hand the loaded documents to a stage that looks them up by id (DECISIONS #19).
+
+    An extractor reads a document's URI and tier; the corroborator reads its
+    text, to count a near-duplicate copy once.
+    """
+    lookup = getattr(stage, "documents", None)
     if isinstance(lookup, dict):
         lookup.update({doc.id: doc for doc in docs})
 

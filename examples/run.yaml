@@ -61,7 +61,7 @@ stages:
   grounder: {use: llm, max_workers: 8}           # or span: the free check alone
   normalizer: {use: value, person_types: [Person]}
   resolver: e2e_stages:RegistryResolver          # a stage of the example's own; built-in: native
-  corroborator: signature                        # options: half_life_days, freshness_floor
+  corroborator: signature                        # options: half_life_days, freshness_floor, near_duplicates
   scorer: evidence                               # the default when left out; options: prior, verdict_weights
   gate: {use: verdict, refuse_not_found: false}  # was `validator` in 0.2; the old key still works
   sink: {use: jsonl, directory: e2e/out}         # or a list of sinks
