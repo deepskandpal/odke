@@ -254,6 +254,8 @@ def render(result: RunResult) -> str:
     )
     for name, report in stats.get("stages", {}).items():
         lines.append(_row(name, _summary(report)))
+    if stats.get("derived"):
+        lines.append(_row("derived", f"{stats['derived']} inverse and symmetric partners"))
     lines.append(_row("refused", str(stats.get("refused", 0))))
     links = graph.get("links", {})
     lines.append(

@@ -228,6 +228,9 @@ class RunConfig(_Strict):
     stages: StagesConfig
     # Apply the ontology's constraints through the sink before the first write.
     bootstrap: bool = False
+    # Add each edge's inverse or symmetric partner (DECISIONS #28). Left out, it
+    # is on exactly when the ontology declares one; `false` turns it off.
+    inverses: bool | None = None
 
     _base_dir: Path = PrivateAttr(default_factory=Path.cwd)
 
