@@ -49,6 +49,7 @@ from openodke.interop import TriplesExtractor
 from openodke.llm.base import Completion, LLMClient, Message, ModelSpec, ProviderNotInstalled
 from openodke.llm.budget import Ledger
 from openodke.llm.cache import CachedClient, DirectoryCache
+from openodke.llm.limits import PROVIDER_LIMITS, LimitedClient
 from openodke.llm.registry import resolve as resolve_client
 from openodke.llm.roles import ModelRoles
 from openodke.llm.testing import RecordedClient, ReplayClient
@@ -150,8 +151,10 @@ class Context:
         before anything is spent. Behind a cache it may be missing until the
         first miss: a rerun answered from the cache needs no adapter at all.
 
-        The ledger counts every call that goes out and stops the run at its
-        budget. The response cache, when on, answers in front of it, so a
+        Every call that goes out holds a slot of its provider's process-wide
+        limit (`openodke.llm.limits`). The ledger counts every call and stops
+        the run at its budget, before a call queues for a slot. The response
+        cache, when on, answers in front of both, so a
         repeated call reaches neither a provider nor a recording and costs
         nothing against the budget. A meter, when on, wraps the lot, so cost is
         counted without a stage knowing: under `stage` when given, so the
@@ -172,7 +175,7 @@ class Context:
                 if self.cache is None:
                     raise
                 inner = OnFirstCall(spec)
-        inner = self.ledger.client(inner)
+        inner = self.ledger.client(LimitedClient(inner))
         if self.cache is not None:
             inner = CachedClient(inner, self.cache)
             self.cached.append(inner)
@@ -1178,6 +1181,8 @@ def build(config: RunConfig) -> Built:
         directory = str(config.resolve(entry))
         if directory not in sys.path:
             sys.path.insert(0, directory)
+    # Process-wide, as a provider's limit is: every stage, and every run here.
+    PROVIDER_LIMITS.update(config.models.limits)
     ontology = _ontology(config)
     context = Context(
         config=config,

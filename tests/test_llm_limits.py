@@ -12,11 +12,14 @@ import threading
 import time
 import urllib.error
 from collections.abc import Iterator, Sequence
+from pathlib import Path
 from typing import Any
 
 import pytest
+from typer.testing import CliRunner
 
 from openodke import Chunk, Document, Entity, Evidence, Fact, Ontology, Span
+from openodke.cli.main import app
 from openodke.extract import LLMExtractor
 from openodke.ground import LLMGrounder, RetryPolicy
 from openodke.llm import (
@@ -29,7 +32,9 @@ from openodke.llm import (
     ProviderError,
     ProviderLimits,
 )
+from openodke.run import build, parse_config
 
+runner = CliRunner()
 SPEC = ModelSpec(model="acme/large")
 
 
@@ -231,6 +236,38 @@ def test_a_pause_is_capped_and_the_retry_policy_still_retries() -> None:
 # --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
+
+
+def test_models_limits_sets_the_process_wide_limit_per_provider(tmp_path: Path) -> None:
+    (tmp_path / "ontology.json").write_text('{"name": "o"}', encoding="utf-8")
+    (tmp_path / "corpus").mkdir()
+    config = parse_config(
+        {
+            "ontology": "ontology.json",
+            "inputs": ["corpus"],
+            "models": {"extract": "acme/large", "limits": {"acme": 4, "ollama": 2}},
+            "stages": {"extractor": "pattern"},
+        },
+        base_dir=tmp_path,
+    )
+    build(config)
+    assert PROVIDER_LIMITS.limits == {"acme": 4, "ollama": 2}
+
+
+def test_a_limit_below_one_is_a_config_error(tmp_path: Path) -> None:
+    (tmp_path / "odke.json").write_text(
+        json.dumps(
+            {
+                "ontology": "ontology.json",
+                "inputs": ["corpus"],
+                "models": {"limits": {"acme": 0}},
+                "stages": {"extractor": "pattern"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = runner.invoke(app, ["run", str(tmp_path / "odke.json")])
+    assert result.exit_code == 2 and "models.limits.acme" in result.output
 
 
 def _fact(doc: Document) -> Fact:

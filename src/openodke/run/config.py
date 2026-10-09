@@ -17,6 +17,7 @@ rather than a stage silently left as the pass-through.
       meter: true                                # cost, per stage
       cache: .odke-cache                         # answer a repeated call from disk
       budget: {usd: 1.50, calls: 2000}           # stop cleanly here, keeping what is done
+      limits: {anthropic: 8}                     # calls in flight per provider, all stages
     stages:
       chunker: {use: sentence, max_words: 120}
       extractor: hybrid                           # the one required stage
@@ -49,7 +50,7 @@ import difflib
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, model_validator
 
@@ -140,7 +141,9 @@ class ModelsConfig(_Strict):
     stats. `cache` names a directory of answers (`openodke.llm.cache`): a call
     asked before is answered from it, and every new answer is kept there.
     `budget` is the most the run may spend (`openodke.llm.budget`): `usd`,
-    `calls`, `input_tokens`, `output_tokens`, each optional.
+    `calls`, `input_tokens`, `output_tokens`, each optional. `limits` caps the
+    calls in flight to each provider it names, across every stage and the whole
+    process (`openodke.llm.limits`).
     """
 
     extract: ModelSpec | None = None
@@ -150,6 +153,7 @@ class ModelsConfig(_Strict):
     meter: bool = False
     cache: str | None = None
     budget: Budget | None = None
+    limits: dict[str, Annotated[int, Field(ge=1)]] = Field(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod
