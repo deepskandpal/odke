@@ -16,12 +16,14 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       # Both legs always report. A break on one version should not hide the
-      # result on another, which is the whole reason for testing three.
+      # result on another, which is the whole reason for testing several.
       fail-fast: false
       matrix:
-        # The range pyproject declares: requires-python = ">=3.11,<3.14".
-        # Advertising support for a version nothing runs is a claim, not a fact.
-        python: ["3.11", "3.12", "3.13"]
+        # Every release pyproject accepts (requires-python = ">=3.11"), each one
+        # listed in its classifiers. A new CPython gets a leg here and a
+        # classifier there in the same change: advertising support for a version
+        # nothing runs is a claim, not a fact.
+        python: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
 
