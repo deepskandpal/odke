@@ -23,6 +23,7 @@ import inspect
 import json
 import os
 import sys
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
@@ -45,7 +46,8 @@ from openodke.extract import HybridExtractor, LLMExtractor, PatternExtractor, Re
 from openodke.gate import VerdictGate
 from openodke.ground import LLMGrounder, RetryPolicy, SpanGrounder
 from openodke.interop import TriplesExtractor
-from openodke.llm.base import LLMClient
+from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
+from openodke.llm.cache import CachedClient, DirectoryCache
 from openodke.llm.registry import resolve as resolve_client
 from openodke.llm.roles import ModelRoles
 from openodke.llm.testing import RecordedClient, ReplayClient
@@ -125,21 +127,27 @@ PROTOCOLS: dict[str, type] = {
 
 @dataclass
 class Context:
-    """What a factory may need beyond its options: the ontology, the models, the meter."""
+    """What a factory may need beyond its options: the ontology, the models, the meter,
+    the response cache."""
 
     config: RunConfig
     ontology: Ontology
     roles: ModelRoles
     meter: CostMeter | None = None
+    cache: DirectoryCache | None = None
     _replays: dict[str, LLMClient] = field(default_factory=dict)
+    # Every cached client handed out, for the run's hit and miss counts.
+    cached: list[CachedClient] = field(default_factory=list)
 
     def client(self, role: str, *, stage: str | None = None) -> LLMClient | None:
         """The client a model-backed stage should use for `role`, or None to resolve its own.
 
-        Recorded responses win when the config names them. A meter, when on,
-        wraps whatever the client is, so cost is counted without a stage
-        knowing: under `stage` when given, so the grounder's widened retries are
-        a cost row of their own, and under the role otherwise.
+        Recorded responses win when the config names them. The response cache,
+        when on, answers in front of whatever the client is, so a repeated call
+        reaches neither a provider nor a recording. A meter, when on, wraps the
+        lot, so cost is counted without a stage knowing: under `stage` when
+        given, so the grounder's widened retries are a cost row of their own,
+        and under the role otherwise.
         """
         inner: LLMClient | None = None
         replay = self.config.models.replay.get(role)  # type: ignore[call-overload]
@@ -147,11 +155,59 @@ class Context:
             if role not in self._replays:
                 self._replays[role] = _replay_client(self.config.resolve(replay), role)
             inner = self._replays[role]
-        if self.meter is None:
+        if self.meter is None and self.cache is None:
             return inner
         if inner is None:
-            inner = resolve_client(getattr(self.roles, role))
+            spec = getattr(self.roles, role)
+            # Behind a cache, resolved on the first miss: a rerun answered from
+            # the store needs no provider adapter at all.
+            inner = resolve_client(spec) if self.cache is None else OnFirstCall(spec)
+        if self.cache is not None:
+            inner = CachedClient(inner, self.cache)
+            self.cached.append(inner)
+        if self.meter is None:
+            return inner
         return self.meter.client(inner, stage=stage or role)
+
+    def cache_stats(self) -> dict[str, Any] | None:
+        """The response cache's directory and its hits, misses and failed calls, or None."""
+        if self.cache is None:
+            return None
+        totals = {"hits": 0, "misses": 0, "failed": 0}
+        for client in self.cached:
+            for key, count in client.stats.items():
+                totals[key] = totals.get(key, 0) + count
+        return {"directory": str(self.cache.directory), **totals}
+
+
+class OnFirstCall:
+    """The client `resolve(spec)` picks, picked on the first call rather than now."""
+
+    def __init__(self, spec: ModelSpec) -> None:
+        self.spec = spec
+        self._client: LLMClient | None = None
+        self._lock = threading.Lock()
+
+    def complete(
+        self,
+        messages: Sequence[Message],
+        *,
+        spec: ModelSpec,
+        schema: dict[str, Any] | None = None,
+    ) -> Completion:
+        with self._lock:
+            if self._client is None:
+                self._client = resolve_client(self.spec)
+            client = self._client
+        return client.complete(messages, spec=spec, schema=schema)
+
+
+def response_cache(directory: Path, where: str = "models.cache") -> DirectoryCache:
+    """The cache in `directory`, created now, so a path that cannot be one is a config error."""
+    try:
+        return DirectoryCache(directory)
+    except OSError as exc:
+        raise ConfigError(f"{where}: cannot use {directory} as a cache directory: {exc}") from None
 
 
 def _replay_client(path: Path, role: str) -> LLMClient:
@@ -1098,6 +1154,11 @@ def build(config: RunConfig) -> Built:
         ontology=ontology,
         roles=config.models.roles(),
         meter=CostMeter() if config.models.meter else None,
+        cache=(
+            response_cache(config.resolve(config.models.cache))
+            if config.models.cache is not None
+            else None
+        ),
     )
     # Each input's loader is built here too and discarded, so an unknown loader or
     # a missing extra stops the config before a sink is opened.
@@ -1167,12 +1228,14 @@ __all__ = [
     "Extra",
     "LookupPlan",
     "NodeLinkFile",
+    "OnFirstCall",
     "SinkPlan",
     "build",
     "build_stage",
     "construct",
     "input_loader",
     "require_extra",
+    "response_cache",
     "sink_plan",
     "with_path_ids",
 ]

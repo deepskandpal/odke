@@ -189,6 +189,9 @@ def collect_stats(built: Built, kg: KnowledgeGraph) -> dict[str, Any]:
     if meter is not None:
         cost = meter.report(documents=int(kg.stats.get("documents", 0))).as_stage_report()
         stats["cost"] = jsonable({"metrics": cost.metrics, "stages": cost.breakdown})
+    cache = built.context.cache_stats()
+    if cache is not None:
+        stats["cache"] = cache
     return stats
 
 
@@ -317,6 +320,16 @@ def render(result: RunResult) -> str:
                 f"{cost.get('calls', 0)} model calls{cached}, "
                 f"{cost.get('prompt_tokens', 0) + cost.get('completion_tokens', 0)} tokens, "
                 + (f"${usd:.4f}" if isinstance(usd, int | float) else "USD unknown"),
+            )
+        )
+    if isinstance(cache := stats.get("cache"), Mapping):
+        failed = cache.get("failed", 0)
+        lines.append(
+            _row(
+                "cache",
+                f"{cache.get('hits', 0)} answered from {cache.get('directory')}, "
+                f"{cache.get('misses', 0)} asked and stored"
+                + (f", {failed} failed and not stored" if failed else ""),
             )
         )
     if result.bootstrap:

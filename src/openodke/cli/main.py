@@ -182,6 +182,10 @@ def ontology_diff(
 
 MODEL_HELP = "Provider-qualified model for every role, e.g. openai/gpt-5.5. Overrides `models`."
 MODEL_PROVIDER_HELP = "Provider for --model when the string does not name one, e.g. openai."
+CACHE_HELP = (
+    "A directory of model answers: a call asked before is answered from it for nothing, "
+    "and every new answer is kept there. Overrides models.cache."
+)
 
 
 @app.command("models")
@@ -218,6 +222,7 @@ def run_command(
         help="Give a not_found whose cited span is narrower than its sentence one more "
         "grounding call, against the sentence. Needs stages.grounder: llm.",
     ),
+    cache: Path | None = typer.Option(None, "--cache", help=CACHE_HELP),
 ) -> None:
     """Run the whole pipeline from a config file.
 
@@ -242,6 +247,8 @@ def run_command(
             typer.echo(f"models: every role on {chosen}")
         if widen:
             loaded = loaded.with_widen()
+        if cache is not None:
+            loaded = loaded.with_cache(cache)
         result = execute(loaded, dry_run=dry_run)
     except (ConfigError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
@@ -370,20 +377,41 @@ def _read_facts(
     return rows, docs, driver
 
 
-def _grounder(config: Path | None, chosen: str | None, *, locate: bool, paper: bool) -> Any:
-    """The model grounder `odke run` would build from these models, or the config's replay."""
+def _grounder(
+    config: Path | None,
+    chosen: str | None,
+    *,
+    locate: bool,
+    paper: bool,
+    cache: Path | None = None,
+) -> Any:
+    """The model grounder `odke run` would build from these models, or the config's replay.
+
+    The response cache is `--cache` when given, else the `models` block's, and
+    answers in front of whichever client that is.
+    """
     from openodke.ground import LLMGrounder
+    from openodke.llm.cache import CachedClient
     from openodke.run import ModelsConfig, load_models
-    from openodke.run.build import _replay_client
+    from openodke.run.build import OnFirstCall, _replay_client, response_cache
 
     models, base = load_models(config) if config is not None else (ModelsConfig(), Path.cwd())
     if chosen is not None:
         models = models.with_model(chosen)
         typer.echo(f"models: grounding on {chosen}")
+    roles = models.roles()
     replay = models.replay.get("ground")
-    client = _replay_client(base / replay, "ground") if replay is not None else None
+    client: Any = _replay_client(base / replay, "ground") if replay is not None else None
+    if cache is not None:
+        store = response_cache(cache.expanduser(), "--cache")
+    elif models.cache is not None:
+        store = response_cache(base / Path(models.cache).expanduser())
+    else:
+        store = None
+    if store is not None:
+        client = CachedClient(client if client is not None else OnFirstCall(roles.ground), store)
     mode: dict[str, Any] = {"context": "document", "verdicts": "binary"} if paper else {}
-    return LLMGrounder(models.roles(), client=client, locate=locate, **mode)
+    return LLMGrounder(roles, client=client, locate=locate, **mode)
 
 
 def _strict_ontology(path: Path) -> Ontology:
@@ -427,6 +455,7 @@ def ground_command(
         "--write-verdicts",
         help="neo4j: set odke_verdict on each relationship read. Off unless asked.",
     ),
+    cache: Path | None = typer.Option(None, "--cache", help=CACHE_HELP),
 ) -> None:
     """Ground a graph openodke did not build, and say what is wrong with it.
 
@@ -456,7 +485,9 @@ def ground_command(
         if write_back and dry_run:
             raise ValueError("a dry run asks no model, so it has no verdicts to write back")
         schema = _strict_ontology(ontology) if ontology is not None else None
-        grounder = None if dry_run else _grounder(config, chosen, locate=locate, paper=paper)
+        grounder = (
+            None if dry_run else _grounder(config, chosen, locate=locate, paper=paper, cache=cache)
+        )
         store = _Store(
             text_property=text_property, database=database, user=user, password_env=password_env
         )
@@ -530,6 +561,7 @@ def validate_command(
     database: str | None = typer.Option(None, "--database", help=DATABASE_HELP),
     user: str = typer.Option("neo4j", "--user", envvar="NEO4J_USER", help=USER_HELP),
     password_env: str = typer.Option("NEO4J_PASSWORD", "--password-env", help=PASSWORD_ENV_HELP),
+    cache: Path | None = typer.Option(None, "--cache", help=CACHE_HELP),
 ) -> None:
     """Validate another extractor's facts: ground, resolve, corroborate, gate and write.
 
@@ -569,7 +601,11 @@ def validate_command(
             raise ValueError("give the facts with --facts, or a run config with --config")
         if facts is not None:
             schema = _strict_ontology(ontology) if ontology is not None else None
-            grounder = None if dry_run else _grounder(config, chosen, locate=locate, paper=False)
+            grounder = (
+                None
+                if dry_run
+                else _grounder(config, chosen, locate=locate, paper=False, cache=cache)
+            )
             store = _Store(
                 text_property=text_property,
                 database=database,
@@ -593,6 +629,8 @@ def validate_command(
             if chosen is not None:
                 loaded = loaded.with_model(chosen)
                 typer.echo(f"models: every role on {chosen}")
+            if cache is not None:
+                loaded = loaded.with_cache(cache)
             if locate:
                 raise ValueError("with a run config, the locator is the grounder's: locate: true")
             built = build(loaded)

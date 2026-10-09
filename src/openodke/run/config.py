@@ -15,6 +15,7 @@ rather than a stage silently left as the pass-through.
       ground: anthropic/claude-haiku-4-5-20251001
       replay: {extract: recorded/extract.json}   # answer from recorded responses
       meter: true                                # cost, per stage
+      cache: .odke-cache                         # answer a repeated call from disk
     stages:
       chunker: {use: sentence, max_words: 120}
       extractor: hybrid                           # the one required stage
@@ -127,13 +128,14 @@ class InputSpec(_Strict):
 
 
 class ModelsConfig(_Strict):
-    """`ModelRoles` by job, plus recorded responses and a cost meter.
+    """`ModelRoles` by job, plus recorded responses, a cost meter and a response cache.
 
     `replay` maps a role to a file of recorded responses — a cassette object
     (`openodke.llm.ReplayClient`) or a list of match entries
     (`openodke.llm.RecordedClient`) — so a run needs no key and no network. `meter`
     wraps every model client in a `CostMeter` and puts the report in the graph's
-    stats.
+    stats. `cache` names a directory of answers (`openodke.llm.cache`): a call
+    asked before is answered from it, and every new answer is kept there.
     """
 
     extract: ModelSpec | None = None
@@ -141,6 +143,7 @@ class ModelsConfig(_Strict):
     infer: ModelSpec | None = None
     replay: dict[Role, str] = Field(default_factory=dict)
     meter: bool = False
+    cache: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -281,6 +284,16 @@ class RunConfig(_Strict):
         config file would break the promise that a config runs the same from anywhere.
         """
         return self.model_copy(update={"models": self.models.with_model(model)})
+
+    def with_cache(self, directory: str | Path) -> RunConfig:
+        """This config answering from the cache in `directory`: what `--cache` applies.
+
+        Resolved against the working directory, as a path given on the command line is.
+        """
+        absolute = str(Path(directory).expanduser().resolve())
+        return self.model_copy(
+            update={"models": self.models.model_copy(update={"cache": absolute})}
+        )
 
     def with_widen(self) -> RunConfig:
         """This config with the model grounder's widen-and-retry on: what `--widen` applies."""
