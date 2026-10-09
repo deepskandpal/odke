@@ -1,6 +1,6 @@
 """Widen and retry: one more reading for a narrow citation that came back `not_found` (#102).
 
-The grounder is shown the cited span and nothing else (DECISIONS #3, #23). An
+By default the grounder reads the cited span alone (DECISIONS #3, #23). An
 extractor that cites the word naming a value, `Ireland` out of a clause listing
 three regions, loses a true fact to its own citation: asked whether "Acme
 operates in Ireland" follows from `Ireland`, the grounder correctly answers
