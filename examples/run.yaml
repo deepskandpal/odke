@@ -45,6 +45,9 @@ models:
     ground: e2e/recorded/ground.json
   # Count calls, tokens and USD per stage into the graph's stats.
   meter: true
+  # Answer a call asked before from this directory (relative to this file), and
+  # keep every new answer there, so a rerun costs nothing. Off unless named.
+  # cache: .odke-cache
 
 # The thirteen stages (DECISIONS #20). Each is a built-in's short name or
 # package.module:Name, with options as extra keys: {use: name, option: value}.
