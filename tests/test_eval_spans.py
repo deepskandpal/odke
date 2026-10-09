@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from openodke import Entity, Evidence, Fact, GroundingVerdict, KnowledgeGraph, Span
+from openodke import Entity, Evidence, Fact, GroundingVerdict, KnowledgeGraph, Span, SpanOrigin
 from openodke.cli.main import app
 from openodke.eval import StageReport
 from openodke.eval.spans import evaluate_spans, load_facts, span_width
@@ -194,6 +194,20 @@ def test_the_directory_a_sink_wrote_is_the_input(tmp_path: Path) -> None:
     JsonlSink(tmp_path).write(KnowledgeGraph(facts=tuple(FACTS)))
     assert [f.id for f in load_facts(tmp_path)] == [f.id for f in FACTS]
     assert evaluate_spans(load_facts(tmp_path / "facts.jsonl")).n == 13
+
+
+def test_the_sink_keeps_who_chose_a_span_and_an_older_file_reads_as_cited(tmp_path: Path) -> None:
+    """The fixture predates `span_origin`, so every span in it loads as cited (DECISIONS #25)."""
+    assert {e.span_origin for f in FACTS for e in f.evidence} == {SpanOrigin.CITED}
+    whole = Evidence(
+        doc_id="d1", span=Span(doc_id="d1", start=0, end=200), span_origin=SpanOrigin.CONTEXT
+    )
+    bare = cited(200, "supported").model_copy(update={"evidence": (whole,)})
+    JsonlSink(tmp_path).write(KnowledgeGraph(facts=(cited(8, "supported"), bare)))
+    assert [f.evidence[0].span_origin for f in load_facts(tmp_path)] == [
+        SpanOrigin.CITED,
+        SpanOrigin.CONTEXT,
+    ]
 
 
 # --------------------------------------------------------------------------- #
