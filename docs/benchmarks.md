@@ -58,7 +58,11 @@ schema sees all of them.
 
 From Python: `openodke.eval.datasets.text2kgbench.fetch / prepare / run / score`,
 and the same for `redocred`. `score` takes triples from any system, which is how
-another tool is compared on the same footing.
+another tool is compared on the same footing. From the shell, that is
+[`odke eval pipeline --bench`](evaluation.md#point-it-at-your-pipeline): your
+pipeline over a prepared set's documents, scored with the set's own metrics,
+and `--validator` for the [Validator](validator.md)'s row, on the set's own
+`odke.json`.
 
 ## Datasets
 
