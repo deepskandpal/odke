@@ -83,6 +83,11 @@ def run_built(built: Built, *, dry_run: bool = False) -> RunResult:
     applied: list[str] = []
     if built.lookup is not None and dry_run:
         result_warnings.append(built.lookup.dry_run_note)
+    judge = getattr(built.stages.get("resolver"), "judge", None)
+    if dry_run and judge is not None and judge.queue is not None:
+        # A dry run writes nothing, the review queue included.
+        judge.queue = None
+        result_warnings.append("dry run: the pair judge's review queue is not written")
     try:
         if built.config.bootstrap:
             constrainer = built.stages["constrainer"]
@@ -105,6 +110,7 @@ def run_built(built: Built, *, dry_run: bool = False) -> RunResult:
         docs = built.documents()
         register_documents(built.stages["extractor"], docs)
         register_documents(built.stages.get("corroborator"), docs)
+        register_documents(built.stages.get("resolver"), docs)
         kg = pipeline.run(docs)
         kg = kg.model_copy(update={"stats": collect_stats(built, kg)})
 
@@ -145,7 +151,8 @@ def register_documents(stage: Any, docs: list[Document]) -> None:
     """Hand the loaded documents to a stage that looks them up by id (DECISIONS #19).
 
     An extractor reads a document's URI and tier; the corroborator reads its
-    text, to count a near-duplicate copy once.
+    text, to count a near-duplicate copy once; the resolver's pair judge reads
+    the sentences around a mention.
     """
     lookup = getattr(stage, "documents", None)
     if isinstance(lookup, dict):

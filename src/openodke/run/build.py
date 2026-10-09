@@ -38,6 +38,7 @@ from openodke.chunking import SentenceChunker
 from openodke.corroborate import (
     EvidenceScorer,
     NativeResolver,
+    PairJudge,
     SignatureCorroborator,
     ValueNormalizer,
 )
@@ -441,6 +442,41 @@ def _llm_grounder(options: dict[str, Any], ctx: Context, where: str) -> LLMGroun
     return grounder
 
 
+def _native_resolver(options: dict[str, Any], ctx: Context, where: str) -> NativeResolver:
+    """`resolver: {use: native, judge: ...}`: the pair judge is off unless named (DECISIONS #34).
+
+    `judge: true` takes its defaults; a mapping sets `low`, `queue` and
+    `reviewed` (paths relative to the config), `max_workers` and `retry`. It
+    asks the `ground` role's model, metered as the stage `judge`.
+    """
+    opts = dict(options)
+    judge = opts.pop("judge", None)
+    if judge is not None and judge is not False:
+        if judge is True:
+            judge = {}
+        if not isinstance(judge, Mapping):
+            raise ConfigError(f"{where}.judge: true, or the judge's options")
+        opts["judge"] = _pair_judge(dict(judge), ctx, f"{where}.judge")
+    resolver: NativeResolver = construct(NativeResolver, opts, where)
+    return resolver
+
+
+def _pair_judge(options: dict[str, Any], ctx: Context, where: str) -> PairJudge:
+    for key in ("queue", "reviewed"):
+        if isinstance(options.get(key), str):
+            options[key] = ctx.config.resolve(options[key])
+    if isinstance(options.get("reviewed"), Path) and not options["reviewed"].is_file():
+        raise ConfigError(f"{where}.reviewed: {options['reviewed']} does not exist")
+    judge: PairJudge = construct(
+        PairJudge,
+        _with_retry(options, where),
+        where,
+        injected={"roles": ctx.roles, "client": ctx.client("ground", stage="judge")},
+        reserved=("sleep", "store_context"),
+    )
+    return judge
+
+
 def _with_retry(options: dict[str, Any], where: str) -> dict[str, Any]:
     """The options with `retry` read as a `RetryPolicy`, so a bad one names its key."""
     opts = dict(options)
@@ -510,7 +546,7 @@ BUILTINS: dict[str, dict[str, Factory]] = {
     },
     "grounder": {"span": _plain(SpanGrounder), "llm": _llm_grounder},
     "normalizer": {"value": _with_ontology(ValueNormalizer)},
-    "resolver": {"native": _plain(NativeResolver)},
+    "resolver": {"native": _native_resolver},
     "corroborator": {"signature": _with_ontology(SignatureCorroborator, "source", "documents")},
     "scorer": {"evidence": _scorer},
     "gate": {"verdict": _plain(VerdictGate)},
