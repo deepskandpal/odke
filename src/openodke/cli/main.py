@@ -828,7 +828,10 @@ def eval_stage(
     stage: str = typer.Argument(
         ...,
         help="route, extract, ground, resolve, score, validate, ablation (with --config), "
-        "or spans (with --facts, and no labels at all).",
+        "spans (with --facts, and no labels at all), or compare (two runs' --items files).",
+    ),
+    runs: list[Path] | None = typer.Argument(
+        None, help="compare only: run A's --items file, then run B's.", show_default=False
     ),
     labels: Path | None = typer.Option(None, "--labels", help="Your labelled rows, as JSONL."),
     predictions: Path | None = typer.Option(
@@ -853,6 +856,24 @@ def eval_stage(
         False, "--describe", help="Print what a label row and a prediction row are, and exit."
     ),
     as_json: bool = typer.Option(False, "--json", help="Emit the report as JSON."),
+    items: Path | None = typer.Option(
+        None,
+        "--items",
+        help="Also write each labelled item's outcome here, as JSONL, for `compare`: "
+        "extract, ground, validate and route.",
+    ),
+    metric: str | None = typer.Option(
+        None,
+        "--metric",
+        help="compare: the primary metric, which decides the verdict: f1, precision, recall "
+        "or accuracy. Default f1 for documents, accuracy for items; the rest are guardrails.",
+    ),
+    resamples: int = typer.Option(
+        2000, "--resamples", min=100, help="compare: bootstrap resamples."
+    ),
+    seed: int = typer.Option(
+        0, "--seed", help="compare: the resampling seed; the same seed gives the same interval."
+    ),
 ) -> None:
     """Score one stage against your own labelled data.
 
@@ -866,13 +887,37 @@ def eval_stage(
     `spans` is the exception: it needs no labelled data. It reads a run's facts
     and reports span width split by the grounder's verdict, which scores the
     too-narrow-citation error with no gold set at all.
+
+    `compare A B` asks whether the change between two runs was real. Write each
+    run's outcomes with `--items`, then compare them: a paired bootstrap over the
+    items both scored, with a verdict of better, worse or inconclusive and the
+    smallest change the set can detect.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
     from openodke.eval.formats import describe as describe_formats
-    from openodke.eval.runner import evaluate_files
+    from openodke.eval.runner import load_inputs, score
     from openodke.llm.base import ProviderError
 
+    inputs = (labels, predictions, run, ontology, documents, config, facts, items)
+    compare_flags = [
+        flag
+        for flag, used in (
+            ("--metric", metric is not None),
+            ("--resamples", resamples != 2000),
+            ("--seed", seed != 0),
+        )
+        if used
+    ]
     try:
+        if stage == "compare":
+            if any(v is not None for v in inputs):
+                raise ValueError("compare reads two --items files and takes no other inputs")
+            _eval_compare(runs or [], describe, as_json, metric, resamples, seed)
+            return
+        if runs:
+            raise ValueError(f"unexpected argument {str(runs[0])!r}: only compare takes runs")
+        if compare_flags:
+            raise ValueError(f"{', '.join(compare_flags)}: for compare only")
         if stage == "spans":
             from openodke.eval.spans import DESCRIPTION, evaluate_spans, load_facts
 
@@ -886,7 +931,7 @@ def eval_stage(
             # A facts file is what --predictions already means for the fact
             # stages, so it is taken as --facts rather than refused.
             source = facts if facts is not None else predictions
-            if any(v is not None for v in (run, ontology, documents, config)):
+            if any(v is not None for v in (run, ontology, documents, config, items)):
                 raise ValueError("spans reads a run's facts; it takes --facts and nothing else")
             if source is None:
                 raise ValueError(
@@ -902,7 +947,7 @@ def eval_stage(
                     f"{DESCRIPTION}\n\n{describe_formats('extract').split('--predictions')[0]}"
                 )
                 return
-            if any(v is not None for v in (predictions, run, ontology, documents, facts)):
+            if any(v is not None for v in (predictions, run, ontology, documents, facts, items)):
                 raise ValueError("ablation runs the config itself; it takes --config and --labels")
             if config is None or labels is None:
                 raise ValueError("ablation needs --config and --labels (or --describe)")
@@ -917,9 +962,12 @@ def eval_stage(
                 raise ValueError("--config is for ablation")
             if facts is not None:
                 raise ValueError("--facts is for spans")
-            report = evaluate_files(
+            rows, predicted = load_inputs(
                 stage, labels, predictions, run=run, ontology=ontology, documents=documents
             )
+            report = score(stage, rows, predicted)
+            if items is not None:
+                _write_items(items, stage, rows, predicted)
     except (ValueError, OSError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from exc
@@ -927,6 +975,31 @@ def eval_stage(
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
     typer.echo(report.model_dump_json(indent=2) if as_json else report.render())
+
+
+def _write_items(path: Path, stage: str, rows: Any, predicted: Any) -> None:
+    from openodke.eval.compare import item_rows, write_items
+
+    outcomes, warnings = item_rows(stage, rows, predicted)
+    write_items(path, outcomes)
+    for warning in warnings:
+        typer.echo(f"warning: {warning}", err=True)
+    unit = "document" if stage == "extract" else "item"
+    typer.echo(f"wrote {path}: {_count(len(outcomes), unit)}", err=True)
+
+
+def _eval_compare(
+    runs: list[Path], describe: bool, as_json: bool, metric: str | None, resamples: int, seed: int
+) -> None:
+    from openodke.eval.compare import DESCRIPTION, compare_files
+
+    if describe:
+        typer.echo(DESCRIPTION)
+        return
+    if len(runs) != 2:
+        raise ValueError(f"compare takes two runs' --items files, A then B; got {len(runs)}")
+    comparison = compare_files(runs[0], runs[1], metric=metric, resamples=resamples, seed=seed)
+    typer.echo(comparison.model_dump_json(indent=2) if as_json else comparison.render())
 
 
 # --------------------------------------------------------------------------- #

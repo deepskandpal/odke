@@ -13,6 +13,7 @@ file, which is also how a platform's merges arrive.
 from __future__ import annotations
 
 import importlib
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +73,31 @@ def evaluate_files(
     documents: str | Path | None = None,
 ) -> StageReport:
     """Load the labels for `stage`, get predictions from a file or a run, and score them."""
+    rows, predicted = load_inputs(
+        stage, labels, predictions, run=run, ontology=ontology, documents=documents
+    )
+    return score(stage, rows, predicted)
+
+
+def score(stage: str, rows: Sequence[Any], predicted: Any) -> StageReport:
+    """Score loaded labels against loaded (or produced) predictions."""
+    return SCORERS[stage](rows, predicted)
+
+
+def load_inputs(
+    stage: str,
+    labels: str | Path,
+    predictions: str | Path | None = None,
+    *,
+    run: str | None = None,
+    ontology: str | Path | None = None,
+    documents: str | Path | None = None,
+) -> tuple[list[Any], Any]:
+    """The labelled rows for `stage`, and its predictions from a file or a run.
+
+    Split from scoring so one set of predictions can be both scored and written
+    out per item (`odke eval --items`) without running a stage twice.
+    """
     if stage not in STAGES:
         raise ValueError(f"unknown stage {stage!r}; expected one of: {', '.join(STAGES)}")
     if run is not None and predictions is not None:
@@ -81,10 +107,8 @@ def evaluate_files(
     if stage == "route":
         route_rows = load_jsonl(labels, RouteLabel)
         if component is not None:
-            return evaluate_routing(route_rows, run_route(component, route_rows))
-        return evaluate_routing(
-            route_rows, load_jsonl(_required(stage, predictions), RoutePrediction)
-        )
+            return route_rows, run_route(component, route_rows)
+        return route_rows, load_jsonl(_required(stage, predictions), RoutePrediction)
 
     if stage == "extract":
         gold = load_jsonl(labels, GoldFact)
@@ -92,14 +116,14 @@ def evaluate_files(
             if documents is None or ontology is None:
                 raise ValueError("--run with extract needs --documents and --ontology")
             docs = load_jsonl(documents, Document)
-            return evaluate_extraction(gold, run_extract(component, docs, _ontology(ontology)))
-        return evaluate_extraction(gold, load_jsonl(_required(stage, predictions), Fact))
+            return gold, run_extract(component, docs, _ontology(ontology))
+        return gold, load_jsonl(_required(stage, predictions), Fact)
 
     if stage == "ground":
         ground_rows = load_jsonl(labels, GroundingLabel)
         if component is not None:
-            return evaluate_grounding(ground_rows, run_ground(component, ground_rows))
-        return evaluate_grounding(ground_rows, _optional(predictions))
+            return ground_rows, run_ground(component, ground_rows)
+        return ground_rows, _optional(predictions)
 
     if stage == "resolve":
         if component is not None:
@@ -108,24 +132,30 @@ def evaluate_files(
                 "links it emitted — a sink's links.jsonl, or a platform's merges — as --predictions"
             )
         pairs = load_jsonl(labels, PairLabel)
-        return evaluate_resolution(pairs, load_jsonl(_required(stage, predictions), LinkRow))
+        return pairs, load_jsonl(_required(stage, predictions), LinkRow)
 
     if stage == "score":
         score_rows = load_jsonl(labels, CalibrationLabel)
         if component is not None:
-            return evaluate_calibration(score_rows, run_score(component, score_rows))
-        return evaluate_calibration(score_rows, _optional(predictions))
+            return score_rows, run_score(component, score_rows)
+        return score_rows, _optional(predictions)
 
     validate_rows = load_jsonl(labels, ValidationLabel)
     if component is not None:
         if ontology is None:
             raise ValueError("--run with validate needs --ontology")
-        return evaluate_validation(
-            validate_rows, run_validate(component, validate_rows, _ontology(ontology))
-        )
-    return evaluate_validation(
-        validate_rows, load_jsonl(_required(stage, predictions), ValidationPrediction)
-    )
+        return validate_rows, run_validate(component, validate_rows, _ontology(ontology))
+    return validate_rows, load_jsonl(_required(stage, predictions), ValidationPrediction)
+
+
+SCORERS: dict[str, Callable[[Any, Any], StageReport]] = {
+    "route": evaluate_routing,
+    "extract": evaluate_extraction,
+    "ground": evaluate_grounding,
+    "resolve": evaluate_resolution,
+    "score": evaluate_calibration,
+    "validate": evaluate_validation,
+}
 
 
 def _required(stage: str, predictions: str | Path | None) -> str | Path:
@@ -142,4 +172,4 @@ def _ontology(path: str | Path) -> Ontology:
     return Ontology.model_validate_json(Path(path).read_text(encoding="utf-8"))
 
 
-__all__ = ["STAGES", "evaluate_files", "load_stage"]
+__all__ = ["SCORERS", "STAGES", "evaluate_files", "load_inputs", "load_stage", "score"]
