@@ -21,8 +21,11 @@ versions; `randrange` and `choices` carry no such promise. The same units,
 statistic, seed and resample count give the same range, byte for byte, which
 is what lets a CI gate compare two reports at all.
 
-Paired comparisons (#142) reuse `draws`: draw the indices once and apply each
-list to both runs' documents, so the two are resampled together.
+Paired comparisons (`openodke.eval.stats`, #142) draw from here too: their
+resampler takes each draw's indices from `draws` and reads every interval with
+`percentile_range`, so a report's ranges and a comparison's come from one
+bootstrap. Where items repeat, as pass/fail outcomes do, it counts how many of
+each outcome a draw takes instead, an exact shortcut with the same distribution.
 """
 
 from __future__ import annotations
@@ -32,7 +35,8 @@ import random
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import TypeVar
 
-RESAMPLES = 1000
+# One count for every range and every comparison (`openodke.eval.stats`).
+RESAMPLES = 2000
 SEED = 0
 LEVEL = 0.95
 
@@ -63,7 +67,8 @@ def percentile_range(values: Sequence[float], level: float = LEVEL) -> tuple[flo
     if not 0 < level < 1:
         raise ValueError(f"level is a share between 0 and 1, got {level}")
     ordered = sorted(values)
-    tail = (1 - level) / 2
+    # Rounded so 95% reads the 2.5th percentile exactly, not 0.025000000000000022.
+    tail = round((1 - level) / 2, 12)
     return _at(ordered, tail), _at(ordered, 1 - tail)
 
 
