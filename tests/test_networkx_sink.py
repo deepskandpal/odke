@@ -23,6 +23,7 @@ from openodke import (  # noqa: E402
     Sink,
     SourceTier,
     Span,
+    SpanOrigin,
 )
 from openodke.eval.sinks import assert_idempotent  # noqa: E402
 from openodke.sinks.neo4j import signature_of  # noqa: E402
@@ -85,15 +86,17 @@ def _fact_back(g: Any, u: str, v: str, attrs: dict[str, Any], projected: set[str
         Evidence(
             doc_id=doc,
             span=Span(doc_id=doc, start=start, end=end) if start >= 0 else None,
+            span_origin=SpanOrigin(origin),
             uri=uri or None,
             tier=SourceTier(tier),
             retrieved_at=at,
         )
-        for doc, uri, start, end, tier, at in zip(
+        for doc, uri, start, end, origin, tier, at in zip(
             attrs["evidence_doc_ids"],
             attrs["evidence_uris"],
             attrs["evidence_starts"],
             attrs["evidence_ends"],
+            attrs["evidence_span_origins"],
             attrs["evidence_tiers"],
             attrs["evidence_retrieved_at"],
             strict=True,
@@ -190,6 +193,15 @@ def test_a_literal_fact_is_an_edge_to_a_claim_node_as_in_neo4j() -> None:
     (edge,) = g.get_edge_data("c:acme", node).values()
     assert set(edge) >= PROVENANCE
     assert edge["percentile"] == "p50"
+
+
+def test_a_context_span_is_told_from_a_citation() -> None:
+    graph = _graph()
+    g = _written(graph)
+    employer = g.edges["p:ada", "c:acme", signature_of(graph.facts[0])]
+    (name,) = g.get_edge_data("p:ada", claim_node(signature_of(graph.facts[3]))).values()
+    assert employer["evidence_span_origins"] == ["cited", "cited"]
+    assert name["evidence_span_origins"] == ["context"]
 
 
 def test_a_denial_keeps_its_polarity_and_is_never_projected() -> None:
