@@ -749,6 +749,7 @@ gate that accepts `unchecked` writes them to the store. The output estimate
 wastes room: a call that would have returned 50 tokens is refused for its
 `max_tokens`. And a provider that reports no cost never reaches a USD limit.
 
+
 ### 33. A support list names each source, and Neo4j keeps it as parallel lists
 
 `Fact.support` was a count. The corroborator already worked out which
