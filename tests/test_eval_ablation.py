@@ -83,6 +83,8 @@ def test_the_notes_say_what_moved_and_what_the_gate_traded(example: Path) -> Non
         "refusing not_found as well would keep 19 of 32 true facts and 1 of 4 false ones "
         "(precision 0.950)" in notes
     )
+    # What extraction left behind, measured on the candidates with no model (#130).
+    assert any(note.startswith("coverage of the candidates: ") for note in notes)
 
 
 def test_grounding_that_moves_nothing_is_reported_as_such(example: Path) -> None:

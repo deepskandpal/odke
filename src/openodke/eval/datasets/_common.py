@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from openodke.coverage import summary as coverage_summary
 from openodke.eval.ablation import AblationRun
 from openodke.eval.cost import StageCost
 from openodke.eval.report import Metric, StageReport
@@ -265,6 +266,8 @@ def score_run(
         f"grounder verdicts on the candidates: {verdicts(ablation.grounded)}",
         *ablation.notes,
     ]
+    if ablation.coverage is not None:
+        lines.append(f"coverage of the candidates: {coverage_summary(ablation.coverage)}")
     return report(stage, len(gold), rows, lines)
 
 

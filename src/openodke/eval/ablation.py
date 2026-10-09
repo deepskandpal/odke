@@ -33,6 +33,8 @@ from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from openodke.coverage import offered_by
+from openodke.coverage import summary as coverage_summary
 from openodke.eval.cost import CallRecord, StageCost
 from openodke.eval.extraction import evaluate_extraction, match_extraction, per_document
 from openodke.eval.formats import GoldFact, GroundingLabel
@@ -76,6 +78,10 @@ class _Recording:
         facts = list(self.inner.extract(chunk, ontology))
         self.found[_key(chunk)] = facts
         return facts
+
+    def offered(self, ontology: Ontology) -> list[str] | None:
+        # What the coverage report reads: the inner extractor's, when it can say.
+        return offered_by(self.inner, ontology)
 
     def extract_many(self, chunks: Sequence[Chunk], ontology: Ontology) -> list[list[Fact]]:
         # Passed on whole, so a benchmark's extraction runs as concurrently as `odke run`'s.
@@ -128,6 +134,8 @@ class AblationRun:
     all_calls: list[CallRecord]
     gate: Any
     notes: list[str] = field(default_factory=list)
+    # What extraction left behind (`CoverageReport.stats()`), measured on the candidates.
+    coverage: dict[str, Any] | None = None
 
     def configurations(self) -> list[tuple[str, list[Fact], list[CallRecord]]]:
         """Each configuration's name, its facts, and the calls it took to get them."""
@@ -160,7 +168,8 @@ def ablate(config: RunConfig) -> AblationRun:
     notes: list[str] = []
 
     recording = _Recording(stages["extractor"])
-    candidates = list(Pipeline(ontology, recording, **route).run(docs).facts)
+    extracted = Pipeline(ontology, recording, coverage=True, **route).run(docs)
+    candidates = list(extracted.facts)
     extraction_calls = list(meter.records)
 
     grounder = stages["grounder"]
@@ -189,6 +198,7 @@ def ablate(config: RunConfig) -> AblationRun:
         all_calls=all_calls,
         gate=gate,
         notes=notes,
+        coverage=extracted.stats.get("coverage"),
     )
 
 
@@ -219,6 +229,8 @@ def run_ablation(config: RunConfig, gold: Sequence[GoldFact]) -> StageReport:
         ),
     ]
     notes[2:2] = _gate_view(gold, candidates, grounded, docs, gate)
+    if run.coverage is not None:
+        notes.append(f"coverage of the candidates: {coverage_summary(run.coverage)}")
     notes.append("a fact merged across documents is scored once in each document it cites")
 
     metrics: dict[str, Metric] = {}
