@@ -492,6 +492,185 @@ def ground_command(
         typer.echo(f"wrote odke_verdict on {_count(written, 'relationship')}")
 
 
+# --------------------------------------------------------------------------- #
+# odke validate — the whole layer
+# --------------------------------------------------------------------------- #
+
+VALIDATE_CONFIG_HELP = (
+    "A run config whose extractor is triples: its inputs, ontology, models, stages and "
+    "sinks. With --facts, only its models block is read, as odke ground reads it."
+)
+
+
+@app.command("validate")
+def validate_command(
+    config: Path | None = typer.Option(None, "--config", help=VALIDATE_CONFIG_HELP),
+    facts: str | None = typer.Option(None, "--facts", help=FACTS_HELP),
+    texts: Path | None = typer.Option(None, "--texts", help=TEXTS_HELP),
+    adapter: str = typer.Option("triples", "--adapter", help=ADAPTER_HELP),
+    ontology: Path | None = typer.Option(None, "--ontology", help=ONTOLOGY_HELP),
+    out: Path | None = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="Write the graph here as JSONL, beside any sinks the config names.",
+    ),
+    model: str | None = typer.Option(None, "--model", help=MODEL_HELP),
+    model_provider: str | None = typer.Option(None, "--model-provider", help=MODEL_PROVIDER_HELP),
+    locate: bool = typer.Option(
+        False, "--locate", help="Find the sentence naming both ends of a fact that cited nothing."
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="The free checks, the locator and every deterministic stage: no model, no write.",
+    ),
+    text_property: str | None = typer.Option(None, "--text-property", help=TEXT_PROPERTY_HELP),
+    database: str | None = typer.Option(None, "--database", help=DATABASE_HELP),
+    user: str = typer.Option("neo4j", "--user", envvar="NEO4J_USER", help=USER_HELP),
+    password_env: str = typer.Option("NEO4J_PASSWORD", "--password-env", help=PASSWORD_ENV_HELP),
+) -> None:
+    """Validate another extractor's facts: ground, resolve, corroborate, gate and write.
+
+    The whole verification layer over one batch, as `openodke.Validator` runs
+    it. The facts come as `odke ground` takes them (--facts, --texts,
+    --adapter, and --config's models block), or from a run config alone whose
+    extractor is `triples`. A stage the config leaves out is the Validator's
+    default, not the pass-through: the free checks and the model grounder, the
+    value normaliser, the native resolver, the signature corroborator, the
+    evidence scorer, and the verdict gate with the schema checks.
+
+    Writes the graph to -o as JSONL and to the config's sinks, and prints the
+    report: facts in, refused, merged, linked and derived, the cost, the
+    prompts sent and the coverage report. A dry run calls no model and writes
+    nothing.
+
+    Exit 2 is input or a config that cannot be read, exit 1 a run that failed.
+    """
+    # Imported here so `odke --version` and the ontology commands stay light.
+    from openodke import Validator
+    from openodke.interop import TriplesExtractor
+    from openodke.llm.base import ProviderError
+    from openodke.run import ConfigError, build
+    from openodke.run.execute import _bootstrap
+    from openodke.sinks.jsonl import JsonlSink
+
+    chosen = _qualified(model, model_provider)
+    driver: Any = None
+    applied: list[str] = []
+    plans: list[Any] = []
+    sinks: list[Any] = []
+    caught: list[warnings.WarningMessage] = []
+    try:
+        if facts is None and config is None:
+            raise ValueError("give the facts with --facts, or a run config with --config")
+        if facts is not None:
+            schema = _strict_ontology(ontology) if ontology is not None else None
+            grounder = None if dry_run else _grounder(config, chosen, locate=locate, paper=False)
+            store = _Store(
+                text_property=text_property,
+                database=database,
+                user=user,
+                password_env=password_env,
+            )
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                rows, docs, driver = _read_facts(adapter, facts, texts, store)
+            validator = Validator(schema, grounder=grounder, locate=locate and grounder is None)
+            named: dict[str, Any] = {}
+        else:
+            assert config is not None  # one of the two is given
+            given = (texts, ontology, text_property, database)
+            if any(v is not None for v in given) or adapter != "triples":
+                raise ValueError(
+                    "a run config names its own inputs, ontology and extractor: leave out "
+                    "--texts, --ontology, --adapter and the Neo4j source options"
+                )
+            loaded = _load_run_config(config)
+            if chosen is not None:
+                loaded = loaded.with_model(chosen)
+                typer.echo(f"models: every role on {chosen}")
+            if locate:
+                raise ValueError("with a run config, the locator is the grounder's: locate: true")
+            built = build(loaded)
+            extractor = built.stages["extractor"]
+            if not isinstance(extractor, TriplesExtractor):
+                raise ConfigError(
+                    "stages.extractor: odke validate checks the triples another extractor "
+                    "wrote, so it takes {use: triples, path: ...}; to extract, use odke run"
+                )
+            docs = built.documents()
+            rows = [row for group in extractor.rows.values() for row in group]
+            named = {"extractor": extractor.extractor, "confidence": extractor.confidence}
+            stage = built.stages
+            plans = built.sinks
+            if not dry_run:
+                sinks = [plan.open() for plan in plans]
+                # Before any model is called, as `odke run` applies it.
+                if loaded.bootstrap:
+                    applied = _bootstrap(built, sinks)
+            elif loaded.bootstrap:
+                constrainer = built.stages["constrainer"]
+                applied = [
+                    s for p in plans if p.can_bootstrap for s in p.ddl(built.ontology, constrainer)
+                ]
+            validator = Validator(
+                built.ontology,
+                grounder=stage["grounder"],
+                roles=built.context.roles,
+                client=built.context.client("ground"),
+                normalizer=stage["normalizer"],
+                resolver=stage["resolver"],
+                corroborator=stage["corroborator"],
+                scorer=stage["scorer"],
+                gate=stage["gate"],
+                inverses=loaded.inverses,
+                coverage=loaded.coverage,
+            )
+        if out is not None and not dry_run:
+            sinks.append(JsonlSink(out))
+        validator.sinks = tuple(sinks)
+    except (ValueError, ConfigError, OntologyLoadError, ImportError, OSError) as exc:
+        _close(driver, sinks)
+        _data_error(exc)
+    except ProviderError as exc:
+        _close(driver, sinks)
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    _echo_warnings(caught)
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            kg, report = validator.validate(rows, docs, dry_run=dry_run, **named)
+    except (ProviderError, OSError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        _close(driver, sinks)
+    _echo_warnings(caught)
+    typer.echo(report.render())
+    verb = "would write" if dry_run else "wrote"
+    if applied:
+        done = "would apply" if dry_run else "applied"
+        typer.echo(f"{'bootstrap':<13} {done} {_count(len(applied), 'statement')}")
+    written = [line for plan in plans for line in plan.describe(kg)]
+    if out is not None:
+        written.append(
+            f"jsonl → {out}: entities.jsonl {len(kg.entities)}, facts.jsonl {len(kg.facts)}, "
+            f"links.jsonl {len(kg.links)}, manifest.json"
+        )
+    for line in written or ["nothing: give -o, or name a sink in the config"]:
+        typer.echo(f"{verb:<13} {line}")
+
+
+def _close(driver: Any, sinks: list[Any]) -> None:
+    """The Neo4j source and every sink that holds a connection, closed."""
+    for held in [driver, *sinks]:
+        close = getattr(held, "close", None)
+        if callable(close):
+            close()
+
+
 @ontology_app.command("infer")
 def ontology_infer(
     paths: list[Path] = typer.Argument(..., help="Files or directories to infer a schema from."),
