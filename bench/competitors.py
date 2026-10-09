@@ -54,11 +54,18 @@ ROLES = {"system": "system", "human": "user", "user": "user", "ai": "assistant"}
 
 
 def load_env(path: str | None) -> None:
-    """KEY=value lines into the environment, never overriding what is already set."""
+    """KEY=value lines into the environment, never overriding what is already set.
+
+    Read as a shell would source them (`run_all.sh` does): a leading `export` and
+    quotes around the value go. Kept, `KEY="sk-…"` sends the quote marks with the
+    key, and every call fails.
+    """
     if not path or not Path(path).exists():
         return
     for line in Path(path).read_text().splitlines():
-        key, _, value = line.strip().partition("=")
+        key, _, value = line.strip().removeprefix("export ").partition("=")
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
         if key and not key.startswith("#"):
             os.environ.setdefault(key, value)
 
@@ -346,6 +353,13 @@ def extract(
         f"{system} ({model}): {len(raw)} triples, {len(rows)} inside the schema,"
         f" {len(docs)} documents, {USAGE['failed_documents']} failed -> {out}"
     )
+    if USAGE["failed_documents"]:
+        # A failed document is an empty answer, and an empty answer scores: a bad
+        # key fails every call and would publish as 0%. Kept for a look, not a table.
+        raise SystemExit(
+            f"{system}: {USAGE['failed_documents']} of {len(docs)} documents failed to"
+            " extract; this set is not a score until they are run again"
+        )
     return out
 
 
