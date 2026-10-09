@@ -34,6 +34,7 @@ from typing import Any, Literal
 from openodke.ground.locate import SpanLocator
 from openodke.ground.retry import RetryPolicy, call_with_retry
 from openodke.ground.span import Counts, SpanGrounder, located
+from openodke.ground.widen import WIDEN, widen
 from openodke.llm.base import (
     Completion,
     LLMClient,
@@ -240,6 +241,11 @@ class LLMGrounder:
     or two sentences naming its subject and object instead, when they exist.
     Its counts are under `"locate"`.
 
+    `widen=True` gives a `not_found` whose span is narrower than its sentence
+    one more call, against the sentence (`openodke.ground.widen`, #102). Off by
+    default. The extra calls go through `widen_client` when one is given, so a
+    cost meter can count them apart; `stats["widen"]` counts them either way.
+
     `ground_many` is the batched path: a document's facts at once, with at most
     `max_workers` model calls in flight. `ground_documents` is the same across
     many documents, and is what the pipeline uses, so a corpus of one-row
@@ -259,6 +265,8 @@ class LLMGrounder:
         context: Context = "span",
         verdicts: Verdicts = "three_way",
         locate: bool = False,
+        widen: bool = False,
+        widen_client: LLMClient | None = None,
     ) -> None:
         if max_workers < 1:
             raise ValueError(f"max_workers must be at least 1, got {max_workers}")
@@ -266,12 +274,19 @@ class LLMGrounder:
             raise ValueError(f"context must be 'span' or 'document', got {context!r}")
         if verdicts not in ("three_way", "binary"):
             raise ValueError(f"verdicts must be 'three_way' or 'binary', got {verdicts!r}")
+        if widen and context == "document":
+            raise ValueError(
+                "widen=True re-asks against the sentence around a narrow span, and "
+                "context='document' already shows the model the whole document"
+            )
         self.context: Context = context
         self.binary = verdicts == "binary"
         self.prompt: Prompt = _PAPER if self.binary else _SPAN
         self.roles = roles if roles is not None else ModelRoles()
         self.spec: ModelSpec = self.roles.ground
         self.client: LLMClient = client if client is not None else self.roles.client_for("ground")
+        self.widen = widen
+        self.widen_client: LLMClient = widen_client if widen_client is not None else self.client
         self.max_workers = max_workers
         self.retry = retry if retry is not None else RetryPolicy()
         self.span_grounder = SpanGrounder()
@@ -293,10 +308,21 @@ class LLMGrounder:
         )
         self._cost_lock = threading.Lock()
         self._cost: float | None = None
+        # Kept apart from the counts above, so they read the same with widen off.
+        self._widened = Counts(
+            "retried",
+            "recovered",
+            "calls",
+            "failed",
+            "unparseable",
+            "prompt_tokens",
+            "completion_tokens",
+        )
+        self._widen_cost: float | None = None
 
     def ground(self, fact: Fact, doc: Document) -> Fact:
         prepared, passage = self._prepare(fact, doc)
-        return prepared if passage is None else self._ask(prepared, passage)
+        return prepared if passage is None else self._ask(prepared, passage, doc)
 
     def ground_many(self, facts: Sequence[Fact], doc: Document) -> list[Fact]:
         """One document's facts, with the model calls run concurrently.
@@ -320,22 +346,22 @@ class LLMGrounder:
         `max_workers` ceiling spans documents rather than stopping at each one.
         """
         out: list[list[Fact]] = []
-        pending: list[tuple[int, int, Fact, str]] = []
+        pending: list[tuple[int, int, Fact, str, Document]] = []
         for at, (facts, doc) in enumerate(batches):
             row: list[Fact] = []
             for index, fact in enumerate(facts):
                 prepared, passage = self._prepare(fact, doc)
                 row.append(prepared)
                 if passage is not None:
-                    pending.append((at, index, prepared, passage))
+                    pending.append((at, index, prepared, passage, doc))
             out.append(row)
         if len(pending) == 1:
-            at, index, fact, passage = pending[0]
-            out[at][index] = self._ask(fact, passage)
+            at, index, fact, passage, doc = pending[0]
+            out[at][index] = self._ask(fact, passage, doc)
         elif pending:
             workers = min(self.max_workers, len(pending))
             with ThreadPoolExecutor(workers, thread_name_prefix="openodke-ground") as pool:
-                futures = [(a, i, pool.submit(self._ask, f, p)) for a, i, f, p in pending]
+                futures = [(a, i, pool.submit(self._ask, f, p, d)) for a, i, f, p, d in pending]
                 for at, index, future in futures:
                     out[at][index] = future.result()
         return out
@@ -361,8 +387,51 @@ class LLMGrounder:
             return checked, doc.text
         return checked, evidence.span.resolve(doc)
 
-    def _ask(self, fact: Fact, passage: str) -> Fact:
+    def _ask(self, fact: Fact, passage: str, doc: Document) -> Fact:
+        verdict = self._judge(fact, passage)
+        if verdict is None:
+            return fact
+        if verdict is GroundingVerdict.NOT_FOUND and self.widen:
+            retried = self._retry_wider(fact, doc)
+            if retried is not None:
+                return retried
+        self._counts.bump(verdict.value)
+        return fact.model_copy(update={"verdict": verdict})
+
+    def _retry_wider(self, fact: Fact, doc: Document) -> Fact | None:
+        """One more call against the sentence, or None when the span is already that wide."""
+        cited = located(fact, doc)
+        wider = widen(cited, doc) if cited is not None else None
+        if cited is None or cited.span is None or wider is None or wider.span is None:
+            return None
+        self._widened.bump("retried")
+        verdict = self._judge(fact, wider.span.resolve(doc), widened=True)
+        record = {
+            "from": [cited.span.start, cited.span.end],
+            "to": [wider.span.start, wider.span.end],
+            "verdict": (verdict or GroundingVerdict.UNCHECKED).value,
+        }
+        qualifiers = {**fact.qualifiers, WIDEN: record}
+        if verdict is not GroundingVerdict.SUPPORTED:
+            self._counts.bump(GroundingVerdict.NOT_FOUND.value)
+            return fact.model_copy(
+                update={"verdict": GroundingVerdict.NOT_FOUND, "qualifiers": qualifiers}
+            )
+        self._widened.bump("recovered")
+        self._counts.bump(GroundingVerdict.SUPPORTED.value)
+        evidence = tuple(wider if e is cited else e for e in fact.evidence)
+        return fact.model_copy(
+            update={
+                "verdict": GroundingVerdict.SUPPORTED,
+                "evidence": evidence,
+                "qualifiers": qualifiers,
+            }
+        )
+
+    def _judge(self, fact: Fact, passage: str, *, widened: bool = False) -> GroundingVerdict | None:
+        """The model's verdict on `fact` against `passage`, or None when there is none to read."""
         messages = build_messages(fact, passage, binary=self.binary)
+        counts = self._widened if widened else self._counts
 
         def on_retry(attempt: int, exc: BaseException, wait: float) -> None:
             self._counts.bump("retries")
@@ -376,7 +445,7 @@ class LLMGrounder:
 
         try:
             completion = call_with_retry(
-                lambda: self._complete(messages),
+                lambda: self._complete(messages, widened=widened),
                 self.retry,
                 sleep=self._sleep,
                 on_retry=on_retry,
@@ -386,32 +455,37 @@ class LLMGrounder:
             # gate that accepts UNCHECKED would write the run as if it were checked.
             raise
         except Exception as exc:  # isolation: one failed call never fails the batch
-            self._counts.bump("failed")
-            log.warning("grounding call failed for fact %s, left unchecked: %s", fact.id, exc)
-            return fact
-        self._account(completion)
+            counts.bump("failed")
+            left = "its not_found stands" if widened else "left unchecked"
+            log.warning("grounding call failed for fact %s, %s: %s", fact.id, left, exc)
+            return None
+        self._account(completion, widened=widened)
         verdict = parse_verdict(completion, binary=self.binary)
         if verdict is None:
-            self._counts.bump("unparseable")
+            counts.bump("unparseable")
             log.warning(
                 "unreadable grounding answer for fact %s: %r", fact.id, completion.text[:200]
             )
-            return fact
-        self._counts.bump(verdict.value)
-        return fact.model_copy(update={"verdict": verdict})
+        return verdict
 
-    def _complete(self, messages: list[Message]) -> Completion:
+    def _complete(self, messages: list[Message], *, widened: bool = False) -> Completion:
         with self._slots:
             self._counts.bump("calls")
+            if widened:
+                self._widened.bump("calls")
             schema = BINARY_SCHEMA if self.binary else GROUNDING_SCHEMA
-            return self.client.complete(messages, spec=self.spec, schema=schema)
+            client = self.widen_client if widened else self.client
+            return client.complete(messages, spec=self.spec, schema=schema)
 
-    def _account(self, completion: Completion) -> None:
-        self._counts.bump("prompt_tokens", completion.prompt_tokens)
-        self._counts.bump("completion_tokens", completion.completion_tokens)
+    def _account(self, completion: Completion, *, widened: bool = False) -> None:
+        for counts in (self._counts, self._widened) if widened else (self._counts,):
+            counts.bump("prompt_tokens", completion.prompt_tokens)
+            counts.bump("completion_tokens", completion.completion_tokens)
         if completion.cost_usd is not None:
             with self._cost_lock:
                 self._cost = (self._cost or 0.0) + completion.cost_usd
+                if widened:
+                    self._widen_cost = (self._widen_cost or 0.0) + completion.cost_usd
 
     @property
     def stats(self) -> dict[str, Any]:
@@ -424,6 +498,12 @@ class LLMGrounder:
         out["span"] = self.span_grounder.stats
         if self.locator is not None:
             out["locate"] = self.locator.stats
+        if self.widen:
+            # The retries' own share; their calls, tokens and cost are in the totals too.
+            widened: dict[str, Any] = self._widened.snapshot()
+            with self._cost_lock:
+                widened["cost_usd"] = self._widen_cost
+            out["widen"] = widened
         return out
 
 
