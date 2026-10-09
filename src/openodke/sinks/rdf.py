@@ -137,8 +137,9 @@ class RdfSink:
 
     With an `ontology`, the output also declares its schema — `owl:Class`
     with `rdfs:subClassOf`, `owl:ObjectProperty` or `owl:DatatypeProperty`
-    with domain, range and `owl:FunctionalProperty` for single cardinality —
-    so the file describes itself and `Ontology.from_owl` reads it back. A
+    with domain, range, `owl:FunctionalProperty` for single cardinality and
+    `owl:inverseOf` / `owl:SymmetricProperty` for inverses — so the file
+    describes itself and `Ontology.from_owl` reads it back. A
     literal value is then typed with its predicate's range, `"1815-12-10"`
     as an `xsd:date`, so SPARQL compares it as one.
 
@@ -403,6 +404,10 @@ class _Builder:
             g.add((prop, RDF.type, OWL.ObjectProperty if edge else OWL.DatatypeProperty))
             if predicate.cardinality == "single":
                 g.add((prop, RDF.type, OWL.FunctionalProperty))
+            if predicate.symmetric:
+                g.add((prop, RDF.type, OWL.SymmetricProperty))
+            if predicate.inverse_of is not None:
+                g.add((prop, OWL.inverseOf, self._iri(sink.term_iri(predicate.inverse_of))))
             self._put(prop, RDFS.label, predicate.label)
             self._put(prop, RDFS.comment, predicate.description)
             for alias in predicate.aliases:

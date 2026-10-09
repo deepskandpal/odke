@@ -132,6 +132,12 @@ class Predicate(BaseModel):
     # inferred ontology sets it from corpus support.
     importance: float = 0.5
     examples: tuple[str, ...] = ()
+    # The edge this one states the other way round: `contains` for
+    # `located_in`. Declaring it on one side is enough; loading fills in the
+    # other. A `symmetric` edge is its own inverse, like `spouse`. Either way the
+    # pipeline adds each fact's partner without asking a model (DECISIONS #28).
+    inverse_of: str | None = None
+    symmetric: bool = False
 
     @field_validator("qualifiers", mode="before")
     @classmethod
@@ -216,6 +222,25 @@ class Ontology(BaseModel):
                     for key, entry in entries.items()
                 }
         return out
+
+    @model_validator(mode="after")
+    def _complete_inverses(self) -> Ontology:
+        # An inverse holds both ways, and a schema usually says so once, as OWL
+        # files do. The other side is filled in only when nothing contradicts it:
+        # two predicates claiming one inverse, or one that already has another, is
+        # left for `validate()` to report, not settled by declaration order.
+        claims: dict[str, list[str]] = {}
+        for key, predicate in self.predicates.items():
+            if predicate.inverse_of is not None and predicate.inverse_of != key:
+                claims.setdefault(predicate.inverse_of, []).append(key)
+        for target, owners in claims.items():
+            partner = self.predicates.get(target)
+            if partner is None or len(owners) > 1 or partner.inverse_of or partner.symmetric:
+                continue
+            if not (partner.is_edge_in(self) and self.predicates[owners[0]].is_edge_in(self)):
+                continue
+            self.predicates[target] = partner.model_copy(update={"inverse_of": owners[0]})
+        return self
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any], *, strict: bool = True) -> Ontology:
@@ -468,6 +493,30 @@ class Ontology(BaseModel):
         """
         found = self.predicates.get(predicate)
         return found.identity_keys if found else ()
+
+    @property
+    def inverses(self) -> dict[str, str]:
+        """Each edge predicate that implies another fact, mapped to that fact's predicate.
+
+        A symmetric predicate maps to itself, and each side of an inverse pair to
+        the other. A pair that is not mutual, or with an end that is missing or a
+        literal property, implies nothing: a schema loaded with `strict=False`
+        derives nothing from an inverse `validate()` cannot even read as one.
+        """
+        out: dict[str, str] = {}
+        for key, predicate in self.predicates.items():
+            target = predicate.inverse_of
+            if not predicate.is_edge_in(self):
+                continue
+            if predicate.symmetric:
+                if target is None:
+                    out[key] = key
+                continue
+            if target is None or target == key or (partner := self.predicates.get(target)) is None:
+                continue
+            if partner.inverse_of == key and not partner.symmetric and partner.is_edge_in(self):
+                out[key] = target
+        return out
 
     def lineage(self, type_name: str) -> set[str]:
         """A type and all of its ancestors, cycle-safe."""
