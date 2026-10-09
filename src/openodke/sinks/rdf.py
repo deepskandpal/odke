@@ -22,7 +22,7 @@ from openodke.sinks.neo4j import (
     signature_of,
     storable,
 )
-from openodke.types import Evidence, Fact, KnowledgeGraph, LinkKind, Polarity
+from openodke.types import Evidence, Fact, KnowledgeGraph, LinkKind, Polarity, Support
 
 if TYPE_CHECKING:
     from rdflib import Graph, URIRef
@@ -99,8 +99,10 @@ class RdfSink:
       `<schema>qualifier/`, and one `odke:evidence` node per source with
       `odke:doc_id`, `odke:uri`, `odke:start`/`odke:end`, `odke:span_origin`
       (who chose the span: `cited`, `located` or `context`), `odke:tier` and
-      `odke:retrieved_at`. The node plays the part the relationship plays in
-      Neo4j and carries the same property names. The IRI is the fact's
+      `odke:retrieved_at`, and one `odke:supported_by` node per independent
+      source with `odke:source`, an `odke:doc_id` per document, `odke:tier`
+      and `odke:retrieved_at`. The node plays the part the relationship plays
+      in Neo4j and carries the same property names. The IRI is the fact's
       signature, so a rerun with new ids and clocks addresses the same node.
     - The plain triple `<s> <schema><predicate> <o>` is written **only** for
       an asserted, unscoped fact the corroborator did not vote down — the same
@@ -335,6 +337,21 @@ class _Builder:
         for key, value in fact.qualifiers.items():
             self._put(node, self._iri(f"{sink.schema}qualifier/{quote(key, safe='')}"), value)
         self._evidence(node, fact.evidence)
+        self._support(node, fact.supported_by)
+
+    def _support(self, owner: URIRef, entries: tuple[Support, ...]) -> None:
+        """One `odke:Support` node per independent source, in the evidence's vocabulary."""
+        from rdflib.namespace import RDF
+
+        for i, entry in enumerate(entries):
+            node = self._iri(f"{owner}/support/{i}")
+            self.g.add((owner, self._vocab("supported_by"), node))
+            self.g.add((node, RDF.type, self._vocab("Support")))
+            self._put(node, self._vocab("source"), entry.source)
+            for doc_id in entry.doc_ids:
+                self._put(node, self._vocab("doc_id"), doc_id)
+            self._put(node, self._vocab("tier"), entry.tier.value)
+            self._put(node, self._vocab("retrieved_at"), entry.retrieved_at)
 
     def _evidence(self, owner: URIRef, evidence: tuple[Evidence, ...]) -> None:
         from rdflib import Literal
