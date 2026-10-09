@@ -154,9 +154,16 @@ def qualify(model: str, provider: str | None) -> str:
 
 
 def key_env_for(spec: ModelSpec) -> str:
-    """The variable this spec's key comes from, or "" when it needs none."""
+    """The variable this spec's key comes from, or "" when it needs none.
+
+    A `base_url` sends the call somewhere the provider's own key was never meant
+    to go — a GPU box, a proxy, often over plain HTTP — so only a variable the
+    caller named with `api_key_env` is read for it.
+    """
     if spec.api_key_env is not None:
         return spec.api_key_env
+    if spec.base_url:
+        return ""
     provider = provider_for(spec.provider)
     return provider.key_env if provider else ""
 
@@ -167,9 +174,10 @@ def require_key(spec: ModelSpec) -> str:
     Raised before the request goes out, because a provider's own 401 says nothing
     about which of twenty variables was meant to carry the key. Not raised when
     `base_url` redirects the call — the caller owns that endpoint's
-    authentication — nor for a provider that accepts its cloud's credential
-    chain, where an unset variable is normal. An `api_key_env` the caller named
-    is always enforced: naming it is saying the endpoint needs it.
+    authentication, and no key is read for it (`key_env_for`) — nor for a
+    provider that accepts its cloud's credential chain, where an unset variable
+    is normal. An `api_key_env` the caller named is always enforced: naming it
+    is saying the endpoint needs it.
     """
     env = key_env_for(spec)
     if not env:
@@ -178,7 +186,7 @@ def require_key(spec: ModelSpec) -> str:
     if key:
         return key
     provider = provider_for(spec.provider)
-    if spec.api_key_env is None and (spec.base_url or (provider and not provider.key_required)):
+    if spec.api_key_env is None and provider and not provider.key_required:
         return ""
     raise MissingAPIKey(
         f"{spec.model} needs an API key in {env}, which is not set.\n"

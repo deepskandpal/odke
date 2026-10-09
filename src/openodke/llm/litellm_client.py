@@ -20,8 +20,13 @@ from openodke.llm.base import (
     ProviderError,
     ProviderNotInstalled,
 )
-from openodke.llm.openai_compat import _maybe_json
+from openodke.llm.openai_compat import _key, _maybe_json
 from openodke.llm.providers import require_key
+
+# What a redirected call is handed when the caller named no key: vLLM's own word
+# for "none", and nobody's secret. Handed nothing, litellm reads the vendor's key
+# from the environment and sends it wherever `api_base` points.
+_NO_KEY = "EMPTY"
 
 
 class LiteLLMClient:
@@ -53,8 +58,7 @@ class LiteLLMClient:
     ) -> Completion:
         # litellm reads the key from the environment itself; this only makes a
         # missing one say which variable, before the request rather than after.
-        if self._checks_key:
-            require_key(spec)
+        key = require_key(spec) if self._checks_key else _key(spec)
         kwargs: dict[str, Any] = {
             "model": spec.model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
@@ -68,6 +72,8 @@ class LiteLLMClient:
         kwargs.update(spec.extra)
         if spec.base_url:
             kwargs["api_base"] = spec.base_url
+            # Only a key the caller named goes to an endpoint the caller chose.
+            kwargs["api_key"] = key or _NO_KEY
         if schema is not None:
             kwargs["response_format"] = {
                 "type": "json_schema",

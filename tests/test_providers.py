@@ -264,6 +264,55 @@ def test_an_injected_transport_is_not_asked_for_a_key(monkeypatch: pytest.Monkey
     assert http.request.headers["Authorization"] == f"Bearer {SECRET}"
 
 
+def test_a_vendor_key_never_follows_a_call_to_another_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With OPENAI_API_KEY exported, a self-hosted server on plain HTTP was sent it."""
+    monkeypatch.setenv("OPENAI_API_KEY", SECRET)
+    http = _FakeHTTP()
+    monkeypatch.setattr(urllib.request, "urlopen", http)
+    gpu = ModelSpec(model="llama3.1", base_url="http://gpu-01:8000/v1")
+    assert key_env_for(gpu) == ""
+    OpenAICompatClient().complete([Message(content="hi")], spec=gpu)
+    assert http.request.full_url == "http://gpu-01:8000/v1/chat/completions"
+    assert "Authorization" not in http.request.headers
+    # Naming the variable is how a caller says that endpoint wants a key.
+    monkeypatch.setenv("GPU_TOKEN", "gpu-token")
+    named = gpu.model_copy(update={"api_key_env": "GPU_TOKEN"})
+    OpenAICompatClient().complete([Message(content="hi")], spec=named)
+    assert http.request.headers["Authorization"] == "Bearer gpu-token"
+    # The vendor's own endpoint still gets the vendor's own key.
+    OpenAICompatClient().complete([Message(content="hi")], spec=ModelSpec(model="openai/gpt-5.5"))
+    assert http.request.headers["Authorization"] == f"Bearer {SECRET}"
+
+
+def test_litellm_is_not_left_to_find_the_vendor_key_for_a_redirected_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """litellm falls back to ANTHROPIC_API_KEY whenever it is handed no key."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)
+    captured: dict[str, Any] = {}
+
+    def fake_completion(**kwargs: Any) -> dict[str, Any]:
+        captured.clear()
+        captured.update(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    client = LiteLLMClient(completion_fn=fake_completion)
+    gpu = ModelSpec(model="anthropic/claude-sonnet-5", base_url="http://gpu-01:8000/v1")
+    client.complete([Message(content="hi")], spec=gpu)
+    assert captured["api_base"] == "http://gpu-01:8000/v1"
+    assert captured["api_key"] and SECRET not in captured["api_key"]
+    monkeypatch.setenv("GPU_TOKEN", "gpu-token")
+    client.complete(
+        [Message(content="hi")], spec=gpu.model_copy(update={"api_key_env": "GPU_TOKEN"})
+    )
+    assert captured["api_key"] == "gpu-token"
+    # Not redirected, litellm reads the provider's own variable as it always has.
+    client.complete([Message(content="hi")], spec=ModelSpec(model="anthropic/claude-sonnet-5"))
+    assert "api_key" not in captured
+
+
 # --------------------------------------------------------------------------- #
 # --model / --model-provider
 # --------------------------------------------------------------------------- #
