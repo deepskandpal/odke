@@ -68,7 +68,7 @@ openodke is pre-alpha. This site documents what is on `main`:
 | Grounding: span verification and a second model | `openodke.ground` | released in 0.1.0 — [Grounding](grounding.md) |
 | Neo4j sink and constraint bootstrap | `openodke.sinks.neo4j` | released in 0.1.0 — [Neo4j sink](neo4j.md) |
 | Evaluation against your own labels | `openodke.eval`, `odke eval` | released in 0.1.0 — [Evaluation](evaluation.md) |
-| Loaders (text, Markdown, records, HTML, PDF, DOCX), the sentence chunker, pattern / LLM / hybrid extractors | `openodke.loaders`, `openodke.chunking`, `openodke.extract` | released in 0.1.0 — [Loaders & extraction](loaders-and-extraction.md) |
+| Loaders (text, Markdown, records, HTML, PDF, DOCX), the sentence chunker, pattern / LLM / hybrid extractors | `openodke.loaders`, `openodke.chunking`, `openodke.extract` | released in 0.1.0 — [Loading documents](loading.md), [Reference extractor](reference-extractor.md) |
 | Normalise, resolve, corroborate, score | `openodke.corroborate` | released in 0.1.0 — [Resolution & corroboration](resolution-and-corroboration.md) |
 | Ontology import from OWL, RDFS, SKOS and a live Neo4j graph | `Ontology.from_owl`, `Ontology.from_neo4j` | released in 0.1.0 — [Ontology](ontology.md#importing-a-schema-you-already-have) |
 | Ontology inference: a draft to review, then freeze | `openodke.infer`, `odke ontology infer`, `odke ontology freeze` | released in 0.1.0 — [Ontology inference](inference.md) |
