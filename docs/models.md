@@ -121,7 +121,9 @@ except MissingAPIKey as exc:
 
 It is not raised where a key is genuinely optional: `base_url` means the caller
 owns that endpoint's authentication, and `bedrock` and `vertex_ai` accept their
-cloud's own credential chain.
+cloud's own credential chain. A `base_url` call is sent no key unless
+`api_key_env` names one, so an exported `OPENAI_API_KEY` never reaches a
+self-hosted server or a proxy.
 
 ```python
 assert require_key(ModelSpec(model="openai/local", base_url="http://localhost:8000/v1")) == ""
