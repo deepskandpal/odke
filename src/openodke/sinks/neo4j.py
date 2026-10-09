@@ -23,6 +23,7 @@ from datetime import date, datetime, time
 from enum import Enum
 from typing import Any, NamedTuple
 
+from openodke.corroborate.merge import _aware
 from openodke.corroborate.provenance import CONFLICT
 from openodke.ontology import Ontology, Predicate
 from openodke.stages import DDL, Constrainer, PlatformProfile
@@ -145,8 +146,15 @@ def provenance_of(fact: Fact, extracted_at: datetime) -> dict[str, Any]:
     written as parallel lists because a Neo4j list holds no nulls and no maps:
     a missing uri is `""`, a missing span is `-1`, and position i in every list
     is the same piece of evidence.
+
+    A naive clock beside an aware one is read as UTC, as the corroborator reads
+    it: Python cannot compare the two, and to Neo4j they are two types, which no
+    list may mix.
     """
     evidence = fact.evidence
+    clocks = [e.retrieved_at for e in evidence]
+    if len({c.tzinfo is None for c in clocks}) > 1:
+        clocks = [_aware(c) for c in clocks]
     props: dict[str, Any] = {
         "fact_id": fact.id,
         "signature": signature_of(fact),
@@ -158,14 +166,14 @@ def provenance_of(fact: Fact, extracted_at: datetime) -> dict[str, Any]:
         "support": fact.support,
         "valid_from": fact.valid_from,
         "valid_to": fact.valid_to,
-        "retrieved_at": max((e.retrieved_at for e in evidence), default=None),
+        "retrieved_at": max(clocks, default=None),
         "extracted_at": extracted_at,
         "evidence_doc_ids": [e.doc_id for e in evidence],
         "evidence_uris": [e.uri or "" for e in evidence],
         "evidence_starts": [e.span.start if e.span else -1 for e in evidence],
         "evidence_ends": [e.span.end if e.span else -1 for e in evidence],
         "evidence_tiers": [e.tier.value for e in evidence],
-        "evidence_retrieved_at": [e.retrieved_at for e in evidence],
+        "evidence_retrieved_at": clocks,
     }
     for key, value in fact.qualifiers.items():
         props[qualifier_property(key)] = storable(value)

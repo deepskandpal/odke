@@ -12,7 +12,8 @@ import importlib
 import os
 import sys
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -36,7 +37,14 @@ from openodke import (
 )
 from openodke.corroborate import CONFLICT, SignatureCorroborator
 from openodke.eval.sinks import assert_idempotent
-from openodke.sinks.neo4j import EXTRA_HINT, Neo4jSink, Statement, signature_of, storable
+from openodke.sinks.neo4j import (
+    EXTRA_HINT,
+    Neo4jSink,
+    Statement,
+    provenance_of,
+    signature_of,
+    storable,
+)
 
 # --------------------------------------------------------------------------- #
 # A driver that records
@@ -353,6 +361,25 @@ def test_reconcilable_qualifiers_are_properties_and_never_overwrite_provenance()
     assert row["props"]["signature"] == row["signature"]
 
 
+def _clocked(*clocks: datetime) -> Fact:
+    evidence = tuple(Evidence(doc_id=f"d{i}", retrieved_at=at) for i, at in enumerate(clocks))
+    ada = Entity(key="p:ada", type="Person")
+    return Fact(subject=ada, predicate="name", object_value="Ada", evidence=evidence)
+
+
+def test_naive_and_aware_evidence_clocks_together_keep_the_latest() -> None:
+    """One loader stamps naive times, another UTC: the write must not fail after the model calls."""
+    naive, aware = datetime(2024, 1, 1), datetime(2025, 1, 1, tzinfo=UTC)
+    props = provenance_of(_clocked(naive, aware), WHEN)
+    assert props["retrieved_at"] == aware
+    # Neo4j stores no list mixing a LocalDateTime and a DateTime; naive is read as UTC.
+    assert props["evidence_retrieved_at"] == [naive.replace(tzinfo=UTC), aware]
+    later = datetime(2026, 1, 1)
+    assert provenance_of(_clocked(aware, later), WHEN)["retrieved_at"] == later.replace(tzinfo=UTC)
+    # Clocks of one kind are left as they are.
+    assert provenance_of(_clocked(naive, later), WHEN)["evidence_retrieved_at"] == [naive, later]
+
+
 # --------------------------------------------------------------------------- #
 # Literal facts
 # --------------------------------------------------------------------------- #
@@ -622,6 +649,37 @@ def test_against_a_live_neo4j() -> None:
             assert untraced == 0
         finally:
             driver.execute_query(mine + "DETACH DELETE n")
+
+
+@contextmanager
+def _live_people() -> Iterator[tuple[Neo4jSink, Any, str]]:
+    """A live sink and a Person type of this test's own, deleted afterwards with its claims."""
+    pytest.importorskip("neo4j")
+    person = f"Person_{uuid.uuid4().hex[:8]}"
+    auth = (os.environ.get("NEO4J_USER", "neo4j"), os.environ.get("NEO4J_PASSWORD", ""))
+    with Neo4jSink(os.environ["NEO4J_URI"], auth) as sink:
+        try:
+            yield sink, sink._driver, person
+        finally:
+            sink._driver.execute_query(
+                f"MATCH (n) WHERE n:`{person}` OR (n:Claim AND n.subject_type = '{person}') "
+                "DETACH DELETE n"
+            )
+
+
+@pytest.mark.skipif(not os.environ.get("NEO4J_URI"), reason="NEO4J_URI is not set")
+def test_naive_and_aware_clocks_write_to_a_live_neo4j() -> None:
+    """Neo4j refuses a list mixing LocalDateTime and DateTime, so the receipts must be one kind."""
+    with _live_people() as (sink, driver, person):
+        fact = _clocked(datetime(2024, 1, 1), datetime(2025, 1, 1, tzinfo=UTC))
+        ada = fact.subject.model_copy(update={"type": person})
+        sink.write(KnowledgeGraph(facts=(fact.model_copy(update={"subject": ada}),)))
+        (record,) = driver.execute_query(
+            f"MATCH (:`{person}`)-[r:name]->() "
+            "RETURN r.retrieved_at AS at, r.evidence_retrieved_at AS clocks"
+        ).records
+        assert record["at"].to_native() == datetime(2025, 1, 1, tzinfo=UTC)
+        assert len(record["clocks"]) == 2
 
 
 def live_graph(suffix: str) -> KnowledgeGraph:
