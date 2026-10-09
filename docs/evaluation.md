@@ -45,6 +45,9 @@ odke eval pipeline --bench runs/movie --run my_pkg.extract:run --validator
   --config` takes them (a bench set's own `odke.json` by default); a stage the
   config leaves out is the Validator's default. With neither, it is the
   Validator's defaults, on the default models.
+- **`--adjudicate LIST`** grounds each prediction your gold lacks three times
+  and prints an adjudicated precision beside the strict one
+  ([Is the gold complete?](#is-the-gold-complete)).
 - **The report** is the [eval report](#the-eval-report). `--report` writes it
   and `--json` prints it. The three modes give the same report for the same
   output.
@@ -77,7 +80,9 @@ the base install.
 
 One evaluator is not BYOLD: [`odke eval spans`](#spans) needs **no labelled data
 at all**. It reads a run's own facts and reports cited span width split by the
-grounder's verdict, which scores the too-narrow-citation error directly.
+grounder's verdict, which scores the too-narrow-citation error directly. With
+no gold, `odke eval precision` needs only a small labelled sample and `odke
+eval pool` none ([Your data, no gold](#your-data-no-gold)).
 
 ## `StageReport`
 
@@ -107,9 +112,12 @@ and `odke bench run` also write an `EvalReport`: one JSON document, versioned by
 check the major version first.
 
 - `odke eval <stage> --report report.json` writes it. `--json` still prints the
-  stage's `StageReport`, as before.
+  stage's `StageReport`, as before; for `pipeline`, `precision` and `pool` it
+  prints the eval report.
 - `odke bench run` writes it as `report.json` beside the predictions; `--report`
   puts it elsewhere.
+- 1.1 added `judged_precision`, `adjudication` and `pooled_recall`. The schema
+  does not require them, so a 1.0 report still reads.
 - The schema ships in the package, as `openodke/eval/eval_report.schema.json`.
   `check_report(data)` holds a document to it in plain Python and lists every
   mismatch. The package checks each report before writing it, and
@@ -117,7 +125,7 @@ check the major version first.
 
 | Key | What it holds |
 |---|---|
-| `schema_version` | `"1.0"` |
+| `schema_version` | `"1.1"` |
 | `title`, `n` | what was scored (`extract`, `ablation`, `text2kgbench:ont_1_movie`) and how many rows |
 | `run` | `openodke` (the version), `models` (role → model), `prompts` (the registered keys sent), `dataset` (name, path, documents, labels, details) |
 | `bootstrap` | how the ranges were drawn: `unit`, `units`, `resamples`, `seed`, `level`, `method`; `null` with no rows |
@@ -131,6 +139,9 @@ check the major version first.
 | `notes[]` | what a number cannot say about the whole run |
 | `comparison` | `odke eval compare`'s block, unchanged: `a`, `b`, `unit`, `metric`, the `primary` paired result, `guardrails`, `mcnemar`, `notes`; `null` when nothing was compared. `odke eval compare A B --report PATH` writes a report that carries it |
 | `diagnosis`, `fixes`, `calibration` | reserved, empty and typed until #140, #141 and #135 fill them |
+| `judged_precision` | 1.1, `null` unless asked for: a judge's precision with no gold, `judge_only`, `corrected` and `labels_only` as `{value, low, high}`; `facts`, `labels`, `false_support`, `lost_support`, `calibrated` and `coverage` ([Your data, no gold](#your-data-no-gold)) |
+| `adjudication` | 1.1, `null` unless asked for: `runs`, `needed`, `questions`, the `audit` path, and per row `strict` and `adjudicated` precision with `not_in_gold`, `asked` and `possibly_missing` ([Is the gold complete?](#is-the-gold-complete)) |
+| `pooled_recall` | 1.1, `null` unless asked for: the `pool`, its `documents`, the `bootstrap`, the `caveat`, and per run `relative_recall`, `supported`, `unique` and `coverage` |
 
 - **The ranges are 95% bootstrap ranges over documents.** Facts from one
   document share one reading of it, so they are not independent; resampling
@@ -674,6 +685,204 @@ assert mcnemar(before, after).p_value < 0.001
 `compare_items` does the same over two runs' `ItemRow`s, and
 `bootstrap_interval` gives one run's 95% range from the same resampler.
 
+## Your data, no gold
+
+On your own documents there is no gold. Two measurements still hold: a judge's
+precision, corrected by a small labelled sample, and each pipeline's recall
+relative to what several found together.
+
+### Precision: the judge, corrected
+
+The grounder, or any judge, grades every fact the pipeline wrote, and its
+supported share is a precision. It is the judge's, though, biased whichever
+way the judge leans, and agreement on a sample does not say which way. So a
+person labels a random sample, and **prediction-powered inference** corrects
+the judge by the mean gap between the labels and the judge on that sample
+(Angelopoulos et al., *Science* 382, 2023, arXiv 2301.09633; ARES uses it for
+LLM judges, arXiv 2311.09476). [DECISIONS #36](decisions.md#36) says why.
+
+```bash
+odke ground --facts triples.jsonl --texts texts/ -o out/   # or any run whose grounder ran
+odke eval precision --facts out/facts.jsonl --documents texts/ --make-sheet sheets/ --n 150
+odke label read sheets/ -o labels.jsonl                 # after ticking the sheets
+odke eval precision --facts out/facts.jsonl --labels labels.jsonl --documents texts/ \
+    --report report.json
+```
+
+On 1,000 judged facts with 120 labelled, the example further down:
+
+```text
+precision without gold  (1000 facts judged, 120 labels)
+  judge only   0.850                 the judge's verdicts, uncorrected
+  corrected    0.783 [0.717, 0.850]  prediction-powered (PPI), 95%
+  labels only  0.750 [0.672, 0.828]  the labels alone, 95%
+  the judge on the sample: 12 false support, 4 lost support
+```
+
+- **Judge only** is the share of `--facts` whose verdict is `supported`. Any
+  other verdict, `unchecked` included, counts as wrong. It has no range: a
+  range would only say how precisely the judge is biased.
+- **Corrected** is the judge's share plus the labels' mean gap,
+  `(1/N) Σ fᵢ + (1/n) Σ (yⱼ − fⱼ)`, over N judged and n labelled facts. Its
+  95% interval is **PPI's closed form**, normal, with variance
+  `Var(y)/N + Var(y − f)·(1/n − 1/N)`. The labelled facts are among the judged
+  ones, so that is the paper's `Var(f)/N + Var(y − f)/n` with the overlap
+  taken out. It is exact when every fact is labelled. Both variances are read
+  off the labelled sample, and the number and its interval are clipped to
+  [0, 1].
+- **Labels only** is the classical interval on the same labels,
+  `ȳ ± 1.96·s/√n`. The corrected interval is narrower whenever the judge
+  mostly agrees with the labels.
+- **Under 100 labels** the corrected number is printed as an *uncalibrated
+  estimate*, and `calibrated` is false in the JSON.
+- **The judge on the sample** is `odke eval ground` over the labels: the
+  confusion, `false_support` and `lost_support`, printed below the numbers.
+- **Recall is never claimed.** With `--documents`, the
+  [coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)
+  stands in for it: sentences naming two known entities that no fact covers,
+  and entities no fact names.
+- **Facts count as independent,** where the report's other ranges resample
+  documents. The sample is drawn fact by fact, so few labelled facts share a
+  document. A corpus of a few long documents is where the interval would be
+  too narrow.
+
+`--make-sheet DIR` draws `--n` facts (150), seeded by `--seed` (0) with
+`random.random()` alone, so the same facts and seed draw the same sample on
+any machine. `--by-predicate` gives each predicate its share, rounded by
+largest remainder, so the sample stays self-weighting and the estimator still
+reads it as a simple random one. The drawn facts go to `DIR/sample.jsonl`
+with their verdict cleared, so nothing beside a sheet shows the judge's
+answer, and onto [label sheets](#labelling-by-hand). Every judged fact must
+cite one of `--documents`, since any may be drawn. A directory that already
+holds a sample or sheets is refused. Labels join the facts on `Fact.id`; one
+that names no judged fact, or repeats one, is left out and counted.
+
+**The simulation** is the test (`tests/test_eval_ppi.py`): judged sets of
+2,000 facts whose true precision is 80%, and a judge biased a known way. The
+lenient judge lets 43% of false facts through and reads 84.6%; the strict one
+misses 10% of true facts and reads 72.4%. Offline, 5,000 seeded sets each:
+
+| Judge | Labels | PPI covers 80% | PPI ± | Labels only ± |
+|---|---|---|---|---|
+| lenient | 300 | 95.2% | 4.1 points | 4.5 points |
+| strict | 300 | 94.8% | 3.4 | 4.5 |
+| lenient | 150 | 95.0% | 5.7 | 6.4 |
+| strict | 150 | 94.0% | 4.6 | 6.4 |
+| lenient | 50 | 94.3% | 9.7 | 11.0 |
+| strict | 50 | 90.8% | 7.6 | 11.0 |
+
+The judge alone misses the truth by its whole bias every time. At 50 labels
+the strict judge's interval covers too rarely: its disagreements are rare, so
+their mean is skewed and the normal interval is too short. That is the
+uncalibrated estimate.
+
+```python
+from openodke.eval.ppi import prediction_powered
+
+# 1,000 facts, 850 judged supported. 120 labelled at random: the judge let 12
+# false facts through and lost 4 true ones.
+judged = [True] * 850 + [False] * 150
+labelled = [(True, True)] * 86 + [(True, False)] * 12 + [(False, True)] * 4 + [(False, False)] * 18
+judge, corrected, labels = prediction_powered(judged, labelled)
+
+assert judge.value == 0.85
+assert (round(corrected.value, 3), round(corrected.low, 3), round(corrected.high, 3)) == (
+    0.783,
+    0.717,
+    0.85,
+)
+assert (round(labels.low, 3), round(labels.high, 3)) == (0.672, 0.828)
+```
+
+In process, `judged_precision(facts, labels, documents=...)` returns the
+section and its notes, `report_precision` the eval report, and
+`write_sample` draws the sheets.
+
+### Recall: a pool of pipelines
+
+Nobody knows how many facts a document states, so recall needs gold. Two or
+more pipelines on the same documents can still be compared on it, the way
+TREC compares search systems it has no complete judgements for: pool what
+they found, and score each against the pool.
+
+```bash
+odke eval pool runs/lgt runs/neo4j runs/reference --documents texts/
+```
+
+- **Each run** is its facts after grounding: a `facts.jsonl`, or the directory a
+  sink wrote, named by its directory. Only a `supported` fact is pooled, so a
+  run must have been grounded (`odke ground`, `odke validate`, or a run whose
+  grounder ran). One run can be openodke's reference extractor, `odke run` with
+  `extractor: llm` on the same texts, as a second opinion.
+- **The pool** is every supported fact any run wrote, per document, once per
+  signature after normalisation: values through `ValueNormalizer`, then folded
+  for case and spacing as the extraction matcher folds them, and each entity
+  by its name key rather than its key. `ACME, Inc.` keyed `Company:acme` and
+  `Acme Inc.` keyed `acme` state one fact.
+- **Relative recall** is a run's supported facts over the pool's, with a 95%
+  bootstrap range over the documents the pool cites, every run's from the same
+  draws. `found by no other` counts the facts only that run has.
+- **It overstates true recall.** The pool misses whatever every run missed, so
+  each share is a ceiling on that run's recall, how far above the truth
+  unknown (Zobel, SIGIR 1998, measured it for TREC's pools). Adding a run can
+  only lower every number. The caveat is a field of the section and is printed
+  beside the numbers, with each run's coverage report, which needs no pool.
+
+## Is the gold complete?
+
+Not in either public dataset. Text2KGBench and Re-DocRED both leave out facts
+their texts state, so a prediction missing from the gold may be one the gold
+missed, and precision against it understates the pipeline. `--adjudicate`
+finds the candidates.
+
+```bash
+odke eval pipeline --labels gold.jsonl --documents texts/ --predictions out.jsonl \
+    --config odke.yaml --adjudicate adjudicated.jsonl
+```
+
+On `examples/triples`, with a recorded grounder that supports Berlin in two
+of three runs (`tests/test_eval_adjudication.py`):
+
+```text
+gold adjudication  (each prediction the gold lacks grounded 3 times; supported in 2 is possibly missing from gold)
+            strict                adjudicated           not in gold  asked  possibly missing
+  pipeline  0.600 [0.600, 0.600]  0.800 [0.800, 0.800]  2            2      1
+  the strict precision never changes; the list, with every verdict: adjudicated.jsonl
+```
+
+- **Missing from the gold** means not a hit by the extraction matcher:
+  spurious, a wrong value or a wrong entity, the row's `over_extraction`. A
+  spurious prediction that cites no document has nothing to be grounded
+  against, and stays a miss.
+- **Each is grounded three times** against the document it was scored in, by
+  `--config`'s grounder or the default one. Supported in at least two of the
+  three, it is **possibly missing from gold**. A question the pipeline row and
+  the `+ validator` row share is asked once.
+- **Three runs are three calls.** Each carries its run index as
+  `ModelSpec.repeat` (0, 1, 2), which no provider sees. The
+  [response cache](models.md#the-response-cache) keys it when it is not 0, so
+  runs 1 and 2 are entries of their own, and run 0 shares the entry of any
+  earlier grounding of the same question. A grounder with no model answers
+  alike every time, and agrees with itself.
+- **The adjudicated precision** counts the possibly missing as hits, in the
+  document each was scored in, and is resampled on the strict range's own
+  draws. It is printed beside the strict precision, which never changes: the
+  adjudicated one trusts the grounder on exactly the facts in question. On the
+  `+ validator` row that is the grounder vouching for what it already let
+  through.
+- **The list** goes to the path given, one JSON line per prediction the gold
+  lacks, the listed ones first: `doc_id`, `claim` (as the grounder read it),
+  `kind`, the `rows` it was in, the three `verdicts`, `supported`,
+  `possibly_missing_from_gold` and the `fact`.
+- **It needs `--labels`.** A `--bench` set is scored by its benchmark's own
+  matching, which this does not read.
+
+How often the list is right is measured on label set G's 200 not-in-gold
+predictions, once a person has labelled them. `bench/adjudication.py` sets the
+list beside the labels: its precision, its recall, and how many of G's planted
+false facts it lists. Until `bench/labels/G/labels.jsonl` exists, it says so
+and exits 0.
+
 ## Labelling by hand
 
 `odke label` writes rows out as markdown sheets that a person ticks wherever a
@@ -754,6 +963,8 @@ odke eval spans --facts out/                        # no labels: width by verdic
 odke eval extract --labels gold.jsonl --predictions facts.jsonl --items b.items.jsonl
 odke eval compare a.items.jsonl b.items.jsonl       # better, worse or inconclusive
 odke eval extract --labels gold.jsonl --predictions facts.jsonl --report report.json
+odke eval precision --facts out/facts.jsonl --labels labels.jsonl   # no gold: judge + sample
+odke eval pool runs/a runs/b --documents texts/     # no gold: recall relative to a pool
 ```
 
 - The CLI covers route, extract, ground, resolve, score and validate, and the
@@ -767,5 +978,8 @@ odke eval extract --labels gold.jsonl --predictions facts.jsonl --report report.
   Its links always come from a file, which is also how a platform's merges arrive.
 - `compare` takes two runs' `--items` files and exits 1 when B is worse
   ([Was the change real?](#was-the-change-real)).
+- `precision` takes `--facts` a judge graded, and `--labels` or
+  `--make-sheet`; `pool` takes two or more runs
+  ([Your data, no gold](#your-data-no-gold)).
 - `--report PATH` writes the [eval report](#the-eval-report) for any stage.
 - Errors exit with status 2.
