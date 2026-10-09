@@ -537,3 +537,55 @@ meaningless.
 
 *Cost:* fixing a typo is a new version, and the next run names a different
 prompt from the last. That is correct: it sent one.
+
+### 28. An inverse comes from the schema, is marked, and is never grounded twice
+
+A passage that says "France contains Brittany" has also said that Brittany is
+located in France. An extractor states the claim once, in whichever direction
+the sentence ran. On Re-DocRED that cost 25 gold facts (#106), each the
+partner of a fact already extracted. The ontology already knows the pairs, so
+the partner needs no model: `Predicate.inverse_of` and `Predicate.symmetric`
+declare them, and the pipeline adds each edge's partner after resolution and
+before corroboration. Declaring an inverse on one side is enough; loading fills
+in the other, as `owl:inverseOf` holds both ways, and `validate()` refuses one
+that does not hold both ways or whose ends do not swap.
+
+Four calls come with it.
+
+**A step, not a fourteenth stage.** The ontology decides everything the step
+does, so there is nothing for a caller to swap in, and a Protocol whose only
+sensible implementation is ours would be a seam in name only (#5, #20). It is a
+step in `Pipeline`, on exactly when the ontology declares a pair.
+`inverses=False`, or `inverses: false` in a run config, turns it off.
+
+**Marked the way the stages mark their work.** The partner carries
+`qualifiers["odke.derived"]`: the rule, and the signature of the fact it came
+from. It says how the claim got into the graph, which is what the reserved
+`odke.*` keys are for, and every sink already writes qualifiers. The link is a
+signature, not an id, because a corroborator merge keeps one id of several
+and the signature survives it. Hashed, it is also the Neo4j relationship's
+MERGE key.
+
+**Never grounded twice, gated with its source.** The partner cites the
+source's evidence and keeps its verdict. Asking the grounder again would pay
+for a question already answered, and could get a different answer. Because the
+verdict is inherited, the gate refuses the partner whenever it refuses the
+source on its verdict (#20), so a refused fact has no partner in the graph.
+Support is counted from evidence, so the two share it, and a source retracted
+by the reconciler (#116) takes its partner's evidence with it.
+
+**A stated fact wins.** When the batch already states the partner, nothing is
+derived. The stated fact stands on its own evidence, and no duplicate reaches
+the store, whether or not a corroborator runs. The price is that a claim stated
+forward in one document and backward in another counts one source in each
+direction, not two.
+
+*Cost:* the graph holds facts no source stated in that direction. They are
+true whenever their source is, and marked, but a query that wants only stated
+facts has to filter on `odke.derived`. Errors are doubled along with facts. On
+the published Re-DocRED runs, the six pairs #106 named raise openodke's recall
+by 1.2 points and cut its precision by 5.1. Of its 59 partners, 21 are gold
+facts, 15 are partners of facts the gold calls right but leaves the other
+direction out of, and 23 come from facts the gold calls wrong. And since the
+step is on by default, adding an `inverse_of` to a live ontology changes the
+next run's graph; `diff` calls that compatible, and calls removing one breaking.

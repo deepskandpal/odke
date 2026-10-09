@@ -347,6 +347,64 @@ The batched paths give the same facts, in the same order, as one call at a time.
 its first write. `run()` does not apply it, because which sink applies it is the
 caller's business.
 
+### Inverse and symmetric partners
+
+When the ontology declares an
+[inverse or a symmetric predicate](ontology.md#inverse-and-symmetric-predicates),
+`run()` adds one step between resolving and corroborating: each edge on such a
+predicate gains its partner, the same claim the other way round. It is a step,
+not a fourteenth stage, because the ontology decides everything it does.
+`Pipeline(..., inverses=False)` turns it off; left as `None`, it is on exactly
+when the ontology declares a pair ([DECISIONS #28](decisions.md)).
+
+- **Same evidence, same verdict.** The partner cites what its source cites, and
+  keeps its verdict, polarity, confidence, both clocks and its qualifiers. It is
+  never grounded again, and a gate that refuses the source on its verdict
+  refuses the partner too, so a refused fact has no partner in the graph.
+- **Marked.** `qualifiers["odke.derived"]` is
+  `{"rule": "inverse" | "symmetric", "of": <the source's signature>}`, written by
+  every sink like any qualifier. `openodke.corroborate.derived_from(fact)` reads
+  the signature back, in memory or from JSON, and a query that wants only stated
+  facts filters on the key.
+- **Never a duplicate.** A partner the batch already states is not derived: the
+  stated fact stands on its own evidence. Partners of one claim stated by several
+  sources share a signature and merge as their sources do, so a partner's
+  `support` is its source's.
+- **Edges only,** and never from a fact that was itself derived.
+  `stats["derived"]` counts the partners added.
+
+```python
+from openodke import Chunk, Document, Entity, Evidence, Fact, Ontology, Pipeline
+
+geo = Ontology.from_dict(
+    {
+        "types": {"Place": {}},
+        "predicates": {
+            "located_in": {"domain": ["Place"], "range": "Place", "inverse_of": "contains"},
+            "contains": {"domain": ["Place"], "range": "Place"},
+        },
+    }
+)
+
+
+class SaysLocated:
+    def extract(self, chunk: Chunk, ontology: Ontology) -> list[Fact]:
+        brittany = Entity(key="brittany", type="Place", label="Brittany")
+        france = Entity(key="france", type="Place", label="France")
+        receipt = (Evidence(doc_id=chunk.doc_id),)
+        return [
+            Fact(subject=brittany, predicate="located_in", object_entity=france, evidence=receipt)
+        ]
+
+
+docs = [Document(id="geo", text="Brittany is a region of France.")]
+kg = Pipeline(geo, SaysLocated()).run(docs)
+print([(f.subject.label, f.predicate, f.object_entity.label) for f in kg.facts])
+# [('Brittany', 'located_in', 'France'), ('France', 'contains', 'Brittany')]
+print(kg.facts[1].qualifiers["odke.derived"]["rule"], kg.stats["derived"])
+# inverse 1
+```
+
 ## `PlatformProfile` and `Delegated`
 
 Some stores already do a stage themselves: neo4j-graphrag resolves after the

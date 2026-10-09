@@ -11,7 +11,7 @@ diffing are deterministic and need no model.
 |---|---|
 | `Ontology` | `name`, `version`, `types`, `predicates`, `inferred`, `frozen_at`, `frozen_by` |
 | `EntityType` | `name`, `description`, `parents`, `keys` (the predicates that together name the thing), `aliases` |
-| `Predicate` | `name`, `label`, `description`, `domain`, `range` (default `"string"`), `cardinality` (`single` or `multi`), `cardinality_scope`, `required`, `qualifiers`, `aliases`, `importance` (default 0.5), `examples` |
+| `Predicate` | `name`, `label`, `description`, `domain`, `range` (default `"string"`), `cardinality` (`single` or `multi`), `cardinality_scope`, `required`, `qualifiers`, `aliases`, `importance` (default 0.5), `examples`, `inverse_of`, `symmetric` |
 | `Qualifier` | `identity` (default `False`), `description` |
 
 A predicate is an **edge** when its `range` names an entity type, and a
@@ -197,6 +197,10 @@ works but probably is not what was meant.
 | `scope-undeclared-qualifier` | error | `cardinality_scope` names a key that is not a qualifier |
 | `scope-not-identity` | error | `cardinality_scope` names a reconcilable qualifier |
 | `duplicate-alias` | error | one alias points at two types, or two predicates |
+| `unknown-inverse` | error | `inverse_of` names a predicate that does not exist |
+| `inverse-not-edge` | error | an end of an inverse, or a symmetric predicate, is a literal property |
+| `inverse-not-mutual` | error | an inverse that does not hold both ways: see [Inverse and symmetric predicates](#inverse-and-symmetric-predicates) |
+| `inverse-domain-range` | error | an inverse's ends do not swap: see [Inverse and symmetric predicates](#inverse-and-symmetric-predicates) |
 | `unknown-domain` | warning | part of a domain is not a type; the rest still works |
 | `inheritance-cycle` | warning | types inherit from each other; `lineage()` tolerates it |
 | `unreviewed` | warning | the schema is still marked `inferred`: nobody has reviewed and [frozen](inference.md#freezing) it |
@@ -210,10 +214,12 @@ breaking or compatible.
 
 Breaking changes are: a removed type, predicate or qualifier; a narrowed range or
 domain; a changed cardinality; a cardinality scope that loses a key; a predicate
-that becomes required; changed entity keys; and a qualifier whose `identity` flips
+that becomes required; changed entity keys; a qualifier whose `identity` flips
 or that is added as identity-bearing, because either one re-partitions
-`Fact.signature`. Widening a range (to an ancestor type, or `integer` to
-`number`) and every documentation change are listed as compatible.
+`Fact.signature`; and an `inverse_of` or `symmetric` taken away or changed,
+because the partners already derived from it no longer follow. Widening a range
+(to an ancestor type, or `integer` to `number`), declaring a new inverse, and
+every documentation change are listed as compatible.
 
 ```python
 old = Ontology.from_dict(
@@ -279,6 +285,49 @@ reconcilable_scope = {
 codes = [d.code for d in Ontology.from_dict(reconcilable_scope, strict=False).validate()]
 assert codes == ["scope-not-identity"]
 ```
+
+## Inverse and symmetric predicates
+
+`inverse_of` names the edge a predicate states the other way round, and
+`symmetric: true` marks an edge that is its own inverse. A passage that says
+France contains Brittany has also said Brittany is located in France, so the
+pipeline adds that partner itself, with no model call
+([Concepts](concepts.md#inverse-and-symmetric-partners),
+[DECISIONS #28](decisions.md)). Declare an inverse on one side: loading fills in
+the other, as `owl:inverseOf` holds both ways. `Ontology.inverses` maps every
+predicate that implies a partner to the partner's predicate.
+
+```python
+geo = Ontology.from_yaml("""
+types: {Place: {}, Person: {}}
+predicates:
+  located_in: {domain: [Place], range: Place, inverse_of: contains}
+  contains: {domain: [Place], range: Place, cardinality: multi}
+  spouse: {domain: [Person], range: Person, symmetric: true}
+""")
+assert geo.predicates["contains"].inverse_of == "located_in"
+assert geo.inverses == {"located_in": "contains", "contains": "located_in", "spouse": "spouse"}
+```
+
+A wrong declaration puts a wrong fact in every graph built with it, so each
+rule below is an error:
+
+- **Both ends exist and are edges** (`unknown-inverse`, `inverse-not-edge`). A
+  property has no inverse: its partner would have a value for a subject.
+- **It holds both ways** (`inverse-not-mutual`). A predicate has one inverse,
+  and that inverse names it back. Two predicates claiming one inverse are not
+  completed by declaration order; they are reported. A predicate that is its
+  own inverse is `symmetric: true`, not `inverse_of` itself, and never both.
+- **The ends swap** (`inverse-domain-range`). A fact's object is its partner's
+  subject, so a predicate's range must sit inside its inverse's domain. A
+  symmetric predicate's domain must be exactly its range.
+
+`from_owl` reads `owl:inverseOf` and `owl:SymmetricProperty`, and `RdfSink`
+writes them. `from_neo4j` and `from_pydantic` read neither, because neither
+source can say it: a Neo4j schema lists relationship types with no axiom
+between them, and a pydantic field has no inverse. Add the keys to
+`ontology.model_dump()` and load it again with `Ontology.from_dict`, which
+completes and checks them.
 
 ## Snippets: what the model is shown
 

@@ -196,6 +196,13 @@ with none, the config is refused. The DDL comes from `stages.constrainer`, or fr
 `Neo4jConstrainer` when that is left out. Every statement is `IF NOT EXISTS`, so
 bootstrapping on every run is safe.
 
+### `inverses`
+
+`inverses: false` turns off the inverse and symmetric partners
+([Concepts](concepts.md#inverse-and-symmetric-partners)). Left out, they are
+on exactly when the ontology declares an `inverse_of` or a `symmetric`
+predicate, and the run report prints how many were added.
+
 ### The inferrer
 
 `inferrer` accepts only `passthrough`. Anything else is refused:
