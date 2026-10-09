@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import math
 import random
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from functools import lru_cache
 from operator import mul
 from statistics import NormalDist, stdev
@@ -172,56 +172,84 @@ def paired_bootstrap(
     bootstrap's own standard error: the same quantity, measured instead of
     assumed.
     """
+    metrics = {"the metric": metric}
+    return paired_bootstraps(a_items, b_items, metrics, n, seed, alpha=alpha, power=power)[
+        "the metric"
+    ]
+
+
+def paired_bootstraps(
+    a_items: Sequence[Item],
+    b_items: Sequence[Item],
+    metrics: Mapping[str, MetricFn],
+    n: int = RESAMPLES,
+    seed: int = 0,
+    *,
+    alpha: float = ALPHA,
+    power: float = POWER,
+) -> dict[str, Paired]:
+    """`paired_bootstrap` for several metrics of the same items, from one set of resamples.
+
+    One pass instead of one per metric, and a primary metric and its guardrails
+    are read off the same draws.
+    """
     a, b = _vectors(a_items), _vectors(b_items)
     if len(a) != len(b):
         raise ValueError(f"the runs must score the same items: {len(a)} against {len(b)}")
     if not a:
         raise ValueError("no items to compare")
-    a_value, b_value = metric(_totals(a), len(a)), metric(_totals(b), len(b))
-    if a_value is None or b_value is None:
-        raise ValueError("the metric is undefined on a run as a whole; nothing to compare")
+    whole: dict[str, tuple[float, float]] = {}
+    for name, metric in metrics.items():
+        a_value, b_value = metric(_totals(a), len(a)), metric(_totals(b), len(b))
+        if a_value is None or b_value is None:
+            raise ValueError(f"{name} is undefined on a run as a whole; nothing to compare")
+        whole[name] = (a_value, b_value)
 
-    a_draws: list[float] = []
-    b_draws: list[float] = []
+    draws: dict[str, tuple[list[float], list[float]]] = {name: ([], []) for name in metrics}
     for ta, tb in _resample([a, b], n, seed):
-        ma, mb = metric(ta, len(a)), metric(tb, len(a))
-        if ma is not None and mb is not None:
-            a_draws.append(ma)
-            b_draws.append(mb)
-    if len(a_draws) < 2:
-        raise ValueError("the metric is undefined on almost every resample; too few items")
-    diffs = sorted(mb - ma for ma, mb in zip(a_draws, b_draws, strict=True))
-    interval = _percentile(diffs, alpha)
+        for name, metric in metrics.items():
+            ma, mb = metric(ta, len(a)), metric(tb, len(a))
+            if ma is not None and mb is not None:
+                draws[name][0].append(ma)
+                draws[name][1].append(mb)
 
     flips = sum(1 for x, y in zip(a, b, strict=True) if x != y)
-    flip_share = flips / len(a)
-    limit: float | None
-    if not flips:
-        limit = None
-    elif metric is share and all(v in ((0,), (1,)) for v in (*a, *b)):
-        limit = detection_limit(len(a), flip_share, alpha, power)
-    else:
-        limit = _z(alpha, power) * stdev(diffs)
-
-    verdict: Verdict = (
-        "worse" if interval[1] < 0 else "better" if interval[0] > 0 else "inconclusive"
-    )
-    return Paired(
-        items=len(a),
-        a=a_value,
-        b=b_value,
-        difference=b_value - a_value,
-        interval=interval,
-        a_interval=_percentile(sorted(a_draws), alpha),
-        b_interval=_percentile(sorted(b_draws), alpha),
-        flips=flips,
-        flip_share=flip_share,
-        detection_limit=limit,
-        verdict=verdict,
-        level=1 - alpha,
-        resamples=len(diffs),
-        seed=seed,
-    )
+    pass_fail = all(v in ((0,), (1,)) for v in (*a, *b))
+    results = {}
+    for name, metric in metrics.items():
+        a_draws, b_draws = draws[name]
+        if len(a_draws) < 2:
+            raise ValueError(f"{name} is undefined on almost every resample; too few items")
+        diffs = sorted(mb - ma for ma, mb in zip(a_draws, b_draws, strict=True))
+        interval = _percentile(diffs, alpha)
+        limit: float | None
+        if not flips:
+            limit = None
+        elif metric is share and pass_fail:
+            limit = detection_limit(len(a), flips / len(a), alpha, power)
+        else:
+            limit = _z(alpha, power) * stdev(diffs)
+        verdict: Verdict = (
+            "worse" if interval[1] < 0 else "better" if interval[0] > 0 else "inconclusive"
+        )
+        a_value, b_value = whole[name]
+        results[name] = Paired(
+            items=len(a),
+            a=a_value,
+            b=b_value,
+            difference=b_value - a_value,
+            interval=interval,
+            a_interval=_percentile(sorted(a_draws), alpha),
+            b_interval=_percentile(sorted(b_draws), alpha),
+            flips=flips,
+            flip_share=flips / len(a),
+            detection_limit=limit,
+            verdict=verdict,
+            level=1 - alpha,
+            resamples=len(diffs),
+            seed=seed,
+        )
+    return results
 
 
 def bootstrap_interval(
@@ -412,6 +440,7 @@ __all__ = [
     "f1",
     "mcnemar",
     "paired_bootstrap",
+    "paired_bootstraps",
     "precision",
     "recall",
     "share",
