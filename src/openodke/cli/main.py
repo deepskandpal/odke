@@ -1071,8 +1071,9 @@ def eval_stage(
     stage: str = typer.Argument(
         ...,
         help="route, extract, ground, resolve, score, validate, ablation (with --config), "
-        "spans (with --facts, and no labels at all), compare (two runs' --items files), or "
-        "pipeline (your own, run with --cmd, --run or --predictions).",
+        "spans (with --facts, and no labels at all), compare (two runs' --items files), "
+        "pipeline (your own, run with --cmd, --run or --predictions), or precision (--facts "
+        "a judge graded, corrected by --labels on a random sample; no gold).",
     ),
     runs: list[Path] | None = typer.Argument(
         None, help="compare only: run A's --items file, then run B's.", show_default=False
@@ -1106,7 +1107,10 @@ def eval_stage(
         "--validator, the Validator's stages and models.",
     ),
     facts: Path | None = typer.Option(
-        None, "--facts", help="For spans: a run's facts.jsonl, or the directory a sink wrote."
+        None,
+        "--facts",
+        help="For spans and precision: a run's facts.jsonl, or the directory a sink wrote. "
+        "For precision, after a judge (the grounder) set each verdict.",
     ),
     describe: bool = typer.Option(
         False, "--describe", help="Print what a label row and a prediction row are, and exit."
@@ -1130,7 +1134,10 @@ def eval_stage(
         2000, "--resamples", min=100, help="compare: bootstrap resamples."
     ),
     seed: int = typer.Option(
-        0, "--seed", help="compare: the resampling seed; the same seed gives the same interval."
+        0,
+        "--seed",
+        help="compare: the resampling seed; the same seed gives the same interval. "
+        "precision: the seed --make-sheet draws the sample with.",
     ),
     fail_under: float | None = typer.Option(
         None,
@@ -1172,6 +1179,20 @@ def eval_stage(
     timeout: float = typer.Option(
         600.0, "--timeout", min=0.0, help="pipeline: seconds --cmd may run before it is stopped."
     ),
+    make_sheet: Path | None = typer.Option(
+        None,
+        "--make-sheet",
+        help="precision: draw a random sample of --facts and write it here as `odke label` "
+        "grounding sheets, with the texts from --documents.",
+    ),
+    sample_size: int = typer.Option(
+        150, "--n", min=1, help="precision --make-sheet: how many facts to draw."
+    ),
+    by_predicate: bool = typer.Option(
+        False,
+        "--by-predicate",
+        help="precision --make-sheet: give each predicate its share of the sample.",
+    ),
 ) -> None:
     """Score one stage against your own labelled data.
 
@@ -1197,6 +1218,12 @@ def eval_stage(
     function (--run) or output already written (--predictions), and scores
     its triples against your labels (--labels, --documents) or a prepared
     benchmark (--bench). --validator adds the row with the Validator's check.
+
+    `precision` needs no gold. A judge, the grounder, graded every fact in
+    --facts; `--make-sheet DIR` draws a random sample of them to label by hand,
+    and the labels read back (--labels) correct the judge's precision by
+    prediction-powered inference. It prints the judge's number, the corrected
+    one with its 95% interval and the labels' own. Recall is never claimed.
 
     Extraction, the ablation and pipeline print precision, recall and F1 with
     95% ranges over your documents. `--report` writes the versioned eval
@@ -1230,10 +1257,21 @@ def eval_stage(
         "--validator": validator,
         "--timeout": timeout != 600.0,
     }
+    sampled = {
+        "--make-sheet": make_sheet is not None,
+        "--n": sample_size != 150,
+        "--by-predicate": by_predicate,
+    }
+    # The flags compare shares with another stage, which takes them as its own.
+    shared = {"precision": ("--seed",)}
+    compare_flags = [flag for flag in compare_flags if flag not in shared.get(stage, ())]
     try:
         if stage != "pipeline" and any(piped.values()):
             named = ", ".join(flag for flag, given in piped.items() if given)
             raise ValueError(f"{named}: these are for pipeline")
+        if stage != "precision" and any(sampled.values()):
+            named = ", ".join(flag for flag, given in sampled.items() if given)
+            raise ValueError(f"{named}: these are for precision")
         if stage == "compare":
             if any(v is not None for v in inputs):
                 raise ValueError("compare reads two --items files and takes no other inputs")
@@ -1260,7 +1298,12 @@ def eval_stage(
         if runs:
             raise ValueError(f"unexpected argument {str(runs[0])!r}: only compare takes runs")
         if compare_flags:
-            raise ValueError(f"{', '.join(compare_flags)}: for compare only")
+            owners = {"--seed": "compare and precision"}
+            raise ValueError(
+                "; ".join(
+                    f"{flag}: for {owners.get(flag, 'compare')} only" for flag in compare_flags
+                )
+            )
         if stage == "pipeline":
             from openodke.eval.harness import DESCRIPTION, evaluate_pipeline
 
@@ -1286,6 +1329,21 @@ def eval_stage(
                 config=config,
                 timeout=timeout,
             )
+        elif stage == "precision":
+            report = _eval_precision(
+                facts,
+                labels,
+                documents,
+                ontology,
+                describe=describe,
+                others=(predictions, run, config, items),
+                make_sheet=make_sheet,
+                sample_size=sample_size,
+                seed=seed,
+                by_predicate=by_predicate,
+            )
+            if report is None:
+                return
         elif stage == "spans":
             from openodke.eval.spans import DESCRIPTION, evaluate_spans, load_facts
 
@@ -1348,13 +1406,85 @@ def eval_stage(
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
     if as_json:
-        # The 0.x stages print their own report, as they did; pipeline has no 0.x form.
-        shown = report if stage == "pipeline" else report.stages[0]
+        # The 0.x stages print their own report, as they did; the newer ones have no 0.x form.
+        shown = report if stage in ("pipeline", "precision") else report.stages[0]
         typer.echo(shown.model_dump_json(indent=2))
         return
     typer.echo(report.render())
     if report_to is not None:
         typer.echo(f"wrote {report_to}")
+
+
+def _eval_precision(
+    facts: Path | None,
+    labels: Path | None,
+    documents: Path | None,
+    ontology: Path | None,
+    *,
+    describe: bool,
+    others: tuple[Any, ...],
+    make_sheet: Path | None,
+    sample_size: int,
+    seed: int,
+    by_predicate: bool,
+) -> Any:
+    """`odke eval precision`: its report, after drawing the sample if asked; None to describe."""
+    from openodke.eval.eval_report import Dataset
+    from openodke.eval.formats import GroundingLabel, load_jsonl
+    from openodke.eval.harness import load_documents
+    from openodke.eval.ppi import DESCRIPTION, SAMPLE_FILE, report_precision, write_sample
+    from openodke.eval.spans import load_facts
+
+    if describe:
+        typer.echo(DESCRIPTION)
+        return None
+    if any(v is not None for v in others):
+        raise ValueError(
+            "precision reads --facts, with --labels, --documents and --ontology; nothing else"
+        )
+    if facts is None:
+        raise ValueError(
+            "precision needs --facts: a run's facts after a judge (the grounder) graded them"
+        )
+    if make_sheet is not None and labels is not None:
+        raise ValueError(
+            "--make-sheet draws the sample to label and --labels reads it back: one step at a time"
+        )
+    judged = load_facts(facts)
+    docs = load_documents(documents) if documents is not None else None
+    if make_sheet is not None:
+        if docs is None:
+            raise ValueError("--make-sheet needs --documents: a sheet shows the text a fact cites")
+        drawn, made = write_sample(
+            judged, docs, make_sheet, n=sample_size, seed=seed, by_predicate=by_predicate
+        )
+        how = f"seed {seed}" + (", by predicate" if by_predicate else "")
+        typer.echo(
+            f"drew {len(drawn)} of {_count(len(judged), 'judged fact')} ({how}) into "
+            f"{make_sheet / SAMPLE_FILE}",
+            err=True,
+        )
+        for warning in made.warnings:
+            typer.echo(f"warning: {warning}", err=True)
+        typer.echo(
+            f"wrote {_count(len(made.sheets), 'sheet')} to {make_sheet}: {made.first} to "
+            f"{made.last}; tick them, read them back with `odke label read {make_sheet} -o "
+            "labels.jsonl`, and pass that file as --labels",
+            err=True,
+        )
+    rows = load_jsonl(labels, GroundingLabel) if labels is not None else []
+    return report_precision(
+        judged,
+        rows,
+        documents=docs,
+        ontology=_load(ontology) if ontology is not None else None,
+        dataset=Dataset(
+            name=Path(facts).name,
+            path=str(facts),
+            documents=len(docs) if docs is not None else None,
+            labels=len(rows) if labels is not None else None,
+        ),
+    )
 
 
 def _write_items(path: Path, stage: str, rows: Any, predicted: Any) -> None:

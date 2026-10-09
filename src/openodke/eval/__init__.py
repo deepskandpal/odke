@@ -37,6 +37,10 @@ Whether a change between two runs was real is `openodke.eval.stats`: a paired
 bootstrap over the items both runs scored, three verdicts (better, worse,
 inconclusive) and the detection limit printed beside every one.
 `compare_items` runs it over two runs' per-item outcomes (`item_rows`).
+
+With no gold at all, `judged_precision` takes a judge's verdicts on every fact
+and a person's labels on a random sample, and corrects the judge's precision
+by prediction-powered inference (`openodke.eval.ppi`).
 """
 
 from openodke.eval.ablation import per_document, report_ablation, run_ablation
@@ -70,6 +74,7 @@ from openodke.eval.formats import (
 )
 from openodke.eval.grounding import evaluate_grounding, grounding_ablation, kept, run_ground
 from openodke.eval.harness import evaluate_pipeline
+from openodke.eval.ppi import judged_precision, report_precision
 from openodke.eval.report import StageReport
 from openodke.eval.resolution import as_triples, evaluate_resolution, links_from_clusters
 from openodke.eval.routing import evaluate_routing, run_route
@@ -130,6 +135,7 @@ __all__ = [
     "grounding_ablation",
     "item_rows",
     "jsonl_counts",
+    "judged_precision",
     "kept",
     "links_from_clusters",
     "load_facts",
@@ -140,6 +146,7 @@ __all__ = [
     "per_document",
     "read_report",
     "report_ablation",
+    "report_precision",
     "run_ablation",
     "run_extract",
     "run_ground",
