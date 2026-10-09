@@ -609,6 +609,11 @@ def validate_command(
         "-o",
         help="Write the graph here as JSONL, beside any sinks the config names.",
     ),
+    merge: bool = typer.Option(
+        False,
+        "--merge",
+        help="Merge into the JSONL already at -o: a fact it holds gains this batch's sources.",
+    ),
     model: str | None = typer.Option(None, "--model", help=MODEL_HELP),
     model_provider: str | None = typer.Option(None, "--model-provider", help=MODEL_PROVIDER_HELP),
     locate: bool = typer.Option(
@@ -642,16 +647,21 @@ def validate_command(
     prompts sent and the coverage report. A dry run calls no model and writes
     nothing.
 
+    A store merges: a fact a Neo4j sink already holds gains this batch's
+    sources rather than a second edge, and so does one in the JSONL at -o with
+    --merge, or in a config's jsonl sink with `merge: true`.
+
     Exit 2 is input or a config that cannot be read, exit 1 a run that failed,
     exit 3 a run its budget stopped, which still wrote what it kept.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
-    from openodke import Validator
+    from openodke import SignatureCorroborator, Validator
     from openodke.interop import TriplesExtractor
     from openodke.llm.base import ProviderError
     from openodke.run import ConfigError, build
     from openodke.run.execute import _bootstrap
     from openodke.sinks.jsonl import JsonlSink
+    from openodke.validator import stores_of
 
     chosen = _qualified(model, model_provider)
     driver: Any = None
@@ -664,6 +674,8 @@ def validate_command(
     try:
         if facts is None and config is None:
             raise ValueError("give the facts with --facts, or a run config with --config")
+        if merge and out is None:
+            raise ValueError("--merge merges into the JSONL at -o: give -o")
         if facts is not None:
             schema = _strict_ontology(ontology) if ontology is not None else None
             grounder = (
@@ -747,8 +759,12 @@ def validate_command(
                 coverage=loaded.coverage,
             )
         if out is not None and not dry_run:
-            sinks.append(JsonlSink(out))
+            sinks.append(JsonlSink(out, merge=merge))
         validator.sinks = tuple(sinks)
+        # A corroborator the config names merges with the sinks, as the default does.
+        configured = validator.corroborator
+        if isinstance(configured, SignatureCorroborator) and not configured.store:
+            configured.store = stores_of(sinks)
     except (ValueError, ConfigError, OntologyLoadError, ImportError, OSError) as exc:
         _close(driver, [*lookups, *sinks])
         _data_error(exc)

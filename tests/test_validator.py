@@ -131,7 +131,10 @@ def test_a_dry_run_calls_no_model_and_writes_nothing() -> None:
 def test_a_neo4j_sink_writes_through_its_driver() -> None:
     driver = FakeDriver()
     sink = Neo4jSink(driver=driver, ontology=PLACES)
-    kg, _ = Validator(PLACES, client=RecordedClient(RECORDED), sinks=[sink]).validate(ROWS, [A, B])
+    validator = Validator(PLACES, client=RecordedClient(RECORDED), sinks=[sink])
+    # A store never bootstrapped has no signature index to merge through, and says so.
+    with pytest.warns(UserWarning, match=r"no index for \w+\.signature"):
+        kg, _ = validator.validate(ROWS, [A, B])
     assert driver.writes, "nothing was written"
     rows = [row for _, params in driver.writes for row in params["rows"]]
     assert {row.get("key") for row in rows} >= {"Region:brittany", "Country:france"}
