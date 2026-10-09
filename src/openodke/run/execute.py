@@ -22,6 +22,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from openodke.corroborate.provenance import CONFLICT
+from openodke.coverage import summary as coverage_summary
 from openodke.run.build import Built, build
 from openodke.run.config import STAGES, RunConfig
 from openodke.stages import PlatformProfile, Sink
@@ -257,6 +258,8 @@ def render(result: RunResult) -> str:
     if stats.get("derived"):
         lines.append(_row("derived", f"{stats['derived']} inverse and symmetric partners"))
     lines.append(_row("refused", str(stats.get("refused", 0))))
+    if isinstance(gaps := stats.get("coverage"), Mapping):
+        lines.append(_row("coverage", coverage_summary(gaps)))
     links = graph.get("links", {})
     lines.append(
         _row(

@@ -2,10 +2,26 @@
 
 from __future__ import annotations
 
-from openodke import Document, Entity, Evidence, Fact, Ontology, Span, SpanOrigin
-from openodke.coverage import NameMatcher, known_names, measure, offered_by
+import json
+from pathlib import Path
+from typing import Any
+
+from openodke import (
+    Chunk,
+    Document,
+    Entity,
+    Evidence,
+    Fact,
+    Ontology,
+    Pipeline,
+    RouteVerdict,
+    Span,
+    SpanOrigin,
+)
+from openodke.coverage import NameMatcher, known_names, measure, offered_by, summary
 from openodke.extract import LLMExtractor
 from openodke.llm import ScriptedClient
+from openodke.run import execute, load_config, parse_config
 
 ONTOLOGY = Ontology.from_dict(
     {
@@ -156,3 +172,123 @@ def test_known_names_are_every_label_and_alias_in_the_batch() -> None:
         "Analytical Engines",
         "London",
     ]
+
+
+class _Replay:
+    """An extractor answering each chunk with the facts planted for its document."""
+
+    def __init__(self, facts: dict[str, list[Fact]]) -> None:
+        self.facts = facts
+
+    def extract(self, chunk: Chunk, ontology: Ontology) -> list[Fact]:
+        return list(self.facts.get(chunk.doc_id, []))
+
+    def offered(self, ontology: Ontology) -> list[str]:
+        return ["employer", "headquarters"]
+
+
+def test_the_pipeline_reports_coverage_per_document_only_when_asked() -> None:
+    replay = _Replay({"d1": [EMPLOYED], "d2": [BASED]})
+    assert "coverage" not in Pipeline(ONTOLOGY, replay).run([DOC, ELSEWHERE]).stats
+
+    stats = Pipeline(ONTOLOGY, replay, coverage=True).run([DOC, ELSEWHERE]).stats["coverage"]
+    assert (stats["sentences"], stats["uncovered"], stats["missed_entities"]) == (3, 1, 1)
+    assert stats["not_offered"] == ["born_in", "founded"]
+    assert stats["unused"] == []
+    by_doc = {d["doc_id"]: d for d in stats["documents"]}
+    assert [s["quote"] for s in by_doc["d1"]["uncovered"]] == [GAP]
+    assert by_doc["d2"] == {"doc_id": "d2", "sentences": 1, "uncovered": [], "missed": []}
+    json.dumps(stats)  # what a manifest writes
+    assert summary(stats) == (
+        "1 of 3 sentences naming two known entities uncovered, 1 entities in no fact, "
+        "2 relations never offered, 0 unused"
+    )
+
+
+class _SkipSecond:
+    def route(self, chunk: Chunk) -> RouteVerdict:
+        return RouteVerdict(action="skip" if "born" in chunk.text else "extract")
+
+
+class _Sentences:
+    def chunk(self, doc: Document) -> list[Chunk]:
+        out, at = [], 0
+        for index, part in enumerate(doc.text.split(". ")):
+            start = doc.text.index(part, at)
+            out.append(
+                Chunk(doc_id=doc.id, start=start, end=start + len(part), text=part, index=index)
+            )
+            at = start + len(part)
+        return out
+
+
+def test_a_chunk_the_router_skipped_is_not_a_gap() -> None:
+    replay = _Replay({"d1": [EMPLOYED], "d2": [BASED]})
+    pipeline = Pipeline(ONTOLOGY, replay, chunker=_Sentences(), router=_SkipSecond(), coverage=True)
+    stats = pipeline.run([DOC, ELSEWHERE]).stats["coverage"]
+    assert stats["uncovered"] == 0
+
+
+def _project(tmp_path: Path, **extra: Any) -> dict[str, Any]:
+    (tmp_path / "ontology.json").write_text(ONTOLOGY.model_dump_json(), encoding="utf-8")
+    (tmp_path / "corpus").mkdir()
+    (tmp_path / "corpus" / "a.txt").write_text(TEXT, encoding="utf-8")
+    return {
+        "ontology": "ontology.json",
+        "inputs": ["corpus"],
+        "stages": {
+            "extractor": "test_coverage:Planted",
+            "sink": {"use": "jsonl", "directory": "out"},
+        },
+        **extra,
+    }
+
+
+class Planted:
+    """`test_coverage:Planted`: the first sentence's fact, cited, for any document."""
+
+    def extract(self, chunk: Chunk, ontology: Ontology) -> list[Fact]:
+        start = chunk.text.find(FIRST)
+        if start < 0:
+            return []
+        at = chunk.start + start
+        span = Span(doc_id=chunk.doc_id, start=at, end=at + len(FIRST), quote=FIRST)
+        return [
+            Fact(
+                subject=ADA,
+                predicate="employer",
+                object_entity=ENGINES,
+                evidence=(Evidence(doc_id=chunk.doc_id, span=span),),
+            ),
+            # A fact that makes London a known name, cited to the first sentence.
+            Fact(
+                subject=ENGINES,
+                predicate="headquarters",
+                object_entity=LONDON,
+                evidence=(Evidence(doc_id=chunk.doc_id, span=span),),
+            ),
+        ]
+
+
+def test_odke_run_reports_coverage_in_its_stats_manifest_and_summary(tmp_path: Path) -> None:
+    result = execute(parse_config(_project(tmp_path), base_dir=tmp_path))
+    coverage = result.stats["coverage"]
+    assert coverage["uncovered"] == 1
+    assert [s["quote"] for s in coverage["documents"][0]["uncovered"]] == [GAP]
+    manifest = json.loads((tmp_path / "out" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["stats"]["coverage"] == coverage
+    line = next(row for row in result.render().splitlines() if row.startswith("coverage"))
+    assert "1 of 2 sentences naming two known entities uncovered" in line
+
+
+def test_odke_run_can_leave_coverage_out(tmp_path: Path) -> None:
+    result = execute(parse_config(_project(tmp_path, coverage=False), base_dir=tmp_path))
+    assert "coverage" not in result.stats
+    assert not any(row.startswith("coverage") for row in result.render().splitlines())
+
+
+def test_the_e2e_example_reports_its_coverage(example: Path) -> None:
+    result = execute(load_config(example / "odke.yaml"), dry_run=True)
+    coverage = result.stats["coverage"]
+    assert coverage["sentences"] >= coverage["uncovered"]
+    assert coverage["not_offered"] == []

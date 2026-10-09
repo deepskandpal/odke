@@ -868,6 +868,7 @@ class Built:
             constrainer=s["constrainer"],
             sinks=sinks,
             inverses=self.config.inverses,
+            coverage=self.config.coverage,
         )
 
     def documents(self) -> list[Document]:
