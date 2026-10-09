@@ -273,5 +273,48 @@ _register(
     source="openodke",
 )
 
+# The entity-pair judge's question (`openodke.corroborate.PairJudge`, #150): two
+# mentions the resolver's rules left open, each with its type and the text
+# around it. Asked once in each order, (A, B) and (B, A).
+_PAIR_SOURCE = (
+    "openodke, after LLM entity matching (Peeters, Steiner & Bizer 2023, arXiv 2310.11244), "
+    "asked in both orders for position bias (Zheng et al. 2023, arXiv 2306.05685 §3.4)"
+)
+_register(
+    "pair",
+    1,
+    (
+        "You decide whether two mentions name the same real-world entity. Each mention comes "
+        "with its entity type and the text around it.\n"
+        "You may use general knowledge of names: abbreviations, short forms, former names, "
+        "transliterations. You may not decide two mentions are the same only because a "
+        "well-known entity has that name; the two contexts must describe one entity. Mentions "
+        "with the same name can be different entities, and mentions with different names can "
+        "be the same entity.\n"
+        'Answer "same" if the contexts describe one entity, "different" if they describe two, '
+        'and "unsure" if the text shown does not settle it.\n'
+        'Reply with JSON only: {"because": "<at most 20 words>", "decision": "same" | '
+        '"different" | "unsure"}'
+    ),
+    source=_PAIR_SOURCE,
+)
+
+# Its user message, a template: each `{field}` is filled in per pair, once, so
+# a context that contains braces is never read as a field. `{a_aliases}` is
+# "; also known as: …" for a stored entity and empty otherwise, on both sides,
+# since the swap puts either entity first.
+_register(
+    "pair.user",
+    1,
+    (
+        'Mention A: "{a_surface}" (type: {a_type}){a_aliases}\n'
+        "Context A: {a_context}\n"
+        "\n"
+        'Mention B: "{b_surface}" (type: {b_type}){b_aliases}\n'
+        "Context B: {b_context}"
+    ),
+    source=_PAIR_SOURCE,
+)
+
 
 __all__ = ["LOCK", "Prompt", "check", "get", "read_lock", "registered"]
