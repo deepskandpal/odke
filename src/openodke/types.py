@@ -153,10 +153,12 @@ class SpanOrigin(StrEnum):
 class Evidence(Frozen):
     """Why we believe a fact: a document, and where in it.
 
-    `span` is the claim-bearing clause. A grounder is shown that span and
-    nothing else, so it has to state the fact when read on its own: asked
-    whether "Acme operates in Ireland" follows from the text `Ireland`, a
-    grounder correctly says `not_found` and a true fact is lost.
+    `span` is the claim-bearing clause. By default `LLMGrounder` reads the span
+    alone, so it should state the fact when read on its own: asked whether
+    "Acme operates in Ireland" follows from the text `Ireland`, a grounder
+    correctly says `not_found` and a true fact is lost. With
+    `context="document"` the grounder reads the whole document instead, and a
+    `context` span is the whole text, not a citation (DECISIONS #25).
 
     `mention` is the narrower span inside the clause that tells this fact from
     the others the same clause states — `Ireland` in a list of three regions.

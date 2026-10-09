@@ -14,7 +14,7 @@ Nothing is paraphrased into place, and every span that survives has passed
 `Span.is_faithful`.
 
 The quote asked for is the *clause* that supports the claim, not the word that
-names the value, because the grounder is shown that span and nothing else
+names the value, because by default the grounder reads that span alone
 (DECISIONS #23). The word that tells one fact from its siblings — one of three
 regions in a list — is carried alongside as `Evidence.mention`, checked the same
 way and dropped if it is not inside the clause.
