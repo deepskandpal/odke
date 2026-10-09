@@ -474,11 +474,13 @@ note:
 ```
 
 The claim line is `render_claim(fact)`, the sentence the grounder is asked
-about, and the cited span is bold inside the passage. Passage text is escaped,
-so markdown cannot hide or restyle it: `$` would otherwise open a formula and
-`%%` a comment. A pair item shows `A:` and `B:`, each a name and its type with
-its context quoted, then the boxes `same`, `different` and `unsure`. Each sheet
-opens with two lines that explain the answers and asks for exactly one tick.
+about, and the cited span is bold inside the passage. A `context` span, the
+whole text of a fact that cited nothing, is no citation and stays plain.
+Passage text is escaped, so markdown cannot hide or restyle it: `$` would
+otherwise open a formula and `%%` a comment. A pair item shows `A:` and `B:`,
+each a name and its type with its context quoted, then the boxes `same`,
+`different` and `unsure`. Each sheet opens with two lines that explain the
+answers and asks for exactly one tick.
 
 Reading back:
 
