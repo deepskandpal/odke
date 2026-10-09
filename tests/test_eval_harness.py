@@ -17,8 +17,11 @@ from typing import Any
 
 import pytest
 import yaml
+from typer.testing import CliRunner
 
 from openodke import Document, Entity, Evidence, Fact
+from openodke.cli.main import app
+from openodke.eval import read_report
 from openodke.eval.datasets import text2kgbench
 from openodke.eval.eval_report import EvalReport
 from openodke.eval.harness import (
@@ -33,6 +36,7 @@ from test_datasets import _t2k_raw
 
 TRIPLES = Path(__file__).resolve().parents[1] / "examples" / "triples"
 PYTHON = shlex.quote(sys.executable)
+runner = CliRunner()
 
 # A stand-in pipeline: the rows in the JSON file named by its third argument,
 # for the texts it finds in {in}.
@@ -341,3 +345,79 @@ def test_the_validator_takes_the_example_s_own_config_as_it_is(strict: Path) -> 
         evaluate_pipeline(
             predictions=TRIPLES / "triples.jsonl", config=strict, **labels_of_the_example()
         )
+
+
+# --------------------------------------------------------------------------- #
+# From the shell
+# --------------------------------------------------------------------------- #
+
+
+def _shell(*extra: str) -> list[str]:
+    return [
+        "eval", "pipeline",
+        "--labels", str(TRIPLES / "gold.jsonl"),
+        "--documents", str(TRIPLES / "texts"),
+        "--ontology", str(TRIPLES / "ontology.json"),
+        *extra,
+    ]  # fmt: skip
+
+
+def test_odke_eval_pipeline_from_the_shell(tmp_path: Path) -> None:
+    out = tmp_path / "report.json"
+    template = f"{sys.executable} {TRIPLES / 'pipeline.py'} {{in}} {{out}}"
+    result = runner.invoke(app, _shell("--cmd", template, "--report", str(out)))
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("pipeline  (n=4)\n")
+    assert "0.600 [0.600, 0.600]" in result.output
+    assert read_report(out).rows[0].counts.hits == 3
+
+    as_json = runner.invoke(app, _shell("--run", f"{TRIPLES / 'pipeline.py'}:extract", "--json"))
+    assert as_json.exit_code == 0, as_json.output
+    assert EvalReport.model_validate_json(as_json.output).rows == read_report(out).rows
+
+
+def test_odke_eval_pipeline_runs_the_bench_set_s_own_checks(tmp_path: Path, bench: Path) -> None:
+    rows = tmp_path / "rows.jsonl"
+    rows.write_text("".join(json.dumps(r) + "\n" for r in BENCH_ROWS))
+    args = ["eval", "pipeline", "--bench", str(bench), "--predictions", str(rows)]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert "pipeline  0.500 [" in result.output
+
+
+@pytest.mark.parametrize(
+    ("extra", "message", "code"),
+    [
+        ([], "exactly one of --cmd, --run and --predictions", 2),
+        (["--predictions", "p.jsonl", "--cmd", "x {in} {out}"], "exactly one of", 2),
+        (["--predictions", str(TRIPLES / "triples.jsonl"), "--config", "x.yaml"], "--config", 2),
+        (["--predictions", str(TRIPLES / "triples.jsonl"), "--items", "i.jsonl"], "--items", 2),
+        (["--cmd", f"{sys.executable} -c pass {{in}} {{out}}"], "wrote nothing at {out}", 1),
+    ],
+)
+def test_pipeline_mistakes_and_failures_exit_with_a_message(
+    extra: list[str], message: str, code: int
+) -> None:
+    result = runner.invoke(app, _shell(*extra))
+    assert result.exit_code == code, result.output
+    assert message in result.output
+
+
+def test_the_pipeline_flags_belong_to_pipeline() -> None:
+    labels = str(TRIPLES / "gold.jsonl")
+    result = runner.invoke(app, ["eval", "extract", "--labels", labels, "--cmd", "x {in} {out}"])
+    assert result.exit_code == 2
+    assert "are for pipeline" in result.output
+    described = runner.invoke(app, ["eval", "pipeline", "--describe"])
+    assert described.exit_code == 0 and "{in}" in described.output
+
+
+def test_odke_eval_pipeline_validator_from_the_shell(strict: Path) -> None:
+    rows = str(TRIPLES / "triples.jsonl")
+    result = runner.invoke(
+        app, _shell("--predictions", rows, "--validator", "--config", str(strict), "--json")
+    )
+    assert result.exit_code == 0, result.output
+    report = EvalReport.model_validate_json(result.output)
+    assert [row.name for row in report.rows] == ["pipeline", "+ validator"]
+    assert report.rows[1].performance.precision.value == 1.0
