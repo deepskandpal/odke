@@ -46,8 +46,8 @@ from openodke.types import (
 # What a loader reads: a path, a URL, bytes, a row iterator. The loader decides.
 Source: TypeAlias = Any
 Corpus: TypeAlias = Iterable[Document]
-# The entities already known, by key. A dict on a first run; a store-backed
-# mapping once there is a graph to resolve against.
+# The entities already known, by key: the batch's own, as the pipeline passes it.
+# What the store holds is reached through a `StoreLookup`, never loaded into this.
 EntityIndex: TypeAlias = Mapping[str, Entity]
 # Constraints in the store's own language — Cypher `CREATE CONSTRAINT`
 # statements, SHACL shapes, SQL — one string per statement or document.
@@ -159,6 +159,22 @@ class Resolver(Protocol):
     def resolve(
         self, facts: Iterable[Fact], index: EntityIndex
     ) -> tuple[Iterable[Fact], Iterable[EntityLink]]: ...
+
+
+@runtime_checkable
+class StoreLookup(Protocol):
+    """What the store already holds that may be one of these entities, without loading it.
+
+    Not a stage: the resolver's way into the store (DECISIONS #31). Returns,
+    by each entity's key, the store's entities that share a block key with it
+    — the same key, an external id, a domain, or the first or last token of a
+    name (`openodke.corroborate.block_keys`) — within its type, and within a
+    tenant when the lookup is scoped to one. A candidate is only compared; the
+    resolver decides. A lookup reads and never writes: the store's nodes are
+    the same after it as before.
+    """
+
+    def candidates(self, entities: Sequence[Entity]) -> Mapping[str, Sequence[Entity]]: ...
 
 
 @runtime_checkable
@@ -465,5 +481,6 @@ __all__ = [
     "Scorer",
     "Sink",
     "Source",
+    "StoreLookup",
     "Validator",
 ]

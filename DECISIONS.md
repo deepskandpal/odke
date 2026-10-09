@@ -624,3 +624,64 @@ pass/fail verdicts only, not a corpus F1 resampled by document, and needs Python
 *Cost:* an inconclusive result passes CI, so a real regression smaller than the
 limit can ship. The limit printed beside it says how big that could be, and the
 A/A test holds the false-alarm rate near 5%.
+
+### 31. The store is looked up, never loaded, and a lookup never changes it
+
+#24 put resolution against the store in scope "through a lookup rather than a
+loaded copy", and `EntityIndex` could not keep that promise. It is a
+`Mapping[str, Entity]`, so resolving a batch against a graph of a million
+nodes meant reading a million nodes first. But blocking already says which
+entities a batch can match: the same type and a shared key, external id,
+domain, or first or last name token. Those are questions a store's indexes
+answer.
+
+So `StoreLookup` is a Protocol with one method, `candidates(entities)`: for
+each entity, by key, the store's entities sharing a block key with it, within
+its type, and within a tenant when the lookup is scoped to one. It is not a
+fourteenth stage. It is the resolver's way into the store, and
+`NativeResolver(lookup=...)` is how it is used. `MemoryLookup` answers from
+today's mapping, in memory. `Neo4jLookup` answers from the indexes
+`bootstrap()` creates, each batch in one read transaction, each block key
+asked once. A type with no index is not read, and says so: a lookup that
+scans is a load by another name.
+
+Four calls come with it.
+
+**A proof re-keys the incoming facts, and the stored entity travels as
+stored.** On a shared id or domain the incoming facts take the store's key and
+the store's entity as the store holds it: label, aliases, id, resolution and
+attributes. The sink's `MERGE` then writes every property back to what it
+already is. Nothing the batch knew about the entity lands on the node. Merging
+the incoming names into it would change a stored node on one batch's say-so,
+which is the replace #16 refuses, one property at a time.
+
+**Anything weaker is a link**, as within a batch (#16): `SIMILAR` at the same
+threshold, `DIFFERENT` on a disagreeing id. Store entities are never compared
+with each other. Resolving the store against itself is a different job, and a
+batch that proposed links between nodes it never mentioned would be doing it
+unasked.
+
+**The batch's own statement of a key wins.** A batch that states a stored key
+itself, or a key its caller chose (`method="caller"`, #18), keeps its own
+entity, as it would with no store. The sink has always updated a node a batch
+restates, and a lookup does not take that from the caller.
+
+**An embedding widens what is compared, never what counts as a match.** The
+vector lookup is a slot. With `embed`, the caller's function, the nearest
+stored labels of the type are candidates too, judged by the same rules. There
+is no embedding dependency, no model, and no new kind of evidence in the
+resolver.
+
+The tenant is a filter on a property until tenant keys arrive (#159). The
+defaults (the resolver's 0.9 for `SIMILAR`, 100 hits a name token, five
+nearest vectors) were set before anything was measured, and are documented as
+defaults.
+
+*Cost:* the incoming entity's other names reach the store only through its
+`SAME_AS` link, and in Neo4j not even there. That link's source key has no
+node, so the sink's `MATCH` finds nothing to hang it on, which is also true
+of a within-batch merge's losing key; a JSONL sink keeps it. A lookup reads
+which indexes exist once, so an index created after its first batch is seen
+by the next lookup. And the first measurement is within documents only:
+Re-DocRED has no ids, so it measures the `SIMILAR` path alone, and identity
+across documents waits for the multi-source benchmark (#117).
