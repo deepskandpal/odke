@@ -29,6 +29,7 @@ def _load(name: str) -> ModuleType:
 
 competitors = _load("competitors")
 inverses = _load("inverses")
+locator = _load("locator")
 tables = _load("tables")
 
 
@@ -228,3 +229,65 @@ def test_inverse_partners_are_scored_with_the_datasets_own_scorer(tmp_path: Path
     issue = measured["ontologies"]["#106's six"]["predicates"]
     assert issue[snake(located)]["inverse_of"] == snake(contains)
     assert issue["spouse"]["symmetric"] is True
+
+
+# locator.py
+# --------------------------------------------------------------------------- #
+
+
+def _saved_run(tmp_path: Path) -> Path:
+    """A competitor's saved Re-DocRED run, three facts long: one kept, two refused."""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "test_0000.txt").write_text(
+        "Ada Lovelace was born in London. She died in Paris."
+    )
+    ontology = {
+        "name": "t",
+        "types": {"Person": {}, "City": {}},
+        "predicates": {"born_in": {"domain": ["Person"], "range": "City"}},
+    }
+    (tmp_path / "ontology.json").write_text(json.dumps(ontology))
+    (tmp_path / "dataset.json").write_text(json.dumps({"relation_labels": {"born_in": "born in"}}))
+    rows = [
+        {"doc": "test_0000", "subject": "Ada Lovelace", "predicate": "BORN_IN", "object": city}
+        for city in ("London", "Paris", "Rome")
+    ]
+    (tmp_path / "facts.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    (tmp_path / "predictions").mkdir()
+    kept = {"id": "test_0000", "triples": [["Ada Lovelace", "born in", "London"]]}
+    (tmp_path / "predictions" / "grounding.jsonl").write_text(json.dumps(kept) + "\n")
+    gold = {
+        "id": "test_0000",
+        "text": "",
+        "entities": [["Ada Lovelace"], ["London"], ["Paris"]],
+        "facts": [[0, "born in", 1]],
+    }
+    (tmp_path / "gold.jsonl").write_text(json.dumps(gold) + "\n")
+    return tmp_path
+
+
+def test_the_locator_bench_reads_the_saved_verdicts_and_places_facts(tmp_path: Path) -> None:
+    system = locator.System(_saved_run(tmp_path))
+    assert system.whole == ["supported", "not_found", "not_found"]
+    assert system.correct == [1, 0, 0]
+    placed, stats = locator.place(system)
+    # Paris is named in the sentence after the subject; Rome nowhere.
+    assert placed == [0, 1]
+    assert (stats["placed"], stats["two_sentence_windows"]) == (2, 1)
+
+
+def test_the_locator_bench_rule_passes_agreement_and_fails_a_lost_true_fact(
+    tmp_path: Path,
+) -> None:
+    system = locator.System(_saved_run(tmp_path))
+    same = locator.compare(system, [0, 1], ["supported", "not_found"], ["supported"], [0], {})
+    assert (same["agreement"], same["retest_agreement"], same["passes"]) == (1.0, 1.0, True)
+    assert same["confusion"] == {
+        "whole not_found / located not_found": 1,
+        "whole supported / located supported": 1,
+    }
+    lost = locator.compare(system, [0, 1], ["not_found", "not_found"], ["supported"], [0], {})
+    assert lost["agreement"] == 0.5 and lost["correct_kept_diff"][1] < 0
+    assert lost["passes"] is False
+    low, high = locator.wilson(95, 100)
+    assert low < 0.95 < high and round(low, 3) == 0.888
