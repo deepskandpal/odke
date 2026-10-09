@@ -9,6 +9,7 @@ import tempfile
 import urllib.request
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED, Range, bootstrap
 from openodke.eval.cost import CallRecord, StageCost
 from openodke.eval.eval_report import (
     Bootstrap,
+    Configuration,
     Dataset,
     EvalReport,
     Row,
@@ -219,25 +221,29 @@ def triples_by_doc(
 def report(
     stage: str,
     n: int,
-    rows: Sequence[tuple[str, Mapping[str, Metric], Sequence[Any], int]],
+    rows: Sequence[tuple[str, Mapping[str, Metric], Sequence[Any] | None, int]],
     notes: Sequence[str],
+    *,
+    labels: Sequence[str] = ("extraction", "grounding", "corroboration"),
 ) -> StageReport:
-    """The ablation table: one row per configuration, its metrics, calls and cost."""
+    """The ablation table: one row per configuration, its metrics, calls and cost.
+
+    `labels` name the rows in the summary metrics (`precision_extraction`, ...),
+    one per row. A row whose calls were not metered has no call or cost column.
+    """
     breakdown: dict[str, dict[str, Metric]] = {}
     for name, row, calls, facts in rows:
-        cost = StageCost.of(name, list(calls))
+        cost = None if calls is None else StageCost.of(name, list(calls))
         breakdown[name] = {
             **row,
             "facts": facts,
-            "model_calls": cost.calls,
-            "prompt_tokens": cost.prompt_tokens,
-            "completion_tokens": cost.completion_tokens,
-            "cost_usd": cost.cost_usd,
+            "model_calls": None if cost is None else cost.calls,
+            "prompt_tokens": None if cost is None else cost.prompt_tokens,
+            "completion_tokens": None if cost is None else cost.completion_tokens,
+            "cost_usd": None if cost is None else cost.cost_usd,
         }
     summary: dict[str, Metric] = {}
-    for label, (name, _, _, _) in zip(
-        ("extraction", "grounding", "corroboration"), rows, strict=True
-    ):
+    for label, (name, _, _, _) in zip(labels, rows, strict=True):
         for key in ("precision", "recall", "f1"):
             summary[f"{key}_{label}"] = breakdown[name].get(key)
     return StageReport(stage=stage, n=n, metrics=summary, breakdown=breakdown, notes=tuple(notes))
@@ -249,21 +255,77 @@ def report(
 Units = Callable[[Mapping[str, Sequence[Triple]]], list[Any]]
 Aggregate = Callable[[Sequence[Any]], dict[str, Metric]]
 ToRow = Callable[
-    [str, Sequence[Any], Mapping[str, Metric], Mapping[str, Range], Sequence[CallRecord]], Row
+    [str, Sequence[Any], Mapping[str, Metric], Mapping[str, Range], Sequence[CallRecord] | None],
+    Row,
 ]
+
+
+@dataclass(frozen=True)
+class Scoring:
+    """How one prepared dataset scores facts: what each dataset module's `scoring` returns.
+
+    `units` takes one configuration's triples by document and scores each
+    document; `aggregate` turns those into the dataset's numbers, and is what
+    the bootstrap recomputes on each draw of documents; `row` makes the eval
+    report's row. `stage` names the set, and `dataset` describes it.
+    """
+
+    stage: str
+    meta: Mapping[str, Any]
+    units: Units
+    aggregate: Aggregate
+    row: ToRow
+    dataset: Dataset
+
+
+@dataclass(frozen=True)
+class Scored:
+    """Configurations scored: the stage table's rows, the eval report's, and the triples."""
+
+    table: list[tuple[str, dict[str, Metric], Sequence[CallRecord] | None, int]]
+    rows: list[Row]
+    predictions: dict[str, dict[str, list[Triple]]]
+
+
+def score_configurations(
+    configurations: Sequence[Configuration],
+    documents: Sequence[Document],
+    scoring: Scoring,
+    *,
+    resamples: int = RESAMPLES,
+    seed: int = SEED,
+    level: float = LEVEL,
+) -> Scored:
+    """Each `(name, facts, calls)` scored with a dataset's own metrics, ranges included.
+
+    Facts are read back as the dataset's triples: labels rather than keys, and
+    the dataset's own relation names, under each document they cite.
+    """
+    labels: Mapping[str, str] = scoring.meta["relation_labels"]
+    names = doc_names(documents)
+    scored = Scored(table=[], rows=[], predictions={})
+
+    def statistic(draw: Sequence[Any]) -> dict[str, Metric]:
+        found = scoring.aggregate(draw)
+        return {k: found[k] for k in ("precision", "recall", "f1")}
+
+    for name, facts, calls in configurations:
+        predicted = triples_by_doc(facts, names, lambda p: labels.get(p, p))
+        scored.predictions[name] = predicted
+        units = scoring.units(predicted)
+        metrics = scoring.aggregate(units)
+        ranges = bootstrap(units, statistic, resamples=resamples, seed=seed, level=level)
+        scored.table.append((name, metrics, calls, len(facts)))
+        scored.rows.append(scoring.row(name, units, metrics, ranges, calls))
+    return scored
 
 
 def report_run(
     ablation: AblationRun,
     gold: Sequence[Mapping[str, Any]],
-    meta: Mapping[str, Any],
+    scoring: Scoring,
     *,
-    stage: str,
-    units: Units,
-    aggregate: Aggregate,
-    row: ToRow,
     notes: Callable[[Mapping[str, Metric], Mapping[str, Metric], Mapping[str, Metric]], list[str]],
-    dataset: Dataset,
     save_to: Path | None = None,
     resamples: int = RESAMPLES,
     seed: int = SEED,
@@ -271,33 +333,21 @@ def report_run(
 ) -> EvalReport:
     """Each configuration of an `AblationRun` scored with a dataset's own metrics.
 
-    `units` takes one configuration's triples by document and scores each
-    document; `aggregate` turns those into the dataset's numbers, which are
-    the stage report's row, and is what the bootstrap recomputes on each draw
-    of documents; `row` makes the eval report's row. `notes` takes the three
-    rows' metrics — extracted, after the gate, after corroboration — and writes
-    the dataset's lines beside the paper's numbers; the grounder's verdicts and
-    the run's own notes follow them.
+    `notes` takes the three rows' metrics — extracted, after the gate, after
+    corroboration — and writes the dataset's lines beside the paper's numbers;
+    the grounder's verdicts and the run's own notes follow them.
     """
-    labels: Mapping[str, str] = meta["relation_labels"]
-    names = doc_names(ablation.documents)
-    table, rows, predictions = [], [], {}
-
-    def statistic(draw: Sequence[Any]) -> dict[str, Metric]:
-        scored = aggregate(draw)
-        return {k: scored[k] for k in ("precision", "recall", "f1")}
-
-    for name, facts, calls in ablation.configurations():
-        predicted = triples_by_doc(facts, names, lambda p: labels.get(p, p))
-        predictions[name] = predicted
-        scored_units = units(predicted)
-        metrics = aggregate(scored_units)
-        ranges = bootstrap(scored_units, statistic, resamples=resamples, seed=seed, level=level)
-        table.append((name, metrics, calls, len(facts)))
-        rows.append(row(name, scored_units, metrics, ranges, calls))
+    scored = score_configurations(
+        ablation.configurations(),
+        ablation.documents,
+        scoring,
+        resamples=resamples,
+        seed=seed,
+        level=level,
+    )
     if save_to is not None:
-        save_predictions(save_to, predictions)
-    raw, gated, full = (metrics for _, metrics, _, _ in table)
+        save_predictions(save_to, scored.predictions)
+    raw, gated, full = (metrics for _, metrics, _, _ in scored.table)
     lines = [
         *notes(raw, gated, full),
         f"grounder verdicts on the candidates: {verdicts(ablation.grounded)}",
@@ -306,13 +356,13 @@ def report_run(
     if ablation.coverage is not None:
         lines.append(f"coverage of the candidates: {coverage_summary(ablation.coverage)}")
     return from_stage(
-        report(stage, len(gold), table, lines),
-        rows=rows,
+        report(scoring.stage, len(gold), scored.table, lines),
+        rows=scored.rows,
         bootstrap=Bootstrap(units=len(gold), resamples=resamples, seed=seed, level=level),
         run=Run(
             models=models_called(ablation.all_calls, ablation.models),
             prompts=ablation.prompts,
-            dataset=dataset,
+            dataset=scoring.dataset,
         ),
     )
 

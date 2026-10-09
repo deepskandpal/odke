@@ -380,7 +380,7 @@ def row(
     units: Sequence[Mapping[str, Any]],
     metrics: Mapping[str, Metric],
     ranges: Mapping[str, Range],
-    calls: Sequence[CallRecord],
+    calls: Sequence[CallRecord] | None,
 ) -> Row:
     """One configuration's eval report row, from the same `documents` its metrics came from."""
     tp, n_pred, n_gold, conformant, hallucinated = (
@@ -450,14 +450,27 @@ def report_run(
 ) -> EvalReport:
     """`score_run`, as the eval report. `path` names the prepared set in its dataset."""
     return _common.report_run(
-        ablation,
-        gold,
-        meta,
+        ablation, gold, scoring(gold, meta, path=path), notes=_notes, save_to=save_to
+    )
+
+
+def scoring(
+    gold: Sequence[Mapping[str, Any]],
+    meta: Mapping[str, Any],
+    *,
+    hallucination: bool = True,
+    path: str | Path | None = None,
+) -> _common.Scoring:
+    """How a prepared set scores facts from any source: `documents`, `aggregate`, `row`.
+
+    `hallucination` is accepted for symmetry with Text2KGBench; this score needs no NLTK.
+    """
+    return _common.Scoring(
         stage=f"{NAME}:{meta['split']}",
+        meta=meta,
         units=lambda predicted: documents(gold, predicted),
         aggregate=aggregate,
         row=row,
-        notes=_notes,
         dataset=Dataset(
             name=NAME,
             path=None if path is None else str(path),
@@ -465,7 +478,6 @@ def report_run(
             labels=sum(len(r["facts"]) for r in gold),
             details={"split": meta["split"]},
         ),
-        save_to=save_to,
     )
 
 
@@ -502,5 +514,6 @@ __all__ = [
     "run",
     "score",
     "score_run",
+    "scoring",
     "to_ontology",
 ]
