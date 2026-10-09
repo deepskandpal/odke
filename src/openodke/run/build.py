@@ -619,15 +619,20 @@ class _JsonlPlan(SinkPlan):
     name = "jsonl"
 
     def __init__(self, options: dict[str, Any], ctx: Context, where: str) -> None:
-        unknown = sorted(set(options) - {"directory"})
+        unknown = sorted(set(options) - {"directory", "merge"})
         if unknown:
-            raise ConfigError(f"{where}.{unknown[0]}: unknown option; jsonl takes directory")
+            raise ConfigError(
+                f"{where}.{unknown[0]}: unknown option; jsonl takes directory and merge"
+            )
         if not isinstance(options.get("directory"), str):
             raise ConfigError(f"{where}.directory: the directory to write into")
+        if not isinstance(options.get("merge", False), bool):
+            raise ConfigError(f"{where}.merge: true or false")
         self.directory = ctx.config.resolve(options["directory"])
+        self.merge = bool(options.get("merge", False))
 
     def open(self) -> Sink:
-        return JsonlSink(self.directory)
+        return JsonlSink(self.directory, merge=self.merge)
 
     def describe(self, kg: KnowledgeGraph) -> list[str]:
         return [

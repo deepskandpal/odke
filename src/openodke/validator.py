@@ -30,6 +30,14 @@ and the types have nothing to check.
 (DECISIONS #31): a `StoreLookup`, such as `Neo4jSink.lookup()` or a
 `MemoryLookup`, handed to the default resolver. Off unless given.
 
+Writing to a store merges with it (#153). Every sink that can say what it
+already holds (a `FactLookup`: `Neo4jSink`, or `JsonlSink(merge=True)`) is
+handed to the default corroborator, which merges each incoming fact with the
+one stored under its signature before the scorer and the gate see it. A rerun
+of a claim from a second source then adds that source to the stored fact's
+support list, and writes no second edge. A corroborator passed in merges with
+the stores it was given, and a dry run reads no sink.
+
 `validate()` returns the graph and a `ValidationReport` of the job: facts in,
 refused, merged, linked and derived; the model calls, tokens and cost; the
 registered prompts sent; and the coverage report. A client held to a budget
@@ -66,6 +74,7 @@ from openodke.ontology import Ontology
 from openodke.pipeline import Pipeline
 from openodke.stages import (
     Corroborator,
+    FactLookup,
     Gate,
     Grounder,
     Normalizer,
@@ -97,6 +106,8 @@ class ValidationReport(Frozen):
     refused_by: dict[str, int] = Field(default_factory=dict)
     # Folded into another fact with the same signature by the corroborator.
     merged: int = 0
+    # Merged with a fact the store already held under its signature (#153).
+    restated: int = 0
     # Links the resolver proposed between entities, by kind.
     linked: int = 0
     links: dict[str, int] = Field(default_factory=dict)
@@ -142,7 +153,8 @@ class ValidationReport(Frozen):
         )
         why = ", ".join(f"{v} {k}" for k, v in self.refused_by.items() if v)
         lines.append(_row("refused", f"{self.refused} by the gate" + (f": {why}" if why else "")))
-        lines.append(_row("merged", f"{self.merged} into a fact with the same signature"))
+        held = f"; {self.restated} into one the store holds" if self.restated else ""
+        lines.append(_row("merged", f"{self.merged} into a fact with the same signature{held}"))
         kinds = ", ".join(f"{v} {k}" for k, v in self.links.items())
         lines.append(
             _row("linked", _n(self.linked, "entity link") + (f": {kinds}" if kinds else ""))
@@ -310,7 +322,11 @@ class Validator:
             "resolver": (
                 self.resolver if self.resolver is not None else NativeResolver(lookup=self.lookup)
             ),
-            "corroborator": _given(self.corroborator, SignatureCorroborator, ontology),
+            "corroborator": (
+                self.corroborator
+                if self.corroborator is not None
+                else SignatureCorroborator(ontology, store=() if dry_run else stores_of(self.sinks))
+            ),
             "scorer": _given(self.scorer, EvidenceScorer),
             "gate": self.gate if self.gate is not None else VerdictGate(schema=True),
         }
@@ -335,6 +351,8 @@ class Validator:
         store = resolved.get("store") if isinstance(resolved, Mapping) else None
         stopped = kg.stats.get("stopped")
         failed = kg.stats.get("failed")
+        corroborated = getattr(stages["corroborator"], "stats", None)
+        held = corroborated.get("store") if isinstance(corroborated, Mapping) else None
         return ValidationReport(
             dry_run=dry_run,
             documents=int(kg.stats.get("documents", 0)),
@@ -345,6 +363,7 @@ class Validator:
             refused=refused,
             refused_by=dict(refused_by),
             merged=facts_in + derived - refused - len(kg.facts),
+            restated=int(held.get("merged", 0)) if isinstance(held, Mapping) else 0,
             linked=len(kg.links),
             links=dict(sorted(links.items())),
             store=(
@@ -410,6 +429,11 @@ def _source(facts: Facts, docs: list[Document], *, extractor: str, confidence: f
         raise ValueError("pass triples rows or Facts, not both")
     rows = [item for item in items if not isinstance(item, Fact)]
     return TriplesExtractor(rows, extractor=extractor, confidence=confidence, documents=docs)
+
+
+def stores_of(sinks: Iterable[Any]) -> tuple[FactLookup, ...]:
+    """The sinks that can say what they already hold, which a write merges with (#153)."""
+    return tuple(sink for sink in sinks if isinstance(sink, FactLookup))
 
 
 def _given(stage: Any, default: Any, *args: Any) -> Any:
@@ -483,4 +507,4 @@ def _n(count: int, noun: str) -> str:
     return f"{count} {noun if count == 1 else plural}"
 
 
-__all__ = ["ValidationReport", "Validated", "Validator"]
+__all__ = ["ValidationReport", "Validated", "Validator", "stores_of"]

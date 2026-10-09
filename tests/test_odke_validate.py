@@ -111,6 +111,31 @@ def test_a_dry_run_calls_no_model_and_writes_nothing(
     assert not (here / "triples" / "out").exists()
 
 
+def test_a_merging_jsonl_store_gains_a_rerun_rather_than_losing_the_last_one(here: Path) -> None:
+    """A rerun into a store merges each fact with the one it holds; nothing is replaced (#153)."""
+    config = yaml.safe_load((here / "triples" / "odke.yaml").read_text(encoding="utf-8"))
+    config["stages"]["sink"]["merge"] = True
+    (here / "triples" / "merge.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    for _ in range(2):
+        result = _validate("--config", "triples/merge.yaml")
+        assert result.exit_code == 0, result.output
+    assert "merged        0 into a fact with the same signature; 5 into one the store holds" in (
+        result.output
+    )
+    assert _manifest(here / "triples" / "out")["facts"] == 5
+
+    args = ["--facts", "triples/triples.jsonl", "--texts", "triples/texts", "--config"]
+    for _ in range(2):
+        result = _validate(*args, "models.yaml", "-o", "o", "--merge")
+        assert result.exit_code == 0, result.output
+    assert "5 into one the store holds" in result.output
+
+    config["stages"]["sink"]["merge"] = "yes"
+    (here / "triples" / "merge.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    result = _validate("--config", "triples/merge.yaml")
+    assert result.exit_code == 2 and "stages.sink.merge: true or false" in result.output
+
+
 def _neo4j_sink() -> dict[str, Any]:
     return {"use": "neo4j", "uri": "bolt://example.invalid:7687", "password_env": "ODKE_SECRET"}
 
@@ -138,20 +163,33 @@ def test_a_configs_neo4j_sink_writes_through_its_driver(
 
 
 class _Store(FakeDriver):
-    """A store holding one company, which every name asked about finds."""
+    """A store holding one company, which every name asked about finds, and no facts."""
 
     INDEXES = [
-        {
-            "name": f"odke_{what}_{label}",
-            "type": kind,
-            "labelsOrTypes": [label],
-            "properties": props,
-        }
-        for label in ("City", "Company", "Person")
-        for what, kind, props in (
-            ("key", "RANGE", ["key"]),
-            ("names", "FULLTEXT", ["label", "aliases"]),
-        )
+        *(
+            {
+                "name": f"odke_{what}_{label}",
+                "type": kind,
+                "entityType": "NODE",
+                "labelsOrTypes": [label],
+                "properties": props,
+            }
+            for label in ("City", "Company", "Person")
+            for what, kind, props in (
+                ("key", "RANGE", ["key"]),
+                ("names", "FULLTEXT", ["label", "aliases"]),
+            )
+        ),
+        *(
+            {
+                "name": f"odke_signature_{predicate}",
+                "type": "RANGE",
+                "entityType": "RELATIONSHIP",
+                "labelsOrTypes": [predicate],
+                "properties": ["signature"],
+            }
+            for predicate in ("chief_executive", "founded", "founder", "office_in")
+        ),
     ]
     STORED = {"key": "c:halden", "label": "Halden Robotics Ltd", "aliases": ["halden.example"]}
 
