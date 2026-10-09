@@ -25,3 +25,25 @@ no network. Delete the `replay` lines in `odke.yaml` to ask a real model.
 facts. `odke eval spans` counts three of the five as having no span of their
 own: the two uncited facts, whose whole passage is not a citation, and the
 quote that is not in the text.
+
+## Scoring it as a pipeline
+
+`gold.jsonl` labels the four facts the passage states, and `pipeline.py` is a
+stand-in pipeline that hands back the five rows. `odke eval pipeline` runs it
+and scores what comes back:
+
+```bash
+odke eval pipeline --labels examples/triples/gold.jsonl \
+    --documents examples/triples/texts --ontology examples/triples/ontology.json \
+    --cmd "python examples/triples/pipeline.py {in} {out}"
+```
+
+`--run examples/triples/pipeline.py:extract` calls it instead, and
+`--predictions examples/triples/triples.jsonl` reads the rows as written; all
+three give the same report. Precision is 0.600 and recall 0.750: the founder,
+the Lyon office and the chief executive are right, Berlin is spurious, and 2012
+is a wrong value (one fact written wrong, the gold 2014 not written).
+`--validator --config examples/triples/odke.yaml` adds the Validator's row, on
+the recorded responses. It scores the same here, because this config's gate
+keeps `not_found`; with `refuse_not_found: true` it refuses Berlin and 2012, and
+precision is 1.000.

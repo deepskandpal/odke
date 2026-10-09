@@ -2,6 +2,57 @@
 
 *Bring your own labelled dataset.*
 
+## Point it at your pipeline
+
+`odke eval pipeline` runs your extraction pipeline, whatever it is, and scores
+the triples it returns. Hand it the pipeline one of three ways:
+
+| Mode | Flag | What runs |
+|---|---|---|
+| command | `--cmd "python my_extract.py {in} {out}"` | the command; `{in}` is a folder with one `<name>.txt` per document, `{out}` the file it must write |
+| callable | `--run my_pkg.extract:run`, or `--run path/to/file.py:run` | the function, called with the `Document`s; it returns triples rows, `TripleRow`s or `Fact`s |
+| files | `--predictions out.jsonl` | nothing: the output is already written |
+
+Score it against your labels (`--labels gold.jsonl --documents texts/`), or
+against a public benchmark set `odke bench prepare` wrote (`--bench runs/movie`),
+scored with that benchmark's own metrics.
+
+```bash
+odke eval pipeline --labels examples/triples/gold.jsonl \
+    --documents examples/triples/texts --ontology examples/triples/ontology.json \
+    --cmd "python examples/triples/pipeline.py {in} {out}" --report report.json
+odke eval pipeline --bench runs/movie --run my_pkg.extract:run --validator
+```
+
+- **Output** is the [triples format](inputs.md): one JSON row per triple, with
+  `doc`, `subject`, `predicate` and `object`, and optionally types, offsets and
+  a quote. A row names its document by id, or by its file name without the
+  suffix. `--adapter langchain`, `langextract` or `graphrag` reads that
+  library's output instead, and a file of `Fact` rows, such as a sink's
+  `facts.jsonl`, is read as facts. A row that names no document is left out
+  and counted in the notes.
+- **Documents** are a folder, each file named by its path inside it
+  (`halden.txt`), or `Document` JSONL. A gold fact names its document the same
+  way.
+- **The command runs with no shell.** The template is split into words first,
+  and the paths go into the words, so nothing in a path is ever parsed. It is
+  stopped after `--timeout` seconds (600 by default). A non-zero exit, a
+  timeout, or no file at `{out}` exits 1 and says which.
+- **`--validator`** runs the [Validator](validator.md) over the same output and
+  reports both rows: `pipeline`, and `+ validator`, the facts it writes after
+  grounding, normalising, resolving, corroborating and gating, with its calls
+  and cost. Its stages and models come from `--config` as `odke validate
+  --config` takes them (a bench set's own `odke.json` by default); a stage the
+  config leaves out is the Validator's default. With neither, it is the
+  Validator's defaults, on the default models.
+- **The report** is the [eval report](#the-eval-report). `--report` writes it
+  and `--json` prints it. The three modes give the same report for the same
+  output.
+
+On `examples/triples`, five hand-written triples against four gold facts score
+precision 0.600 and recall 0.750: three hits, Berlin spurious, and 2012 a wrong
+value. One document, so each range is its number.
+
 Precision and recall claims need a harness, or they are marketing. A number
 computed against the pipeline's own output measures nothing, though, and the
 package cannot label your corpus for you. So for every stage, `openodke.eval` ships
