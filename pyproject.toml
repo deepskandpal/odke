@@ -89,6 +89,9 @@ dev = [
 docs = [
   "mkdocs>=1.6,<2",
   "mkdocs-material>=9.5,<10",
+  # Old page URLs redirect. 1.2.3 moved to ProperDocs and pulls in a second
+  # MkDocs, properdocs, so this stays on 1.2.2.
+  "mkdocs-redirects>=1.2.2,<1.2.3",
 ]
 
 [build-system]
