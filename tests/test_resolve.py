@@ -127,9 +127,9 @@ def test_identifiers_from_different_authorities_neither_match_nor_disagree() -> 
 
 
 def test_a_shared_domain_alias_is_same_as_decided_by_the_linker() -> None:
-    assert domain_of("https://www.acme.com/about") == "acme.com"
+    assert domain_of("https://www.acme.com/") == "acme.com"
     assert domain_of("Acme Inc.") is None
-    a = Entity(key="c1", type="Company", label="Acme", aliases=("https://www.acme.com/about",))
+    a = Entity(key="c1", type="Company", label="Acme", aliases=("https://www.acme.com/",))
     b = Entity(key="c2", type="Company", label="Acme Widgets Group", aliases=("acme.com",))
     facts, links = _resolve(a, b)
     (link,) = links
@@ -139,6 +139,23 @@ def test_a_shared_domain_alias_is_same_as_decided_by_the_linker() -> None:
     assert facts[1].subject.resolution == Resolution(
         method="linker", linker="odke.native", score=1.0
     )
+
+
+def test_two_profile_urls_on_one_site_are_not_proof_of_one_entity() -> None:
+    """A URL with a path names a page on a host, not the host: LinkedIn is nobody's domain."""
+    assert domain_of("https://www.linkedin.com/in/alice-chen") is None
+    alice = Entity(
+        key="p1",
+        type="Person",
+        label="Alice Chen",
+        aliases=("https://www.linkedin.com/in/alice-chen",),
+    )
+    bob = Entity(
+        key="p2", type="Person", label="Bob Diaz", aliases=("https://linkedin.com/in/bobdiaz",)
+    )
+    facts, links = _resolve(alice, bob)
+    assert links == []
+    assert [f.subject.key for f in facts] == ["p1", "p2"]
 
 
 def test_evidence_against_beats_evidence_for() -> None:

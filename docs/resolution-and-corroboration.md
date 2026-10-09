@@ -144,9 +144,11 @@ too large. `candidate_pairs(entities)` returns exactly the pairs blocking lets
 through, so the cost of a configuration can be measured before it runs.
 
 **Strong identifiers** are `Entity.external_id` and the domains among an entity's
-aliases (`https://www.acme.com/about` and `acme.com` are both `acme.com`). An id
-may carry a scheme, as in `wikidata:Q95`, and ids from two different schemes
-neither match nor disagree.
+aliases (`https://www.acme.com/` and `acme.com` are both `acme.com`). A URL with a
+path names a page on a host, not the host, so two profile pages on one site
+(`https://www.linkedin.com/in/alice-chen`, `https://linkedin.com/in/bobdiaz`) are
+compared as names and are never proof. An id may carry a scheme, as in
+`wikidata:Q95`, and ids from two different schemes neither match nor disagree.
 
 **Weak evidence** is name similarity on the name keys: the better of a `difflib`
 ratio and a token overlap in which an initial matches a word it could abbreviate
