@@ -1193,6 +1193,13 @@ def eval_stage(
         "--by-predicate",
         help="precision --make-sheet: give each predicate its share of the sample.",
     ),
+    adjudicate: Path | None = typer.Option(
+        None,
+        "--adjudicate",
+        help="pipeline, with --labels: ground each prediction the gold lacks three times; one "
+        "supported in two is possibly missing from gold. Prints an adjudicated precision "
+        "beside the strict one and writes the list here, as JSONL.",
+    ),
 ) -> None:
     """Score one stage against your own labelled data.
 
@@ -1218,6 +1225,8 @@ def eval_stage(
     function (--run) or output already written (--predictions), and scores
     its triples against your labels (--labels, --documents) or a prepared
     benchmark (--bench). --validator adds the row with the Validator's check.
+    --adjudicate LIST grounds each prediction your gold lacks three times and
+    prints an adjudicated precision beside the strict one.
 
     `precision` needs no gold. A judge, the grounder, graded every fact in
     --facts; `--make-sheet DIR` draws a random sample of them to label by hand,
@@ -1256,6 +1265,7 @@ def eval_stage(
         "--adapter": adapter != "triples",
         "--validator": validator,
         "--timeout": timeout != 600.0,
+        "--adjudicate": adjudicate is not None,
     }
     sampled = {
         "--make-sheet": make_sheet is not None,
@@ -1314,8 +1324,10 @@ def eval_stage(
                 raise ValueError("--facts is for spans")
             if items is not None:
                 raise ValueError("--items is written for extract, ground, validate and route")
-            if config is not None and not validator:
-                raise ValueError("--config is for ablation, and for pipeline with --validator")
+            if config is not None and not (validator or adjudicate is not None):
+                raise ValueError(
+                    "--config is for ablation, and for pipeline with --validator or --adjudicate"
+                )
             report = evaluate_pipeline(
                 command=cmd,
                 function=run,
@@ -1328,6 +1340,7 @@ def eval_stage(
                 validator=validator,
                 config=config,
                 timeout=timeout,
+                adjudicate=adjudicate,
             )
         elif stage == "precision":
             report = _eval_precision(

@@ -99,6 +99,7 @@ def test_the_key_is_the_sha256_of_the_request_as_canonical_json() -> None:
         (MESSAGES, SPEC.model_copy(update={"temperature": 0.0}), None),
         (MESSAGES, SPEC.model_copy(update={"max_tokens": 65}), None),
         (MESSAGES, SPEC.model_copy(update={"extra": {"reasoning_effort": "low"}}), None),
+        (MESSAGES, SPEC.model_copy(update={"repeat": 1}), None),
     ],
     ids=[
         "model",
@@ -111,6 +112,7 @@ def test_the_key_is_the_sha256_of_the_request_as_canonical_json() -> None:
         "temperature",
         "max_tokens",
         "extra",
+        "repeat",
     ],
 )
 def test_any_component_that_changes_the_answer_misses(
@@ -122,6 +124,20 @@ def test_any_component_that_changes_the_answer_misses(
     client.complete(messages, spec=spec, schema=schema)
     assert inner.calls == 2
     assert client.stats == {"hits": 0, "misses": 2, "failed": 0}
+
+
+def test_draw_0_keys_exactly_as_before_repeat_existed() -> None:
+    """Pinned keys, computed before `repeat` was in the key: no existing entry is lost."""
+    assert "repeat" not in request(MESSAGES, spec=SPEC.model_copy(update={"repeat": 0}))
+    assert cache_key(MESSAGES, spec=SPEC, schema=GROUNDING_SCHEMA) == (
+        "8c9735ff913e182a7f8e7a59a6cc4cb50a892d9153dce50ea4e22df3cff3f5d8"
+    )
+    assert cache_key(MESSAGES, spec=SPEC) == (
+        "e6aad37ac301107fa1efc80c9264834d92855b1e0c99176d351849bcdc26825f"
+    )
+    keys = {cache_key(MESSAGES, spec=SPEC.model_copy(update={"repeat": r})) for r in range(3)}
+    assert len(keys) == 3
+    assert request(MESSAGES, spec=SPEC.model_copy(update={"repeat": 2}))["repeat"] == 2
 
 
 def test_what_decides_only_whether_a_call_succeeds_is_not_in_the_key() -> None:

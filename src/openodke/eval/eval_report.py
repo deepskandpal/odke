@@ -20,9 +20,11 @@ knowing which stage made the report. So an Evaluator run also writes an
 - **diagnosis**, **fixes**, **comparison** and **calibration**: empty, and
   typed, until the issues that fill them land (#140, #141, #142, #135).
 
-1.1 adds the sections that score without gold, each `null` when not asked
-for: **judged_precision**, a judge's precision corrected by a labelled sample
-(#144, `openodke.eval.ppi`).
+1.1 adds the sections that score without gold, or with gold that is
+incomplete, each `null` when not asked for: **judged_precision**, a judge's
+precision corrected by a labelled sample (#144, `openodke.eval.ppi`), and
+**adjudication**, the predictions the gold lacks that the grounder supports
+(#145, `openodke.eval.adjudication`).
 
 `eval_report.schema.json`, beside this file, is the contract. `check_report`
 holds a report to it in plain Python, with no dependency; every report the
@@ -271,6 +273,44 @@ class JudgedPrecision(Frozen):
     coverage: CoverageTotals | None = None
 
 
+# --------------------------------------------------------------------------- #
+# Incomplete gold (#145)
+# --------------------------------------------------------------------------- #
+
+
+class AdjudicatedRow(Frozen):
+    """One row's precision, strict and with the predictions the grounder vouches for as hits.
+
+    `not_in_gold` is the row's predictions the gold lacks (its over-extraction);
+    `asked`, those of them that cite a document to be grounded against;
+    `possibly_missing`, those the grounder supported in enough runs. `strict`
+    is the row's own precision and range, unchanged; `adjudicated` counts the
+    possibly missing as hits, resampled on the same draws.
+    """
+
+    name: str
+    not_in_gold: int = Field(ge=0)
+    asked: int = Field(ge=0)
+    possibly_missing: int = Field(ge=0)
+    strict: Estimate
+    adjudicated: Estimate
+
+
+class Adjudication(Frozen):
+    """Gold adjudication (#145): each prediction the gold lacks, grounded `runs` times.
+
+    One supported in `needed` of the `runs` is possibly missing from gold.
+    `questions` is how many distinct predictions were asked, each once for
+    every row it is in. `audit` is where the list was written.
+    """
+
+    runs: int = Field(ge=1)
+    needed: int = Field(ge=1)
+    questions: int = Field(ge=0)
+    rows: tuple[AdjudicatedRow, ...]
+    audit: str | None = None
+
+
 class EvalReport(Frozen):
     """One run, scored: the versioned document `odke eval` and `odke bench run` write."""
 
@@ -294,6 +334,8 @@ class EvalReport(Frozen):
     # Added in 1.1, so a 1.0 report has none of them: precision with no gold,
     # the judge corrected by a labelled sample (#144).
     judged_precision: JudgedPrecision | None = None
+    # gold that is incomplete, adjudicated by the grounder (#145).
+    adjudication: Adjudication | None = None
 
     def as_json(self) -> str:
         return self.model_dump_json(indent=2)
@@ -687,6 +729,30 @@ def _without_gold(report: EvalReport) -> list[str]:
     lines: list[str] = []
     if report.judged_precision is not None:
         lines += ["", *_judged(report.judged_precision)]
+    if report.adjudication is not None:
+        lines += ["", *_adjudicated(report.adjudication)]
+    return lines
+
+
+def _adjudicated(section: Adjudication) -> list[str]:
+    lines = [
+        f"gold adjudication  (each prediction the gold lacks grounded {section.runs} times; "
+        f"supported in {section.needed} is possibly missing from gold)"
+    ]
+    body = [
+        [
+            row.name,
+            _estimate(row.strict),
+            _estimate(row.adjudicated),
+            str(row.not_in_gold),
+            str(row.asked),
+            str(row.possibly_missing),
+        ]
+        for row in section.rows
+    ]
+    lines += _table(["", "strict", "adjudicated", "not in gold", "asked", "possibly missing"], body)
+    where = f": {section.audit}" if section.audit else ""
+    lines.append(f"  the strict precision never changes; the list, with every verdict{where}")
     return lines
 
 
@@ -758,6 +824,8 @@ __all__ = [
     "CHECKS",
     "SCHEMA_PATH",
     "SCHEMA_VERSION",
+    "AdjudicatedRow",
+    "Adjudication",
     "Bootstrap",
     "Conformance",
     "Cost",

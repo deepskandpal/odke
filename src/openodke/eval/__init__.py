@@ -40,10 +40,14 @@ inconclusive) and the detection limit printed beside every one.
 
 With no gold at all, `judged_precision` takes a judge's verdicts on every fact
 and a person's labels on a random sample, and corrects the judge's precision
-by prediction-powered inference (`openodke.eval.ppi`).
+by prediction-powered inference (`openodke.eval.ppi`). With gold that is
+incomplete, `adjudicate` grounds each prediction the gold lacks three times and
+lists those supported in two as possibly missing from gold, for an adjudicated
+precision beside the strict one (`openodke.eval.adjudication`).
 """
 
 from openodke.eval.ablation import per_document, report_ablation, run_ablation
+from openodke.eval.adjudication import adjudicate
 from openodke.eval.calibration import evaluate_calibration, run_score
 from openodke.eval.compare import Comparison, ItemRow, compare_files, compare_items, item_rows
 from openodke.eval.cost import (
@@ -113,6 +117,7 @@ __all__ = [
     "StageReport",
     "ValidationLabel",
     "ValidationPrediction",
+    "adjudicate",
     "as_triples",
     "assert_idempotent",
     "bootstrap_interval",

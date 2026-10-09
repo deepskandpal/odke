@@ -120,3 +120,19 @@ multi-source benchmark (#117) measures proofs and identity across documents.
 ```bash
 python bench/store_lookup.py data/redocred/test_revised.json --out out/store-lookup
 ```
+
+## Gold adjudication on label set G
+
+`adjudication.py` measures how often `odke eval pipeline --adjudicate` (#145)
+is right. Label set G holds 200 real predictions the public gold does not
+count and 100 planted false ones, each labelled by hand. The script sets the
+list (supported in 2 of 3 grounding runs) beside those labels: its precision
+(how often "possibly missing from gold" is true), its recall (how much of the
+gold's gap it finds), per dataset, with Wilson intervals, and how many planted
+facts it lists. Until `labels/G/labels.jsonl` is read back from the ticked
+sheets, it says so and exits 0.
+
+```bash
+python bench/adjudication.py --model anthropic/claude-haiku-4-5-20251001 --out out/adjudication
+python bench/adjudication.py --verdicts out/adjudication/G.verdicts.jsonl   # no calls
+```
