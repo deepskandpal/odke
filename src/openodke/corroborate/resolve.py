@@ -189,7 +189,7 @@ def _distinct(entities: Iterable[Entity]) -> list[Entity]:
     return [seen[k] for k in sorted(seen)]
 
 
-def candidate_pairs(entities: Iterable[Entity], *, max_block: int = 500) -> set[tuple[str, str]]:
+def candidate_pairs(entities: Iterable[Entity], *, max_block: int = 100) -> set[tuple[str, str]]:
     """The key pairs blocking lets through — every comparison resolution makes.
 
     Exposed so the cost of a configuration can be measured before it is run:
@@ -207,7 +207,8 @@ class NativeResolver:
     `nudge_down` are what one agreeing or disagreeing non-identifying attribute
     (a country, an industry) adds or takes away; disagreement costs more, for the
     same reason the disagreement rule exists. `max_block` caps a block before it
-    is split or skipped.
+    is split or skipped. A block is compared pair by pair, so the cap is what
+    bounds the work: 100 entities are 4,950 comparisons, 500 would be 124,750.
 
     Returns every fact with `Entity.resolution` stamped — `external_id` where a
     shared identifier settled a merge, `linker="odke.native"` otherwise, with
@@ -223,7 +224,7 @@ class NativeResolver:
         threshold: float = 0.9,
         nudge_up: float = 0.05,
         nudge_down: float = 0.15,
-        max_block: int = 500,
+        max_block: int = 100,
     ) -> None:
         self.threshold = threshold
         self.nudge_up = nudge_up
