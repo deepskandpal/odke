@@ -51,8 +51,8 @@ judge.
 
 Without one, a string object is an entity unless `object_type` names a literal
 type (`string`, `text`, `integer`, `number`, `float`, `boolean`, `date`,
-`datetime`). Numbers and booleans are literals, and an untyped entity is a
-`Thing`.
+`datetime`, `quantity`). Numbers and booleans are literals, and an untyped
+entity is a `Thing`.
 
 An entity's key is its type and case-folded name. The
 [resolver](resolution-and-corroboration.md) decides when two names are one

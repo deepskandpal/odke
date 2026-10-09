@@ -14,7 +14,7 @@ every stage sees the same shape. Loading, validating and diffing need no model.
 | `EntityType` | `description`, `parents`, `aliases` | | |
 | | `keys` | `()` | the predicates that together name the thing |
 | `Predicate` | `domain` | `()`, meaning every type | the types it applies to |
-| | `range` | `"string"` | an entity type makes an **edge**; `string`, `integer`, `number`, `float`, `boolean`, `date` or `datetime` makes a **property** |
+| | `range` | `"string"` | an entity type makes an **edge**; `string`, `integer`, `number`, `float`, `boolean`, `date`, `datetime` or `quantity` (a number with its unit, normalised to [one unit per dimension](resolution-and-corroboration.md#normalise)) makes a **property** |
 | | `cardinality` | `"single"` | or `"multi"` |
 | | `cardinality_scope` | `()` | see [Cardinality and its scope](#cardinality-and-its-scope) |
 | | `qualifiers` | `{}` | name to `Qualifier`; a bare list of names is all reconcilable |
