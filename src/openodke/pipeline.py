@@ -41,6 +41,8 @@ from openodke.corroborate.inverses import partners
 from openodke.coverage import measure as measure_coverage
 from openodke.coverage import offered_by
 from openodke.ontology import Ontology
+from openodke.reextract import Reextract, hook_for
+from openodke.reextract import reextract as reextract_gaps
 from openodke.stages import (
     DDL,
     Chunker,
@@ -90,6 +92,9 @@ class Pipeline:
 
     `coverage=True` counts what extraction left behind in each document, with
     no model (`openodke.coverage`), into `KnowledgeGraph.stats["coverage"]`.
+    `reextract=Reextract()` hands those gaps back to the extractor and grounds
+    what returns (`openodke.reextract`), with its counts under
+    `stats["reextract"]`. Both are off by default.
 
     `validator=` is the 0.2 name of `gate=`, and works with a warning until
     1.0.0 (DECISIONS #26).
@@ -114,6 +119,7 @@ class Pipeline:
         sinks: Sequence[Sink] = (),
         validator: Gate | None = None,
         coverage: bool = False,
+        reextract: Reextract | None = None,
     ) -> None:
         if validator is not None:
             if gate is not None:
@@ -140,6 +146,9 @@ class Pipeline:
         # On whenever the ontology declares a pair, unless the caller says not.
         self.inverses = bool(ontology.inverses) if inverses is None else inverses
         self.coverage = coverage
+        self.reextract = reextract
+        # Checked here, so a pipeline that cannot re-extract fails before a call is made.
+        self._hook = None if reextract is None else hook_for(reextract, extractor)
 
         # Once, at configuration, so a long-running pipeline says it one time
         # rather than once per run. Nothing here changes what runs.
@@ -228,15 +237,28 @@ class Pipeline:
                 candidates.extend(extracted)
             batches.append((candidates, doc))
         grounded = _ground(self.grounder, batches)
-        if self.coverage:
+        if self.coverage or self._hook is not None:
             # What extraction left behind, before anything merges or refuses.
-            stats["coverage"] = measure_coverage(
+            report = measure_coverage(
                 [doc for doc, chunks in routed if chunks],
                 [fact for row in grounded for fact in row],
                 self.ontology,
                 offered=offered_by(self.extractor, self.ontology),
                 regions={doc.id: [(c.start, c.end) for c in chunks] for doc, chunks in routed},
-            ).stats()
+            )
+            if self.coverage:
+                stats["coverage"] = report.stats()
+            if self.reextract is not None and self._hook is not None:
+                # The gaps go back to the extractor; what returns is grounded here.
+                grounded, stats["reextract"] = reextract_gaps(
+                    self.reextract,
+                    self._hook,
+                    lambda more: _ground(self.grounder, more),
+                    self.ontology,
+                    routed,
+                    grounded,
+                    report,
+                )
         facts = [self.normalizer.normalize(fact) for row in grounded for fact in row]
 
         resolved, links = self.resolver.resolve(facts, _entities_of(facts))

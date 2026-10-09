@@ -169,6 +169,19 @@ class HybridExtractor:
         shown = offered(ontology)
         return None if shown is None else list(shown)
 
+    def reextract(
+        self,
+        window: Chunk,
+        relations: Sequence[str],
+        already: Sequence[Fact],
+        ontology: Ontology,
+    ) -> list[Fact]:
+        """The model path's re-extract (#102): a gap is prose, and prose is the model's."""
+        hook = getattr(self.llm, "reextract", None)
+        if not callable(hook):
+            raise TypeError("this HybridExtractor has no model path that can re-extract")
+        return list(hook(window, list(relations), list(already), ontology))
+
     def _document(self, chunk: Chunk) -> Document:
         doc = self.documents.get(chunk.doc_id)
         if doc is None:

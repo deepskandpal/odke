@@ -40,11 +40,13 @@ from openodke.extract._common import (
     index_documents,
     subject_entity,
 )
+from openodke.ground.llm import render_claim
 from openodke.ground.retry import RetryPolicy, call_with_retry
 from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
 from openodke.llm.registry import resolve
 from openodke.llm.roles import ModelRoles
 from openodke.ontology import Ontology, OntologySnippet, Predicate
+from openodke.prompts import Prompt
 from openodke.prompts import get as get_prompt
 from openodke.types import Chunk, Entity, Fact, Polarity, Span
 
@@ -55,6 +57,8 @@ log = logging.getLogger("openodke.extract")
 # of each is what is sent, and every `ModelCall` names the one it sent.
 _PROMPT = get_prompt("extract")
 _REPAIR_PROMPT = get_prompt("extract.repair")
+# The re-extract hook's (#102); the same repair turn follows a malformed reply.
+_REEXTRACT = get_prompt("reextract")
 # The texts under their old names, for anything that imports them.
 _INSTRUCTIONS = _PROMPT.text
 _REPAIR = _REPAIR_PROMPT.text
@@ -289,57 +293,14 @@ class LLMExtractor:
         snippets = self.snippets(ontology)
         if not snippets:
             return []
-        schema = response_schema(snippets) if self.structured else None
-        messages = self.messages(chunk, snippets)
-        data: dict[str, Any] | None = None
-        replies: list[str] = []
-        for attempt in range(self.repairs + 1):
-            completion = self._complete(chunk, messages, schema)
-            call = ModelCall(
-                doc_id=chunk.doc_id,
-                chunk_index=chunk.index,
-                model=completion.model or self.spec.model,
-                prompt_tokens=completion.prompt_tokens,
-                completion_tokens=completion.completion_tokens,
-                cost_usd=completion.cost_usd,
-                repair=attempt > 0,
-                prompt=(_REPAIR_PROMPT if attempt else _PROMPT).key,
-            )
-            with self._lock:
-                self.calls.append(call)
-            data = _contract(completion)
-            if data is not None:
-                break
-            replies.append(completion.text)
-            messages = [
-                *messages,
-                Message(role="assistant", content=completion.text),
-                Message(role="user", content=_REPAIR_PROMPT.text),
-            ]
+        data = self._reply(chunk, self.messages(chunk, snippets), snippets, _PROMPT)
         if data is None:
-            self._reject(chunk, "malformed reply")
-            kept = MalformedReply(
-                doc_id=chunk.doc_id, chunk_index=chunk.index, replies=tuple(replies)
-            )
             with self._lock:
-                self.malformed.append(kept)
                 self.empty_extractions += 1
-            log.warning(
-                "no reply followed the contract for chunk %s#%d after %d attempts; "
-                "nothing extracted. The raw text is in LLMExtractor.malformed",
-                chunk.doc_id,
-                chunk.index,
-                len(replies),
-            )
             return []
-
-        ctx = ChunkContext(chunk, self.documents.get(chunk.doc_id))
-        by_type = {s.type_name: s for s in snippets}
         with self._lock:
             since = len(self.rejections)
-        facts: list[Fact] = []
-        for entity in data["entities"]:
-            facts.extend(self._entity(ctx, ontology, by_type, entity))
+        facts = self._facts(chunk, ontology, snippets, data)
         if not facts:
             # Not an error, and not nothing: the same chunk yields five facts on
             # one call and none on the next, and only a count and a line in the
@@ -358,6 +319,122 @@ class LLMExtractor:
                 len(data["entities"]),
                 refused,
             )
+        return facts
+
+    def reextract(
+        self,
+        window: Chunk,
+        relations: Sequence[str],
+        already: Sequence[Fact],
+        ontology: Ontology,
+    ) -> list[Fact]:
+        """Facts the first pass missed in `window`, asked about `relations` alone (#102).
+
+        The re-extract hook (`openodke.reextract.Reextractor`). One call with the
+        registered `reextract` prompt: the flagged properties' snippets, the
+        facts `already` taken from the passage, rendered as the grounder renders
+        claims, and the window. The reply is read exactly as `extract` reads
+        one, quotes checked against the window, and a reply with nothing in it
+        is the expected answer rather than an empty extraction.
+        """
+        if not window.text.strip():
+            return []
+        snippets = self.reextract_snippets(ontology, relations)
+        if not snippets:
+            return []
+        listed = "\n".join(f"- {render_claim(fact)}" for fact in already) or "(none)"
+        system = "\n\n".join([_REEXTRACT.text, *(s.render() for s in snippets)])
+        user = f"Already extracted from this passage:\n{listed}\n\nPassage:\n{window.text}"
+        messages = [Message(role="system", content=system), Message(role="user", content=user)]
+        data = self._reply(window, messages, snippets, _REEXTRACT)
+        return [] if data is None else self._facts(window, ontology, snippets, data)
+
+    def reextract_snippets(
+        self, ontology: Ontology, relations: Sequence[str]
+    ) -> list[OntologySnippet]:
+        """One snippet per entity type, holding only `relations`, ranked as `snippet` ranks.
+
+        `snippet_limit` does not apply: the relations are already the few a gap
+        could hold, and one past the limit is exactly what a gap may be missing.
+        """
+        wanted = set(relations)
+        out: list[OntologySnippet] = []
+        for name in self.types if self.types is not None else sorted(ontology.types):
+            found = [p for p in ontology.predicates_for(name) if p.name in wanted]
+            if not found:
+                continue
+            ranked = sorted(found, key=lambda p: (-p.importance, p.name))
+            kind = ontology.types.get(name)
+            out.append(
+                OntologySnippet(
+                    type_name=name,
+                    type_description=kind.description if kind is not None else None,
+                    predicates=tuple(ranked),
+                    ontology_name=ontology.name,
+                    ontology_version=ontology.version,
+                )
+            )
+        return out
+
+    def _reply(
+        self,
+        chunk: Chunk,
+        messages: list[Message],
+        snippets: Sequence[OntologySnippet],
+        prompt: Prompt,
+    ) -> dict[str, Any] | None:
+        """The contract from the model, after up to `repairs` repairs; None, recorded, if never."""
+        schema = response_schema(snippets) if self.structured else None
+        data: dict[str, Any] | None = None
+        replies: list[str] = []
+        for attempt in range(self.repairs + 1):
+            completion = self._complete(chunk, messages, schema)
+            call = ModelCall(
+                doc_id=chunk.doc_id,
+                chunk_index=chunk.index,
+                model=completion.model or self.spec.model,
+                prompt_tokens=completion.prompt_tokens,
+                completion_tokens=completion.completion_tokens,
+                cost_usd=completion.cost_usd,
+                repair=attempt > 0,
+                prompt=(_REPAIR_PROMPT if attempt else prompt).key,
+            )
+            with self._lock:
+                self.calls.append(call)
+            data = _contract(completion)
+            if data is not None:
+                return data
+            replies.append(completion.text)
+            messages = [
+                *messages,
+                Message(role="assistant", content=completion.text),
+                Message(role="user", content=_REPAIR_PROMPT.text),
+            ]
+        self._reject(chunk, "malformed reply")
+        kept = MalformedReply(doc_id=chunk.doc_id, chunk_index=chunk.index, replies=tuple(replies))
+        with self._lock:
+            self.malformed.append(kept)
+        log.warning(
+            "no reply followed the contract for chunk %s#%d after %d attempts; "
+            "nothing extracted. The raw text is in LLMExtractor.malformed",
+            chunk.doc_id,
+            chunk.index,
+            len(replies),
+        )
+        return None
+
+    def _facts(
+        self,
+        chunk: Chunk,
+        ontology: Ontology,
+        snippets: Sequence[OntologySnippet],
+        data: dict[str, Any],
+    ) -> list[Fact]:
+        ctx = ChunkContext(chunk, self.documents.get(chunk.doc_id))
+        by_type = {s.type_name: s for s in snippets}
+        facts: list[Fact] = []
+        for entity in data["entities"]:
+            facts.extend(self._entity(ctx, ontology, by_type, entity))
         return facts
 
     def extract_many(self, chunks: Sequence[Chunk], ontology: Ontology) -> list[list[Fact]]:
