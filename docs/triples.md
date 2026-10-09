@@ -165,3 +165,49 @@ odke eval spans --facts examples/triples/out
 The run makes four model calls for five facts, because the invented quote is
 refused for free. Three facts come back `supported` and two `not_found`, and
 `odke eval spans` reports the two uncited facts as having no span of their own.
+
+## From other libraries
+
+Each adapter turns one library's output into rows and the texts they cite, and
+imports nothing from the library. Hand both to `TriplesExtractor` as above.
+
+### LangChain `GraphDocument`
+
+`from_graph_documents` reads `LLMGraphTransformer`'s output: the objects, their
+`model_dump()` dicts, or a JSON file of either (an array, or one per line).
+
+| `GraphDocument` | Row |
+|---|---|
+| `source.page_content` | The text. Its id is `source.id`, or a hash of the text when that is unset; `source.metadata["source"]` is its URI |
+| `relationships[].source.id`, `.target.id` | `subject`, `object` |
+| `relationships[].source.type`, `.target.type` | `subject_type`, `object_type`. The untyped `Node` is left out, for the ontology to decide |
+| `relationships[].type` | `predicate` |
+| `relationships[].properties` | `qualifiers` |
+| `nodes[].properties` | One literal row per property: the node is the `subject`, the key the `predicate` |
+| no offsets, no quote | The whole text, marked `context` |
+
+```python
+from openodke.interop import from_graph_documents
+
+graph_document = {  # GraphDocument.model_dump(); the objects read the same way
+    "nodes": [],
+    "relationships": [
+        {
+            "source": {"id": "Halden Robotics", "type": "Company"},
+            "target": {"id": "Lyon", "type": "City"},
+            "type": "OFFICE_IN",
+        }
+    ],
+    "source": {"page_content": text, "metadata": {"source": "notes/halden.txt"}},
+}
+rows, texts = from_graph_documents([graph_document])
+stage = TriplesExtractor(rows, extractor="langchain", documents=texts)
+kg = Pipeline(ontology, stage, grounder=LLMGrounder(client=client)).run(texts)
+print(kg.facts[0].verdict.value, kg.facts[0].evidence[0].span_origin.value)  # supported context
+```
+
+Every fact is grounded against its whole document. `supported` then says the
+document, read whole, states the triple. It does not say where: there is no
+citation for a reader to check, and a long document lets the grounder join two
+passages that never state the claim together. `odke eval spans` counts these
+facts as having no span of their own.
