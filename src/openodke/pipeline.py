@@ -10,7 +10,7 @@ themselves.
 
 The order is the ODKE+ order with the seams the paper leaves implicit made
 explicit. Per chunk: route, extract. Per document: ground, normalise. Over the
-batch: resolve, corroborate, score, validate. Then write. A stage that can batch
+batch: resolve, corroborate, score, gate. Then write. A stage that can batch
 is handed the whole run at once — `extract_many` every chunk, `ground_documents`
 every document — and runs its model calls concurrently; the result is the same,
 in the same order, as one at a time.
@@ -28,7 +28,9 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
+from openodke._renamed import Renamed, deprecated, module_getattr
 from openodke.ontology import Ontology
 from openodke.stages import (
     DDL,
@@ -37,25 +39,25 @@ from openodke.stages import (
     Corroborator,
     Delegated,
     Extractor,
+    Gate,
     Grounder,
     Initiator,
     Normalizer,
     PassThroughChunker,
     PassThroughConstrainer,
     PassThroughCorroborator,
+    PassThroughGate,
     PassThroughGrounder,
     PassThroughNormalizer,
     PassThroughResolver,
     PassThroughRouter,
     PassThroughScorer,
-    PassThroughValidator,
     PlatformProfile,
     Resolver,
     Retriever,
     Router,
     Scorer,
     Sink,
-    Validator,
 )
 from openodke.types import Chunk, Document, Entity, Fact, KnowledgeGraph
 
@@ -76,6 +78,9 @@ class Pipeline:
     Every stage but the extractor is optional. `None` means the pass-through
     from `openodke.stages`, so a caller names only the stages they have opinions
     about and the rest are identity functions.
+
+    `validator=` is the 0.2 name of `gate=`, and works with a warning until
+    1.0.0 (DECISIONS #26).
     """
 
     def __init__(
@@ -91,10 +96,16 @@ class Pipeline:
         resolver: Resolver | None = None,
         corroborator: Corroborator | None = None,
         scorer: Scorer | None = None,
-        validator: Validator | None = None,
+        gate: Gate | None = None,
         constrainer: Constrainer | None = None,
         sinks: Sequence[Sink] = (),
+        validator: Gate | None = None,
     ) -> None:
+        if validator is not None:
+            if gate is not None:
+                raise TypeError("pass gate= alone; validator= is its old name")
+            deprecated("Pipeline(validator=...)", "Pipeline(gate=...)")
+            gate = validator
         self.ontology = ontology
         self.extractor = extractor
         self.retriever = retriever
@@ -107,7 +118,7 @@ class Pipeline:
             PassThroughCorroborator() if corroborator is None else corroborator
         )
         self.scorer: Scorer = PassThroughScorer() if scorer is None else scorer
-        self.validator: Validator = PassThroughValidator() if validator is None else validator
+        self.gate: Gate = PassThroughGate() if gate is None else gate
         self.constrainer: Constrainer = (
             PassThroughConstrainer() if constrainer is None else constrainer
         )
@@ -119,10 +130,10 @@ class Pipeline:
             profile = getattr(sink, "profile", None)
             if not isinstance(profile, PlatformProfile):
                 continue
-            # A platform that prunes is doing what a Validator refuses here.
+            # A platform that prunes is doing what a Gate refuses here.
             overlaps = (
                 ("resolver", resolver, PassThroughResolver, profile.resolves, "resolves"),
-                ("validator", validator, PassThroughValidator, profile.prunes, "prunes"),
+                ("gate", gate, PassThroughGate, profile.prunes, "prunes"),
                 (
                     "constrainer",
                     constrainer,
@@ -145,8 +156,19 @@ class Pipeline:
                         stacklevel=2,
                     )
 
+    @property
+    def validator(self) -> Gate:
+        """The 0.2 name of `gate`; reading it warns until 1.0.0 (DECISIONS #26)."""
+        deprecated("Pipeline.validator", "Pipeline.gate")
+        return self.gate
+
+    @validator.setter
+    def validator(self, value: Gate) -> None:
+        deprecated("Pipeline.validator", "Pipeline.gate")
+        self.gate = value
+
     def run(self, docs: Sequence[Document]) -> KnowledgeGraph:
-        # Counts, not a log: enough to see that routing or validation did
+        # Counts, not a log: enough to see that routing or the gate did
         # something, which is the first question when a graph comes back small.
         stats = {
             "documents": len(docs),
@@ -194,7 +216,7 @@ class Pipeline:
         scored = [self.scorer.score(f) for f in self.corroborator.corroborate(resolved)]
         kept: list[Fact] = []
         for fact in scored:
-            if self.validator.validate(fact, self.ontology).action == "refuse":
+            if self.gate.validate(fact, self.ontology).action == "refuse":
                 stats["refused"] += 1
             else:
                 kept.append(fact)
@@ -286,6 +308,19 @@ def _entities_of(facts: Sequence[Fact]) -> dict[str, Entity]:
             seen.setdefault(f.object_entity.key, f.object_entity)
     return seen
 
+
+if TYPE_CHECKING:
+    # What a type checker sees; at run time the 0.2 names come from `__getattr__`.
+    Validator = Gate
+    PassThroughValidator = PassThroughGate
+
+__getattr__ = module_getattr(
+    __name__,
+    {
+        "Validator": Renamed(Gate, "openodke.stages.Gate"),
+        "PassThroughValidator": Renamed(PassThroughGate, "openodke.stages.PassThroughGate"),
+    },
+)
 
 # The stage Protocols used to be declared here. They are re-exported so that
 # `from openodke.pipeline import Extractor` keeps working; `openodke.stages` is home.

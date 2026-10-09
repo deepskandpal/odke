@@ -208,7 +208,7 @@ class CalibrationLabel(Frozen):
 
 
 class ValidationLabel(Frozen):
-    """One fact, and what a validator should decide about it.
+    """One fact, and what the gate should decide about it.
 
     A row is one fact and the action a person takes against the ontology:
     `accept` (write it), `refuse` (do not) or `conflict` (write it and flag
@@ -223,7 +223,7 @@ class ValidationLabel(Frozen):
 
 
 class ValidationPrediction(Frozen):
-    """What a validator said about the fact with this `id`."""
+    """What the gate said about the fact with this `id`."""
 
     id: str
     action: Decision

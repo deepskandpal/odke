@@ -194,11 +194,11 @@ def test_run_scores_an_importable_router_over_the_labels() -> None:
 def test_run_validate_needs_an_ontology_and_uses_it(tmp_path: Path) -> None:
     labels = FIXTURES / "validate.labels.jsonl"
     with pytest.raises(ValueError, match="needs --ontology"):
-        evaluate_files("validate", labels, run="openodke.stages:PassThroughValidator")
+        evaluate_files("validate", labels, run="openodke.stages:PassThroughGate")
     ontology = tmp_path / "ontology.json"
     ontology.write_text(json.dumps({"name": "demo"}))
     report = evaluate_files(
-        "validate", labels, run="openodke.stages:PassThroughValidator", ontology=ontology
+        "validate", labels, run="openodke.stages:PassThroughGate", ontology=ontology
     )
     # Accepting everything agrees on the three accept rows only.
     assert report.metrics["agreement"] == 0.5

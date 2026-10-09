@@ -9,7 +9,7 @@ cost what extraction costs, people would turn it off).
 By default the model sees the cited span and answers in three ways. The paper's
 own grounder (ODKE+ §3.3.1, App. B) is different: it sees the whole context and
 answers True or False, and only affirmed facts are kept. `context="document"`,
-`verdicts="binary"` and `VerdictValidator(refuse_not_found=True)` together
+`verdicts="binary"` and `VerdictGate(refuse_not_found=True)` together
 reproduce it, so the paper's claims can be tested as written.
 
 The span check runs first, inside this grounder, every time. The model is only

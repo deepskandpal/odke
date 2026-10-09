@@ -1,14 +1,14 @@
-"""Scoring a Validator: agreement with the verdicts a person would give.
+"""Scoring a gate: agreement with the verdicts a person would give.
 
-The validator is the gate — what it refuses is not written — so its two
-costly disagreements point in opposite directions. Refusing a fact a person
-would accept is silent data loss (`wrongly_refused`). Accepting one a person
-would refuse puts it in the graph (`wrongly_written`). And a conflict
-accepted without its flag (`conflicts_missed`) is a contradiction nobody will
-be asked to look at. Each is counted on its own line.
+What the gate refuses is not written, so its two costly disagreements point
+in opposite directions. Refusing a fact a person would accept is silent data
+loss (`wrongly_refused`). Accepting one a person would refuse puts it in the
+graph (`wrongly_written`). And a conflict accepted without its flag
+(`conflicts_missed`) is a contradiction nobody will be asked to look at. Each
+is counted on its own line.
 
-Agreement is reported as accuracy and as Cohen's kappa, because a validator
-that accepts everything scores a high accuracy on a slice that is mostly
+Agreement is reported as accuracy and as Cohen's kappa, because a gate that
+accepts everything scores a high accuracy on a slice that is mostly
 acceptable, and a kappa of zero.
 """
 
@@ -27,13 +27,13 @@ from openodke.eval.report import (
     per_class,
 )
 from openodke.ontology import Ontology
-from openodke.stages import Validator
+from openodke.stages import Gate
 
 ACTIONS = ("accept", "refuse", "conflict")
 
 
 def run_validate(
-    validator: Validator, labels: Iterable[ValidationLabel], ontology: Ontology
+    validator: Gate, labels: Iterable[ValidationLabel], ontology: Ontology
 ) -> list[ValidationPrediction]:
     """Validate every labelled fact against `ontology`, in-process."""
     predictions = []

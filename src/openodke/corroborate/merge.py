@@ -27,7 +27,7 @@ where `age` is measured back from the newest evidence in the batch and `n_s` is
 the number of claims source `s` backs in the batch. The highest rank wins. A
 loser is **kept**, never dropped. Its confidence is multiplied by
 `rank / winning rank`, and `qualifiers["odke.conflict"]` records a sentence
-saying why, so a validator or a person can see the losing claim.
+saying why, so the gate or a person can see the losing claim.
 
 Agreement is volume-normalised. A raw count of agreeing sources — Pasternack and
 Roth's *Sums* — rewards whoever is loudest, and a scraper emitting ten thousand

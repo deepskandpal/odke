@@ -662,8 +662,8 @@ class Neo4jConstrainer:
     - existence, property-type and node-key constraints. Neo4j has them in
       Enterprise Edition only, so none is emitted and `EntityType.keys` is not
       compiled — the corroborator, not the store, is where those keys are used.
-    - domain and range — that an employer is a Company. The validator is the
-      gate for those.
+    - domain and range — that an employer is a Company. The gate is where
+      those are checked.
 
     Only what the ontology names is compiled. A type or predicate that turns up
     in a graph but not in the schema gets no constraint: the store enforces

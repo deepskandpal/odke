@@ -193,7 +193,7 @@ class GroundingVerdict(StrEnum):
 
 
 class ValidationVerdict(Frozen):
-    """What the validator concluded, checking a fact against the ontology.
+    """What the gate concluded, checking a fact against the ontology.
 
     `accept` is written. `refuse` is not, and `reason` says why. `conflict` is
     written and flagged: the fact is well-formed but disagrees with something
