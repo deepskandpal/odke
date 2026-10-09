@@ -21,6 +21,8 @@ so the subpackage adds no dependency to the base install (DECISIONS #1).
 Every run the Evaluator scores can also be written as one `EvalReport`: a
 versioned JSON document whose shape does not depend on the stage, with 95%
 ranges on precision, recall and F1 (`openodke.eval.eval_report`).
+`evaluate_pipeline` points it at a whole pipeline: a command, a callable, or
+the files it wrote (`openodke.eval.harness`).
 
 Cost needs no labels: `CostMeter` wraps the `LLMClient` a stage was built
 with, so a run is measured without any stage Protocol changing.
@@ -67,6 +69,7 @@ from openodke.eval.formats import (
     load_jsonl,
 )
 from openodke.eval.grounding import evaluate_grounding, grounding_ablation, kept, run_ground
+from openodke.eval.harness import evaluate_pipeline
 from openodke.eval.report import StageReport
 from openodke.eval.resolution import as_triples, evaluate_resolution, links_from_clusters
 from openodke.eval.routing import evaluate_routing, run_route
@@ -119,6 +122,7 @@ __all__ = [
     "evaluate_calibration",
     "evaluate_extraction",
     "evaluate_grounding",
+    "evaluate_pipeline",
     "evaluate_resolution",
     "evaluate_routing",
     "evaluate_spans",
