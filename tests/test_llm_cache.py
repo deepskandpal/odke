@@ -32,6 +32,7 @@ from openodke.llm import (
     ModelRoles,
     ModelSpec,
     ProviderError,
+    ProviderNotInstalled,
     ScriptedClient,
 )
 from openodke.llm.cache import FORMAT, cache_key, prompt_keys, request
@@ -374,11 +375,12 @@ def test_a_rerun_from_the_cache_needs_neither_a_recording_nor_a_provider(
     assert result.exit_code == 0, result.output
     shutil.rmtree(project / "out")
 
-    def refuse(spec: ModelSpec) -> Any:
-        raise AssertionError(f"a rerun resolved a client for {spec.model}")
+    def missing(spec: ModelSpec) -> Any:
+        # As on an install without the [llm] extra: no adapter for the provider.
+        raise ProviderNotInstalled(f"no adapter for {spec.model}")
 
     # `openodke.run.build` the attribute is the function; the module is in sys.modules.
-    monkeypatch.setattr(sys.modules["openodke.run.build"], "resolve_client", refuse)
+    monkeypatch.setattr(sys.modules["openodke.run.build"], "resolve_client", missing)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     # No replay files: anything not in the cache would have to reach a provider.
     config = _config(models={"extract": "anthropic/claude-sonnet-5", "meter": True})

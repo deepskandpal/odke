@@ -46,7 +46,8 @@ from openodke.extract import HybridExtractor, LLMExtractor, PatternExtractor, Re
 from openodke.gate import VerdictGate
 from openodke.ground import LLMGrounder, RetryPolicy, SpanGrounder
 from openodke.interop import TriplesExtractor
-from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
+from openodke.llm.base import Completion, LLMClient, Message, ModelSpec, ProviderNotInstalled
+from openodke.llm.budget import Ledger
 from openodke.llm.cache import CachedClient, DirectoryCache
 from openodke.llm.registry import resolve as resolve_client
 from openodke.llm.roles import ModelRoles
@@ -128,40 +129,50 @@ PROTOCOLS: dict[str, type] = {
 @dataclass
 class Context:
     """What a factory may need beyond its options: the ontology, the models, the meter,
-    the response cache."""
+    the response cache, and the ledger every model call is counted on."""
 
     config: RunConfig
     ontology: Ontology
     roles: ModelRoles
     meter: CostMeter | None = None
     cache: DirectoryCache | None = None
+    # The run's budget and what it has spent: every client is counted here.
+    ledger: Ledger = field(default_factory=Ledger)
     _replays: dict[str, LLMClient] = field(default_factory=dict)
     # Every cached client handed out, for the run's hit and miss counts.
     cached: list[CachedClient] = field(default_factory=list)
 
-    def client(self, role: str, *, stage: str | None = None) -> LLMClient | None:
-        """The client a model-backed stage should use for `role`, or None to resolve its own.
+    def client(self, role: str, *, stage: str | None = None) -> LLMClient:
+        """The client a model-backed stage should use for `role`.
 
-        Recorded responses win when the config names them. The response cache,
-        when on, answers in front of whatever the client is, so a repeated call
-        reaches neither a provider nor a recording. A meter, when on, wraps the
-        lot, so cost is counted without a stage knowing: under `stage` when
-        given, so the grounder's widened retries are a cost row of their own,
-        and under the role otherwise.
+        Recorded responses win when the config names them; otherwise the
+        provider's client, resolved now, so a missing adapter stops the run
+        before anything is spent. Behind a cache it may be missing until the
+        first miss: a rerun answered from the cache needs no adapter at all.
+
+        The ledger counts every call that goes out and stops the run at its
+        budget. The response cache, when on, answers in front of it, so a
+        repeated call reaches neither a provider nor a recording and costs
+        nothing against the budget. A meter, when on, wraps the lot, so cost is
+        counted without a stage knowing: under `stage` when given, so the
+        grounder's widened retries are a cost row of their own, and under the
+        role otherwise.
         """
-        inner: LLMClient | None = None
+        inner: LLMClient
         replay = self.config.models.replay.get(role)  # type: ignore[call-overload]
         if replay is not None:
             if role not in self._replays:
                 self._replays[role] = _replay_client(self.config.resolve(replay), role)
             inner = self._replays[role]
-        if self.meter is None and self.cache is None:
-            return inner
-        if inner is None:
+        else:
             spec = getattr(self.roles, role)
-            # Behind a cache, resolved on the first miss: a rerun answered from
-            # the store needs no provider adapter at all.
-            inner = resolve_client(spec) if self.cache is None else OnFirstCall(spec)
+            try:
+                inner = resolve_client(spec)
+            except ProviderNotInstalled:
+                if self.cache is None:
+                    raise
+                inner = OnFirstCall(spec)
+        inner = self.ledger.client(inner)
         if self.cache is not None:
             inner = CachedClient(inner, self.cache)
             self.cached.append(inner)
@@ -178,6 +189,25 @@ class Context:
             for key, count in client.stats.items():
                 totals[key] = totals.get(key, 0) + count
         return {"directory": str(self.cache.directory), **totals}
+
+    def spent(self) -> dict[str, Any]:
+        """Calls, tokens and USD for the run: the ledger's, with the cache's hits among the calls.
+
+        `usd` is None when any call's cost went unreported: unknown, never a
+        partial sum.
+        """
+        spent = self.ledger.spent
+        cache = self.cache_stats()
+        hits = int(cache["hits"]) if cache is not None else 0
+        return {
+            "calls": spent.calls + hits,
+            "cached_calls": hits,
+            "input_tokens": spent.input_tokens,
+            "output_tokens": spent.output_tokens,
+            "usd": spent.usd,
+            "priced_usd": spent.priced_usd,
+            "unpriced_calls": spent.unpriced_calls,
+        }
 
 
 class OnFirstCall:
@@ -1154,6 +1184,7 @@ def build(config: RunConfig) -> Built:
         ontology=ontology,
         roles=config.models.roles(),
         meter=CostMeter() if config.models.meter else None,
+        ledger=Ledger(config.models.budget),
         cache=(
             response_cache(config.resolve(config.models.cache))
             if config.models.cache is not None

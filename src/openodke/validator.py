@@ -32,7 +32,9 @@ and the types have nothing to check.
 
 `validate()` returns the graph and a `ValidationReport` of the job: facts in,
 refused, merged, linked and derived; the model calls, tokens and cost; the
-registered prompts sent; and the coverage report. A dry run asks no model and
+registered prompts sent; and the coverage report. A client held to a budget
+(`openodke.llm.budget`) that stops the job leaves a partial graph, written as
+usual, and the report's `stopped` says where and why. A dry run asks no model and
 writes nothing: the free checks, the locator, and every deterministic stage.
 """
 
@@ -57,6 +59,7 @@ from openodke.ground import LLMGrounder
 from openodke.ground.checks import REASONS, VERDICTS, CheckedGrounder, refusals
 from openodke.interop.triples import TripleRow, TriplesExtractor
 from openodke.llm.base import LLMClient
+from openodke.llm.budget import stopped_summary
 from openodke.llm.roles import ModelRoles
 from openodke.ontology import Ontology
 from openodke.pipeline import Pipeline
@@ -113,9 +116,13 @@ class ValidationReport(Frozen):
     prompts: tuple[str, ...] = ()
     # `KnowledgeGraph.stats["coverage"]`: what extraction left behind (#130).
     coverage: dict[str, Any] | None = None
+    # `KnowledgeGraph.stats["stopped"]`: where a budget stopped the job, and why.
+    stopped: dict[str, Any] | None = None
 
     def render(self) -> str:
         lines = ["odke validate — dry run, no model called" if self.dry_run else "odke validate"]
+        if self.stopped is not None:
+            lines.append(_row("stopped", stopped_summary(self.stopped)))
         unmatched = f"; {self.unmatched} name a text that was not given" if self.unmatched else ""
         lines.append(
             _row("in", f"{_n(self.facts_in, 'fact')} from {_n(self.documents, 'text')}{unmatched}")
@@ -319,6 +326,7 @@ class Validator:
         coverage = kg.stats.get("coverage")
         resolved = getattr(stages["resolver"], "stats", None)
         store = resolved.get("store") if isinstance(resolved, Mapping) else None
+        stopped = kg.stats.get("stopped")
         return ValidationReport(
             dry_run=dry_run,
             documents=int(kg.stats.get("documents", 0)),
@@ -345,6 +353,7 @@ class Validator:
             cost_usd=spent.get("cost_usd"),
             prompts=tuple(str(p) for p in grounding.get("prompts", ())),
             coverage=dict(coverage) if isinstance(coverage, Mapping) else None,
+            stopped=dict(stopped) if isinstance(stopped, Mapping) else None,
         )
 
 

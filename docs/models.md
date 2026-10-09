@@ -200,5 +200,5 @@ In `odke run`, `models: {cache: .odke-cache}` names the directory, relative to
 the config. `odke validate` and `odke ground` read the same key from `--config`,
 and all three take `--cache DIR`, which overrides it. The cache answers in front
 of `models.replay` and the provider alike, and a rerun answered entirely from it
-resolves no provider. The run report gains a `cache` line, hits and misses, and
-`stats["cache"]`.
+needs no provider adapter and no key. The run report gains a `cache` line, hits
+and misses, and `stats["cache"]`.

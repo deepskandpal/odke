@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 import pytest
+from typer.testing import CliRunner
 
 from openodke import (
     Chunk,
@@ -27,6 +29,7 @@ from openodke import (
     Pipeline,
     Span,
 )
+from openodke.cli.main import EXIT_BUDGET, app
 from openodke.extract import LLMExtractor
 from openodke.ground import LLMGrounder, RetryPolicy, is_transient
 from openodke.llm import (
@@ -39,14 +42,20 @@ from openodke.llm import (
     ModelRoles,
     ModelSpec,
     ProviderError,
+    ProviderNotInstalled,
     RecordedClient,
 )
 from openodke.llm.budget import estimate_tokens
+from openodke.run import execute, load_config
 from openodke.sinks.jsonl import JsonlSink
+from test_run import EXTRACT, NOTES, PEOPLE, _config, _write
+from test_run import GROUND as VERDICTS
 
+runner = CliRunner()
 SPEC = ModelSpec(model="test/model", max_tokens=64)
 MESSAGES = [Message(role="system", content="Judge."), Message(content="Claim: x. Passage: y.")]
 ROLES = ModelRoles.single("test/model")
+REPO = Path(__file__).parent.parent
 
 
 class _Counting:
@@ -353,3 +362,125 @@ def test_a_retry_policy_never_spends_a_stopped_budget() -> None:
     kg = Pipeline(Ontology(), _Given(), grounder=grounder).run(docs)
     assert inner.calls == 1 and grounder.stats["retries"] == 0
     assert kg.stats["stopped"]["unchecked"] == 2
+
+
+# --------------------------------------------------------------------------- #
+# odke run, odke validate, odke ground
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def project(tmp_path: Path, people: Ontology) -> Path:
+    """`test_run`'s project: a note and a CSV row, an ontology and recorded responses."""
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "notes.md").write_text(NOTES, encoding="utf-8")
+    (corpus / "people.csv").write_text(PEOPLE, encoding="utf-8")
+    (tmp_path / "ontology.json").write_text(people.model_dump_json(), encoding="utf-8")
+    (tmp_path / "extract.json").write_text(json.dumps(EXTRACT), encoding="utf-8")
+    (tmp_path / "ground.json").write_text(json.dumps(VERDICTS), encoding="utf-8")
+    return tmp_path
+
+
+def test_odke_run_stops_at_its_budget_writes_what_it_kept_and_exits_3(project: Path) -> None:
+    # One extraction call and six grounding calls would be needed; three are allowed.
+    config = _config(models__budget={"calls": 3})
+    result = runner.invoke(app, ["run", str(_write(project, config))])
+    assert result.exit_code == EXIT_BUDGET == 3, result.output
+
+    lines = (project / "out" / "facts.jsonl").read_text(encoding="utf-8").splitlines()
+    facts = [json.loads(line) for line in lines]
+    assert [f["verdict"] for f in facts].count("unchecked") == 4
+    stats = json.loads((project / "out" / "manifest.json").read_text(encoding="utf-8"))["stats"]
+    assert stats["stopped"]["limit"] == "calls" and stats["stopped"]["stage"] == "ground"
+    assert stats["spent"]["calls"] == 3 and stats["budget"] == {"calls": 3}
+    assert "stopped       at budget, calls 3 of 3, during ground: 4 facts left unchecked" in (
+        result.output
+    )
+    assert "cost          3 model calls" in result.output
+    assert "budget        calls 3 of 3" in result.output
+    assert "wrote         jsonl →" in result.output
+
+
+def test_a_stop_before_the_first_call_keeps_what_the_pattern_path_read(project: Path) -> None:
+    result = execute(load_config(_write(project, _config(models__budget={"calls": 0}))))
+    stopped = result.stats["stopped"]
+    # The note's prose needed the model; the CSV row's two facts cost nothing.
+    assert (stopped["stage"], stopped["unextracted"], stopped["unchecked"]) == ("extract", 1, 2)
+    assert result.stats["graph"]["facts"] == 2 and result.stats["spent"]["calls"] == 0
+    assert result.stats["stages"]["extractor"]["paths"]["pattern_facts"] == 2
+
+
+def test_the_flags_set_the_budget_over_the_config(project: Path) -> None:
+    config = _config(models__budget={"calls": 100})
+    result = runner.invoke(
+        app, ["run", str(_write(project, config)), "--budget-calls", "1", "--dry-run"]
+    )
+    assert result.exit_code == 3, result.output
+    # The one call went to extraction, so not one of its six facts was grounded.
+    assert "calls 1 of 1, during ground: 6 facts left unchecked" in result.output
+
+
+def test_every_run_report_has_a_cost_line_metered_or_not(project: Path) -> None:
+    config = _config(models={"extract": "anthropic/claude-sonnet-5", "replay": {
+        "extract": "extract.json", "ground": "ground.json"}})  # fmt: skip
+    result = runner.invoke(app, ["run", str(_write(project, config)), "--dry-run"])
+    assert result.exit_code == 0, result.output
+    # The grounding replies carry no price, so USD is unknown rather than a partial sum.
+    assert "cost          7 model calls, 1423 tokens, USD unknown" in result.output
+    assert "budget" not in result.output and "stopped" not in result.output
+
+
+def test_without_a_cache_a_missing_adapter_stops_the_run_before_anything_is_spent(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def missing(spec: ModelSpec) -> Any:
+        raise ProviderNotInstalled(f"no adapter for {spec.model}")
+
+    monkeypatch.setattr(sys.modules["openodke.run.build"], "resolve_client", missing)
+    # Extraction is recorded, grounding is not: the build refuses before extracting.
+    config = _config(models__replay={"extract": "extract.json"})
+    result = runner.invoke(app, ["run", str(_write(project, config))])
+    assert result.exit_code == 1 and "no adapter for anthropic/claude-sonnet-5" in result.output
+    assert not (project / "out").exists()
+
+
+def test_a_budget_in_a_config_is_checked_like_any_other_key(project: Path) -> None:
+    bad = _config(models__budget={"usd": -1})
+    result = runner.invoke(app, ["run", str(_write(project, bad))])
+    assert result.exit_code == 2
+    assert "models.budget.usd" in result.output
+
+
+@pytest.fixture
+def triples(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    import shutil
+
+    shutil.copytree(REPO / "examples" / "triples", tmp_path / "triples")
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+TRIPLES = ["--facts", "triples/triples.jsonl", "--texts", "triples/texts", "-o", "out"]
+
+
+def test_odke_ground_stops_at_its_budget_and_still_writes(triples: Path) -> None:
+    result = runner.invoke(
+        app, ["ground", *TRIPLES, "--config", "triples/odke.yaml", "--budget-calls", "2"]
+    )
+    assert result.exit_code == 3, result.output
+    summary = json.loads((triples / "out" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["stopped"]["limit"] == "calls" and summary["calls"] == 2
+    assert summary["verdicts"]["unchecked"] == 2
+    assert len((triples / "out" / "facts.jsonl").read_text().splitlines()) == 5
+    assert "stopped       at budget, calls 2 of 2, during ground" in result.output
+
+
+def test_odke_validate_stops_at_its_budget_and_still_writes(triples: Path) -> None:
+    result = runner.invoke(
+        app, ["validate", *TRIPLES, "--config", "triples/odke.yaml", "--budget-calls", "2"]
+    )
+    assert result.exit_code == 3, result.output
+    assert "stopped       at budget, calls 2 of 2, during ground" in result.output
+    manifest = json.loads((triples / "out" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["stats"]["validation"]["stopped"]["unchecked"] == 2
