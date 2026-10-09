@@ -227,13 +227,11 @@ class RunConfig(_Strict):
     def with_model(self, model: str) -> RunConfig:
         """This config with every model role on `model`: what `odke run --model` applies.
 
-        `base_dir` is carried over explicitly, because a copy that resolved its
-        paths against the working directory instead of the config file would
-        break the promise that a config runs the same from anywhere.
+        `base_dir` comes along because `model_copy` carries private attributes. A
+        copy that resolved its paths against the working directory instead of the
+        config file would break the promise that a config runs the same from anywhere.
         """
-        copy = self.model_copy(update={"models": self.models.with_model(model)})
-        copy._base_dir = self._base_dir
-        return copy
+        return self.model_copy(update={"models": self.models.with_model(model)})
 
 
 def load_config(path: str | Path) -> RunConfig:
