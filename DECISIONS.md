@@ -513,6 +513,16 @@ fail at import; it will fail later, wherever it used the name as the gate. And
 until the report's schema moves, a config that says `gate:` produces a report
 whose line says `validator`.
 
+*2026-10-09, for 1.0.0 (#129):* the planned break. `openodke.Validator` is the
+layer, `openodke.validator.Validator`, and the alias that named the gate there
+is gone. It goes without a release that warns in between: the name now
+resolves to a working class, so a warning would fire on every correct use.
+`stages.Validator`, `pipeline.Validator` and the other old names still name
+the gate and still warn. The layer's method is `validate`, the gate's method
+name too, so a `Validator` fits the `Gate` Protocol by shape. Code that still
+passes it as the gate builds a pipeline. The first `validate(fact, ontology)`
+call then raises a `TypeError` naming `openodke.Gate`.
+
 ### 27. A prompt is a registered, versioned object
 
 A calibration card says what it measured: a model, a prompt, a dataset. "The

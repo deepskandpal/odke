@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import subprocess
 import sys
+import warnings
 from collections.abc import Iterable
 
 import pytest
@@ -126,7 +127,6 @@ def test_with_schema_it_refuses_what_the_ontology_has_no_room_for() -> None:
 # --------------------------------------------------------------------------- #
 
 OLD_NAMES = [
-    ("openodke", "Validator", Gate),
     ("openodke", "VerdictValidator", VerdictGate),
     ("openodke.stages", "Validator", Gate),
     ("openodke.stages", "PassThroughValidator", PassThroughGate),
@@ -164,12 +164,24 @@ def test_an_old_import_warns_at_the_line_that_wrote_it() -> None:
     assert gate.validate(_fact(GroundingVerdict.NOT_FOUND), Ontology()).action == "refuse"
 
 
-def test_the_top_level_validator_warns_that_it_is_about_to_change_meaning() -> None:
-    """#129 makes `openodke.Validator` the layer, so its warning says more than "renamed"."""
+def test_the_top_level_validator_is_the_layer_now_and_the_stage_name_still_warns() -> None:
+    """1.0.0 gives `openodke.Validator` to the layer (#129); the gate's old name there is gone."""
     import openodke
+    from openodke.validator import Validator
 
-    with pytest.warns(DeprecationWarning, match="whole verification layer"):
-        assert openodke.Validator is Gate
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert openodke.Validator is Validator
+        from openodke import Validator as imported
+    assert imported is Validator and imported is not Gate
+    # It has a gate's method name, so code that still uses it as the gate is told so.
+    with pytest.raises(TypeError, match=r"the gate is openodke\.Gate"):
+        Validator().validate(_fact(GroundingVerdict.SUPPORTED), Ontology())
+    # Where the old name named only the gate, it still does, and still says so.
+    from openodke import stages
+
+    with pytest.warns(DeprecationWarning, match=r"openodke\.stages\.Validator is deprecated"):
+        assert stages.Validator is Gate
 
 
 def test_an_unknown_name_is_still_an_attribute_error() -> None:
