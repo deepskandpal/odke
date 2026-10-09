@@ -85,7 +85,13 @@ class LiteLLMClient:
         except Exception as exc:  # noqa: BLE001 - litellm raises provider-specific types
             raise ProviderError(f"{spec.model} call failed: {exc}") from exc
 
-        body = response if isinstance(response, dict) else response.model_dump()
+        if isinstance(response, dict):
+            body, cost = response, response.get("_response_cost")
+        else:
+            body = response.model_dump()
+            # litellm keeps its cost beside the response rather than in it, so
+            # `model_dump()` leaves it behind.
+            cost = (getattr(response, "_hidden_params", None) or {}).get("response_cost")
         text = (body.get("choices") or [{}])[0].get("message", {}).get("content") or ""
         usage = body.get("usage") or {}
         return Completion(
@@ -94,7 +100,7 @@ class LiteLLMClient:
             model=body.get("model", spec.model),
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
-            cost_usd=body.get("_response_cost"),
+            cost_usd=cost,
             raw=body,
         )
 
