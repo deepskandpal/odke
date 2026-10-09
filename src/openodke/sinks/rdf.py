@@ -97,7 +97,8 @@ class RdfSink:
       its provenance hangs off that node: `odke:polarity`, `odke:confidence`,
       `odke:support`, both clocks, `odke:identity_keys`, the qualifiers under
       `<schema>qualifier/`, and one `odke:evidence` node per source with
-      `odke:doc_id`, `odke:uri`, `odke:start`/`odke:end`, `odke:tier` and
+      `odke:doc_id`, `odke:uri`, `odke:start`/`odke:end`, `odke:span_origin`
+      (who chose the span: `cited`, `located` or `context`), `odke:tier` and
       `odke:retrieved_at`. The node plays the part the relationship plays in
       Neo4j and carries the same property names. The IRI is the fact's
       signature, so a rerun with new ids and clocks addresses the same node.
@@ -349,6 +350,7 @@ class _Builder:
                 self._put(node, self._vocab("start"), item.span.start)
                 self._put(node, self._vocab("end"), item.span.end)
                 self._put(node, self._vocab("quote"), item.span.quote)
+            self._put(node, self._vocab("span_origin"), item.span_origin.value)
             self._put(node, self._vocab("tier"), item.tier.value)
             self._put(node, self._vocab("retrieved_at"), item.retrieved_at)
 
