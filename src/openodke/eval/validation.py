@@ -17,7 +17,15 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 
 from openodke.eval.formats import ValidationLabel, ValidationPrediction
-from openodke.eval.report import Metric, StageReport, accuracy, cohen_kappa, macro_f1, per_class
+from openodke.eval.report import (
+    Metric,
+    StageReport,
+    accuracy,
+    cohen_kappa,
+    join_by_id,
+    macro_f1,
+    per_class,
+)
 from openodke.ontology import Ontology
 from openodke.stages import Validator
 
@@ -41,18 +49,9 @@ def evaluate_validation(
     labels: Sequence[ValidationLabel], predictions: Iterable[ValidationPrediction]
 ) -> StageReport:
     """Agreement, kappa, per-action P/R/F1, and the three disagreements that cost."""
-    by_id = {p.id: p for p in predictions}
-    pairs = [(row.action, by_id[row.fact.id].action) for row in labels if row.fact.id in by_id]
+    joined, notes = join_by_id(labels, predictions, lambda row: row.fact.id)
+    pairs = [(row.action, p.action) for row, p in joined]
     by_action, confusion = per_class(pairs, ACTIONS)
-
-    notes = []
-    if len(pairs) < len(labels):
-        notes.append(
-            f"{len(labels) - len(pairs)} labelled fact(s) had no prediction and were not scored"
-        )
-    known = {row.fact.id for row in labels}
-    if stray := sum(1 for key in by_id if key not in known):
-        notes.append(f"{stray} prediction(s) matched no labelled fact and were ignored")
 
     wrongly_refused = confusion["accept"]["refuse"] + confusion["conflict"]["refuse"]
     wrongly_written = confusion["refuse"]["accept"] + confusion["refuse"]["conflict"]

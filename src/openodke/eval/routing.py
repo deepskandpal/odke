@@ -14,7 +14,15 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 
 from openodke.eval.formats import RouteLabel, RoutePrediction
-from openodke.eval.report import Metric, StageReport, accuracy, macro_f1, per_class, ratio
+from openodke.eval.report import (
+    Metric,
+    StageReport,
+    accuracy,
+    join_by_id,
+    macro_f1,
+    per_class,
+    ratio,
+)
 from openodke.stages import Router
 
 ACTIONS = ("extract", "skip", "defer")
@@ -40,9 +48,7 @@ def evaluate_routing(
     labels: Sequence[RouteLabel], predictions: Iterable[RoutePrediction]
 ) -> StageReport:
     """Per-label P/R/F1, the action confusion, and how many fact chunks were skipped."""
-    by_id = {p.id: p for p in predictions}
-    joined = [(row, by_id[row.id]) for row in labels if row.id in by_id]
-    notes = _join_notes(labels, by_id)
+    joined, notes = join_by_id(labels, predictions, lambda row: row.id, noun="chunk")
 
     actions, confusion = per_class(((r.action, p.action) for r, p in joined), ACTIONS)
     to_extract = confusion["extract"]
@@ -82,18 +88,6 @@ def evaluate_routing(
         confusion=confusion,
         notes=tuple(notes),
     )
-
-
-def _join_notes(labels: Sequence[RouteLabel], by_id: dict[str, RoutePrediction]) -> list[str]:
-    notes = []
-    unpredicted = sum(1 for row in labels if row.id not in by_id)
-    if unpredicted:
-        notes.append(f"{unpredicted} labelled chunk(s) had no prediction and were not scored")
-    known = {row.id for row in labels}
-    unlabelled = sum(1 for key in by_id if key not in known)
-    if unlabelled:
-        notes.append(f"{unlabelled} prediction(s) matched no labelled chunk and were ignored")
-    return notes
 
 
 __all__ = ["ACTIONS", "NO_LABEL", "evaluate_routing", "run_route"]

@@ -27,7 +27,7 @@ import math
 from collections.abc import Iterable, Sequence
 
 from openodke.eval.formats import CalibrationLabel
-from openodke.eval.report import Metric, StageReport
+from openodke.eval.report import Metric, StageReport, join_by_id
 from openodke.stages import Scorer
 from openodke.types import Fact
 
@@ -56,7 +56,12 @@ def evaluate_calibration(
     threshold: float = 0.9,
 ) -> StageReport:
     """Brier, the reliability curve and ECE, over `Fact.confidence` against outcomes."""
-    pairs, notes = _join(labels, predictions)
+    # Without predictions, each label row's own fact is scored as it stands.
+    pairs, notes = (
+        ([(row, row.fact) for row in labels], [])
+        if predictions is None
+        else join_by_id(labels, predictions, lambda row: row.fact.id)
+    )
     for _, fact in pairs:
         if not 0.0 <= fact.confidence <= 1.0:
             raise ValueError(
@@ -119,24 +124,6 @@ def evaluate_calibration(
         "true_rate_at_threshold": true_high,
     }
     return StageReport(stage="score", n=n, metrics=metrics, breakdown=breakdown, notes=tuple(notes))
-
-
-def _join(
-    labels: Sequence[CalibrationLabel], predictions: Iterable[Fact] | None
-) -> tuple[list[tuple[CalibrationLabel, Fact]], list[str]]:
-    if predictions is None:
-        return [(row, row.fact) for row in labels], []
-    by_id = {f.id: f for f in predictions}
-    pairs = [(row, by_id[row.fact.id]) for row in labels if row.fact.id in by_id]
-    notes = []
-    if len(pairs) < len(labels):
-        notes.append(
-            f"{len(labels) - len(pairs)} labelled fact(s) had no prediction and were not scored"
-        )
-    known = {row.fact.id for row in labels}
-    if stray := sum(1 for key in by_id if key not in known):
-        notes.append(f"{stray} prediction(s) matched no labelled fact and were ignored")
-    return pairs, notes
 
 
 __all__ = ["BINS", "bin_of", "evaluate_calibration", "run_score"]

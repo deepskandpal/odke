@@ -16,8 +16,8 @@ wrong", which is a different and worse finding.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
-from typing import TypeAlias
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import Protocol, TypeAlias, TypeVar
 
 from pydantic import Field
 
@@ -26,6 +26,15 @@ from openodke.types import Frozen
 # A headline number: `int` for counts, `float` for rates, `None` for
 # undefined — never 0.0 standing in for "could not be computed".
 Metric: TypeAlias = int | float | None
+
+
+class _Identified(Protocol):
+    @property
+    def id(self) -> str: ...
+
+
+_Label = TypeVar("_Label")
+_Prediction = TypeVar("_Prediction", bound=_Identified)
 
 
 class StageReport(Frozen):
@@ -152,6 +161,38 @@ def ratio(numerator: float, denominator: float) -> Metric:
 
 
 # --------------------------------------------------------------------------- #
+# Joining
+# --------------------------------------------------------------------------- #
+
+
+def join_by_id(
+    labels: Sequence[_Label],
+    predictions: Iterable[_Prediction],
+    key: Callable[[_Label], str],
+    *,
+    noun: str = "fact",
+) -> tuple[list[tuple[_Label, _Prediction]], list[str]]:
+    """Each labelled row with the prediction whose `id` is `key(row)`, and notes.
+
+    A label with no prediction is not scored, and neither is a prediction with
+    no label; the notes count both, so a report never scores fewer rows than
+    it was given without saying how many it left out. `noun` names a row in
+    the notes: a fact, or a chunk.
+    """
+    by_id = {p.id: p for p in predictions}
+    pairs = [(row, by_id[key(row)]) for row in labels if key(row) in by_id]
+    notes = []
+    if len(pairs) < len(labels):
+        notes.append(
+            f"{len(labels) - len(pairs)} labelled {noun}(s) had no prediction and were not scored"
+        )
+    known = {key(row) for row in labels}
+    if stray := sum(1 for k in by_id if k not in known):
+        notes.append(f"{stray} prediction(s) matched no labelled {noun} and were ignored")
+    return pairs, notes
+
+
+# --------------------------------------------------------------------------- #
 # Rendering
 # --------------------------------------------------------------------------- #
 
@@ -178,6 +219,7 @@ __all__ = [
     "StageReport",
     "accuracy",
     "cohen_kappa",
+    "join_by_id",
     "macro_f1",
     "per_class",
     "prf",
