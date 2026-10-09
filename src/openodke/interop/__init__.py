@@ -8,6 +8,7 @@ the library.
 
 from __future__ import annotations
 
+from openodke.interop.graphrag import from_graphrag, read_graphrag
 from openodke.interop.langchain import from_graph_documents
 from openodke.interop.langextract import attribute_triples, from_langextract
 from openodke.interop.triples import (
@@ -26,7 +27,9 @@ __all__ = [
     "TriplesExtractor",
     "attribute_triples",
     "from_graph_documents",
+    "from_graphrag",
     "from_langextract",
+    "read_graphrag",
     "read_triples",
     "to_fact",
 ]
