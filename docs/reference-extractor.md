@@ -3,7 +3,7 @@
 !!! note "Reference only: bug fixes, no new features"
     These extractors get bug fixes only; work that would extend them is parked
     ([DECISIONS #24](decisions.md#24)). To check another extractor's output,
-    start from [Triples from any extractor](triples.md).
+    start from [Inputs](inputs.md).
 
 An extractor is anything with `extract(chunk, ontology) -> Iterable[Fact]`. The
 three in `openodke.extract` key an entity by its type and folded name

@@ -26,7 +26,7 @@ The extractors:
   same node types and patterns, no lexical graph.
 
 Both competitors are held to the schema the way LLMGraphTransformer's strict mode
-does it. Their triples reach openodke in its [triples format](../docs/triples.md),
+does it. Their triples reach openodke in its [triples format](../docs/inputs.md),
 through the `triples` extract stage. They quote nothing, so each is grounded
 against its whole document, which is the paper's own mode: the whole context,
 True or False, affirmed facts kept (`odke bench prepare --paper`; the set's

@@ -50,6 +50,7 @@ plugins:
         sinks.md: stores.md
         neo4j.md: stores.md#neo4j
         inference.md: ontology.md#drafting-one-parked
+        triples.md: inputs.md
 
 markdown_extensions:
   - admonition
@@ -75,7 +76,7 @@ nav:
   - Ontology: ontology.md
   - "Loading documents": loading.md
   - "Reference extractor": reference-extractor.md
-  - "Triples from any extractor": triples.md
+  - Inputs: inputs.md
   - Grounding: grounding.md
   - "Resolution & corroboration": resolution-and-corroboration.md
   - "Write to a store": stores.md
