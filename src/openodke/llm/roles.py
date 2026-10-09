@@ -20,7 +20,11 @@ from openodke.llm.registry import resolve
 # Sensible starting points, not a hard-coded vendor. Every one of these is
 # overridable, and nothing in the library breaks if they are replaced with
 # ollama/… or openai/… or a gateway string.
-DEFAULT_EXTRACT = "anthropic/claude-sonnet-5"
+#
+# Each is an exact model id, and changes only with a new calibration card
+# (DECISIONS #7a). Anthropic publishes Sonnet 5.5 under `claude-sonnet-5-5`
+# alone, with no dated snapshot, and it is the model the published bench ran on.
+DEFAULT_EXTRACT = "anthropic/claude-sonnet-5-5"
 DEFAULT_GROUND = "anthropic/claude-haiku-4-5-20251001"
 # One word comes back, whichever model is asked.
 _GROUND_MAX_TOKENS = 256

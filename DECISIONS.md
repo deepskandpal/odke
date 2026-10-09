@@ -84,7 +84,8 @@ its passages to the default's vendor.
 
 Defaults name Claude models because something must be the default. Nothing in the
 library depends on them, and `ModelRoles.single("ollama/…")` is a first-class
-configuration rather than a degraded one.
+configuration rather than a degraded one. Defaults are pinned model ids, never
+moving aliases, and a default changes only along with a new calibration card.
 
 ### 7b. A registry, so an internal gateway is not a fork
 
