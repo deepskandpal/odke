@@ -29,20 +29,16 @@ from pathlib import Path
 from typing import Any
 
 from openodke.eval.ablation import AblationRun, ablate
+from openodke.eval.datasets import _common
 from openodke.eval.datasets._common import (
     Opener,
     Triple,
     change,
     check_out,
-    doc_names,
     download,
     read_jsonl,
-    report,
     run_config,
-    save_predictions,
     snake,
-    triples_by_doc,
-    verdicts,
     write_documents,
     write_json,
     write_jsonl,
@@ -351,35 +347,32 @@ def score_run(
     save_to: Path | None = None,
 ) -> StageReport:
     """Score an `AblationRun` already made — `run` without the model calls."""
-    labels: Mapping[str, str] = meta["relation_labels"]
-    names = doc_names(ablation.documents)
-    rows = []
-    scored: dict[str, dict[str, Metric]] = {}
-    predictions = {}
-    for name, facts, calls in ablation.configurations():
-        predicted = triples_by_doc(facts, names, lambda p: labels.get(p, p))
-        predictions[name] = predicted
-        metrics = score(gold, predicted)
-        scored[name] = metrics
-        rows.append((name, metrics, calls, len(facts)))
-    if save_to is not None:
-        save_predictions(save_to, predictions)
-    raw, gated, full = (scored[n] for n, _, _ in ablation.configurations())
+    return _common.score_run(
+        ablation,
+        gold,
+        meta,
+        stage=f"{NAME}:{meta['split']}",
+        score=lambda predicted: score(gold, predicted),
+        notes=_notes,
+        save_to=save_to,
+    )
+
+
+def _notes(
+    raw: Mapping[str, Metric], gated: Mapping[str, Metric], full: Mapping[str, Metric]
+) -> list[str]:
     before = float(raw["hallucinated_triples"] or 0)
     after = float(gated["hallucinated_triples"] or 0)
     precisions = ", ".join(
         f"{p:.1%}" if p is not None else "n/a"
         for p in (raw["precision"], gated["precision"], full["precision"])
     )
-    notes = [
+    return [
         f"hallucinated triples: {before:.0f} extracted, {after:.0f} after the gate — "
         f"{change(before, after)} (ODKE+ reports -35%)",
         f"precision: {precisions} (extracted, after the gate, after corroboration;"
         " ODKE+ reports 91% raw, 98.8% ranked)",
-        f"grounder verdicts on the candidates: {verdicts(ablation.grounded)}",
-        *ablation.notes,
     ]
-    return report(f"{NAME}:{meta['split']}", len(gold), rows, notes)
 
 
 __all__ = [
