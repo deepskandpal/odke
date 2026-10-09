@@ -31,7 +31,7 @@ from openodke import (  # noqa: E402
 from openodke.eval.sinks import assert_idempotent  # noqa: E402
 from openodke.sinks.neo4j import signature_of  # noqa: E402
 from openodke.sinks.rdf import DEFAULT_BASE, EXTRA_HINT, VOCAB, RdfSink  # noqa: E402
-from test_neo4j_sink import _graph  # noqa: E402
+from test_neo4j_sink import _graph, contested_founding  # noqa: E402
 
 FORMATS = ("turtle", "nt", "json-ld")
 ENT = f"{DEFAULT_BASE}entity/"
@@ -128,6 +128,16 @@ def test_a_scoped_value_is_not_a_plain_triple_and_each_scope_is_its_own_node(
                  odke:identity_keys ?key }}""",
     )
     assert rows == {("p50", "percentile"), ("p95", "percentile")}
+
+
+def test_a_value_the_corroborator_voted_down_is_not_a_plain_triple(tmp_path: Path) -> None:
+    """`founded` is an owl:FunctionalProperty: one value, the one that won."""
+    graph, ontology = contested_founding()
+    g = _loaded(tmp_path, "turtle", graph, ontology=ontology)
+    assert _select(g, "SELECT ?year WHERE { ent:c%3Aacme ont:founded ?year }") == {("1999",)}
+    # The loser stays a statement node, so it is still there to query.
+    stated = "SELECT ?year WHERE { ?st rdf:predicate ont:founded ; rdf:object ?year }"
+    assert _select(g, stated) == {("1999",), ("2001",)}
 
 
 # --------------------------------------------------------------------------- #

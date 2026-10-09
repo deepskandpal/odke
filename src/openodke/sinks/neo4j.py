@@ -18,11 +18,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from datetime import date, datetime, time
 from enum import Enum
 from typing import Any, NamedTuple
 
+from openodke.corroborate.provenance import CONFLICT
 from openodke.ontology import Ontology, Predicate
 from openodke.stages import DDL, Constrainer, PlatformProfile
 from openodke.types import Entity, EntityLink, Fact, KnowledgeGraph, Polarity
@@ -190,6 +191,17 @@ def is_scoped(fact: Fact) -> bool:
     return any(k in fact.qualifiers for k in fact.identity_keys)
 
 
+def is_outvoted(fact: Fact) -> bool:
+    """True when the corroborator weighed this fact against a rival and it lost.
+
+    The loser stays a record — its edge, its claim, its statement node — but it
+    is not the value. More sources can back the loser than the winner, so
+    anything that picks "the" value has to ask this rather than rank on support.
+    """
+    conflict = fact.qualifiers.get(CONFLICT)
+    return isinstance(conflict, Mapping) and conflict.get("status") == "lost"
+
+
 # --------------------------------------------------------------------------- #
 # The write plan
 # --------------------------------------------------------------------------- #
@@ -284,8 +296,9 @@ def projections(
 
     Only asserted, unscoped claims with a value project: a denial is not a
     value, and a value with an identity-bearing qualifier means nothing without
-    its scope. A single-valued predicate projects its best-supported claim; a
-    multi-valued one, when the ontology says so, the list in that order.
+    its scope. Nor does a claim the corroborator voted down, however many
+    sources back it. A single-valued predicate projects its best-supported
+    claim; a multi-valued one, when the ontology says so, the list in that order.
     """
     grouped: dict[tuple[str, str, str], list[Fact]] = {}
     for fact in kg.facts:
@@ -294,6 +307,7 @@ def projections(
             or fact.object_value is None
             or fact.polarity is not Polarity.ASSERTED
             or is_scoped(fact)
+            or is_outvoted(fact)
         ):
             continue
         grouped.setdefault((fact.subject.type, fact.predicate, fact.subject.key), []).append(fact)
@@ -429,8 +443,9 @@ class Neo4jSink:
       kinds of fact. The value is *also* projected onto the subject as
       `s.predicate`, because that is what a Cypher query reaches for first.
       The projection is derived and lossy on purpose: only asserted, unscoped
-      claims project; a single-valued predicate carries its best-supported
-      claim; a multi-valued one (when the ontology is known) the list.
+      claims project, and never one the corroborator voted down; a
+      single-valued predicate carries its best-supported claim; a multi-valued
+      one (when the ontology is known) the list.
     - An `EntityLink` is `(a)-[:SAME_AS|SIMILAR|DIFFERENT {score, reason}]->(b)`.
       Nodes are never merged (DECISIONS #16).
 
@@ -717,6 +732,7 @@ __all__ = [
     "check_target",
     "entities_of",
     "is_check",
+    "is_outvoted",
     "is_scoped",
     "link_row",
     "plan",

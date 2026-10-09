@@ -34,6 +34,7 @@ from openodke import (
     SourceTier,
     Span,
 )
+from openodke.corroborate import CONFLICT, SignatureCorroborator
 from openodke.eval.sinks import assert_idempotent
 from openodke.sinks.neo4j import EXTRA_HINT, Neo4jSink, Statement, signature_of, storable
 
@@ -391,6 +392,60 @@ def test_a_single_valued_projection_carries_the_best_supported_claim() -> None:
     driver = _written(KnowledgeGraph(facts=(weak, strong)))
     assert _rows_where(driver, "SET s.`hq`") == [{"subject_key": "c:acme", "value": "Munich"}]
     # Both claims are still held; the conflict is not resolved by dropping one.
+    assert len(_rows_where(driver, "MERGE (c:`Claim`")) == 2
+
+
+def contested_founding() -> tuple[KnowledgeGraph, Ontology]:
+    """One curated registry says 1999 and three scrapes say 2001, through the real corroborator."""
+    acme = Entity(key="c:acme", type="Company", label="Acme")
+    ontology = Ontology(predicates={"founded": Predicate(name="founded", cardinality="single")})
+
+    def founded(year: str, doc: str, tier: SourceTier) -> Fact:
+        source = Evidence(
+            doc_id=doc, uri=f"https://{doc}.example/acme", tier=tier, retrieved_at=WHEN
+        )
+        return Fact(subject=acme, predicate="founded", object_value=year, evidence=(source,))
+
+    facts = SignatureCorroborator(ontology).corroborate(
+        [
+            founded("1999", "registry", SourceTier.CURATED),
+            *(founded("2001", f"scrape{i}", SourceTier.UNVERIFIED) for i in range(3)),
+        ]
+    )
+    decided = {f.object_value: (f.support, f.qualifiers[CONFLICT]["status"]) for f in facts}
+    assert decided == {"1999": (1, "won"), "2001": (3, "lost")}
+    return KnowledgeGraph(entities=(acme,), facts=tuple(facts)), ontology
+
+
+def test_a_claim_the_corroborator_voted_down_never_projects() -> None:
+    """More support is not the answer when the corroborator weighed it and said no."""
+    graph, ontology = contested_founding()
+    driver = _written(graph, ontology=ontology)
+    assert _rows_where(driver, "SET s.`founded`") == [{"subject_key": "c:acme", "value": "1999"}]
+    # The loser is still a claim, with the reason it lost on its relationship.
+    claims = _rows_where(driver, "MERGE (c:`Claim`")
+    assert {row["value"] for row in claims} == {"1999", "2001"}
+
+
+def test_an_assertion_that_lost_to_a_denial_never_projects() -> None:
+    acme = Entity(key="c:acme", type="Company")
+    says = Fact(
+        subject=acme,
+        predicate="sells",
+        object_value="customer_data",
+        evidence=(Evidence(doc_id="blog", tier=SourceTier.UNVERIFIED, retrieved_at=WHEN),),
+    )
+    denies = says.model_copy(
+        update={
+            "polarity": Polarity.DENIED,
+            "evidence": (Evidence(doc_id="policy", tier=SourceTier.CURATED, retrieved_at=WHEN),),
+        }
+    )
+    facts = SignatureCorroborator().corroborate([says, denies])
+    lost = next(f for f in facts if f.polarity is Polarity.ASSERTED)
+    assert lost.qualifiers[CONFLICT]["status"] == "lost"
+    driver = _written(KnowledgeGraph(facts=tuple(facts)))
+    assert _rows_where(driver, "SET s.") == []
     assert len(_rows_where(driver, "MERGE (c:`Claim`")) == 2
 
 

@@ -111,9 +111,10 @@ the provenance: `fact_id`, `signature`, `polarity`, `extractor`, `verdict`,
 offsets, tiers and retrieval times). A literal fact points at a claim node holding
 its value, because a plain property cannot carry provenance, two contested values,
 or a denial. The value is also **projected** onto the subject as a plain property,
-but only for an asserted fact with no identity-bearing qualifier, and for a
-`single` predicate only the best-supported claim. The [Neo4j page](neo4j.md#the-shape-and-why)
-has the reasoning in full.
+but only for an asserted fact with no identity-bearing qualifier that the
+corroborator did not vote down, and for a `single` predicate only the
+best-supported claim. The [Neo4j page](neo4j.md#the-shape-and-why) has the
+reasoning in full.
 
 ## JSONL
 
@@ -249,7 +250,7 @@ domain on purpose: data minted under it is visibly unplaced. Pass your own.
 |---|---|
 | `Entity` | `<base>entity/<key>`, typed with its class `<schema><Type>` and `odke:Entity`, with `odke:key`, `rdfs:label`, `skos:altLabel` per alias, `odke:external_id`, `odke:resolution_*`, and its attributes under `<schema>attribute/` |
 | `Fact` | a **reified statement** `<base>fact/<signature>`: an `rdf:Statement` and `odke:Fact` with `rdf:subject`, `rdf:predicate` and `rdf:object`, carrying `odke:polarity`, `odke:confidence`, `odke:support`, both clocks, `odke:identity_keys`, its qualifiers under `<schema>qualifier/`, and one `odke:evidence` node per source with `odke:doc_id`, `odke:uri`, `odke:start`, `odke:end`, `odke:quote`, `odke:tier` and `odke:retrieved_at` |
-| the plain triple `<s> <schema><predicate> <o>` | written **only** for an asserted fact with no identity-bearing qualifier: the same rule that decides the Neo4j projection |
+| the plain triple `<s> <schema><predicate> <o>` | written **only** for an asserted fact with no identity-bearing qualifier that the corroborator did not vote down: the same rule that decides the Neo4j projection |
 | `EntityLink` | `owl:sameAs`, `odke:similar_to` or `odke:different_from` between the two entity IRIs, reified the same way so `odke:score`, `odke:reason` and `odke:created_at` can be read |
 | the ontology, when given | `owl:Class` with `rdfs:subClassOf` and `owl:hasKey`; `owl:ObjectProperty` or `owl:DatatypeProperty` with domain, range and `owl:FunctionalProperty` for `single` |
 
