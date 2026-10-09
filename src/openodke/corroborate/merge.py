@@ -12,7 +12,9 @@ source's value. The valid clock takes the earliest start and latest end any
 source gave. `support` is the count of **independent sources**: forty pages
 from one host are one source, two chunks of one document are one, and a page
 copied to another host counts once with its original when the corroborator has
-the texts to compare (`duplicates`).
+the texts to compare (`duplicates`). `supported_by` names those sources, one
+`Support` each, so `support` is its length: what a reconciler reads when a
+source changes or disappears.
 
 **Contest.** Two claims conflict when they share subject and predicate, the
 predicate is single-valued in the ontology, they agree on its `scope_keys` (the
@@ -64,7 +66,15 @@ from openodke.corroborate.provenance import (
     unstamped,
 )
 from openodke.ontology import Ontology
-from openodke.types import Document, Evidence, Fact, GroundingVerdict, Polarity, SourceTier
+from openodke.types import (
+    Document,
+    Evidence,
+    Fact,
+    GroundingVerdict,
+    Polarity,
+    SourceTier,
+    Support,
+)
 
 SourceKey = Callable[[Evidence], str]
 
@@ -135,11 +145,51 @@ def _collapse(
     source: SourceKey,
 ) -> set[str]:
     """`sources`, with the sources of each group of documents counted once."""
+    return set(_joined(sources, evidence, groups, source).values())
+
+
+def _joined(
+    sources: Iterable[str],
+    evidence: Sequence[Evidence],
+    groups: Iterable[Iterable[str]],
+    source: SourceKey,
+) -> dict[str, str]:
+    """Each source, mapped to the key it counts under: the least of its group's, or its own."""
     joined: list[set[str]] = [{s} for s in sources]
     for group in groups:
         docs = set(group)
         joined.append({source(e) for e in evidence if e.doc_id in docs})
-    return {min(g) for g in _union(joined)}
+    return {member: min(g) for g in _union(joined) for member in g}
+
+
+def support_of(
+    evidence: Sequence[Evidence],
+    groups: Iterable[Iterable[str]] = (),
+    source: SourceKey = source_of,
+) -> tuple[Support, ...]:
+    """The support list a fact citing `evidence` carries: one `Support` per independent source.
+
+    Sources are counted as `independent_sources` counts them: by `source`, and
+    each group of near-duplicate documents in `groups` as one, under the least
+    of their keys. Entries are sorted by source key, and each names its
+    documents, its best tier and its newest clock.
+    """
+    if not evidence:
+        return ()
+    own = {source(e) for e in evidence}
+    joined = _joined(own, evidence, groups, source)
+    by_key: dict[str, list[Evidence]] = defaultdict(list)
+    for e in evidence:
+        by_key[joined[source(e)]].append(e)
+    return tuple(
+        Support(
+            source=key,
+            doc_ids=tuple(sorted({e.doc_id for e in cited})),
+            tier=max((e.tier for e in cited), key=lambda tier: tier.weight),
+            retrieved_at=max((e.retrieved_at for e in cited), key=_aware),
+        )
+        for key, cited in sorted(by_key.items())
+    )
 
 
 def _aware(moment: datetime) -> datetime:
@@ -283,10 +333,14 @@ class SignatureCorroborator:
             qualifiers[NEAR_DUPLICATES] = groups
         extractors = sorted({f.extractor for f in members})
         present = {f.verdict for f in members}
+        # A source with no evidence has no name: a claim any of whose members
+        # cites nothing keeps its count and names none of its sources.
+        named = support_of(cited, groups, self.source) if all(f.evidence for f in members) else ()
         return first.model_copy(
             update={
                 "evidence": cited,
-                "support": len(sources),
+                "support": len(named) if named else len(sources),
+                "supported_by": named,
                 "qualifiers": qualifiers,
                 "valid_from": _bound([f.valid_from for f in members], latest=False),
                 "valid_to": _bound([f.valid_to for f in members], latest=True),
@@ -483,4 +537,5 @@ __all__ = [
     "SignatureCorroborator",
     "independent_sources",
     "source_of",
+    "support_of",
 ]
