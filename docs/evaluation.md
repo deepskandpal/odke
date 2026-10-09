@@ -176,7 +176,9 @@ for citation quality with no gold set**: it scores the too-narrow-citation error
 directly, which is the error a span gold set would be built to find. The report
 is the width distribution per verdict — count, median, quartiles, min and max —
 plus the share of facts citing no span at all, and one summary line. The widths
-are of `Evidence.span`, the span the grounder is shown.
+are of `Evidence.span`, the span the grounder is shown. A span the
+[locator](grounding.md#locating-spans) found is not a citation, so it is counted
+apart, in the `located` column, and left out of the widths.
 
 ```python
 from openodke.eval import evaluate_spans
