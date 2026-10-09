@@ -561,6 +561,8 @@ def validate_command(
     applied: list[str] = []
     plans: list[Any] = []
     sinks: list[Any] = []
+    # The store lookup's plan, which closes a connection it opened itself.
+    lookups: list[Any] = []
     caught: list[warnings.WarningMessage] = []
     try:
         if facts is None and config is None:
@@ -605,12 +607,16 @@ def validate_command(
             named = {"extractor": extractor.extractor, "confidence": extractor.confidence}
             stage = built.stages
             plans = built.sinks
+            lookups = [built.lookup] if built.lookup is not None else []
             if not dry_run:
                 sinks = [plan.open() for plan in plans]
                 # Before any model is called, as `odke run` applies it.
                 if loaded.bootstrap:
                     applied = _bootstrap(built, sinks)
-            elif loaded.bootstrap:
+                built.open_lookup(sinks)
+            elif built.lookup is not None:
+                typer.echo(f"warning: {built.lookup.dry_run_note}", err=True)
+            if dry_run and loaded.bootstrap:
                 constrainer = built.stages["constrainer"]
                 applied = [
                     s for p in plans if p.can_bootstrap for s in p.ddl(built.ontology, constrainer)
@@ -632,10 +638,10 @@ def validate_command(
             sinks.append(JsonlSink(out))
         validator.sinks = tuple(sinks)
     except (ValueError, ConfigError, OntologyLoadError, ImportError, OSError) as exc:
-        _close(driver, sinks)
+        _close(driver, [*lookups, *sinks])
         _data_error(exc)
     except ProviderError as exc:
-        _close(driver, sinks)
+        _close(driver, [*lookups, *sinks])
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
     _echo_warnings(caught)
@@ -647,7 +653,7 @@ def validate_command(
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
     finally:
-        _close(driver, sinks)
+        _close(driver, [*lookups, *sinks])
     _echo_warnings(caught)
     typer.echo(report.render())
     verb = "would write" if dry_run else "wrote"

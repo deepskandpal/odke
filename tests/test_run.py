@@ -8,6 +8,7 @@ extraction, match entries for grounding — through the config's own
 from __future__ import annotations
 
 import json
+import re
 import sys
 import types
 from collections import Counter
@@ -19,7 +20,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from openodke import Chunk, Ontology, RouteVerdict, Sink
+from openodke import Chunk, Entity, Ontology, RouteVerdict, Sink
 from openodke.cli.main import app
 from openodke.corroborate import SCORE
 from openodke.ground import RetryPolicy
@@ -406,6 +407,130 @@ def test_a_missing_password_variable_is_named(
     result = runner.invoke(app, ["run", str(_write(project, config))])
     assert result.exit_code == 2
     assert "ODKE_TEST_SECRET is not set" in result.output
+
+
+# --------------------------------------------------------------------------- #
+# store_lookup
+# --------------------------------------------------------------------------- #
+
+# What `SHOW INDEXES` answers once the people ontology is bootstrapped.
+INDEXES = [
+    {"name": f"odke_{what}_{label}", "type": kind, "labelsOrTypes": [label], "properties": props}
+    for label in ("Company", "Person")
+    for what, kind, props in (
+        ("key", "RANGE", ["key"]),
+        ("external_id", "RANGE", ["external_id"]),
+        ("names", "FULLTEXT", ["label", "aliases"]),
+    )
+]
+
+
+def test_store_lookup_reads_the_neo4j_sinks_store_before_it_writes(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hopper = {"key": "p:hopper", "label": "Grace Hopper", "aliases": []}
+
+    class Store(FakeDriver):
+        """Every name asked about finds her; the resolver decides which one she is."""
+
+        def answer(self, cypher: str) -> list[dict[str, Any]]:
+            if "fulltext" not in cypher:
+                return super().answer(cypher)
+            # The statement being answered is the last one recorded.
+            return [{"block": row["block"], "node": hopper} for row in self.calls[-1][2]["rows"]]
+
+    driver = Store({"SHOW INDEXES": INDEXES})
+    connected: list[str] = []
+
+    def connect(uri: str, auth: Any) -> Any:
+        connected.append(uri)
+        return driver
+
+    monkeypatch.setattr(neo4j_module, "_connect", connect)
+    monkeypatch.setenv("ODKE_TEST_SECRET", "not-a-real-password")
+    config = _config(store_lookup={"use": "neo4j", "tenant": "t1", "limit": 7})
+    config["stages"]["sink"] = _neo4j_sink()
+    result = execute(parse_config(config, base_dir=project))
+
+    # One connection, the sink's; the store is read before the first write.
+    assert connected == ["bolt://example.invalid:7687"]
+    modes = [mode for mode, _, _ in driver.calls]
+    assert modes[0] == "auto" and "read" in modes and "write" in modes
+    assert max(i for i, m in enumerate(modes) if m == "read") < modes.index("write")
+    reads = [(cypher, params) for mode, cypher, params in driver.calls if mode == "read"]
+    assert all(params["tenant"] == "t1" for _, params in reads)
+    assert any(params.get("limit") == 7 for _, params in reads)
+    # No resolver named: store_lookup brings the native one, and it found the person.
+    links = [(link.source_key, link.target_key, link.kind.value) for link in result.graph.links]
+    assert any(target == "p:hopper" and kind == "similar" for _, target, kind in links)
+    store = result.stats["stages"]["resolver"]["store"]
+    assert store["looked_up"] >= 1 and store["similar"] >= 1
+    assert driver.closed
+
+
+def test_a_dry_run_opens_no_store_and_says_so(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(uri: str, auth: Any) -> Any:
+        raise AssertionError("a dry run must not connect")
+
+    monkeypatch.setattr(neo4j_module, "_connect", refuse)
+    config = _config(store_lookup="neo4j")
+    config["stages"]["sink"] = _neo4j_sink()
+    result = runner.invoke(app, ["run", str(_write(project, config)), "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "store_lookup: a dry run opens no store" in result.output
+
+
+@pytest.mark.parametrize(
+    ("store_lookup", "stages", "message"),
+    [
+        ("neo4j", {}, "store_lookup: neo4j reads the store the run's neo4j sink writes to"),
+        ("neo", {"sink": _neo4j_sink()}, "did you mean 'neo4j'?"),
+        ({"use": "neo4j", "password": "x"}, {"sink": _neo4j_sink()}, "store_lookup.password"),
+        ({"use": "neo4j", "tenant_id": "x"}, {"sink": _neo4j_sink()}, "store_lookup.tenant_id"),
+        ("neo4j", {"sink": _neo4j_sink(), "resolver": "passthrough"}, "takes no lookup"),
+    ],
+)
+def test_a_store_lookup_that_cannot_run_is_refused_before_anything_runs(
+    project: Path, store_lookup: Any, stages: dict[str, Any], message: str
+) -> None:
+    config = _config(store_lookup=store_lookup)
+    config["stages"].update(stages)
+    if not stages:
+        del config["stages"]["sink"]
+    with pytest.raises(ConfigError, match=re.escape(message)):
+        build(parse_config(config, base_dir=project))
+
+
+class _OneStoredPerson:
+    """A store of one, as a lookup of your own: `{use: module:Name, ...}`."""
+
+    def __init__(self, key: str) -> None:
+        self.stored = Entity(key=key, type="Person", label="Grace Hopper")
+        self.asked: list[str] = []
+
+    def candidates(self, entities: Any) -> dict[str, list[Entity]]:
+        self.asked.extend(e.key for e in entities)
+        return {e.key: [self.stored] for e in entities}
+
+
+def test_a_store_lookup_of_your_own_is_named_by_import_path(
+    project: Path, support: types.ModuleType
+) -> None:
+    support.OneStoredPerson = _OneStoredPerson  # type: ignore[attr-defined]
+    config = _config(store_lookup={"use": f"{SUPPORT}:OneStoredPerson", "key": "p:grace"})
+    config["stages"]["resolver"] = {"use": "native", "threshold": 0.95}
+    built = build(parse_config(config, base_dir=project))
+    assert built.stages["resolver"].threshold == 0.95
+    result = execute(parse_config(config, base_dir=project))
+    links = {(link.target_key, link.kind.value) for link in result.graph.links}
+    assert ("p:grace", "similar") in links
+
+    # A router is not a lookup, and the config says so before anything runs.
+    config["store_lookup"] = {"use": f"{SUPPORT}:SkipPrefix", "prefix": "#"}
+    with pytest.raises(ConfigError, match="SkipPrefix is not a StoreLookup"):
+        build(parse_config(config, base_dir=project))
 
 
 # --------------------------------------------------------------------------- #

@@ -25,12 +25,14 @@ from openodke import (
     Document,
     Entity,
     EntityLink,
+    Evidence,
     Fact,
     LinkKind,
     Ontology,
     Pipeline,
     Resolution,
     StoreLookup,
+    Validator,
 )
 from openodke.corroborate import (
     MemoryLookup,
@@ -48,6 +50,7 @@ from openodke.sinks.neo4j import (
     store_indexes,
     stored_entity,
 )
+from openodke.stages import PassThroughGate, PassThroughGrounder
 from test_neo4j_sink import FakeDriver
 
 ACME = Entity(
@@ -478,6 +481,40 @@ def test_a_node_read_back_is_the_entity_the_sink_wrote() -> None:
     projected = {**_node(written), "founded": 2014}
     ontology = Ontology.from_dict({"types": {"Company": {}}, "predicates": {"founded": {}}})
     assert stored_entity(projected, "Company", ontology=ontology) == written
+
+
+# --------------------------------------------------------------------------- #
+# The Validator and the configs
+# --------------------------------------------------------------------------- #
+
+
+def test_the_validator_resolves_against_a_store_and_reports_it() -> None:
+    by_domain = Entity(key="c:acme-inc", type="Company", label="ACME Inc.", aliases=("acme.com",))
+    widget = Entity(key="c:widget", type="Company", label="Acme Widget")
+    facts = [
+        Fact(subject=e, predicate="name", object_value=e.label, evidence=(Evidence(doc_id="d"),))
+        for e in (by_domain, widget)
+    ]
+    validator = Validator(
+        grounder=PassThroughGrounder(), gate=PassThroughGate(), lookup=MemoryLookup(STORE)
+    )
+    kg, report = validator.validate(facts, [Document(id="d", text="ACME Inc. and Acme Widget.")])
+    assert {f.subject.key for f in kg.facts} == {"c:acme", "c:widget"}
+    assert report.store == {
+        "looked_up": 2,
+        "candidates": 2,
+        "rekeyed": 1,
+        "same_as": 1,
+        "similar": 1,
+        "different": 0,
+    }
+    assert "store         2 entities looked up, 2 candidates in the store: 1 re-keyed" in (
+        report.render()
+    )
+    assert Validator().validate([], []).report.store is None
+
+    with pytest.raises(ValueError, match=r"NativeResolver\(lookup=\.\.\.\)"):
+        Validator(resolver=NativeResolver(), lookup=MemoryLookup(STORE))
 
 
 # --------------------------------------------------------------------------- #
