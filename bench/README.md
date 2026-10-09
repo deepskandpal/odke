@@ -74,7 +74,10 @@ cross-model comparison.
 
 Each competitor directory keeps its triples (`facts.jsonl`), its model and token
 usage (`usage.json`) and its report; every run keeps its predictions per
-configuration (`predictions/`), which is what an audit reads.
+configuration (`predictions/`), which is what an audit reads. A document a
+competitor fails on (a bad key fails them all) would score as an empty answer,
+so `competitors.py` exits non-zero when any did, and `tables.py` leaves that set
+out of the averages and says so.
 
 The published comparison (PR #105) ran on `anthropic/claude-sonnet-5-5`
 extracting and `anthropic/claude-haiku-4-5` grounding. No other provider has run

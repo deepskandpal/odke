@@ -43,6 +43,11 @@ def rejected(report: dict[str, Any]) -> int:
     return int(found.group(1)) if found else 0
 
 
+def failed(folder: Path) -> int:
+    """Documents a competitor's extraction lost, from its `usage.json`; 0 for openodke's."""
+    return int((load(folder / "usage.json") or {}).get("failed_documents") or 0)
+
+
 def models(folder: Path) -> tuple[str | None, str | None]:
     """The extraction and grounding model strings a set's config names."""
     config = load(folder / "odke.json") or {}
@@ -109,9 +114,18 @@ def table(title: str, sets: list[Path], keys: list[str], counts: list[str]) -> l
     out.append("|---" * (len(keys) + len(counts) + 3) + "|")
     spend: dict[str, tuple[str, str]] = {}
     for system, sub in SYSTEMS:
-        reports = [(d / sub, r) for d in sets if (r := load(d / sub / "report.json")) is not None]
+        # A set whose extraction lost documents scores them as empty answers, which
+        # is not the system's score: it is left out, as a set with no report is.
+        dropped = [d for d in sets if failed(d / sub)]
+        reports = [
+            (d / sub, r)
+            for d in sets
+            if d not in dropped and (r := load(d / sub / "report.json")) is not None
+        ]
+        gone = f"({len(dropped)} of {len(sets)} sets dropped: documents failed to extract)"
         if not reports:
-            out.append(f"| {system} | (no report) |" + " |" * (len(keys) + len(counts) + 1))
+            empty = gone if dropped else "(no report)"
+            out.append(f"| {system} | {empty} |" + " |" * (len(keys) + len(counts) + 1))
             continue
         for row in ROWS:
             means = [
@@ -130,12 +144,14 @@ def table(title: str, sets: list[Path], keys: list[str], counts: list[str]) -> l
             )
         costs = [cost(r, f, sub) for f, r in reports]
         spend[system] = (dollars([c[0] for c in costs]), dollars([c[1] for c in costs]))
-        missing = len(sets) - len(reports)
+        missing = len(sets) - len(reports) - len(dropped)
         if missing:
             out.append(
                 f"| | ({missing} of {len(sets)} sets missing) |"
                 + " |" * (len(keys) + len(counts) + 1)
             )
+        if dropped:
+            out.append(f"| | {gone} |" + " |" * (len(keys) + len(counts) + 1))
     out.append("")
     out.append(
         "Cost: " + "; ".join(f"{s} extraction {e} + grounding {g}" for s, (e, g) in spend.items())
