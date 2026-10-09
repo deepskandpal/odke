@@ -14,7 +14,12 @@ changes the answer:
 - the response schema;
 - the spec's sampling parameters: `temperature`, `max_tokens` and `extra`;
 - the key of each registered prompt the messages carry (DECISIONS #27), where
-  the registry knows the text.
+  the registry knows the text;
+- `repeat`, when it is not 0: which draw of one question this is. Gold
+  adjudication asks each question three times on purpose (#145), and without
+  it the second and third would replay the first. Draw 0 adds nothing, so a key
+  written before `repeat` existed is still the same key, and the first draw of
+  a question shares its entry with an ordinary call of it.
 
 `timeout` and `api_key_env` are left out: they decide whether a call
 succeeds, not what it says. Change anything else, the prompt's version
@@ -87,8 +92,12 @@ def prompt_keys(messages: Sequence[Message]) -> list[str]:
 def request(
     messages: Sequence[Message], *, spec: ModelSpec, schema: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Everything that changes the answer, as the object `cache_key` hashes."""
-    return {
+    """Everything that changes the answer, as the object `cache_key` hashes.
+
+    `repeat` is in it only when it is not 0, so every key from before it
+    existed still finds its entry.
+    """
+    body: dict[str, Any] = {
         "format": FORMAT,
         "model": spec.model,
         "base_url": spec.base_url,
@@ -101,6 +110,9 @@ def request(
         },
         "prompts": prompt_keys(messages),
     }
+    if spec.repeat:
+        body["repeat"] = spec.repeat
+    return body
 
 
 def cache_key(

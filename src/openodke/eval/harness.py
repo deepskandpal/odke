@@ -25,6 +25,11 @@ benchmark's own metrics. With `validator` it also runs `openodke.Validator`
 over the same output (#129), and the report has both rows: the pipeline, and
 the pipeline with the Validator: grounded, normalised, resolved, corroborated
 and gated, with what that cost.
+
+With `adjudicate`, each prediction your gold lacks is grounded three times,
+and one supported in two of them is listed as possibly missing from gold
+(`openodke.eval.adjudication`, #145): an adjudicated precision is printed beside
+each row's strict one, and the list is written for audit.
 """
 
 from __future__ import annotations
@@ -85,7 +90,8 @@ FORMATS = ("triples", *ADAPTERS)
 DESCRIPTION = """\
 odke eval pipeline (--cmd TEMPLATE | --run MODULE:FUNCTION | --predictions FILE)
                    (--labels GOLD_FACTS --documents DOCS | --bench PREPARED)
-                   [--adapter NAME] [--ontology FILE] [--validator [--config RUN_CONFIG]]
+                   [--adapter NAME] [--ontology FILE] [--validator] [--config RUN_CONFIG]
+                   [--adjudicate LIST]
 
 Runs your pipeline over the documents and scores what it returns.
 
@@ -108,7 +114,14 @@ folder, each file named by its path inside it, or Document JSONL).
 
 --validator runs the Validator over the same output and reports both rows:
 with the stages and models of --config (a bench set's own odke.json by
-default), or the Validator's defaults."""
+default), or the Validator's defaults.
+
+--adjudicate LIST, with --labels: gold is incomplete, so each prediction the
+gold lacks is grounded three times against its document (--config's grounder,
+or the default one). One supported in two of the three runs is possibly
+missing from gold. Each row's adjudicated precision, counting those as hits,
+is printed beside its strict one, which never changes, and every prediction
+the gold lacks goes to LIST (JSONL) with its three verdicts."""
 
 
 class PipelineError(RuntimeError):
@@ -536,6 +549,7 @@ def evaluate_pipeline(
     validator: bool = False,
     config: str | Path | None = None,
     timeout: float = TIMEOUT,
+    adjudicate: str | Path | None = None,
 ) -> EvalReport:
     """Run a pipeline one way, read its output, validate it if asked, and score it.
 
@@ -543,6 +557,9 @@ def evaluate_pipeline(
     `documents`) and `bench`. `validator` runs `openodke.Validator` over the
     same output and adds its row; `config` is the run config it takes its
     stages and models from, a bench set's own `odke.json` by default.
+    `adjudicate` names the file the adjudication list goes to: each prediction
+    the gold lacks, grounded three times by `config`'s grounder or the default
+    one (`openodke.eval.adjudication`). It needs `labels`.
     """
     modes = [m for m in (command, function, predictions) if m is not None]
     if len(modes) != 1:
@@ -555,8 +572,16 @@ def evaluate_pipeline(
         raise ValueError(f"unknown adapter {adapter!r}; one of {', '.join(FORMATS)}")
     if function is not None and adapter != "triples":
         raise ValueError("--adapter reads files; a callable returns rows or facts itself")
-    if config is not None and not validator:
-        raise ValueError("--config is for --validator: the Validator's stages and models")
+    if config is not None and not (validator or adjudicate is not None):
+        raise ValueError(
+            "--config is for --validator and --adjudicate: the Validator's stages and "
+            "models, and the grounder's"
+        )
+    if adjudicate is not None and labels is None:
+        raise ValueError(
+            "--adjudicate needs --labels: it lists the predictions your gold facts lack, by "
+            "openodke's matching, and a --bench set is scored by its benchmark's own"
+        )
     if labels is not None:
         if documents is None:
             raise ValueError("--labels needs --documents: the texts the pipeline reads")
@@ -579,7 +604,73 @@ def evaluate_pipeline(
     ran = f" in {output.seconds:.1f} s" if output.seconds is not None else ""
     notes.insert(0, f"{output.how}: {len(output.items)} row(s){ran}, {len(facts)} fact(s)")
     checked = check(facts, corpus, config) if validator else None
-    return score(corpus, facts, checked=checked, notes=notes)
+    report = score(corpus, facts, checked=checked, notes=notes)
+    if adjudicate is not None:
+        rows = [(PIPELINE, facts)] + ([(VALIDATOR, checked.facts)] if checked else [])
+        report = adjudicated(report, corpus, rows, Path(adjudicate), config)
+    return report
+
+
+def adjudicated(
+    report: EvalReport,
+    corpus: Corpus,
+    rows: Sequence[tuple[str, Sequence[Fact]]],
+    audit: Path,
+    config: str | Path | None = None,
+) -> EvalReport:
+    """`report` with its adjudication section, after writing the list to `audit`.
+
+    The grounder is `config`'s, as `odke validate --config` builds it, or the
+    default `LLMGrounder` on the default models; metered either way, so the
+    report names the model it called.
+    """
+    from openodke.eval.adjudication import NEEDED, RUNS, adjudicate, write_audit
+    from openodke.eval.cost import CostMeter
+
+    assert corpus.gold is not None
+    if config is not None:
+        from openodke.run.build import build
+        from openodke.run.config import load_config
+
+        loaded = load_config(config)
+        built = build(
+            loaded.model_copy(update={"models": loaded.models.model_copy(update={"meter": True})})
+        )
+        grounder = built.stages["grounder"]
+        meter = built.context.meter
+        assert meter is not None
+        configured = {"ground": built.context.roles.ground.model}
+    else:
+        from openodke.ground import LLMGrounder
+        from openodke.llm.roles import ModelRoles
+
+        roles = ModelRoles()
+        meter = CostMeter()
+        grounder = LLMGrounder(roles, client=meter.client(roles.client_for("ground"), "ground"))
+        configured = {"ground": roles.ground.model}
+    section, entries = adjudicate(rows, corpus.gold, corpus.documents, grounder)
+    write_audit(audit, entries)
+    listed = sum(entry.listed for entry in entries)
+    note = (
+        f"adjudication: {len(entries)} prediction(s) the gold lacks, grounded {RUNS} times "
+        f"each; {listed} supported in {NEEDED} or more, possibly missing from gold "
+        f"(every one, with its verdicts, in {audit})"
+    )
+    stats = getattr(grounder, "stats", None)
+    prompts = stats.get("prompts", []) if isinstance(stats, Mapping) else []
+    run = report.run.model_copy(
+        update={
+            "models": {**models_called(meter.records, configured), **report.run.models},
+            "prompts": tuple(dict.fromkeys([*report.run.prompts, *prompts])),
+        }
+    )
+    return report.model_copy(
+        update={
+            "adjudication": section.model_copy(update={"audit": str(audit)}),
+            "notes": (*report.notes, note),
+            "run": run,
+        }
+    )
 
 
 # --------------------------------------------------------------------------- #

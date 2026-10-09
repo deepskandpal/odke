@@ -53,6 +53,11 @@ class ModelSpec(BaseModel):
     # Anything provider-specific that has no business in this model: reasoning
     # effort, safety settings, an Azure api_version, a Bedrock region.
     extra: dict[str, Any] = Field(default_factory=dict)
+    # Which draw of one request this is, 0 for the first, and never sent to a
+    # provider. A caller that asks the same question again on purpose, as gold
+    # adjudication grounds a fact three times (#145), numbers the draws, so
+    # anything that keys a request, a response cache say, keeps them apart.
+    repeat: int = Field(default=0, ge=0)
 
     @property
     def provider(self) -> str:

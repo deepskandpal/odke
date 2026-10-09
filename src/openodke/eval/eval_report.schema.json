@@ -60,6 +60,10 @@
     "judged_precision": {
       "description": "Added in 1.1, so not required: precision with no gold, a judge corrected by a labelled sample (#144); null when not asked for.",
       "anyOf": [{"type": "null"}, {"$ref": "#/$defs/judged_precision"}]
+    },
+    "adjudication": {
+      "description": "Added in 1.1, so not required: the predictions the gold lacks that the grounder supports in enough runs, and each row's precision strict and adjudicated (#145); null when not asked for.",
+      "anyOf": [{"type": "null"}, {"$ref": "#/$defs/adjudication"}]
     }
   },
   "$defs": {
@@ -377,6 +381,31 @@
         "minimum": {"$ref": "#/$defs/count"},
         "calibrated": {"type": "boolean"},
         "coverage": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/coverage_totals"}]}
+      }
+    },
+    "adjudicated_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "not_in_gold", "asked", "possibly_missing", "strict", "adjudicated"],
+      "properties": {
+        "name": {"type": "string"},
+        "not_in_gold": {"$ref": "#/$defs/count"},
+        "asked": {"$ref": "#/$defs/count"},
+        "possibly_missing": {"$ref": "#/$defs/count"},
+        "strict": {"$ref": "#/$defs/estimate"},
+        "adjudicated": {"$ref": "#/$defs/estimate"}
+      }
+    },
+    "adjudication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runs", "needed", "questions", "rows", "audit"],
+      "properties": {
+        "runs": {"type": "integer", "minimum": 1},
+        "needed": {"type": "integer", "minimum": 1},
+        "questions": {"$ref": "#/$defs/count"},
+        "rows": {"type": "array", "items": {"$ref": "#/$defs/adjudicated_row"}},
+        "audit": {"type": ["string", "null"], "description": "Where the list was written, as JSONL."}
       }
     }
   }
