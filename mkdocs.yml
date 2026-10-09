@@ -1,7 +1,7 @@
 site_name: openodke
 site_description: >-
-  Text in, a grounded knowledge graph out: ontology-guided knowledge extraction
-  for Neo4j or any graph store.
+  The verification layer between any extractor and the graph store: ground,
+  resolve, corroborate and evaluate extracted triples.
 site_url: https://openodke.dev/
 repo_url: https://github.com/deepskandpal/odke
 repo_name: deepskandpal/odke
