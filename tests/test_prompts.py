@@ -43,6 +43,13 @@ def test_the_old_constants_are_the_registered_texts() -> None:
     assert get("infer.repair", 1).text == infer_llm._REPAIR
 
 
+# The entity-pair judge's lineage, which both its keys carry.
+PAIR = (
+    "openodke, after LLM entity matching (Peeters, Steiner & Bizer 2023, arXiv 2310.11244), "
+    "asked in both orders for position bias (Zheng et al. 2023, arXiv 2306.05685 §3.4)"
+)
+
+
 def test_every_prompt_says_where_it_came_from() -> None:
     assert {p.key: p.source for p in registered()} == {
         "extract.repair@1": "openodke",
@@ -51,6 +58,8 @@ def test_every_prompt_says_where_it_came_from() -> None:
         "ground.span@1": "openodke",
         "infer.repair@1": "openodke",
         "infer@1": "openodke",
+        "pair.user@1": PAIR,
+        "pair@1": PAIR,
         "reextract@1": (
             "openodke, after GraphRAG's gleaning pass (Edge et al. 2024, arXiv 2404.16130), "
             "scoped to one window and grounded after"
