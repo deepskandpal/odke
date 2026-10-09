@@ -275,6 +275,8 @@ ablation can count what would have gone; the `Validator` is the gate.
 rather than per batch — before anything implemented them. Later would have
 been a migration for every caller.
 
+*Renamed by #26:* the tenth stage is `Gate` now. "Validator" names the layer.
+
 ### 21. A stage the platform also does is warned about, never forbidden
 
 The package sits on top of any platform, and some platforms already do a
@@ -457,3 +459,55 @@ span.
 *Cost:* one more optional field on a frozen model. It defaults to `cited`,
 because every extractor in this package cites, so a fact serialised by 0.2.x
 loads as exactly what it was.
+
+### 26. The Validator is the layer; the gate is a stage
+
+1.0 is two products in one package. The Validator sits between any extractor
+and the store, and grounds, resolves, corroborates, gates and writes (#24). The
+Evaluator runs a pipeline on benchmarks or your labels and says where it loses
+facts and whether the Validator helps. "Validator" is the name people will look
+for: `openodke.Validator`, `odke validate`.
+
+But since 0.1 that name has meant one stage: the tenth Protocol, the gate that
+decides what is written (#20), and `VerdictValidator`, the gate `odke run`
+ships. One word for the whole layer and for one of its stages makes every
+sentence about either ambiguous, in the docs and in a traceback. So the stage
+gives the name up:
+- `stages.Validator` is `stages.Gate`, and `PassThroughValidator` is
+  `PassThroughGate`;
+- `VerdictValidator` is `VerdictGate`, in `openodke.gate`;
+- `Pipeline(validator=...)` is `Pipeline(gate=...)`, and the `odke run` key
+  `validator:` is `gate:`.
+
+The method keeps its name, `validate(fact, ontology)`. Renaming it would break
+every gate already written, and a gate validating a fact still reads correctly.
+The inner stages keep theirs too (grounder, normaliser, resolver, corroborator,
+scorer), because each names one job and the decisions above use them.
+
+The old names keep working until 1.0.0, because nothing public is removed
+before 1.0 (#24). Each warns where it is used:
+- an old class name, at every path where it was public (`openodke`,
+  `openodke.stages`, `openodke.pipeline`, `openodke.validators`), is the new
+  class itself, read through the module's `__getattr__` with a
+  `DeprecationWarning`. `isinstance`, subclassing and old pickles keep working.
+- `Pipeline(validator=...)` and `Pipeline.validator` warn and pass through to
+  the gate.
+- a config with `validator:` warns and runs. `odke run` prints that warning
+  itself, because Python hides a library's `DeprecationWarning` from the person
+  at the terminal. Naming both keys is an error.
+
+Two names do not follow the rest:
+- **`openodke.Validator` is the gate only until #129.** Then it becomes the
+  layer: one entry point that runs ground, resolve, corroborate, gate and write.
+  Its warning says so now, so a caller learns the name is about to change
+  meaning, not merely move.
+- **The run report keeps `stages.validator`.** The gate's counts sit under that
+  key in `KnowledgeGraph.stats`, in every JSONL manifest written so far, and in
+  whatever reads those. A report key is a format, and it changes with the
+  report's schema version, not with a Python name.
+
+*Cost:* two names for one thing until 1.0.0. `openodke.Validator` changes
+meaning instead of disappearing, so code that ignored its warning will not
+fail at import; it will fail later, wherever it used the name as the gate. And
+until the report's schema moves, a config that says `gate:` produces a report
+whose line says `validator`.
