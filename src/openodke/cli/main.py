@@ -211,6 +211,12 @@ def run_command(
     ),
     model: str | None = typer.Option(None, "--model", help=MODEL_HELP),
     model_provider: str | None = typer.Option(None, "--model-provider", help=MODEL_PROVIDER_HELP),
+    widen: bool = typer.Option(
+        False,
+        "--widen",
+        help="Give a not_found whose cited span is narrower than its sentence one more "
+        "grounding call, against the sentence. Needs stages.grounder: llm.",
+    ),
 ) -> None:
     """Run the whole pipeline from a config file.
 
@@ -233,6 +239,8 @@ def run_command(
         if chosen is not None:
             loaded = loaded.with_model(chosen)
             typer.echo(f"models: every role on {chosen}")
+        if widen:
+            loaded = loaded.with_widen()
         result = execute(loaded, dry_run=dry_run)
     except (ConfigError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
