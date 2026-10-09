@@ -38,8 +38,9 @@ Nodes are never merged into one another ([DECISIONS #16](decisions.md)).
 **A fact's relationship is `MERGE`d on `signature`,** which is a SHA-256 of
 `Fact.signature`: subject, predicate, object, polarity and the identity-bearing
 qualifiers ([Concepts](concepts.md#the-signature-and-what-is-in-it)). A second run
-mints new fact ids and new clocks, finds the relationship it wrote, and updates it
-rather than adding another. Two facts that differ only in a reconcilable
+mints new fact ids and new clocks, finds the relationship it wrote, and replaces
+its properties rather than adding another relationship, so a qualifier or a
+conflict stamp the fact no longer carries goes with the rewrite. Two facts that differ only in a reconcilable
 qualifier are one relationship; uptime at p50 and at p95 are two; a denial is its
 own relationship with `polarity: 'denied'`.
 

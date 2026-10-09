@@ -81,11 +81,13 @@ class NetworkXSink:
       graph holds, as Neo4j's `MATCH` on both ends would. Nodes are never
       merged (DECISIONS #16).
 
-    Writing adds and updates, never removes: `add_node`/`add_edge` on a key
-    that exists updates its attributes, as `MERGE … SET +=` does. So writing
-    one graph twice, or rerunning the pipeline into the same `graph`, leaves
-    the counts where they were. The node id is the key alone, as in RDF; a
-    key two types share is one node.
+    Writing adds and updates, and never removes a node or an edge. A node that
+    exists has its attributes updated, as `MERGE … SET n +=` does; a fact edge
+    that exists has them replaced, as `SET r = props` does, so nothing a
+    rewritten fact no longer carries survives it. So writing one graph twice,
+    or rerunning the pipeline into the same `graph`, leaves the counts where
+    they were. The node id is the key alone, as in RDF; a key two types share
+    is one node.
     """
 
     def __init__(self, graph: Any = None, *, ontology: Ontology | None = None) -> None:
@@ -159,7 +161,9 @@ def _fill(graph: Any, kg: KnowledgeGraph, ontology: Ontology | None) -> None:
                 value=fact.object_value,
             )
         graph.add_edge(fact.subject.key, target, key=signature)
-        graph.edges[fact.subject.key, target, signature].update(attrs)
+        edge = graph.edges[fact.subject.key, target, signature]
+        edge.clear()
+        edge.update(attrs)
 
     for (_, predicate), rows in sorted(projections(kg, ontology).items()):
         name = _node_name("property", predicate)

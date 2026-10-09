@@ -208,8 +208,8 @@ class Neo4jAdminCsvSink:
       would have set — evidence lists as arrays, both clocks as datetimes.
 
     Rows `Neo4jSink` would MERGE into one — two facts with one signature, a
-    link written twice — are one row here, their properties combined in plan
-    order as successive `SET r += row.props` would combine them. A link is
+    link written twice — are one row here, holding the properties the last of
+    them sets, as successive `SET r = row.props` would leave them. A link is
     written between every node holding each key, which is what its `MATCH` on
     `(:Entity {key})` finds; a key no entity in the graph holds finds nothing,
     since an import starts from an empty database.
@@ -295,7 +295,7 @@ class Neo4jAdminCsvSink:
         merged: dict[str, dict[str, Any]] = {}
         for row in st.rows:
             claims[row["signature"]] = {f: row[f] for f in fields}
-            merged.setdefault(row["signature"], {}).update(row["props"])
+            merged[row["signature"]] = row["props"]
         stem = f"{subject_type}-{predicate}"
         node_header = (f"signature:ID({_CLAIM_SPACE})", ":LABEL", *_typed(fields, claims.values()))
         node_rows = tuple(
@@ -316,10 +316,7 @@ class Neo4jAdminCsvSink:
         subject_type, predicate, object_type = st.names
         merged: dict[str, tuple[str, str, dict[str, Any]]] = {}
         for row in st.rows:
-            start, end, props = merged.setdefault(
-                row["signature"], (row["subject_key"], row["object_key"], {})
-            )
-            props.update(row["props"])
+            merged[row["signature"]] = (row["subject_key"], row["object_key"], row["props"])
         return self._relationships(
             f"{_schema_name('edges', f'{subject_type}-{predicate}-{object_type}')}.csv",
             predicate,

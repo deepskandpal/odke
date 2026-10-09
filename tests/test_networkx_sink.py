@@ -263,6 +263,24 @@ def test_the_networkx_sink_is_idempotent() -> None:
     assert counts() == before
 
 
+def test_a_rewritten_fact_edge_is_replaced_so_a_stale_stamp_goes() -> None:
+    """Run 1 stamped the claim lost; run 2 found no rival. Its edge must say so."""
+    ada = Entity(key="p:ada", type="Person")
+    stamped = Fact(
+        subject=ada,
+        predicate="born",
+        object_value="1815",
+        qualifiers={"odke.conflict": {"status": "lost"}},
+    )
+    sink = NetworkXSink()
+    sink.write(KnowledgeGraph(facts=(stamped,)))
+    sink.write(KnowledgeGraph(facts=(stamped.model_copy(update={"qualifiers": {}}),)))
+    signature = signature_of(stamped)
+    edge = sink.graph.edges["p:ada", claim_node(signature), signature]
+    assert "odke.conflict" not in edge
+    assert (edge["kind"], edge["predicate"], edge["signature"]) == ("fact", "born", signature)
+
+
 def test_the_sink_fills_the_graph_it_is_given_and_to_graph_matches_write() -> None:
     existing = nx.MultiDiGraph()
     existing.add_node("elsewhere", kind="entity")

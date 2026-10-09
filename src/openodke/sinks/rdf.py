@@ -140,7 +140,7 @@ class RdfSink:
     so the file describes itself and `Ontology.from_owl` reads it back.
 
     Two facts with one signature are one statement node, carrying the later
-    fact, as successive `SET r += props` would leave a Neo4j relationship.
+    fact, as successive `SET r = props` would leave a Neo4j relationship.
     The file is rewritten on every `write`.
     """
 
