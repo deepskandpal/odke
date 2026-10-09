@@ -137,7 +137,9 @@ class RdfSink:
     With an `ontology`, the output also declares its schema — `owl:Class`
     with `rdfs:subClassOf`, `owl:ObjectProperty` or `owl:DatatypeProperty`
     with domain, range and `owl:FunctionalProperty` for single cardinality —
-    so the file describes itself and `Ontology.from_owl` reads it back.
+    so the file describes itself and `Ontology.from_owl` reads it back. A
+    literal value is then typed with its predicate's range, `"1815-12-10"`
+    as an `xsd:date`, so SPARQL compares it as one.
 
     Two facts with one signature are one statement node, carrying the later
     fact, as successive `SET r = props` would leave a Neo4j relationship.
@@ -241,6 +243,37 @@ class _Builder:
             value = json.dumps(value, default=str, ensure_ascii=False)
         return Literal(value)
 
+    def _value(self, fact: Fact) -> Any:
+        """A literal fact's value, typed as its predicate's range declares.
+
+        The schema says `xsd:date`; a date written as plain text compares as
+        text, so `FILTER(?born < "1900-01-01"^^xsd:date)` would never find it.
+        Text that is not a valid form of the datatype — a month, `"1815-12"`,
+        for a date — stays a plain literal rather than become an ill-typed one.
+
+        Only text is typed here: rdflib already types a number, a boolean or a
+        datetime by its Python type. Plain text already is an xsd:string, and
+        rdflib reads any text as some boolean, so a boolean check proves nothing.
+        """
+        from rdflib import Literal
+        from rdflib.namespace import XSD
+        from rdflib.term import XSDToPython
+
+        value = storable(fact.object_value)
+        ontology = self.sink.ontology
+        declared = ontology.predicates.get(fact.predicate) if ontology is not None else None
+        name = XSD_RANGES.get(declared.range) if declared is not None else None
+        if isinstance(value, str) and name not in (None, "string", "boolean"):
+            datatype = self._iri(f"{XSD}{name}")
+            read = XSDToPython.get(datatype)
+            try:
+                if read is not None:
+                    read(value)
+                    return Literal(value, datatype=datatype)
+            except (ValueError, ArithmeticError):
+                pass
+        return self._literal(value)
+
     def _put(self, subject: URIRef, predicate: URIRef, value: Any) -> None:
         if value is not None:
             self.g.add((subject, predicate, self._literal(value)))
@@ -276,7 +309,7 @@ class _Builder:
         if fact.object_entity is not None:
             obj = self._iri(sink.entity_iri(fact.object_entity.key))
         elif fact.object_value is not None:
-            obj = self._literal(fact.object_value)
+            obj = self._value(fact)
         if (
             obj is not None
             and fact.polarity is Polarity.ASSERTED

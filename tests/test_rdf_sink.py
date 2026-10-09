@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -138,6 +138,26 @@ def test_a_value_the_corroborator_voted_down_is_not_a_plain_triple(tmp_path: Pat
     # The loser stays a statement node, so it is still there to query.
     stated = "SELECT ?year WHERE { ?st rdf:predicate ont:founded ; rdf:object ?year }"
     assert _select(g, stated) == {("1999",), ("2001",)}
+
+
+def test_a_value_is_typed_as_its_predicate_range_declares(tmp_path: Path) -> None:
+    """The schema says xsd:date, so a date must compare as a date in SPARQL, not as text."""
+    ontology = Ontology(predicates={"born": Predicate(name="born", range="date")})
+    ada, grace = Entity(key="p:ada", type="Person"), Entity(key="p:grace", type="Person")
+    graph = KnowledgeGraph(
+        facts=(
+            Fact(subject=ada, predicate="born", object_value="1815-12-10"),
+            Fact(subject=grace, predicate="born", object_value="1906-12"),
+        )
+    )
+    g = _loaded(tmp_path, "turtle", graph, ontology=ontology)
+    before = f'SELECT ?who WHERE {{ ?who ont:born ?o FILTER(?o < "1900-01-01"^^<{XSD.date}>) }}'
+    assert _select(g, before) == {(f"{ENT}p%3Aada",)}
+    # The statement node's object is the same typed term.
+    stated = "SELECT ?o WHERE { ?st rdf:subject ent:p%3Aada ; rdf:object ?o }"
+    assert _select(g, stated) == {(date(1815, 12, 10),)}
+    # A month is no xsd:date: it stays plain text rather than become an ill-typed literal.
+    assert g.value(URIRef(f"{ENT}p%3Agrace"), URIRef(f"{ONT}born")) == Literal("1906-12")
 
 
 # --------------------------------------------------------------------------- #
