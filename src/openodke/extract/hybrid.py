@@ -13,6 +13,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from openodke._batch import incomplete, is_config_error, told
 from openodke.corroborate.normalize import normalize_value
 from openodke.extract._common import Documents, index_documents
 from openodke.extract.pattern import PatternExtractor
@@ -129,12 +130,24 @@ class HybridExtractor:
     def extract_many(self, chunks: Sequence[Chunk], ontology: Ontology) -> list[list[Fact]]:
         docs = [self._document(chunk) for chunk in chunks]
         reports = [self.report.setdefault(d.id, PathReport(modality=d.modality)) for d in docs]
+        # A chunk that fails on either path fails alone (`openodke._batch`).
+        failures: dict[int, Exception] = {}
         # The free path first, chunk by chunk, so its failure costs no model call.
-        pattern = [
-            _run(self.pattern, chunk, doc, ontology) if doc.modality != "unstructured" else None
-            for chunk, doc in zip(chunks, docs, strict=True)
+        pattern: list[list[Fact] | None] = []
+        for at, (chunk, doc) in enumerate(zip(chunks, docs, strict=True)):
+            if doc.modality == "unstructured":
+                pattern.append(None)
+                continue
+            try:
+                pattern.append(_run(self.pattern, chunk, doc, ontology))
+            except Exception as exc:
+                if is_config_error(exc) or isinstance(exc, BudgetExceeded):
+                    raise
+                pattern.append(None)
+                failures[at] = exc
+        prose = [
+            i for i, doc in enumerate(docs) if doc.modality != "structured" and i not in failures
         ]
-        prose = [i for i, doc in enumerate(docs) if doc.modality != "structured"]
         model: dict[int, list[Fact]] = {}
         stop: BudgetExceeded | None = None
         if self.llm is not None and prose:
@@ -154,6 +167,12 @@ class HybridExtractor:
                     if isinstance(partial, list) and len(partial) == len(prose)
                     else [None] * len(prose)
                 )
+                failures.update({prose[j]: e for j, e in exc.failures.items()})
+            except Exception as exc:
+                if is_config_error(exc) or (got := told(exc, len(prose))) is None:
+                    raise
+                found, theirs = got
+                failures.update({prose[j]: e for j, e in theirs.items()})
             model = {i: facts for i, facts in zip(prose, found, strict=True) if facts is not None}
         out: list[list[Fact]] = []
         for i, report in enumerate(reports):
@@ -170,14 +189,21 @@ class HybridExtractor:
             kept = merge(candidates, ontology=ontology)
             report.merged += len(candidates) - len(kept)
             out.append(kept)
+        if stop is None and not failures:
+            return out
+        # None for a chunk that failed, and for one with no path finished: the
+        # stop reached it first.
+        partial_out: list[list[Fact] | None] = [
+            None
+            if i in failures or (pattern[i] is None and i in prose and i not in model)
+            else facts
+            for i, facts in enumerate(out)
+        ]
         if stop is not None:
-            # A chunk with no path finished is one the stop reached first.
-            stop.partial = [
-                None if pattern[i] is None and i in prose and i not in model else facts
-                for i, facts in enumerate(out)
-            ]
+            stop.partial = partial_out
+            stop.failures = failures
             raise stop
-        return out
+        raise incomplete(failures, partial_out)
 
     def offered(self, ontology: Ontology) -> list[str] | None:
         """The predicates the model path is shown, or None when it cannot say.
@@ -221,18 +247,27 @@ class HybridExtractor:
         made = calls if isinstance(calls, list) else []
         many = getattr(llm, "extract_many", None)
         if not callable(many):
-            found: list[list[Fact]] = []
-            for chunk, doc in zip(chunks, docs, strict=True):
+            found: list[list[Fact] | None] = []
+            failed: dict[int, Exception] = {}
+            for at, (chunk, doc) in enumerate(zip(chunks, docs, strict=True)):
                 seen = len(made)
                 try:
                     found.append(_run(llm, chunk, doc, ontology))
                 except BudgetExceeded as stop:
                     stop.partial = [*found, *([None] * (len(chunks) - len(found)))]
+                    stop.failures = failed
                     raise
+                except Exception as exc:
+                    if is_config_error(exc):
+                        raise
+                    found.append(None)
+                    failed[at] = exc
                 finally:
                     for call in made[seen:]:
                         self.report[doc.id].count_call(call)
-            return found
+            if failed:
+                raise incomplete(failed, found)
+            return [facts for facts in found if facts is not None]
         for doc in docs:
             _register(llm, doc)
         seen = len(made)

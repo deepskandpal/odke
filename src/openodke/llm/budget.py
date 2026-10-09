@@ -113,8 +113,9 @@ class BudgetExceeded(RuntimeError):
 
     `limit` names the limit that stopped it, `budget` and `spent` say where it
     stood, and `ledger` is the ledger, whose `spent` keeps counting the calls
-    that were already in flight. `partial` is set by a stage that ran a batch:
-    what it finished before the stop.
+    that were already in flight. A stage that ran a batch sets `partial`, what
+    it finished before the stop, and `failures`, by index, the items of the
+    batch that failed on their own first (`openodke._batch`).
     """
 
     def __init__(
@@ -125,6 +126,8 @@ class BudgetExceeded(RuntimeError):
         self.spent = spent
         self.ledger = ledger
         self.partial: Any = None
+        # Items of the batch that failed on their own before the stop, by index.
+        self.failures: dict[int, Exception] = {}
         super().__init__(
             f"stopped at budget: {describe(limit, spent, budget)}; no further model call is made"
         )

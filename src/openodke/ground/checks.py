@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from openodke._batch import incomplete, is_config_error, told
 from openodke.corroborate.provenance import CHECK
 from openodke.ground.locate import SpanLocator
 from openodke.ground.span import Counts, SpanGrounder
@@ -130,8 +131,13 @@ class CheckedGrounder:
     def ground_many(self, facts: Sequence[Fact], doc: Document) -> list[Fact]:
         try:
             return self.ground_documents([(facts, doc)])[0]
-        except BudgetExceeded as stop:
-            stop.partial = stop.partial[0] if isinstance(stop.partial, list) else None
+        except Exception as exc:
+            # One document's row, not a batch of one.
+            partial = getattr(exc, "partial", None)
+            if isinstance(partial, list):
+                setattr(exc, "partial", partial[0])  # noqa: B010
+                if hasattr(exc, "failures"):
+                    setattr(exc, "failures", {})  # noqa: B010
             raise
 
     def ground_documents(
@@ -151,6 +157,7 @@ class CheckedGrounder:
             for row, keep, (_, doc) in zip(out, passed, batches, strict=True)
         ]
         stop: BudgetExceeded | None = None
+        failures: dict[int, Exception] = {}
         try:
             answered = self._ground(work)
         except BudgetExceeded as exc:
@@ -158,6 +165,15 @@ class CheckedGrounder:
             stop = exc
             partial = exc.partial
             answered = partial if isinstance(partial, list) else [facts for facts, _ in work]
+        except Exception as exc:
+            # A document the grounder failed on, said so (`openodke._batch`):
+            # one row per batch, so its index is the batch's.
+            if is_config_error(exc) or (got := told(exc, len(work))) is None:
+                raise
+            partial, failures = got
+            answered = [
+                facts if row is None else row for row, (facts, _) in zip(partial, work, strict=True)
+            ]
         for row, keep, grounded in zip(out, passed, answered, strict=True):
             for index, fact in zip(keep, grounded, strict=True):
                 row[index] = fact
@@ -167,6 +183,8 @@ class CheckedGrounder:
         if stop is not None:
             stop.partial = out
             raise stop
+        if failures:
+            raise incomplete(failures, out)
         return out
 
     def _check(self, fact: Fact) -> Fact:

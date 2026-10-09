@@ -26,14 +26,19 @@ an `odke run` config.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+from openodke._batch import is_config_error, told
 from openodke.chunking import sentences
 from openodke.coverage import CoverageReport, NameMatcher, identity, known_entities
+from openodke.llm.budget import BudgetExceeded
 from openodke.ontology import Ontology
 from openodke.types import Chunk, Document, Entity, Fact, GroundingVerdict, Span
+
+log = logging.getLogger("openodke.reextract")
 
 # On Fact.qualifiers: {"window": [start, end]}, the gap a fact came back from.
 REEXTRACT = "odke.reextract"
@@ -115,7 +120,9 @@ def reextract(
     `routed` and `grounded` are the pipeline's, one row per document; `report`
     is the coverage measured on them. Returned facts that repeat one already
     held (by `Fact.signature`) are dropped and counted, and the rest are
-    grounded with `ground` and stamped `odke.reextract`.
+    grounded with `ground` and stamped `odke.reextract`. A window whose call
+    fails, or a document whose returned facts fail to ground, is counted under
+    `failed` and skipped; the first pass stands for it.
     """
     every = [fact for row in grounded for fact in row]
     known = known_entities(every)
@@ -144,7 +151,16 @@ def reextract(
                 continue
             counts["windows"] += 1
             already = [f for f in facts if _in_window(f, window, keys)]
-            for fact in hook.reextract(window, relations, already, ontology):
+            try:
+                found = list(hook.reextract(window, relations, already, ontology))
+            except Exception as exc:
+                # One window's failure costs that window: the first pass stands (#162).
+                if is_config_error(exc) or isinstance(exc, BudgetExceeded):
+                    raise
+                counts["failed"] = counts.get("failed", 0) + 1
+                log.warning("re-extraction failed for a window of %s, skipped: %s", doc.id, exc)
+                continue
+            for fact in found:
                 counts["returned"] += 1
                 if fact.signature in held:
                     counts["duplicates"] += 1
@@ -155,7 +171,21 @@ def reextract(
         if returned:
             asked.append((at, returned, doc))
     if asked:
-        for (at, _, _), checked in zip(asked, ground([(f, d) for _, f, d in asked]), strict=True):
+        failures: dict[int, Exception] = {}
+        try:
+            grounded_rows = ground([(f, d) for _, f, d in asked])
+        except Exception as exc:
+            if is_config_error(exc) or isinstance(exc, BudgetExceeded):
+                raise
+            if (got := told(exc, len(asked))) is None:
+                raise
+            grounded_rows, failures = got
+        for i, ((at, _, doc), checked) in enumerate(zip(asked, grounded_rows, strict=True)):
+            if i in failures:
+                # What came back for a document its grounding failed on is not kept.
+                counts["failed"] = counts.get("failed", 0) + 1
+                log.warning("grounding re-extracted facts failed for %s: %s", doc.id, failures[i])
+                continue
             for fact in checked:
                 verdicts[fact.verdict.value] = verdicts.get(fact.verdict.value, 0) + 1
                 refused = fact.verdict in (
@@ -169,11 +199,13 @@ def reextract(
 
 def summary(stats: dict[str, Any]) -> str:
     """One line from the counts `reextract` returns: what `odke run` prints."""
-    return (
+    line = (
         f"{stats.get('windows', 0)} windows asked, {stats.get('returned', 0)} facts returned "
         f"({stats.get('duplicates', 0)} already held), {stats.get('kept', 0)} kept and "
         f"{stats.get('refused', 0)} refused by grounding"
     )
+    # Counted only when one did: a window or a document whose gap pass raised.
+    return line + (f", {stats['failed']} failed" if stats.get("failed") else "")
 
 
 def _windows(
