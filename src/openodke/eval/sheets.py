@@ -11,6 +11,12 @@ The sheet shows a grounding claim exactly as `render_claim` puts it to the
 grounder, so the person judges what the model judged. Passage text is escaped
 so that markdown cannot hide or restyle it: a `$` stays a dollar sign rather
 than opening a formula.
+
+Reading back is strict where a slip would corrupt the labels and lenient where
+it would not. An item with no tick is unlabelled, counted and reported. An item
+with two ticks, or a heading the sidecar does not know, is an error naming the
+file and the line of the item's heading, and nothing is written until every
+sheet reads cleanly.
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from openodke.eval.formats import GroundingLabel
 from openodke.ground.llm import render_claim
 from openodke.ground.span import located
 from openodke.types import Document, Fact, Frozen
@@ -63,6 +70,10 @@ class Kind:
     explain: tuple[str, str]
     boxes: dict[str, str]  # the box as written → the answer it records
     render: Callable[[Any], list[str]]
+    output: type[BaseModel]
+    label: Callable[[dict[str, Any], str], dict[str, Any]]
+    # The answer that is never a label: its rows go to a file of their own.
+    apart: str | None = None
 
 
 # Markdown, and Obsidian on top of it, would hide or restyle text containing
@@ -125,6 +136,8 @@ GROUNDING = Kind(
     ),
     boxes={"supported": "supported", "contradicted": "contradicted", "not found": "not_found"},
     render=_grounding,
+    output=GroundingLabel,
+    label=lambda row, answer: {**row, "verdict": answer},
 )
 KINDS = {kind.name: kind for kind in (GROUNDING,)}
 
@@ -225,4 +238,207 @@ def make_sheets(kind: str, items: Path, out: Path, *, per_sheet: int = 50) -> Ma
     return Made(sheets=sheets, items=len(rows), first=ids[0], last=ids[-1], warnings=warnings)
 
 
-__all__ = ["GROUNDING", "KINDS", "GroundingItem", "Kind", "Made", "make_sheets", "plain", "quote"]
+# --------------------------------------------------------------------------- #
+# Reading back
+# --------------------------------------------------------------------------- #
+
+
+class SheetError(ValueError):
+    """Every problem found in the sheets, one `path:line: …` per line of the message."""
+
+    def __init__(self, problems: list[str]) -> None:
+        super().__init__("\n".join(problems))
+        self.problems = problems
+
+
+_HEADING = re.compile(r"^###\s+(\S+)\s*$")
+_BOX = re.compile(r"^\s*[-*+]\s+\[(.)\]\s+(.*?)\s*$")
+
+
+@dataclass
+class _Marked:
+    """What a person left on one item: the heading's line, the ticked boxes, the note."""
+
+    line: int
+    ticked: list[str]
+    note: list[str] | None = None
+
+
+def _sidecar(path: Path) -> list[tuple[str, Kind, dict[str, Any]]]:
+    if not path.is_file():
+        raise SheetError([f"{path}: missing; it holds the items its sheet was made from"])
+    entries = []
+    # Split on "\n" alone: a row may hold a raw U+2028, which splitlines() breaks on.
+    lines = path.read_text(encoding="utf-8").split("\n")
+    for number, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+            entries.append((str(entry["id"]), _kind(entry["kind"]), dict(entry["row"])))
+        except (ValueError, KeyError, TypeError) as exc:
+            raise SheetError([f"{path}:{number}: not a sidecar row: {exc}"]) from exc
+    return entries
+
+
+def _marks(sheet: Path, known: set[str], kind: Kind, problems: list[str]) -> dict[str, _Marked]:
+    """Each item heading in `sheet`, and the boxes ticked and the note written under it."""
+    found: dict[str, _Marked] = {}
+    current: _Marked | None = None
+    # Lines as an editor numbers them: "\n" ends one, nothing else does.
+    lines = [line.removesuffix("\r") for line in sheet.read_text(encoding="utf-8").split("\n")]
+    for number, line in enumerate(lines, start=1):
+        heading = _HEADING.match(line)
+        if heading:
+            item_id, current = heading.group(1), None
+            if item_id not in known:
+                sidecar = sheet.with_suffix(".items.jsonl").name
+                problems.append(f"{sheet}:{number}: {item_id} is not in {sidecar}")
+            elif item_id in found:
+                problems.append(f"{sheet}:{number}: {item_id} appears twice")
+            else:
+                current = found[item_id] = _Marked(number, [])
+            continue
+        if current is None:
+            continue
+        box = _BOX.match(line)
+        if box:
+            mark, text = box.groups()
+            name = next((b for b in kind.boxes if text == b or text.startswith(f"{b} ")), None)
+            if name is None:
+                problems.append(f"{sheet}:{number}: no box is called {text!r}")
+            elif mark in "xX":
+                current.ticked.append(name)
+            elif mark != " ":
+                problems.append(f"{sheet}:{number}: [{mark}] is neither [x] nor [ ]")
+        elif current.note is not None:
+            current.note.append(line)
+        elif line.startswith(NOTE):
+            current.note = [line[len(NOTE) :]]
+    for item_id, marked in found.items():
+        if len(marked.ticked) > 1:
+            problems.append(
+                f"{sheet}:{marked.line}: {item_id} has {len(marked.ticked)} boxes ticked "
+                f"({', '.join(marked.ticked)}); tick exactly one"
+            )
+    return found
+
+
+@dataclass(frozen=True)
+class Reading:
+    """What a set of sheets says, ready to write as JSONL."""
+
+    kind: Kind
+    sheets: list[Path]
+    items: int
+    labels: list[dict[str, Any]]
+    apart: list[dict[str, Any]]
+    notes: list[dict[str, Any]]
+    counts: dict[str, int]  # per box, in the order the sheet shows them
+
+    @property
+    def unlabelled(self) -> int:
+        return self.items - sum(self.counts.values())
+
+    def summary(self) -> str:
+        sheets = f"{len(self.sheets)} sheet{'' if len(self.sheets) == 1 else 's'}"
+        labelled = sum(self.counts.values())
+        per_box = ", ".join(f"{box} {n}" for box, n in self.counts.items())
+        return (
+            f"{sheets}, {self.items} items: {labelled} labelled, {self.unlabelled} unlabelled\n"
+            f"{per_box}"
+        )
+
+    def write(self, out: Path) -> list[tuple[Path, int]]:
+        """The labels to `out`; notes, and any rows kept apart, to files beside it."""
+        out = Path(out)
+        files = [(out, self.labels)]
+        if self.kind.apart is not None:
+            files.append((out.with_suffix(f".{self.kind.apart}.jsonl"), self.apart))
+        files.append((out.with_suffix(".notes.jsonl"), self.notes))
+        out.parent.mkdir(parents=True, exist_ok=True)
+        for path, rows in files:
+            text = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+            path.write_text(text, encoding="utf-8", newline="\n")
+        return [(path, len(rows)) for path, rows in files]
+
+
+def read_sheets(path: Path) -> Reading:
+    """Every sheet at `path` (one sheet, or a directory of them) as labels.
+
+    Exactly one tick is a label; no tick leaves the item unlabelled; anything
+    else raises `SheetError` listing every problem in every sheet, each with
+    the file and line of the item's heading.
+    """
+    path = Path(path)
+    if path.is_dir():
+        sheets = sorted(path.glob(GLOB))
+        if not sheets:
+            raise ValueError(f"{path}: no {GLOB} in this directory")
+    elif path.is_file():
+        sheets = [path]
+    else:
+        raise ValueError(f"{path}: no such sheet or directory")
+
+    problems: list[str] = []
+    read = []
+    kinds: dict[str, Kind] = {}
+    for sheet in sheets:
+        entries = _sidecar(sheet.with_suffix(".items.jsonl"))
+        if not entries:
+            continue
+        kinds.update((kind.name, kind) for _, kind, _ in entries)
+        marks = _marks(sheet, {item_id for item_id, _, _ in entries}, entries[0][1], problems)
+        read.append((sheet, entries, marks))
+    if len(kinds) > 1:
+        problems.append(f"{path}: mixes {' and '.join(sorted(kinds))} sheets; read them apart")
+    if problems:
+        raise SheetError(problems)
+    if not kinds:
+        raise ValueError(f"{path}: the sheets hold no items")
+    (kind,) = kinds.values()
+
+    labels: list[dict[str, Any]] = []
+    apart: list[dict[str, Any]] = []
+    notes: list[dict[str, Any]] = []
+    counts = dict.fromkeys(kind.boxes, 0)
+    items = 0
+    for sheet, entries, marks in read:
+        for item_id, _, row in entries:
+            items += 1
+            marked = marks.get(item_id)
+            answer = None
+            if marked is not None and len(marked.ticked) == 1:
+                box = marked.ticked[0]
+                counts[box] += 1
+                answer = kind.boxes[box]
+                if answer == kind.apart:
+                    apart.append(row)
+                else:
+                    label = kind.label(row, answer)
+                    try:
+                        kind.output.model_validate(label)
+                    except ValueError as exc:
+                        problems.append(f"{sheet}: {item_id}: not a {kind.output.__name__}: {exc}")
+                    labels.append(label)
+            note = "\n".join(marked.note).strip() if marked and marked.note else ""
+            if note:
+                notes.append({"id": item_id, "sheet": sheet.name, "answer": answer, "note": note})
+    if problems:
+        raise SheetError(problems)
+    return Reading(kind, sheets, items, labels, apart, notes, counts)
+
+
+__all__ = [
+    "GROUNDING",
+    "KINDS",
+    "GroundingItem",
+    "Kind",
+    "Made",
+    "Reading",
+    "SheetError",
+    "make_sheets",
+    "plain",
+    "quote",
+    "read_sheets",
+]
