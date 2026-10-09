@@ -49,6 +49,7 @@ plugins:
         loaders-and-extraction.md: loading.md
         sinks.md: stores.md
         neo4j.md: stores.md#neo4j
+        inference.md: ontology.md#drafting-one-parked
 
 markdown_extensions:
   - admonition
@@ -71,9 +72,7 @@ nav:
   - Concepts: concepts.md
   - "The Validator": validator.md
   - "Models & providers": models.md
-  - Ontology:
-      - "Loading, validating, importing": ontology.md
-      - Inference: inference.md
+  - Ontology: ontology.md
   - "Loading documents": loading.md
   - "Reference extractor": reference-extractor.md
   - "Triples from any extractor": triples.md

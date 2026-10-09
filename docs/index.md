@@ -55,7 +55,7 @@ flowchart LR
 the ontology into the store's own constraints for a sink to apply before its
 first write. The inferrer is a bootstrap, not a mode: it proposes an ontology
 that you review, freeze and then pass in ([DECISIONS #8](decisions.md#8);
-[Ontology inference](inference.md)).
+[Ontology](ontology.md#drafting-one-parked)).
 
 ## What is here today
 
@@ -71,7 +71,7 @@ openodke is pre-alpha. This site documents what is on `main`:
 | Loaders (text, Markdown, records, HTML, PDF, DOCX), the sentence chunker, pattern / LLM / hybrid extractors | `openodke.loaders`, `openodke.chunking`, `openodke.extract` | released in 0.1.0 — [Loading documents](loading.md), [Reference extractor](reference-extractor.md) |
 | Normalise, resolve, corroborate, score | `openodke.corroborate` | released in 0.1.0 — [Resolution & corroboration](resolution-and-corroboration.md) |
 | Ontology import from OWL, RDFS, SKOS and a live Neo4j graph | `Ontology.from_owl`, `Ontology.from_neo4j` | released in 0.1.0 — [Ontology](ontology.md#importing-a-schema-you-already-have) |
-| Ontology inference: a draft to review, then freeze | `openodke.infer`, `odke ontology infer`, `odke ontology freeze` | released in 0.1.0 — [Ontology inference](inference.md) |
+| Ontology inference: a draft to review, then freeze | `openodke.infer`, `odke ontology infer`, `odke ontology freeze` | released in 0.1.0 — [Ontology](ontology.md#drafting-one-parked) |
 | JSONL, Cypher-file, neo4j-admin CSV, RDF and NetworkX sinks | `openodke.sinks` | released in 0.1.0 — [Write to a store](stores.md) |
 | The whole pipeline from one config file | `openodke.run`, `odke run` | released in 0.1.0 — [`odke run`](run.md) |
 | The ablation: extraction alone, + grounding, + corroboration | `openodke.eval.run_ablation`, `odke eval ablation` | released in 0.1.0 — [Evaluation](evaluation.md#ablation) |

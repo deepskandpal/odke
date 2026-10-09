@@ -1,24 +1,28 @@
 # Ontology
 
-An `Ontology` is the schema the extractor is held to: named `types` (each an
-`EntityType`) and `predicates` (each a `Predicate`). You supply it as a dict, JSON,
-YAML or pydantic models; import it from OWL, RDFS, SKOS or a live Neo4j graph; or
-draft it from a corpus by [inference](inference.md) and freeze it once reviewed.
-Either way every downstream stage sees this one shape. Loading, validating and
-diffing are deterministic and need no model.
+An `Ontology` is the schema facts are held to: named `types` and `predicates`.
+Load it from a dict, JSON, YAML, pydantic models, OWL or a live Neo4j graph;
+every stage sees the same shape. Loading, validating and diffing need no model.
 
-| Model | Fields |
-|---|---|
-| `Ontology` | `name`, `version`, `types`, `predicates`, `inferred`, `frozen_at`, `frozen_by` |
-| `EntityType` | `name`, `description`, `parents`, `keys` (the predicates that together name the thing), `aliases` |
-| `Predicate` | `name`, `label`, `description`, `domain`, `range` (default `"string"`), `cardinality` (`single` or `multi`), `cardinality_scope`, `required`, `qualifiers`, `aliases`, `importance` (default 0.5), `examples`, `inverse_of`, `symmetric` |
-| `Qualifier` | `identity` (default `False`), `description` |
+## Fields
 
-A predicate is an **edge** when its `range` names an entity type, and a
-**property** when its range is a literal type: `string`, `integer`, `number`,
-`float`, `boolean`, `date` or `datetime`. An empty `domain` is open: the
-predicate applies to every type. Inside `types` and `predicates`, an entry's
-`name` defaults to its key, so you never have to write it twice.
+| Model | Field | Default | Meaning |
+|---|---|---|---|
+| `Ontology` | `name`, `version` | `"untitled"`, `"0"` | |
+| | `types`, `predicates` | empty | keyed by name; an entry's `name` defaults to its key |
+| | `inferred`, `frozen_at`, `frozen_by` | `False`, `None`, `None` | set by [inference](#drafting-one-parked) and [`freeze()`](#freezing) |
+| `EntityType` | `description`, `parents`, `aliases` | | |
+| | `keys` | `()` | the predicates that together name the thing |
+| `Predicate` | `domain` | `()`, meaning every type | the types it applies to |
+| | `range` | `"string"` | an entity type makes an **edge**; `string`, `integer`, `number`, `float`, `boolean`, `date` or `datetime` makes a **property** |
+| | `cardinality` | `"single"` | or `"multi"` |
+| | `cardinality_scope` | `()` | see [Cardinality and its scope](#cardinality-and-its-scope) |
+| | `qualifiers` | `{}` | name to `Qualifier`; a bare list of names is all reconcilable |
+| | `required` | `False` | every entity in the domain should hold a value |
+| | `importance` | 0.5 | ranks the predicate in [snippets](reference-extractor.md#what-the-model-is-shown) |
+| | `label`, `description`, `aliases`, `examples` | | |
+| | `inverse_of`, `symmetric` | `None`, `False` | see [Inverse and symmetric predicates](#inverse-and-symmetric-predicates) |
+| `Qualifier` | `identity` | `False` | `True` puts the qualifier in `Fact.signature` ([DECISIONS #15](decisions.md#15)) |
 
 ## Loading
 
@@ -28,7 +32,6 @@ from openodke import Ontology
 ontology = Ontology.from_dict(
     {
         "name": "saas-vendors",
-        "version": "2",
         "types": {
             "Vendor": {"description": "A company that sells software.", "keys": ["legal_name"]},
             "Service": {"description": "A product a vendor runs."},
@@ -37,7 +40,6 @@ ontology = Ontology.from_dict(
             "legal_name": {"domain": ["Vendor"], "required": True},
             "operates": {"domain": ["Vendor"], "range": "Service", "cardinality": "multi"},
             "price": {
-                "description": "List price per seat per month.",
                 "domain": ["Service"],
                 "range": "number",
                 "qualifiers": {"tier": {"identity": True}, "as_of": {}},
@@ -45,44 +47,30 @@ ontology = Ontology.from_dict(
         },
     }
 )
-
 assert ontology.predicates["operates"].is_edge_in(ontology)
 assert ontology.identity_keys("price") == ("tier",)
 ```
 
-`Ontology.from_json(source)` and `Ontology.from_yaml(source)` take a file path or
-the document itself. A `str` counts as the document when it contains a newline or
-starts the way JSON or YAML starts (`{`, `[`, `---`, `#`, `%`); any other string
-is a path. YAML needs the `yaml` extra and nothing else does.
+| Source | Call | Extra |
+|---|---|---|
+| a dict | `Ontology.from_dict(data)` | — |
+| JSON | `Ontology.from_json(source)` | — |
+| YAML | `Ontology.from_yaml(source)` | `yaml` |
+| pydantic models | `Ontology.from_pydantic(*models, name=...)` | — |
+| OWL, RDFS or SKOS | `Ontology.from_owl(source, *, format=None, language="en")` | `rdf` |
+| a live Neo4j graph | `Ontology.from_neo4j(driver_or_uri, *, auth=None, database=None)` | `neo4j` |
 
-```python
-vendors = Ontology.from_yaml("""
-name: saas-vendors
-types:
-  Service: {description: A product a vendor runs.}
-predicates:
-  uptime:
-    domain: [Service]
-    range: number
-    qualifiers:
-      percentile: {identity: true}
-      region: {identity: true}
-      as_of: {}
-    cardinality_scope: [percentile, region]
-""")
+`from_json` and `from_yaml` read a `str` as the document itself when it contains
+a newline or starts with `{`, `[`, `---`, `#` or `%`, and as a path otherwise.
 
-assert vendors.predicates["uptime"].scope_keys == ("percentile", "region")
-```
+### Strict loading
 
-A bare list of qualifier names, such as `qualifiers: [start_date, end_date]`, is
-also accepted, and every name in it is reconcilable.
-
-### When loading fails
-
-Load errors are `OntologyLoadError`, which is a `ValueError`. Each problem is one
-line naming the offending key by its dotted path and saying what was found there.
-A misspelt key gets a suggestion, and a syntax error carries a line and column.
-The same lines are available individually as `exc.problems`.
+Every loader but `from_pydantic`, which is always strict, takes `strict=True` by
+default: it runs `validate()` and raises `OntologyLoadError`, a `ValueError`, on
+any **error**. Each problem is one line naming the key by its dotted path, and
+`exc.problems` lists them. With `strict=False`, anything well-formed loads; the
+two importers then warn once with `OntologyImportWarning`, whose `.problems`
+holds the same lines.
 
 ```python
 from openodke import OntologyLoadError
@@ -94,61 +82,25 @@ except OntologyLoadError as exc:
 # predicates.employer.rnage: unknown key — did you mean 'range'?
 ```
 
-Loading is `strict` by default: it also runs `validate()` and refuses a schema
-with **errors**. Warnings never block. `strict=False` loads anything well-formed,
-which is what a tool that wants to *show* the diagnostics needs.
+### From pydantic models
 
-```python
-schema = {
-    "types": {"Person": {}, "Company": {}},
-    "predicates": {"employer": {"domain": ["Person"], "range": "Compnay"}},
-}
-try:
-    Ontology.from_dict(schema)
-except OntologyLoadError as exc:
-    print(exc.problems[0])
-# predicates.employer.range: 'Compnay' is neither an entity type nor a literal type
-# (boolean, date, datetime, float, integer, number, string) — did you mean 'Company'? [unknown-range]
-
-loose = Ontology.from_dict(schema, strict=False)
-assert [(d.severity, d.code, d.path) for d in loose.validate()] == [
-    ("error", "unknown-range", "predicates.employer.range")
-]
-```
-
-## From pydantic models
-
-If your entities are already pydantic models, `Ontology.from_pydantic(*models)`
-reads them rather than making you write the schema a second time:
-
-- Each model is an entity type, and its docstring is the description.
-- Each field is a predicate. A field typed as another model you passed is an
-  edge to it.
-- `list[X]`, `tuple[X, ...]` and `set[X]` are `cardinality="multi"`.
-- `X | None`, or a field with a default, is not `required`.
-- A field's description becomes the predicate's description, and its title
-  becomes the label.
-- A model that subclasses another model you passed names it as a parent, and
-  does not redeclare the fields it inherits.
-- `str`, `int`, `float`, `Decimal`, `bool`, `date`, `datetime` and `UUID` map to
-  literal ranges, as do enums and `Literal`s of one of those.
+Each model is a type and each field a predicate. A field typed as another model
+you passed is an edge; `list[X]`, `tuple[X, ...]` and `set[X]` are `multi`;
+`X | None` or a field with a default is not `required`. A field that cannot be
+mapped, such as `int | str`, raises.
 
 ```python
 from datetime import date
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class Company(BaseModel):
-    """An incorporated organisation."""
-
     legal_name: str
 
 
 class Person(BaseModel):
-    """A human being."""
-
-    name: str = Field(description="Full name as written in the source.")
+    name: str
     born: date | None = None
     employer: list[Company] = []
 
@@ -156,250 +108,24 @@ class Person(BaseModel):
 people = Ontology.from_pydantic(Person, Company, name="people")
 employer = people.predicates["employer"]
 assert (employer.domain, employer.range, employer.cardinality) == (("Person",), "Company", "multi")
-assert people.predicates["name"].required and not people.predicates["born"].required
 ```
 
-A field that cannot be mapped is reported as `Model.field`, and the whole
-conversion raises. A silently dropped field would be a predicate the extractor is
-never asked about.
+### Importing a schema you already have
 
-```python
-class Ambiguous(BaseModel):
-    identifier: int | str
-
-
-try:
-    Ontology.from_pydantic(Ambiguous)
-except OntologyLoadError as exc:
-    print(exc)
-# Ambiguous.identifier: int | str is a union — an ontology range is one type; split it into
-# two fields or pick one
-```
-
-## Validate
-
-`ontology.validate()` returns a list of `Diagnostic(code, path, message,
-severity)` and never raises. It returns a list rather than a bool because
-"invalid" is not something you can act on, and a message naming the key and
-suggesting a fix is. The line between the two severities is whether extraction
-goes wrong. An **error** produces wrong or missing facts: strict loading refuses
-it, and `odke ontology validate` exits non-zero. A **warning** is a schema that
-works but probably is not what was meant.
-
-| Code | Severity | Found when |
-|---|---|---|
-| `name-mismatch` | error | an entry's `name` differs from its key |
-| `unknown-parent` | error | a type's parent is not a type |
-| `unknown-key` | error | a type's `keys` names a predicate that does not exist |
-| `key-outside-domain` | error | a type's key predicate never applies to that type |
-| `unknown-range` | error | a range is neither a type nor a literal type |
-| `unreachable-predicate` | error | no entry in a predicate's domain is a type, so no snippet includes it |
-| `scope-undeclared-qualifier` | error | `cardinality_scope` names a key that is not a qualifier |
-| `scope-not-identity` | error | `cardinality_scope` names a reconcilable qualifier |
-| `duplicate-alias` | error | one alias points at two types, or two predicates |
-| `unknown-inverse` | error | `inverse_of` names a predicate that does not exist |
-| `inverse-not-edge` | error | an end of an inverse, or a symmetric predicate, is a literal property |
-| `inverse-not-mutual` | error | an inverse that does not hold both ways: see [Inverse and symmetric predicates](#inverse-and-symmetric-predicates) |
-| `inverse-domain-range` | error | an inverse's ends do not swap: see [Inverse and symmetric predicates](#inverse-and-symmetric-predicates) |
-| `unknown-domain` | warning | part of a domain is not a type; the rest still works |
-| `inheritance-cycle` | warning | types inherit from each other; `lineage()` tolerates it |
-| `unreviewed` | warning | the schema is still marked `inferred`: nobody has reviewed and [frozen](inference.md#freezing) it |
-
-## Diff
-
-Once a graph is live, an edited ontology is a migration, and the question to ask
-of it is whether existing data and queries still fit. `old.diff(new)` returns
-`SchemaChange(kind, path, breaking, detail)` for every difference, each marked
-breaking or compatible.
-
-Breaking changes are: a removed type, predicate or qualifier; a narrowed range or
-domain; a changed cardinality; a cardinality scope that loses a key; a predicate
-that becomes required; changed entity keys; a qualifier whose `identity` flips
-or that is added as identity-bearing, because either one re-partitions
-`Fact.signature`; and an `inverse_of` or `symmetric` taken away or changed,
-because the partners already derived from it no longer follow. Widening a range
-(to an ancestor type, or `integer` to `number`), declaring a new inverse, and
-every documentation change are listed as compatible.
-
-```python
-old = Ontology.from_dict(
-    {
-        "types": {"Person": {}, "Company": {}},
-        "predicates": {
-            "employer": {"domain": ["Person"], "range": "Company", "cardinality": "multi"},
-            "uptime": {"range": "number", "qualifiers": {"percentile": {"identity": True}}},
-        },
-    }
-)
-new = Ontology.from_dict(
-    {
-        "types": {"Person": {}, "Company": {}},
-        "predicates": {
-            "employer": {"domain": ["Person"], "range": "Company", "description": "Who pays them."},
-            "uptime": {"range": "number", "qualifiers": {"percentile": {"identity": False}}},
-        },
-    }
-)
-for change in old.diff(new):
-    print(change)
-# breaking   changed predicates.employer.cardinality: 'multi' → 'single' (subjects already holding several values now conflict)
-# compatible changed predicates.employer.description: None → 'Who pays them.'
-# breaking   changed predicates.uptime.cardinality_scope: (percentile) → () (no longer unique per percentile, so existing values may conflict)
-# breaking   changed predicates.uptime.qualifiers.percentile.identity: True → False (fact signatures change, so existing claims split or merge)
-
-assert sum(c.breaking for c in old.diff(new)) == 3
-```
-
-## Cardinality and its scope
-
-`cardinality` says how many values a subject may hold; `cardinality_scope` says
-*within what*. "One price per subject" and "one price per subject per tier" are
-both `single`. A flat count would treat the second as a stream of contradictions,
-and qualifier-scoped facts are ordinary — a price per tier, an uptime per plan.
-
-The scope is a list of qualifier keys that is always unioned with the
-identity-bearing ones. A fact that differs on an identity-bearing qualifier is a
-different claim, so two such facts can never conflict. The default, `()`,
-therefore already means "one value per subject per identity key", and there is no
-flat setting to get wrong. Declaring keys makes the scope visible in the schema.
-`validate()` requires every declared key to be an identity-bearing qualifier,
-because a reconcilable one cannot separate one value from another.
-`Predicate.scope_keys` is the resolved, sorted tuple. It is what the
-[Neo4j cardinality check](stores.md#check) groups by, so the
-schema and the store cannot disagree about what counts as a conflict.
-
-```python
-price = ontology.predicates["price"]
-assert (price.cardinality, price.cardinality_scope, price.scope_keys) == ("single", (), ("tier",))
-
-reconcilable_scope = {
-    "types": {"Service": {}},
-    "predicates": {
-        "price": {
-            "domain": ["Service"],
-            "qualifiers": {"as_of": {}},
-            "cardinality_scope": ["as_of"],
-        }
-    },
-}
-codes = [d.code for d in Ontology.from_dict(reconcilable_scope, strict=False).validate()]
-assert codes == ["scope-not-identity"]
-```
-
-## Inverse and symmetric predicates
-
-`inverse_of` names the edge a predicate states the other way round, and
-`symmetric: true` marks an edge that is its own inverse. A passage that says
-France contains Brittany has also said Brittany is located in France, so the
-pipeline adds that partner itself, with no model call
-([Concepts](concepts.md#inverse-and-symmetric-partners),
-[DECISIONS #28](decisions.md#28)). Declare an inverse on one side: loading fills in
-the other, as `owl:inverseOf` holds both ways. `Ontology.inverses` maps every
-predicate that implies a partner to the partner's predicate.
-
-```python
-geo = Ontology.from_yaml("""
-types: {Place: {}, Person: {}}
-predicates:
-  located_in: {domain: [Place], range: Place, inverse_of: contains}
-  contains: {domain: [Place], range: Place, cardinality: multi}
-  spouse: {domain: [Person], range: Person, symmetric: true}
-""")
-assert geo.predicates["contains"].inverse_of == "located_in"
-assert geo.inverses == {"located_in": "contains", "contains": "located_in", "spouse": "spouse"}
-```
-
-A wrong declaration puts a wrong fact in every graph built with it, so each
-rule below is an error:
-
-- **Both ends exist and are edges** (`unknown-inverse`, `inverse-not-edge`). A
-  property has no inverse: its partner would have a value for a subject.
-- **It holds both ways** (`inverse-not-mutual`). A predicate has one inverse,
-  and that inverse names it back. Two predicates claiming one inverse are not
-  completed by declaration order; they are reported. A predicate that is its
-  own inverse is `symmetric: true`, not `inverse_of` itself, and never both.
-- **The ends swap** (`inverse-domain-range`). A fact's object is its partner's
-  subject, so a predicate's range must sit inside its inverse's domain. A
-  symmetric predicate's domain must be exactly its range.
-
-`from_owl` reads `owl:inverseOf` and `owl:SymmetricProperty`, and `RdfSink`
-writes them. `from_neo4j` and `from_pydantic` read neither, because neither
-source can say it: a Neo4j schema lists relationship types with no axiom
-between them, and a pydantic field has no inverse. Add the keys to
-`ontology.model_dump()` and load it again with `Ontology.from_dict`, which
-completes and checks them.
-
-## Snippets: what the model is shown
-
-The model is never shown the whole schema. For each entity type it sees an
-`OntologySnippet`: the predicates whose domain covers that type (inherited ones
-included), ranked by `importance` and then by name, and cut at `limit` (25 by
-default). That cut is how the prompt stays a fixed size as the ontology grows. A
-snippet is data, rendered two ways from one object: `render()` produces prose for
-a prompt and `json_schema()` produces a schema for structured output, so the two
-cannot drift apart ([DECISIONS #6](decisions.md#6)).
-
-```python
-snippet = ontology.snippet("Service")
-print(snippet.render())
-# Entity type: Service
-# Description: A product a vendor runs.
-# Properties you may extract:
-# - price (number, single): List price per seat per month. [qualifiers: tier, as_of]
-
-assert snippet.json_schema()["properties"]["price"]["type"] == "number"
-```
-
-## Importing a schema you already have
-
-Plenty of schemas already exist, as OWL files or as the graph a database already
-holds, and writing them again as JSON is how two copies drift. Two importers read
-them directly. Both report everything they could not carry over by where it was
-found, and both share one rule for what happens next:
-
-- **`strict=True`** (the default) raises `OntologyLoadError` listing every problem,
-  as `from_pydantic` does, and refuses a result `validate()` finds errors in. A
-  dropped axiom is a rule the extractor is silently never held to.
-- **`strict=False`** loads whatever maps, and the same problems arrive as one
-  `OntologyImportWarning`, whose `.problems` holds the lines `OntologyLoadError`
-  would have raised with. Choosing to load a large public ontology anyway never
-  means choosing not to be told.
-
-### From OWL, RDFS and SKOS
-
-`Ontology.from_owl(source, *, format=None, name=None, version=None, language="en",
-strict=True)` reads a file path, a document, or an rdflib `Graph`, and needs the
-`rdf` extra. `format` is any rdflib parser name; left out, it is guessed from the
-file suffix or from the document (RDF/XML, JSON-LD, else Turtle, which also reads
-N-Triples).
+`from_owl` reads a path, a document or an rdflib `Graph`. What it cannot carry
+over, such as restrictions, sub-properties, equivalence or union ranges, is
+reported by the subject it was found on. `owl:imports` is not followed.
 
 | RDF | Ontology |
 |---|---|
-| `owl:Class`, `rdfs:Class`, `skos:Concept`, and anything used as a class by `rdfs:subClassOf`, `skos:broader`, a domain or an object range | an `EntityType`, named by the IRI's local name |
-| `rdfs:subClassOf`, `skos:broader`, and `skos:narrower` read backwards | `parents` |
+| `owl:Class`, `rdfs:Class`, `skos:Concept` | a type, named by the IRI's local name |
+| `rdfs:subClassOf`, `skos:broader` | `parents` |
 | `owl:hasKey` | `keys` |
-| `owl:ObjectProperty` | an edge predicate to its `rdfs:range` |
-| `owl:DatatypeProperty` | a literal predicate, its XSD range mapped to a literal type |
-| a bare `rdf:Property` | an edge when its range is a class, and a literal otherwise |
-| `rdfs:domain`, or a domain that is an `owl:unionOf` | `domain`, which is already a union |
-| `owl:FunctionalProperty` | `cardinality="single"`. Every other property is `multi`, because OWL's open world lets a property hold any number of values unless it says otherwise. |
-| `owl:inverseOf`, on either side | `inverse_of`; a property declared its own inverse is `symmetric` |
-| `owl:SymmetricProperty` | `symmetric` |
-| `rdfs:label` / `skos:prefLabel` | a predicate's `label` |
-| `rdfs:comment` / `skos:definition` | `description`; a type with no comment takes its label when the label says more than the name |
-| `skos:altLabel`, `skos:hiddenLabel` | `aliases` |
-| the `owl:Ontology`'s `rdfs:label` and `owl:versionInfo` | `name` and `version`, unless you pass them |
-
-Text tagged with `language` wins, then untagged text. `importance` stays at its
-default: nothing in an OWL file says how often a predicate is used.
-
-What the model cannot hold is reported by the subject it was found on:
-restrictions, property characteristics other than functional and symmetric,
-sub-properties, an inverse that is not one named property, equivalence and
-disjointness, union ranges, unmapped datatypes, individuals, and imports. `owl:imports` is not followed; parse the imported
-ontology into the same rdflib `Graph` and pass the `Graph`. Annotations outside
-the OWL, RDF, RDFS and SKOS vocabularies, such as Dublin Core or `rdfs:seeAlso`, are
-documentation and are not reported.
+| `owl:ObjectProperty`, `owl:DatatypeProperty` | an edge, a property |
+| `rdfs:domain`, `rdfs:range` | `domain`, `range` |
+| `owl:FunctionalProperty` | `single`; every other property is `multi` |
+| `owl:inverseOf`, `owl:SymmetricProperty` | `inverse_of`, `symmetric` |
+| `rdfs:label`, `rdfs:comment`, `skos:altLabel` | `label`, `description`, `aliases` |
 
 ```python
 import warnings
@@ -409,120 +135,152 @@ from openodke import OntologyImportWarning
 hr_owl = """
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix : <https://example.org/hr#> .
 
-:Person a owl:Class ; rdfs:comment "A human being." .
-:Company a owl:Class ; owl:hasKey ( :legal_name ) .
-:legal_name a owl:DatatypeProperty ; rdfs:domain :Company ; rdfs:range xsd:string .
-:employer a owl:ObjectProperty, owl:FunctionalProperty ;
-    rdfs:label "Employer" ; rdfs:domain :Person ; rdfs:range :Company .
-:born a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range xsd:date .
+:Person a owl:Class .
+:Company a owl:Class .
+:employer a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain :Person ; rdfs:range :Company .
 :manages a owl:ObjectProperty, owl:TransitiveProperty ; rdfs:domain :Person ; rdfs:range :Person .
 """
-try:
-    Ontology.from_owl(hr_owl)
-except OntologyLoadError as exc:
-    print(exc.problems)
-# (':manages: is a owl:TransitiveProperty, which the ontology model cannot express',)
-
 with warnings.catch_warnings(record=True) as caught:
     warnings.simplefilter("always")
     hr = Ontology.from_owl(hr_owl, name="hr", strict=False)
 (warning,) = caught
 assert warning.category is OntologyImportWarning
-assert warning.message.problems == (
-    ":manages: is a owl:TransitiveProperty, which the ontology model cannot express",
-)
-
-employer = hr.predicates["employer"]
-assert (employer.domain, employer.range, employer.cardinality, employer.label) == (
-    ("Person",),
-    "Company",
-    "single",
-    "Employer",
-)
-assert (hr.predicates["born"].range, hr.predicates["born"].cardinality) == ("date", "multi")
-assert hr.types["Company"].keys == ("legal_name",)
+print(warning.message.problems[0])
+# :manages: is a owl:TransitiveProperty, which the ontology model cannot express
+assert hr.predicates["employer"].cardinality == "single"
 ```
 
-`RdfSink` writes this same vocabulary when it is given an ontology, so a schema it
-wrote reads back ([Write to a store](stores.md#rdf)).
+`from_neo4j` reads a graph's own schema and writes nothing. A label is a type, a
+relationship type is an edge (or a property when it ends at `:Claim` nodes),
+and a node property is a property. `importance` comes from how often each is
+used. A graph [`Neo4jSink`](stores.md#neo4j) wrote reads back as the shape it
+wrote. Labels have no hierarchy, so there are no `parents`; every edge is
+`multi`, and every qualifier reconcilable.
 
-### From a live Neo4j graph
+## Validate
 
-`Ontology.from_neo4j(source, *, auth=None, database=None, name=None, version="0",
-strict=True)` reads the schema of a graph you already have. `source` is a driver,
-or a URI to connect to with `auth`, which needs the `neo4j` extra. It calls three
-procedures present and not deprecated in Neo4j 5, `db.schema.nodeTypeProperties()`,
-`db.schema.relTypeProperties()` and `db.schema.visualization()`, plus counts.
-Nothing is written. The two property procedures read the store, and are not free on
-a large graph.
+`ontology.validate()` returns a list of `Diagnostic(code, path, message,
+severity)` and never raises. An **error** produces wrong or missing facts, and
+strict loading refuses it. A **warning** marks a schema that works but is
+probably not what was meant.
 
-- A **label** is an entity type.
-- A **relationship type** is an edge predicate to the label it ends at, or a literal
-  predicate when it ends at `:Claim` nodes. Its properties that are not provenance
-  become qualifiers.
-- A **node property** is a literal predicate on the labels that hold it. Its range
-  is read from the value types Neo4j reports; it is `multi` when it holds lists,
-  and `required` when every node of those labels has it.
-- **`importance` comes from counts**: relationships per type and nodes holding each
-  property, log-scaled against the most-used predicate. That is the frequency
-  signal the paper ranks snippets by, so a snippet puts the graph's most-used
-  predicates first.
+| Code | Severity | Found when |
+|---|---|---|
+| `name-mismatch` | error | an entry's `name` differs from its key |
+| `unknown-parent` | error | a type's parent is not a type |
+| `unknown-key` | error | a type's `keys` names a predicate that does not exist |
+| `key-outside-domain` | error | a type's key predicate never applies to that type |
+| `unknown-range` | error | a range is neither a type nor a literal type |
+| `unreachable-predicate` | error | nothing in a predicate's domain is a type, so no snippet includes it |
+| `scope-undeclared-qualifier` | error | `cardinality_scope` names a key that is not a qualifier |
+| `scope-not-identity` | error | `cardinality_scope` names a reconcilable qualifier |
+| `duplicate-alias` | error | one alias points at two types, or two predicates |
+| `unknown-inverse` | error | `inverse_of` names a predicate that does not exist |
+| `inverse-not-edge` | error | an end of an inverse, or a symmetric predicate, is a property |
+| `inverse-not-mutual` | error | an inverse does not name its partner back |
+| `inverse-domain-range` | error | an inverse's ends do not swap |
+| `unknown-domain` | warning | part of a domain is not a type |
+| `inheritance-cycle` | warning | types inherit from each other |
+| `unreviewed` | warning | the schema is still marked `inferred` |
 
-A graph `Neo4jSink` wrote reads back as the shape it wrote: `:Entity` and `:Claim`
-are the sink's labels, not types; the entity fields and provenance properties are
-not predicates or qualifiers, and neither are the keys the stages record their work
-under (`odke.name_key`, `odke.conflict`, `odke.score` and the rest of `odke.*`); a
-projected property and the claims behind it are one predicate; and the `SAME_AS`,
-`SIMILAR` and `DIFFERENT` links are not predicates.
+## Inverse and symmetric predicates
 
-What the store cannot say is not invented. Labels have no hierarchy, so there are
-no parents. Edges are `multi`, because how many one node holds is not in the
-schema. Qualifiers are reconcilable, because whether one bears identity is a
-decision ([DECISIONS #15](decisions.md#15)) that no count reveals. A value type with no
-literal range, a relationship that ends at several labels (read as the most-used
-one), and one name used by both a relationship and a property are reported.
+`inverse_of` names the edge that states a predicate the other way round, and
+`symmetric: true` marks an edge that is its own inverse. The pipeline adds each
+fact's partner without a model call
+([Concepts](concepts.md#inverse-and-symmetric-partners),
+[DECISIONS #28](decisions.md#28)). Declare an inverse on one side; loading fills
+in the other. A predicate's range must sit inside its inverse's domain.
 
-<!-- docs: no-run -->
 ```python
-import os
-
-live = Ontology.from_neo4j(
-    os.environ["NEO4J_URI"],
-    auth=(os.environ["NEO4J_USER"], os.environ["NEO4J_PASSWORD"]),
-    database="neo4j",
-    strict=False,
-)
-print(live.snippet("Company").render())  # the graph's most-used predicates first
+geo = Ontology.from_yaml("""
+types: {Place: {}, Person: {}}
+predicates:
+  located_in: {domain: [Place], range: Place, inverse_of: contains}
+  contains: {domain: [Place], range: Place, cardinality: multi}
+  spouse: {domain: [Person], range: Person, symmetric: true}
+""")
+assert geo.inverses == {"located_in": "contains", "contains": "located_in", "spouse": "spouse"}
 ```
 
-## Inferring a draft
+## Diff
 
-A corpus with no schema at all can get a draft: `Ontology.infer(documents)`, or
-`odke ontology infer corpus/ --out draft.yaml`. Deterministic proposers find
-candidate types and predicates with the spans that produced them, a model
-optionally names and ranks them, and the result is marked `inferred=True` for a
-person to review, edit and `freeze()`. It is a bootstrap, never a mode
-([DECISIONS #8](decisions.md#8)). [Ontology inference](inference.md) covers it end to
-end.
+`old.diff(new)` returns a `SchemaChange(kind, path, breaking, detail)` for
+every difference.
+
+- **Breaking:** a removed type, predicate or qualifier; a narrowed range or
+  domain; a changed cardinality; a scope that loses a key; a predicate that
+  becomes required; changed entity keys; a qualifier whose `identity` flips, or
+  that is added as identity-bearing; an `inverse_of` or `symmetric` removed or
+  changed.
+- **Compatible:** a widened range (to an ancestor type, or `integer` to
+  `number`), a new inverse, and every documentation change.
+
+```python
+employs = {"domain": ["Person"], "range": "Company"}
+types = {"Person": {}, "Company": {}}
+multi = {**employs, "cardinality": "multi"}
+old = Ontology.from_dict({"types": types, "predicates": {"employer": multi}})
+new = Ontology.from_dict({"types": types, "predicates": {"employer": employs}})
+for change in old.diff(new):
+    print(change)
+# breaking   changed predicates.employer.cardinality: 'multi' → 'single' (subjects already holding several values now conflict)
+```
+
+## Cardinality and its scope
+
+`cardinality` says how many values a subject may hold; `cardinality_scope` says
+within what. The scope always includes the identity-bearing qualifiers, so with
+an identity-bearing `tier`, a `single` price means one price per subject per
+tier. Declared scope keys must be identity-bearing qualifiers.
+`Predicate.scope_keys` is the resolved tuple, and the
+[Neo4j cardinality check](stores.md#check) groups by it.
+
+```python
+price = ontology.predicates["price"]
+assert (price.cardinality, price.cardinality_scope, price.scope_keys) == ("single", (), ("tier",))
+```
+
+## Freezing
+
+`ontology.freeze(by=...)` returns a copy with `inferred` cleared and
+`frozen_at` and `frozen_by` set. It raises `OntologyFreezeError` while
+`validate()` reports an error, and `ValueError` for an empty `by`. After that,
+`diff` reports an edit like any other.
+
+```python
+frozen = ontology.freeze(by="Ada Lovelace")
+assert (frozen.inferred, frozen.frozen_by) == (False, "Ada Lovelace")
+```
+
+## Drafting one (parked)
+
+For a corpus with no schema, `odke ontology infer` drafts one. Record shapes,
+Hearst patterns and co-occurrence propose types and predicates, each with the
+spans behind it. Unless `--no-llm` is given, one call through the `infer` model
+role then names and merges them. The draft is marked `inferred=True` and
+carries its evidence as YAML comments. Until it is frozen, `validate()` warns
+`unreviewed` and `Neo4jSink` warns `UnreviewedOntologyWarning`. Nothing infers
+on its own: `odke run` refuses an inferrer ([DECISIONS #8](decisions.md#8)).
+Inference is parked: it works, and is not being extended.
+
+```bash
+odke ontology infer corpus/ --out draft.yaml --no-llm   # no model, no key
+odke ontology validate draft.yaml                        # warns: unreviewed
+# review and edit draft.yaml
+odke ontology freeze draft.yaml --by "Ada Lovelace"      # refuses while there is an error
+```
 
 ## From the shell
 
-The CLI loads `.yaml` / `.yml` files as YAML and everything else as JSON. These
-commands never load strictly, because they exist to show you what is wrong.
+These commands load non-strictly, so they can show what is wrong. `.yaml` and
+`.yml` files are read as YAML, anything else as JSON.
 
 ```bash
-odke ontology validate schema.json other.yaml    # every diagnostic; exit 1 if any file has an error
-odke ontology diff old.json new.json             # breaking changes first
-odke ontology diff old.json new.json --fail-on-breaking   # ...and exit 1 if there are any
+odke ontology validate schema.json other.yaml    # exit 1 if any file has an error
+odke ontology diff old.json new.json --fail-on-breaking
 odke ontology types schema.json                  # each type and how many predicates it can carry
-odke ontology snippet schema.json Person         # the exact prompt fragment
-odke ontology snippet schema.json Person --json-schema --limit 10
-odke ontology infer corpus/ --out draft.yaml --no-llm   # a draft for review: see Ontology inference
-odke ontology freeze draft.yaml --by "Ada Lovelace"      # after review; refuses while there are errors
+odke ontology snippet schema.json Person         # the prompt fragment for one type
 ```
-
-`validate` takes several files because that is how pre-commit calls it, and
-warnings print without failing.
