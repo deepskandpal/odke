@@ -71,15 +71,15 @@ value left alone costs a missed merge; a wrong rewrite costs a wrong fact.
 | Function | Reads | Canonical form |
 |---|---|---|
 | `normalize_date(text, *, day_first=None)` | ISO dates and datetimes, `10 December 1815`, `Dec 10, 1815`, `03/04/2020`, `March 2020`, `2020-03` | `1815-12-10`, a month such as `2020-03`, or an ISO datetime; `None` when unsure |
-| `normalize_quantity(text)` | `1,234`, `12.5 percent`, `$1.2bn`, `1.5 GiB` | `1234`, `"12.5 %"`, `"1200000000 USD"`, `"1610612736 B"`; `None` when unsure |
+| `normalize_quantity(text)` | `1,234`, `5 km`, `12.5 percent`, `€1.2bn`, `1.5 GiB` | `1234`, `"5000 m"`, `"12.5 %"`, `"1200000000 EUR"`, `"1610612736 B"`; `None` when unsure |
 | `name_key(text, *, person=False)` | a name | casefolded, accents and punctuation dropped, `S.A.` → `sa`, `&` → `and`. Organisations lose a leading "the" and trailing legal forms; people are reordered from "Last, First" and lose honorifics and generational suffixes |
 
 - An all-numeric day/month date is read only when it is unambiguous (one part
   above 12, or both equal) unless `day_first` settles it: `03/04/2020` is the third
   of April in London and the fourth of March in New York.
-- Scale abbreviations apply only to money, because `5 m` is five metres. Byte
-  units are case-sensitive, so `Mb` (megabits) is not read as megabytes. A leading
-  zero (`0123`) marks an identifier, and it is refused.
+- Scale abbreviations apply only to money, because `5 m` is five metres. Unit
+  symbols are case-sensitive, as SI writes them, so `Mb` (megabits) is not read as
+  megabytes. A leading zero (`0123`) marks an identifier, and it is refused.
 - The ontology's range decides what a value may become. A `string` range is left
   verbatim apart from whitespace (a registration number `"0114322"` must not become
   an integer), a `date` range is only read as a date, and a numeric range only as a
@@ -89,13 +89,25 @@ value left alone costs a missed merge; a wrong rewrite costs a wrong fact.
   so `J. Smith` is not made `John Smith`: that is the resolver's call, with a
   score.
 
+**Units.** A number with a unit becomes `"<number> <unit>"` in one unit per
+dimension: metres, kilograms and seconds, bytes for data, and `%`. The arithmetic
+is `Decimal`, so `5 km`, `5,000 m` and `5000 metres` are all `"5000 m"`, and a
+length never meets a mass. `KB` is 1,000 bytes, as SI says, and only `KiB` is
+1,024. A year is a unit of its own, because it has no fixed length in seconds.
+Currency is never converted. A symbol becomes an ISO code only when one currency
+owns it (`€`, `£`, `₹`, `US$`); `$`, `¥` and `Rs` are kept as written, after the
+amount. Numbers are read in English notation, with a dot decimal and comma
+thousands. Anything outside the table stays as written: temperature, `pound`,
+`ton`, months, a decimal comma.
+
 ```python
 from openodke.corroborate import name_key, normalize_date, normalize_quantity
 
 assert normalize_date("Dec 10, 1815") == "1815-12-10"
 assert normalize_date("03/04/2020") is None
 assert normalize_date("03/04/2020", day_first=True) == "2020-04-03"
-assert normalize_quantity("$1.2bn") == "1200000000 USD" and normalize_quantity("5 m") is None
+assert normalize_quantity("5 km") == normalize_quantity("5,000 metres") == "5000 m"
+assert normalize_quantity("$1.2bn") == "1200000000 $" and normalize_quantity("5 °C") is None
 assert name_key("Acme, Inc.") == name_key("The Acme Corporation") == "acme"
 assert name_key("Lovelace, Ada", person=True) == "ada lovelace"
 
