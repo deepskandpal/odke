@@ -81,6 +81,8 @@ class ModelCall:
     # The key of the registered prompt the call sent (DECISIONS #27): `extract@1`,
     # or on a repair the repair prompt's. None only on a record built elsewhere.
     prompt: str | None = None
+    # Answered from the response cache, so nothing was sent and nothing spent.
+    cached: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -398,6 +400,7 @@ class LLMExtractor:
                 cost_usd=completion.cost_usd,
                 repair=attempt > 0,
                 prompt=(_REPAIR_PROMPT if attempt else prompt).key,
+                cached=completion.cached,
             )
             with self._lock:
                 self.calls.append(call)

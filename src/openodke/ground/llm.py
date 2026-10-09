@@ -227,6 +227,7 @@ class LLMGrounder:
     `stats`: calls made and retried, calls that failed, each verdict's count,
     answers that could not be read, tokens, the key of the registered prompt the
     calls sent under `"prompts"`, and the span check's own counts under `"span"`.
+    Calls a response cache answered are counted under `"cached"` too.
 
     A call is retried on transient errors under `retry`; when it still fails, or
     fails in a way retrying cannot fix, the fact is left `UNCHECKED` and logged.
@@ -481,6 +482,10 @@ class LLMGrounder:
         for counts in (self._counts, self._widened) if widened else (self._counts,):
             counts.bump("prompt_tokens", completion.prompt_tokens)
             counts.bump("completion_tokens", completion.completion_tokens)
+            if completion.cached:
+                # Counted among `calls`, and only once one happens, so a run
+                # without a response cache reports exactly as it did.
+                counts.bump("cached")
         if completion.cost_usd is not None:
             with self._cost_lock:
                 self._cost = (self._cost or 0.0) + completion.cost_usd

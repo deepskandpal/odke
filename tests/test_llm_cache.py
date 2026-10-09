@@ -14,7 +14,10 @@ from typing import Any
 
 import pytest
 
-from openodke import prompts
+from openodke import Chunk, Ontology, prompts
+from openodke.eval.cost import CostMeter
+from openodke.extract import LLMExtractor
+from openodke.ground import LLMGrounder
 from openodke.ground.llm import GROUNDING_SCHEMA, build_messages
 from openodke.llm import (
     CachedClient,
@@ -22,8 +25,10 @@ from openodke.llm import (
     DirectoryCache,
     MemoryCache,
     Message,
+    ModelRoles,
     ModelSpec,
     ProviderError,
+    ScriptedClient,
 )
 from openodke.llm.cache import FORMAT, cache_key, prompt_keys, request
 
@@ -165,6 +170,39 @@ def test_an_error_is_never_stored() -> None:
     assert client.stats == {"hits": 0, "misses": 1, "failed": 1}
 
 
+def test_a_malformed_reply_is_stored_and_its_repair_has_a_key_of_its_own(
+    people: Ontology,
+) -> None:
+    chunk = Chunk(doc_id="d1", index=0, text="Ada Lovelace was born in 1815.", start=0, end=30)
+    good = {
+        "entities": [
+            {
+                "type": "Person",
+                "name": "Ada Lovelace",
+                "facts": [{"predicate": "birth_date", "value": "1815", "quote": "born in 1815"}],
+            }
+        ]
+    }
+    store = MemoryCache()
+    first = LLMExtractor(
+        client=CachedClient(ScriptedClient(["Sure! Here it is.", good]), store),
+        spec=SPEC,
+        types=["Person"],
+    )
+    facts = first.extract(chunk, people)
+    assert len(facts) == 1 and len(store) == 2
+    assert [c.repair for c in first.calls] == [False, True]
+
+    # The rerun replays the reply, the rejection of it, and the repair: no call at all.
+    again = LLMExtractor(
+        client=CachedClient(ScriptedClient([]), store), spec=SPEC, types=["Person"]
+    )
+    replayed = again.extract(chunk, people)
+    assert [f.signature for f in replayed] == [f.signature for f in facts]
+    assert [(c.repair, c.cached) for c in again.calls] == [(False, True), (True, True)]
+    assert [c.prompt for c in again.calls] == ["extract@1", "extract.repair@1"]
+
+
 # --------------------------------------------------------------------------- #
 # The directory store
 # --------------------------------------------------------------------------- #
@@ -227,9 +265,59 @@ def test_concurrent_writers_never_leave_a_torn_entry(tmp_path: Path) -> None:
     assert all(json.loads(store.path(k).read_text())["pad"] for k in keys)
 
 
+def test_concurrent_grounding_through_one_cache_matches_a_serial_run(tmp_path: Path) -> None:
+    docs = [_doc(i) for i in range(12)]
+    batches = [([_fact(i)], doc) for i, doc in enumerate(docs)]
+    roles = ModelRoles.single("test/model")
+
+    inner = _Counting()
+    first = LLMGrounder(roles, client=CachedClient(inner, tmp_path), max_workers=6)
+    grounded = first.ground_documents(batches)
+    assert inner.calls == 12
+
+    rerun = _Counting()
+    second = LLMGrounder(roles, client=CachedClient(rerun, tmp_path), max_workers=6)
+    assert second.ground_documents(batches) == grounded
+    assert rerun.calls == 0
+    assert (second.stats["calls"], second.stats["cached"], second.stats["prompt_tokens"]) == (
+        12,
+        12,
+        0,
+    )
+    assert "cached" not in first.stats
+
+
+# --------------------------------------------------------------------------- #
+# Cost
+# --------------------------------------------------------------------------- #
+
+
+def test_the_meter_records_a_hit_as_a_cached_call_that_cost_nothing() -> None:
+    meter = CostMeter()
+    client = meter.client(CachedClient(_Counting()), stage="ground")
+    client.complete(MESSAGES, spec=SPEC)
+    client.complete(MESSAGES, spec=SPEC)
+
+    first, second = meter.records
+    assert (first.cached, first.cost_usd) == (False, pytest.approx(0.0003))
+    assert (second.cached, second.cost_usd, second.prompt_tokens) == (True, 0.0, 0)
+    report = meter.report(documents=1)
+    assert report.total.cached_calls == 1 and report.total.calls == 2
+    assert report.total.cost_usd == pytest.approx(0.0003)
+    stage = report.as_stage_report()
+    assert stage.metrics["cached_calls"] == 1
+    assert stage.breakdown["ground"]["cached_calls"] == 1
+
+
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+
+
+def _doc(i: int) -> Any:
+    from openodke import Document
+
+    return Document(id=f"d{i}", text=f"Person {i} was born in {1800 + i}.")
 
 
 def _fact(i: int = 0) -> Any:
