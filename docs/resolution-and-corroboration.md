@@ -44,6 +44,7 @@ what it did under one reserved key, instead of discarding what it replaced:
 | `odke.conflict` | `CONFLICT` | `Fact.qualifiers` | `SignatureCorroborator` | the decision about a contested value: `status` (`won`, `lost` or `tied`) and a `reason` sentence, plus `to`, `ratio` and `confidence_before` for a loser |
 | `odke.score` | `SCORE` | `Fact.qualifiers` | `EvidenceScorer` | the scorer's inputs: `extractor`, `prior_used`, `verdict`, `support`, `conflict` |
 | `odke.derived` | `DERIVED` | `Fact.qualifiers` | the pipeline's [inverse step](concepts.md#inverse-and-symmetric-partners) | `rule` (`inverse` or `symmetric`) and `of`, the signature of the stated fact this one was derived from |
+| `odke.widen` | `WIDEN` | `Fact.qualifiers` | `LLMGrounder(widen=True)` | one [widen-and-retry](grounding.md#widen-and-retry) attempt: `from` and `to` as `[start, end]`, and the retry's `verdict`; the span is the wider one only when that verdict is `supported` |
 
 The conflict and score stamps are functions of the batch they were computed in.
 Running either stage again over its own output starts from the extractor's

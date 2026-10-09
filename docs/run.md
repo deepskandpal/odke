@@ -150,7 +150,7 @@ would have to be a Python object, such as a corroborator's `source` callable.
 | `chunker` | `sentence`, `passthrough` | `SentenceChunker` | `max_words`, `overlap` |
 | `router` | `passthrough`, `delegated` | — | your own is `package.module:Name` |
 | `extractor` | `pattern`, `llm`, `hybrid`, `triples` | `PatternExtractor`, `LLMExtractor`, `HybridExtractor`, `TriplesExtractor` | `pattern`: `mappings`, `subject_type`, `confidence`; `llm`: `types`, `snippet_limit`, `confidence`, `repairs`, `retry` and `max_workers` (as the grounder's); `hybrid`: `llm` (options, or `false`), `pattern` (options); `triples`: `path` (required), `extractor`, `confidence` — another extractor's output, [in the triples format](triples.md) |
-| `grounder` | `span`, `llm`, `passthrough`, `delegated` | `SpanGrounder`, `LLMGrounder` | `llm`: `max_workers`, `retry` (`attempts`, `base_delay`, `multiplier`, `max_delay`, `jitter`), `locate` ([the span locator](grounding.md#locating-spans)) |
+| `grounder` | `span`, `llm`, `passthrough`, `delegated` | `SpanGrounder`, `LLMGrounder` | `llm`: `max_workers`, `retry` (`attempts`, `base_delay`, `multiplier`, `max_delay`, `jitter`), `context`, `verdicts`, `locate` ([the span locator](grounding.md#locating-spans)), `widen` ([widen and retry](grounding.md#widen-and-retry); `odke run --widen` sets it) |
 | `normalizer` | `value`, `passthrough`, `delegated` | `ValueNormalizer` | `day_first`, `person_types` |
 | `resolver` | `native`, `passthrough`, `delegated` | `NativeResolver` | `threshold`, `nudge_up`, `nudge_down`, `max_block` |
 | `corroborator` | `signature`, `passthrough`, `delegated` | `SignatureCorroborator` | `half_life_days`, `freshness_floor`, `intervals` |
@@ -268,7 +268,7 @@ stage:
 | `documents`, `chunks`, `skipped`, `deferred`, `refused` | the pipeline's own counts |
 | `graph` | `facts`, `edges`, `properties`, `entities`, and `links` by kind |
 | `stages.extractor` | `paths` (the hybrid's `PathReport` totals), `rejections` by reason, or `model_calls`; `prompts`, the keys of the [registered prompts](models.md#prompts) the model sent; for `triples`, rows by how their evidence was made (`cited`, `quoted`, `quote_not_found`, `context`), `unmatched_rows` and `ambiguous_rows` |
-| `stages.grounder` | calls, retries, failures, a count per verdict, tokens, `cost_usd`, `prompts`, the span check's own counts, and with `locate` the locator's |
+| `stages.grounder` | calls, retries, failures, a count per verdict, tokens, `cost_usd`, `prompts`, the span check's own counts, with `locate` the locator's, and with `widen`, under `widen`: `retried`, `recovered` and the retries' own calls, tokens and cost, which `cost` meters as their own row, `ground.widen` |
 | `stages.corroborator` | `conflicts`: how many facts `won`, `lost` or `tied` a contest |
 | `stages.validator` | the gate's `accepted`, and `refused` by reason. The key keeps its 0.2 name ([DECISIONS #26](decisions.md)) |
 | `stages.<name>` | anything else a stage reports by carrying a `stats` mapping, your own stages included |
