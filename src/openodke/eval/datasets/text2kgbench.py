@@ -37,6 +37,7 @@ from openodke.eval.datasets._common import (
     Opener,
     Triple,
     change,
+    check_out,
     doc_names,
     download,
     pascal,
@@ -205,6 +206,7 @@ def prepare(
     raw = json.loads(paths["ontology"].read_text(encoding="utf-8"))
     gold = read_jsonl(paths["gold"])[:limit] if limit else read_jsonl(paths["gold"])
     target = Path(out)
+    check_out(target)
     ontology, labels = to_ontology(raw)
     write_json(target / "ontology.json", ontology)
     write_documents(target, ((row["id"], row["sent"]) for row in gold))
