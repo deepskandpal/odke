@@ -157,6 +157,18 @@ class HybridExtractor:
             out.append(kept)
         return out
 
+    def offered(self, ontology: Ontology) -> list[str] | None:
+        """The predicates the model path is shown, or None when it cannot say.
+
+        Only the model path's: the pattern path reads whatever predicate a
+        column names, so it withholds nothing a coverage report could name.
+        """
+        offered = getattr(self.llm, "offered", None)
+        if not callable(offered):
+            return None
+        shown = offered(ontology)
+        return None if shown is None else list(shown)
+
     def _document(self, chunk: Chunk) -> Document:
         doc = self.documents.get(chunk.doc_id)
         if doc is None:
