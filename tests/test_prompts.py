@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from openodke import prompts
+from openodke.corroborate import judge
 from openodke.extract import llm as extract_llm
 from openodke.ground import llm as ground_llm
 from openodke.infer import llm as infer_llm
@@ -41,6 +42,7 @@ def test_the_old_constants_are_the_registered_texts() -> None:
     assert get("extract.repair", 1).text == extract_llm._REPAIR
     assert get("infer", 1).text == infer_llm._INSTRUCTIONS
     assert get("infer.repair", 1).text == infer_llm._REPAIR
+    assert get("pair", 1) is judge.PROMPT and get("pair.user", 1) is judge.FRAME
 
 
 # The entity-pair judge's lineage, which both its keys carry.

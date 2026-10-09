@@ -9,9 +9,11 @@ person adds to it, which is one tick per item and an optional note.
 
 Two kinds: `grounding` sheets read back as `GroundingLabel` rows, and `pair`
 sheets as `PairLabel` rows, with every pair answered `unsure` kept out of them.
+The pair judge's review queue is a pair items file as it stands.
 
 The sheet shows a grounding claim exactly as `render_claim` puts it to the
-grounder, so the person judges what the model judged. Passage text is escaped
+grounder, and a pair's two mentions as the pair judge reads them (`Mention`),
+so the person judges what the model judged. Passage text is escaped
 so that markdown cannot hide or restyle it: a `$` stays a dollar sign rather
 than opening a formula.
 
@@ -33,6 +35,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from openodke.corroborate.judge import Mention
 from openodke.eval.formats import GroundingLabel, PairLabel
 from openodke.ground.llm import render_claim
 from openodke.ground.span import located
@@ -148,34 +151,27 @@ GROUNDING = Kind(
 )
 
 
-class Mention(Frozen):
-    """One side of a pair: an entity key and its type, and how and where it was written.
-
-    `label` is the name as the text has it (the key is shown when it is
-    absent); `context` is the passage it appeared in.
-    """
-
-    key: str
-    type: str
-    label: str | None = None
-    context: str | None = None
-
-
 class PairItem(Frozen):
     """One row of `odke label make pair`: two mentions, one entity or two?
 
     `same` and `different` read back as a `PairLabel` on the two keys.
     `unsure` never does: those rows go to a file of their own, in this shape,
-    ready to be made into a sheet again.
+    ready to be made into a sheet again. A row of the pair judge's review
+    queue is one, and carries what the judge answered in each order under
+    `judge`. The sheet never shows it, so the person decides unanchored.
     """
 
     a: Mention
     b: Mention
+    judge: dict[str, Any] | None = None
 
 
 def _side(name: str, mention: Mention) -> list[str]:
     shown = mention.label or mention.key
-    lines = [plain(f"{name}: {shown} ({mention.type})")]
+    head = f"{name}: {shown} ({mention.type})"
+    if aliases := [n for n in mention.aliases if n != shown]:
+        head += f", also known as {', '.join(aliases)}"
+    lines = [plain(head)]
     if mention.context:
         found = re.search(re.escape(shown), mention.context, re.IGNORECASE)
         span = (found.start(), found.end()) if found else (None, None)
