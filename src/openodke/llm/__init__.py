@@ -21,6 +21,9 @@ install with no extra dependency. Everything else routes through litellm, which
 `openodke.llm.providers` is the table behind that: every provider openodke can
 address, the variable each reads its key from, and who serves it. `odke models`
 prints it. Keys come from the environment and are never stored or printed.
+
+`CachedClient` wraps any client so that a request it has answered before is
+answered again from the store, for nothing (`openodke.llm.cache`).
 """
 
 from openodke.llm.base import (
@@ -32,6 +35,7 @@ from openodke.llm.base import (
     ProviderError,
     ProviderNotInstalled,
 )
+from openodke.llm.cache import CachedClient, DirectoryCache, MemoryCache
 from openodke.llm.openai_compat import DEFAULT_BASE_URLS, OpenAICompatClient
 from openodke.llm.providers import PROVIDERS, Provider, key_env_for, qualify, require_key
 from openodke.llm.registry import register, registered_providers, resolve, unregister
@@ -47,9 +51,12 @@ from openodke.llm.testing import (
 __all__ = [
     "DEFAULT_BASE_URLS",
     "PROVIDERS",
+    "CachedClient",
     "Cassette",
     "Completion",
+    "DirectoryCache",
     "LLMClient",
+    "MemoryCache",
     "Message",
     "MissingAPIKey",
     "ModelRoles",
