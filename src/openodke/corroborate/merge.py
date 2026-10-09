@@ -57,8 +57,10 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from openodke.corroborate.duplicates import DEFAULT_THRESHOLD, NearDuplicates
+from openodke.corroborate.inverses import derived_from
 from openodke.corroborate.provenance import (
     CONFLICT,
+    DERIVED,
     NEAR_DUPLICATES,
     SOURCE_FORM,
     near_duplicates,
@@ -66,6 +68,7 @@ from openodke.corroborate.provenance import (
     unstamped,
 )
 from openodke.ontology import Ontology
+from openodke.stages import FactLookup
 from openodke.types import (
     Document,
     Evidence,
@@ -257,6 +260,15 @@ class SignatureCorroborator:
     Without the texts nothing is compared. `odke run` and the Validator hand
     over the documents they were given, and `stats["near_duplicates"]` counts
     the pairs compared and found.
+
+    `store` is a `FactLookup`, or several: what the store already holds. After
+    the batch merges, each claim the store holds under the same signature
+    merges with it as one more member, in one read per store, so its support
+    list grows by the batch's new sources and its edge is rewritten rather
+    than added (#153). The Validator hands over every sink it writes to that
+    can say what it holds. `stats["store"]` counts the facts `read`, those
+    `merged` with a stored fact, and the derived ones `dropped` because the
+    store states the claim.
     """
 
     def __init__(
@@ -269,6 +281,7 @@ class SignatureCorroborator:
         intervals: Mapping[str, Literal["min", "max"]] = DEFAULT_INTERVALS,
         documents: Mapping[str, Document] | Iterable[Document] | None = None,
         near_duplicates: float | None = DEFAULT_THRESHOLD,
+        store: FactLookup | Sequence[FactLookup] | None = None,
     ) -> None:
         if near_duplicates is not None and not 0.0 < near_duplicates <= 1.0:
             raise ValueError(f"near_duplicates must be in (0, 1] or None, got {near_duplicates}")
@@ -280,7 +293,13 @@ class SignatureCorroborator:
         items = documents.values() if isinstance(documents, Mapping) else documents or ()
         self.documents: dict[str, Document] = {doc.id: doc for doc in items}
         self.near_duplicates = near_duplicates
-        self.stats: dict[str, Any] = {"near_duplicates": {"compared": 0, "found": 0}}
+        self.store: tuple[FactLookup, ...] = (
+            () if store is None else (store,) if isinstance(store, FactLookup) else tuple(store)
+        )
+        self.stats: dict[str, Any] = {
+            "near_duplicates": {"compared": 0, "found": 0},
+            "store": {"read": 0, "merged": 0, "dropped": 0},
+        }
 
     def corroborate(self, facts: Iterable[Fact]) -> list[Fact]:
         groups: dict[tuple[Any, ...], list[Fact]] = {}
@@ -291,6 +310,8 @@ class SignatureCorroborator:
         if self.near_duplicates is not None and self.documents:
             copies = NearDuplicates(self.documents, self.near_duplicates)
         merged = [self._merge(members, copies) for members in groups.values()]
+        if self.store and merged:
+            merged = self._with_store(merged, copies)
         if copies is not None:
             counts = self.stats["near_duplicates"]
             counts["compared"] += copies.compared
@@ -349,6 +370,36 @@ class SignatureCorroborator:
                 "verdict": next(v for v in _VERDICTS if v in present),
             }
         )
+
+    def _with_store(self, facts: list[Fact], copies: NearDuplicates | None) -> list[Fact]:
+        """The batch merged with what the stores already hold under each signature (#153).
+
+        A stored fact merges with its incoming twin as two members of one claim
+        do, so the support list grows by the batch's sources. A derived fact
+        merges only with a derived one, because a statement of the claim wins
+        (DECISIONS #28): a derived twin of a stored statement is dropped, and a
+        statement replaces a stored derived twin. Each derived fact then takes
+        its parent's evidence and list, so the two stay shared.
+        """
+        counts = self.stats["store"]
+        twins: dict[tuple[Any, ...], list[Fact]] = defaultdict(list)
+        for store in self.store:
+            for signature, stored in store.stored(facts).items():
+                twins[signature].append(unstamped(stored))
+            counts["read"] += len(facts)
+        out: list[Fact] = []
+        for fact in facts:
+            found = twins.get(fact.signature, [])
+            derived = DERIVED in fact.qualifiers
+            if derived and any(DERIVED not in twin.qualifiers for twin in found):
+                counts["dropped"] += 1
+                continue
+            same = [twin for twin in found if (DERIVED in twin.qualifiers) == derived]
+            if same:
+                counts["merged"] += 1
+                fact = self._merge([fact, *same], copies)
+            out.append(fact)
+        return _shared(out)
 
     @staticmethod
     def _strength(fact: Fact) -> tuple[float, datetime]:
@@ -530,6 +581,29 @@ class SignatureCorroborator:
             f"trust, freshness, and agreement discounted by how much each source asserts: "
             f"{won.rank:.2f} to {lost.rank:.2f}."
         )
+
+
+def _shared(facts: list[Fact]) -> list[Fact]:
+    """Each derived fact with its parent's evidence and support list, when its parent is here."""
+    stated = {f.signature: f for f in facts if DERIVED not in f.qualifiers}
+    out: list[Fact] = []
+    for fact in facts:
+        of = derived_from(fact)
+        parent = stated.get(of) if of is not None else None
+        if parent is None or parent.evidence == fact.evidence:
+            out.append(fact)
+            continue
+        qualifiers = {k: v for k, v in fact.qualifiers.items() if k != NEAR_DUPLICATES}
+        if NEAR_DUPLICATES in parent.qualifiers:
+            qualifiers[NEAR_DUPLICATES] = parent.qualifiers[NEAR_DUPLICATES]
+        update = {
+            "evidence": parent.evidence,
+            "support": parent.support,
+            "supported_by": parent.supported_by,
+            "qualifiers": qualifiers,
+        }
+        out.append(fact.model_copy(update=update))
+    return out
 
 
 __all__ = [
