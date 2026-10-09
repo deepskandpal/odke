@@ -11,7 +11,7 @@ import json
 import os
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import typer
 
@@ -501,6 +501,78 @@ def eval_stage(
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
     typer.echo(report.model_dump_json(indent=2) if as_json else report.render())
+
+
+# --------------------------------------------------------------------------- #
+# odke label — labelling by hand
+# --------------------------------------------------------------------------- #
+
+label_app = typer.Typer(
+    help="Write sheets to label by hand, and read the ticks back as labels.",
+    no_args_is_help=True,
+)
+app.add_typer(label_app, name="label")
+
+
+def _data_error(exc: Exception) -> NoReturn:
+    # One `error:` line per problem: a sheet can have several, each with its line.
+    for line in str(exc).splitlines():
+        typer.echo(f"error: {line}", err=True)
+    raise typer.Exit(2) from exc
+
+
+@label_app.command("make")
+def label_make(
+    kind: str = typer.Argument(..., help="grounding or pair."),
+    items: Path = typer.Argument(..., help="The rows to label, as JSONL."),
+    out: Path = typer.Option(..., "--out", "-o", help="A directory with no sheets in it yet."),
+    per_sheet: int = typer.Option(
+        50, "--per-sheet", min=1, help="Items per sheet: one sheet is one sitting."
+    ),
+) -> None:
+    """Write numbered markdown sheets to tick by hand, with the rows kept beside them.
+
+    A grounding row is a GroundingLabel without its verdict: the fact and the
+    text it cites. A pair row is two mentions, `a` and `b`, each a key and a
+    type with an optional label and context. Each item gets a heading, what to
+    judge and one box per answer; sheet-NN.items.jsonl keeps its rows. The same
+    rows write the same sheets, byte for byte, and a directory that already
+    holds sheets is refused. Exit 2 is a row or a directory it cannot use.
+    """
+    # Imported here so `odke --version` and the ontology commands stay light.
+    from openodke.eval.sheets import make_sheets
+
+    try:
+        made = make_sheets(kind, items, out, per_sheet=per_sheet)
+    except (ValueError, OSError) as exc:
+        _data_error(exc)
+    for warning in made.warnings:
+        typer.echo(f"warning: {warning}", err=True)
+    typer.echo(f"wrote {_count(len(made.sheets), 'sheet')} to {out}: {made.first} to {made.last}")
+
+
+@label_app.command("read")
+def label_read(
+    path: Path = typer.Argument(..., help="A sheet, or the directory `odke label make` wrote."),
+    out: Path = typer.Option(..., "--out", "-o", help="Where to write the labels, as JSONL."),
+) -> None:
+    """Read ticked sheets back as GroundingLabel or PairLabel rows.
+
+    One tick is a label. No tick leaves the item unlabelled, and it is counted.
+    Two ticks, or a heading the sidecar does not know, exits 2 with the file and
+    the line of the item's heading, and nothing is written. Notes go beside the
+    labels as <out>.notes.jsonl; pairs answered unsure as <out>.unsure.jsonl.
+    """
+    from openodke.eval.sheets import read_sheets
+
+    try:
+        reading = read_sheets(path)
+        written = reading.write(out)
+    except (ValueError, OSError) as exc:
+        _data_error(exc)
+    typer.echo(reading.summary())
+    for target, n in written:
+        typer.echo(f"wrote {target}: {_count(n, 'row')}")
 
 
 # --------------------------------------------------------------------------- #

@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from typer.testing import CliRunner
 
+from openodke.cli.main import app
 from openodke.eval import GroundingLabel, PairLabel, load_jsonl
 from openodke.eval.sheets import SheetError, make_sheets, quote, read_sheets
 
@@ -366,3 +368,77 @@ def test_grounding_and_pair_sheets_are_not_read_together(tmp_path: Path) -> None
         (tmp_path / "p" / f"sheet-01{suffix}").rename(tmp_path / "s" / f"sheet-02{suffix}")
     with pytest.raises(SheetError, match="mixes grounding and pair sheets"):
         read_sheets(tmp_path / "s")
+
+
+# --------------------------------------------------------------------------- #
+# odke label
+# --------------------------------------------------------------------------- #
+
+runner = CliRunner()
+
+
+def test_make_tick_read_from_the_shell(tmp_path: Path) -> None:
+    items = _jsonl(tmp_path / "items.jsonl", [_grounding(n) for n in range(3)])
+    made = runner.invoke(app, ["label", "make", "grounding", str(items), "-o", str(tmp_path / "s")])
+    assert made.exit_code == 0, made.output
+    assert made.output == f"wrote 1 sheet to {tmp_path / 's'}: G-0001 to G-0003\n"
+
+    _tick(tmp_path / "s" / "sheet-01.md", "G-0002", "not found")
+    out = tmp_path / "labels.jsonl"
+    read = runner.invoke(app, ["label", "read", str(tmp_path / "s"), "-o", str(out)])
+    assert read.exit_code == 0, read.output
+    assert read.output == (
+        "1 sheet, 3 items: 1 labelled, 2 unlabelled\n"
+        "supported 0, contradicted 0, not found 1\n"
+        f"wrote {out}: 1 row\n"
+        f"wrote {tmp_path / 'labels.notes.jsonl'}: 0 rows\n"
+    )
+
+
+def test_a_malformed_sheet_exits_2_with_its_line_and_writes_nothing(tmp_path: Path) -> None:
+    items = _jsonl(tmp_path / "items.jsonl", [_grounding(n) for n in range(2)])
+    runner.invoke(app, ["label", "make", "grounding", str(items), "-o", str(tmp_path / "s")])
+    sheet = tmp_path / "s" / "sheet-01.md"
+    _tick(sheet, "G-0002", "supported")
+    _tick(sheet, "G-0002", "contradicted")
+
+    out = tmp_path / "labels.jsonl"
+    result = runner.invoke(app, ["label", "read", str(sheet), "--out", str(out)])
+    assert result.exit_code == 2
+    assert f"error: {sheet}:{_line(sheet, '### G-0002')}: G-0002 has 2 boxes" in result.output
+    assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["make", "triples", "{items}", "-o", "{out}"], "unknown sheet kind 'triples'"),
+        (["make", "pair", "{items}", "-o", "{out}"], "items.jsonl:1: not a pair item"),
+        (["make", "grounding", "{missing}", "-o", "{out}"], "No such file"),
+        (["read", "{missing}", "-o", "{out}/labels.jsonl"], "no such sheet or directory"),
+        (["read", "{tmp}", "-o", "{out}/labels.jsonl"], "no sheet-*.md in this directory"),
+    ],
+)
+def test_label_mistakes_exit_2(tmp_path: Path, args: list[str], message: str) -> None:
+    items = _jsonl(tmp_path / "items.jsonl", [_grounding(0)])
+    names = {"items": items, "out": tmp_path / "s", "missing": tmp_path / "nope", "tmp": tmp_path}
+    result = runner.invoke(app, ["label", *(arg.format(**names) for arg in args)])
+    assert result.exit_code == 2
+    assert message in result.output
+
+
+def test_fewer_than_one_item_per_sheet_is_a_usage_error(tmp_path: Path) -> None:
+    items = _jsonl(tmp_path / "items.jsonl", [_grounding(0)])
+    args = ["label", "make", "grounding", str(items), "-o", str(tmp_path / "s")]
+    # Exit code only: click renders its usage errors through rich, styled per terminal.
+    assert runner.invoke(app, [*args, "--per-sheet", "0"]).exit_code == 2
+    assert not (tmp_path / "s").exists()
+
+
+def test_make_refuses_a_directory_with_sheets_in_it(tmp_path: Path) -> None:
+    items = _jsonl(tmp_path / "items.jsonl", [_grounding(0)])
+    args = ["label", "make", "grounding", str(items), "-o", str(tmp_path / "s")]
+    assert runner.invoke(app, args).exit_code == 0
+    again = runner.invoke(app, args)
+    assert again.exit_code == 2
+    assert "already has sheets" in again.output
