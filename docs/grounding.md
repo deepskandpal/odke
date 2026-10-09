@@ -16,6 +16,99 @@ neither drops a fact. The gate decides what is written, and because nothing is
 dropped early, the ablation can count what grounding *would* have removed
 ([DECISIONS #20](decisions.md)).
 
+## A graph from somewhere else: `odke ground`
+
+You have a graph from somewhere else. Here is what one command tells you about
+it. `examples/triples/` is five triples someone else wrote about one short
+text, with the model's answers recorded, so this runs with no key:
+
+```bash
+odke ground --facts examples/triples/triples.jsonl --texts examples/triples/texts \
+  --ontology examples/triples/ontology.json --config examples/triples/odke.yaml -o out
+```
+
+```text
+odke ground
+rows          5 (5 grounded)
+verdicts      supported 3, contradicted 0, not_found 2, unchecked 0
+free checks   1 refused: 1 not in the text
+no span       3 of 5 cite no span of their own
+model         4 calls, 657 tokens, USD unknown (ground.span@1)
+failures
+  the evidence does not support the fact: 1
+    Halden Robotics —office_in→ Berlin  [not_found, examples/triples/texts/halden.txt]
+  the citation is too narrow for its claim: 0
+
+spans  (n=5)
+  …
+wrote out/facts.jsonl, out/summary.json
+```
+
+Each fact goes through three steps, cheapest first, and a fact one step settles
+never reaches the next:
+
+1. **The free checks.** The mention is in the text: the span check below. With
+   `--ontology`, the relation is one of its predicates, and the types fit its
+   domain and range. One row here quotes text the passage does not hold, so it
+   is `not_found` without a call. A fact the ontology has no room for keeps
+   its verdict and is stamped with why, under `qualifiers["odke.check"]`.
+2. **The span locator**, with `--locate`, for facts that cited nothing.
+3. **The model**, unless `--dry-run`. A dry run is steps 1 and 2: no model, no
+   key, no cost.
+
+Two facts came back `not_found`, and the summary tells their failures apart,
+because they are fixed in different places:
+
+- **The evidence does not support the fact.** The model read the passage, and it
+  does not say this, or says otherwise. Berlin is never mentioned: the fact is
+  wrong.
+- **The citation is too narrow for its claim.** The model read a citation that
+  does not name both the subject and the object, so it could not state the
+  claim (DECISIONS #23). The fact may be true; the extractor's citation lost
+  it. With `--paper` the model reads the whole document instead, so none is
+  counted.
+
+`out/facts.jsonl` is the same facts with their verdicts, in the format a run
+writes, so `odke eval spans --facts out` reads it. `out/summary.json` is the
+summary, with the ids of every fact of each failure shape.
+
+| Option | |
+|---|---|
+| `--facts` | A triples file, an adapter's output, or a Neo4j URI |
+| `--adapter` | `triples` (the default), `langchain`, `langextract`, `graphrag` or `neo4j` ([Triples](triples.md#from-other-libraries)) |
+| `--texts` | The texts the facts cite, a file or a directory. Triples need them, and so does a Neo4j graph openodke wrote; the other adapters' output carries its own |
+| `--ontology` | Adds the free checks on the relation and the types |
+| `--config`, `--model`, `--model-provider` | The model, as `odke run` takes it: a file's `models` block, `replay` included |
+| `--locate`, `--paper`, `--dry-run` | The span locator; ODKE+'s whole-document True/False grounder; no model |
+| `--text-property` | `neo4j`: the relationship property holding each one's text, for a graph openodke did not write |
+| `--user`, `--password-env`, `--database` | Neo4j, as the sink takes them: the password from an environment variable (`NEO4J_PASSWORD`), never a flag or a file |
+| `--write-verdicts` | `neo4j`: set `odke_verdict` on each relationship read. Off unless asked |
+| `-o` | The directory to write into |
+
+Exit 2 is input that cannot be read, exit 1 a run that failed. In Python it is
+`ground_graph`, over any adapter's rows and texts:
+
+```python
+from openodke import Document
+from openodke.ground import LLMGrounder
+from openodke.interop import ground_graph
+from openodke.llm import RecordedClient
+
+passage = "Halden Robotics opened its second office in Lyon in 2019."
+claim = {"doc": "halden", "subject": "Halden Robotics", "predicate": "office_in"}
+rows = [{**claim, "object": "Lyon", "quote": "Lyon"}, {**claim, "object": "Berlin"}]
+client = RecordedClient([{"match": "Claim:", "response": {"verdict": "not_found"}}])
+grounded = ground_graph(
+    rows, [Document(id="halden", text=passage)], grounder=LLMGrounder(client=client)
+)
+print(grounded.summary.too_narrow.examples[0])
+# Halden Robotics —office_in→ Lyon  [not_found, halden]
+print(grounded.summary.unsupported.examples[0])
+# Halden Robotics —office_in→ Berlin  [not_found, halden]
+```
+
+`grounder=None` is the dry run. `grounded.write("out")` writes the two files.
+
 ## The free check: `SpanGrounder`
 
 `check_span(evidence, doc)` classifies one piece of evidence as a `SpanStatus`:

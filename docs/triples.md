@@ -166,6 +166,10 @@ The run makes four model calls for five facts, because the invented quote is
 refused for free. Three facts come back `supported` and two `not_found`, and
 `odke eval spans` reports the two uncited facts as having no span of their own.
 
+To check rows like these without writing a config, `odke ground` takes the
+file, the texts and any adapter, and says what is wrong with them:
+[A graph from somewhere else](grounding.md#a-graph-from-somewhere-else-odke-ground).
+
 ## From other libraries
 
 Each adapter turns one library's output into rows and the texts they cite, and
