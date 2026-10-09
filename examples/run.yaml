@@ -52,6 +52,9 @@ models:
   # past it is refused before it is made, and the run keeps and writes what it
   # has, then exits 3. Off unless named.
   # budget: {usd: 1.50, calls: 2000}
+  # The most calls in flight to each provider named, across every stage and
+  # the whole process. A stage's own max_workers still applies.
+  # limits: {anthropic: 8}
 
 # The thirteen stages (DECISIONS #20). Each is a built-in's short name or
 # package.module:Name, with options as extra keys: {use: name, option: value}.
