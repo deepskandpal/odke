@@ -41,7 +41,9 @@ extractor is `triples`. The config gives the inputs, the ontology, the models,
 the stages and the sinks, and a stage it leaves out gets the Validator's
 default, not the pass-through. With `--facts`, `--config` is read only for its
 `models` block, as `odke ground` reads it. `-o` adds a JSONL sink to whatever
-sinks the config names.
+sinks the config names, and `--merge` makes it a store to
+[merge with](stores.md#merge-with-the-store): a fact it holds gains the
+batch's sources.
 
 `--dry-run` calls no model and writes nothing. It runs the free checks, the
 locator with `--locate`, and every deterministic stage, then prints what
@@ -124,7 +126,7 @@ name's default options:
 | grounder | `LLMGrounder(roles, client=client, locate=locate)`, behind the free checks (`CheckedGrounder`) |
 | normalizer | `ValueNormalizer(ontology)` |
 | resolver | `NativeResolver()` |
-| corroborator | `SignatureCorroborator(ontology)` |
+| corroborator | `SignatureCorroborator(ontology, store=...)`, handed every sink that can say what it holds, so a write [merges with the store](stores.md#merge-with-the-store) |
 | scorer | `EvidenceScorer()` |
 | gate | `VerdictGate(schema=True)`: refuses what the text contradicts, and what the free checks refused |
 | inverses | on when the ontology declares a pair ([DECISIONS #28](decisions.md#28)); `inverses=False` turns it off |
@@ -146,7 +148,8 @@ the relation and the types have nothing to check.
 - **Volumes.** `facts_in` (and `unmatched`, rows whose text wasn't given),
   `refused` (and `refused_by`, the gate's reasons), `merged`, `linked` (and
   `links` by kind), `derived` and `facts_out`. The arithmetic holds:
-  in + derived − refused − merged = out.
+  in + derived − refused − merged = out. `restated` counts the facts merged
+  with one the store already held; they are in `facts_out`.
 - **Grounding.** `verdicts` counts every fact in by the verdict grounding left
   it with. `checked` is what the free checks refused.
 - **Cost.** `calls`, `tokens` and `cost_usd` (`None` until a provider reports

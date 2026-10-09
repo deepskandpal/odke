@@ -341,7 +341,10 @@ config the option is [`store_lookup`](run.md#store_lookup).
 
 `SignatureCorroborator(ontology=None, *, source=source_of, half_life_days=365.0,
 freshness_floor=0.5, intervals=DEFAULT_INTERVALS, documents=None,
-near_duplicates=0.9)` does two jobs, in order.
+near_duplicates=0.9, store=None)` does two jobs, in order. With `store`, a
+`FactLookup` or several, it also merges each claim with the one the store
+already holds under its signature, between the two
+([Merge with the store](stores.md#merge-with-the-store)).
 
 ### Merge by signature
 
