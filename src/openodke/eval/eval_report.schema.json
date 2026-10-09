@@ -140,6 +140,7 @@
         "under_extraction",
         "predicted",
         "gold",
+        "uncited",
         "unscored",
         "documents"
       ],
@@ -149,6 +150,7 @@
         "under_extraction": {"$ref": "#/$defs/count"},
         "predicted": {"$ref": "#/$defs/count"},
         "gold": {"$ref": "#/$defs/count"},
+        "uncited": {"$ref": "#/$defs/count"},
         "unscored": {"$ref": "#/$defs/count"},
         "documents": {"$ref": "#/$defs/count"}
       }
