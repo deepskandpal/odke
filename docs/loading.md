@@ -138,6 +138,18 @@ for chunk in chunks:
 assert all(doc.text[c.start : c.end] == c.text for c in chunks)
 ```
 
+## Routing
+
+A `Router` sees each chunk before extraction and returns a `RouteVerdict`. A
+chunk routed `skip` or `defer` is counted in `kg.stats` and never extracted.
+
+| Field | Values |
+|---|---|
+| `action` | `extract`, `skip` or `defer` |
+| `label` | Your own word for the chunk's kind; the package ships no taxonomy |
+| `scope` | `chunk` (the default), or `document`: a `skip` or `defer` then stops the rest of the document |
+| `reason` | Optional text saying why |
+
 ## In a run config
 
 In an [`odke run`](run.md) config, a loader is its lower-case format name and
