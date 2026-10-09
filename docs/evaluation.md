@@ -72,19 +72,28 @@ check the major version first.
 | `bootstrap` | how the ranges were drawn: `unit`, `units`, `resamples`, `seed`, `level`, `method`; `null` with no rows |
 | `rows[]` | one per configuration scored against gold facts: one for `extract`, three for the ablation and a benchmark, none for the other stages |
 | `rows[].performance` | `precision`, `recall`, `f1`, each `{value, low, high}`; `average` is `micro` (facts pooled) or `macro` (the mean of documents, as Text2KGBench averages) |
-| `rows[].counts` | `hits`; `over_extraction` (predicted, not in gold); `under_extraction` (gold, not predicted); `predicted`, `gold`, `unscored`, `documents` |
+| `rows[].counts` | `hits`; `over_extraction` (predicted, not in gold); `under_extraction` (gold, not predicted); `predicted`, `gold`; `uncited` (spurious predictions citing no document); `unscored`; `documents` |
 | `rows[].conformance` | `rate`, `conformant`, `facts`, `checks`: the share of predicted facts whose relation and types fit the ontology; `null` with no ontology |
 | `rows[].hallucination` | `definition`, `hallucinated`, `facts`, `rate`, and per-part rates where the dataset gives them; `null` where it defines none |
 | `rows[].cost`, `rows[].latency` | calls, tokens, USD (`null` when any call was unpriced) and seconds in calls; `null` when the run was not metered |
 | `stages[]` | the `StageReport`s, unchanged |
 | `notes[]` | what a number cannot say about the whole run |
-| `diagnosis`, `fixes`, `comparison`, `calibration` | reserved, empty and typed until #140, #141, #142 and #135 fill them |
+| `comparison` | `odke eval compare`'s block, unchanged: `a`, `b`, `unit`, `metric`, the `primary` paired result, `guardrails`, `mcnemar`, `notes`; `null` when nothing was compared. `odke eval compare A B --report PATH` writes a report that carries it |
+| `diagnosis`, `fixes`, `calibration` | reserved, empty and typed until #140, #141 and #135 fill them |
 
 - **The ranges are 95% bootstrap ranges over documents.** Facts from one
   document share one reading of it, so they are not independent; resampling
-  facts would print a range too narrow. 1,000 draws, seed 0, so the same labels
+  facts would print a range too narrow. 2,000 draws, seed 0, so the same labels
   give the same range on any machine. A draw on which a number is undefined is
-  left out. `openodke.eval.bootstrap` is the one implementation.
+  left out.
+- **One bootstrap.** `openodke.eval.bootstrap` draws the documents and reads
+  the percentiles, for a report's ranges and for [`compare`](#was-the-change-real)
+  alike, so the same documents and seed give the same range in both. A
+  document's counts are the row `--items` writes for it.
+- **A spurious prediction that cites no document** is in no document's counts,
+  and so in no `--items` row. The report still counts it, as
+  `evaluate_extraction` does, in its numbers and in every draw, and
+  `counts.uncited` says how many.
 - **A wrong value or a wrong entity** counts once in `over_extraction` and once
   in `under_extraction`, as it does in `fp` and `fn`.
 - **The numbers are the evaluator's own.** The rows hold the same precision,
@@ -561,13 +570,15 @@ compare  accuracy over 300 items  (A: p1.items.jsonl, B: p2.items.jsonl)
 - `--items` writes one row per item, for extract, ground, validate and route:
   `{"id": "d1", "tp": 3, "fp": 1, "fn": 0}` per labelled document, and
   `{"id": "g7", "correct": true}` per labelled fact or chunk. The rows sum to the
-  report's own counts.
+  report's own counts, less any spurious prediction that cites no document,
+  which is in no document's row and is named in a warning.
 - Both files must hold the same ids, and items are paired by id. Different items
   are refused, naming the ones only one side has: a comparison over different
   items measures the difference between the sets.
 - `--resamples` (2,000) and `--seed` (0): the same items and seed give the same
-  interval on every interpreter. `--json` prints one `Comparison` block, which a
-  versioned eval report can carry as its comparison section.
+  interval on every interpreter. `--json` prints one `Comparison` block, and
+  `--report PATH` writes it as the [eval report](#the-eval-report)'s
+  `comparison` section.
 
 **In CI**, keep the base run's items and compare the head's against them:
 
