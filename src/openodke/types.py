@@ -132,6 +132,24 @@ class RouteVerdict(Frozen):
     reason: str | None = None
 
 
+class SpanOrigin(StrEnum):
+    """Who chose an evidence span, which says how much its width means.
+
+    Most extractors outside this package cite nothing. Their facts can still be
+    grounded, against the whole text they came from, but that text is not a
+    citation: counting it as one would make every such fact look wide and
+    well-cited in `odke eval spans` (DECISIONS #25).
+    """
+
+    # The extractor chose these offsets, or quoted the text found at them.
+    CITED = "cited"
+    # openodke found them for a fact whose extractor cited nothing.
+    LOCATED = "located"
+    # Nobody chose them: the whole text the fact came from, so that a fact with
+    # no citation still has a passage to be grounded against.
+    CONTEXT = "context"
+
+
 class Evidence(Frozen):
     """Why we believe a fact: a document, and where in it.
 
@@ -145,11 +163,16 @@ class Evidence(Frozen):
     It is for highlighting and for anyone who wants the tightest citation;
     nothing in the pipeline reads it. Optional, so facts serialised before it
     existed still load (DECISIONS #23).
+
+    `span_origin` says who chose `span`. Every extractor in this package cites,
+    so it defaults to `cited`, and facts serialised before it existed load as
+    what they were (DECISIONS #25).
     """
 
     doc_id: str
     span: Span | None = None
     mention: Span | None = None
+    span_origin: SpanOrigin = SpanOrigin.CITED
     uri: str | None = None
     tier: SourceTier = SourceTier.UNVERIFIED
     retrieved_at: datetime = Field(default_factory=_utcnow)

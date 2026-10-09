@@ -19,9 +19,10 @@ Nothing about what the model is asked changes. (The libraries' structured paths
 force a tool choice, which some reasoning models refuse; both run their
 prompt-and-parse paths here.)
 
-Triples go to `competitors/<system>/facts.jsonl`, and the directory is made
-runnable: the prepared config with the extractor swapped for `replay:Replayed`,
-which hands those triples to openodke's grounder and corroborator unchanged.
+Triples go to `competitors/<system>/facts.jsonl` in openodke's triples format
+(docs/triples.md), and the directory is made runnable: the prepared config with
+the extractor swapped for `triples`, which hands those triples to openodke's
+grounder and corroborator unchanged.
 Both competitors are held to the schema the way LLMGraphTransformer's strict
 mode does it: a triple whose (head type, relation, tail type) is not a pattern
 of the ontology is dropped.
@@ -339,8 +340,7 @@ def extract(
     config = json.loads((prepared / "odke.json").read_text())
     # Absolute: openodke resolves its own stages' paths against the config, not a plugin's.
     facts = str((out / "facts.jsonl").resolve())
-    config["stages"]["extractor"] = {"use": "replay:Replayed", "path": facts, "system": system}
-    config["pythonpath"] = [str(Path(__file__).resolve().parent)]
+    config["stages"]["extractor"] = {"use": "triples", "path": facts, "extractor": system}
     (out / "odke.json").write_text(json.dumps(config, indent=2))
     print(
         f"{system} ({model}): {len(raw)} triples, {len(rows)} inside the schema,"

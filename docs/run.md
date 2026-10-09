@@ -147,7 +147,7 @@ would have to be a Python object, such as a corroborator's `source` callable.
 | `loader` | `directory`, `text`, `markdown`, `html`, `pdf`, `docx`, `csv`, `tsv`, `json`, `jsonl`, `parquet` | the `openodke.loaders` classes | `tier`, and each class's own: `encoding`, `modality`, `records`, `delimiter`, `columns`, `pattern`; `html`: `strip_boilerplate`; `pdf`: `per_page`, `page_separator` |
 | `chunker` | `sentence`, `passthrough` | `SentenceChunker` | `max_words`, `overlap` |
 | `router` | `passthrough`, `delegated` | — | your own is `package.module:Name` |
-| `extractor` | `pattern`, `llm`, `hybrid` | `PatternExtractor`, `LLMExtractor`, `HybridExtractor` | `pattern`: `mappings`, `subject_type`, `confidence`; `llm`: `types`, `snippet_limit`, `confidence`, `repairs`; `hybrid`: `llm` (options, or `false`), `pattern` (options) |
+| `extractor` | `pattern`, `llm`, `hybrid`, `triples` | `PatternExtractor`, `LLMExtractor`, `HybridExtractor`, `TriplesExtractor` | `pattern`: `mappings`, `subject_type`, `confidence`; `llm`: `types`, `snippet_limit`, `confidence`, `repairs`; `hybrid`: `llm` (options, or `false`), `pattern` (options); `triples`: `path` (required), `extractor`, `confidence` — another extractor's output, [in the triples format](triples.md) |
 | `grounder` | `span`, `llm`, `passthrough`, `delegated` | `SpanGrounder`, `LLMGrounder` | `llm`: `max_workers`, `retry` (`attempts`, `base_delay`, `multiplier`, `max_delay`, `jitter`) |
 | `normalizer` | `value`, `passthrough`, `delegated` | `ValueNormalizer` | `day_first`, `person_types` |
 | `resolver` | `native`, `passthrough`, `delegated` | `NativeResolver` | `threshold`, `nudge_up`, `nudge_down`, `max_block` |
@@ -258,7 +258,7 @@ stage:
 |---|---|
 | `documents`, `chunks`, `skipped`, `deferred`, `refused` | the pipeline's own counts |
 | `graph` | `facts`, `edges`, `properties`, `entities`, and `links` by kind |
-| `stages.extractor` | `paths` (the hybrid's `PathReport` totals), `rejections` by reason, or `model_calls` |
+| `stages.extractor` | `paths` (the hybrid's `PathReport` totals), `rejections` by reason, or `model_calls`; for `triples`, rows by how their evidence was made (`cited`, `quoted`, `quote_not_found`, `context`) and `unmatched_rows` |
 | `stages.grounder` | calls, retries, failures, a count per verdict, tokens, `cost_usd`, and the span check's own counts |
 | `stages.corroborator` | `conflicts`: how many facts `won`, `lost` or `tied` a contest |
 | `stages.validator` | `accepted`, and `refused` by reason |

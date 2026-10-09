@@ -1,0 +1,26 @@
+[
+  {
+    "match": "Claim: Halden Robotics (Company) — founder — Mara Quist (Person).\n",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Halden Robotics (Company) — office in — Lyon (City).\n",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Halden Robotics (Company) — chief executive — Tomas Ferrand (Person).\n",
+    "response": {
+      "verdict": "supported"
+    }
+  },
+  {
+    "match": "Claim: Halden Robotics (Company) — office in — Berlin (City).\n",
+    "response": {
+      "verdict": "not_found"
+    }
+  }
+]

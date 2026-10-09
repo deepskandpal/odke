@@ -58,6 +58,7 @@ from openodke.types import (
     RouteVerdict,
     SourceTier,
     Span,
+    SpanOrigin,
     ValidationVerdict,
 )
 from openodke.validators import VerdictValidator
@@ -110,6 +111,7 @@ __all__ = [
     "Sink",
     "SourceTier",
     "Span",
+    "SpanOrigin",
     "ValidationVerdict",
     "Validator",
     "ValueNormalizer",

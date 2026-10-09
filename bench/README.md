@@ -26,10 +26,11 @@ The extractors:
   same node types and patterns, no lexical graph.
 
 Both competitors are held to the schema the way LLMGraphTransformer's strict mode
-does it. Their triples reach openodke through `replay:Replayed`, an extractor stage
-that cites the whole document — they quote nothing — so grounding runs in the
-paper's own mode: the whole context, True or False, affirmed facts kept
-(`odke bench prepare --paper`; the set's ground model grounds).
+does it. Their triples reach openodke in its [triples format](../docs/triples.md),
+through the `triples` extract stage. They quote nothing, so each is grounded
+against its whole document, which is the paper's own mode: the whole context,
+True or False, affirmed facts kept (`odke bench prepare --paper`; the set's
+ground model grounds).
 
 Microsoft GraphRAG is not here: its extraction writes free-text entity and
 relationship descriptions for community summaries, with no ontology, so it cannot

@@ -1,0 +1,31 @@
+{
+  "name": "companies",
+  "version": "1",
+  "types": {
+    "Company": {"description": "An incorporated business."},
+    "Person": {"description": "A named individual."},
+    "City": {"description": "A city."}
+  },
+  "predicates": {
+    "founder": {
+      "description": "A person who founded the company.",
+      "domain": ["Company"],
+      "range": "Person"
+    },
+    "office_in": {
+      "description": "A city where the company has an office.",
+      "domain": ["Company"],
+      "range": "City"
+    },
+    "chief_executive": {
+      "description": "The company's chief executive.",
+      "domain": ["Company"],
+      "range": "Person"
+    },
+    "founded": {
+      "description": "The year the company was founded.",
+      "domain": ["Company"],
+      "range": "integer"
+    }
+  }
+}

@@ -1,0 +1,5 @@
+{"doc": "halden", "subject": "Halden Robotics", "subject_type": "Company", "predicate": "founder", "object": "Mara Quist", "object_type": "Person", "start": 0, "end": 59, "quote": "Halden Robotics was founded in Leeds in 2014 by Mara Quist."}
+{"doc": "halden", "subject": "Halden Robotics", "subject_type": "Company", "predicate": "office_in", "object": "Lyon", "object_type": "City", "quote": "it opened a second office in Lyon in 2019"}
+{"doc": "halden", "subject": "Halden Robotics", "subject_type": "Company", "predicate": "chief_executive", "object": "Tomas Ferrand", "object_type": "Person"}
+{"doc": "halden", "subject": "Halden Robotics", "subject_type": "Company", "predicate": "office_in", "object": "Berlin", "object_type": "City"}
+{"doc": "halden", "subject": "Halden Robotics", "subject_type": "Company", "predicate": "founded", "object": 2012, "quote": "founded in 2012"}

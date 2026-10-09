@@ -127,7 +127,7 @@ def test_the_summary_names_the_gap_when_the_widths_separate() -> None:
     assert report.notes[0] == (
         "not_found median 8 chars vs supported 63.5 — citations are too narrow"
     )
-    assert report.notes[1] == "2 of 13 fact(s) cite no span at all and have no width"
+    assert report.notes[1] == "2 of 13 fact(s) cite no span of their own and have no width"
     assert "no labels were used" in report.notes[-1]
 
 

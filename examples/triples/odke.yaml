@@ -1,0 +1,24 @@
+# Five hand-written triples, checked by openodke: the input format in one run.
+#
+#   odke run examples/triples/odke.yaml
+#   odke eval spans --facts examples/triples/out
+#
+# It runs on recorded responses (models.replay), so it needs no key and no
+# network. Delete the replay lines to call the model instead.
+
+ontology: ontology.json
+
+inputs:
+  - path: texts                                  # halden.txt is the text the rows call "halden"
+    loader: {use: directory}
+
+models:
+  ground: anthropic/claude-haiku-4-5-20251001
+  replay:
+    ground: recorded/ground.json
+
+stages:
+  extractor: {use: triples, path: triples.jsonl, extractor: hand-written}
+  grounder: llm
+  validator: verdict
+  sink: {use: jsonl, directory: out}

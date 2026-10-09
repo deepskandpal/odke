@@ -156,4 +156,8 @@ def test_a_limited_run_scores_only_its_documents(
     assert usage["model"] == "openai/gpt-5"
     assert usage["documents"] == 1
     config = json.loads((out / "odke.json").read_text())
-    assert config["stages"]["extractor"]["use"] == "replay:Replayed"
+    assert config["stages"]["extractor"] == {
+        "use": "triples",
+        "path": str((out / "facts.jsonl").resolve()),
+        "extractor": "lgt",
+    }
