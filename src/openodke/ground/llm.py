@@ -40,6 +40,7 @@ from openodke.llm.base import (
     ProviderNotInstalled,
 )
 from openodke.llm.roles import ModelRoles
+from openodke.prompts import Prompt
 from openodke.prompts import get as get_prompt
 from openodke.types import Document, Entity, Fact, GroundingVerdict, Polarity
 
@@ -51,7 +52,8 @@ VERDICTS = (GroundingVerdict.SUPPORTED, GroundingVerdict.CONTRADICTED, Grounding
 
 # The two prompts this grounder can send, from the registry (DECISIONS #27):
 # `ground.span` by default, and the paper's `ground.paper` (ODKE+ App. B) when
-# `verdicts="binary"`. The latest version of each is what is sent.
+# `verdicts="binary"`. The latest version of each is what is sent, and its key
+# is what `stats["prompts"]` names.
 _SPAN = get_prompt("ground.span")
 _PAPER = get_prompt("ground.paper")
 # The texts under their old names, for anything that imports them.
@@ -219,8 +221,8 @@ class LLMGrounder:
     `roles.ground` names the model; `client` overrides how it is reached, which
     is how the suite replays recorded answers. Everything the stage did is in
     `stats`: calls made and retried, calls that failed, each verdict's count,
-    answers that could not be read, tokens, and the span check's own counts
-    under `"span"`.
+    answers that could not be read, tokens, the key of the registered prompt the
+    calls sent under `"prompts"`, and the span check's own counts under `"span"`.
 
     A call is retried on transient errors under `retry`; when it still fails, or
     fails in a way retrying cannot fix, the fact is left `UNCHECKED` and logged.
@@ -257,6 +259,7 @@ class LLMGrounder:
             raise ValueError(f"verdicts must be 'three_way' or 'binary', got {verdicts!r}")
         self.context: Context = context
         self.binary = verdicts == "binary"
+        self.prompt: Prompt = _PAPER if self.binary else _SPAN
         self.roles = roles if roles is not None else ModelRoles()
         self.spec: ModelSpec = self.roles.ground
         self.client: LLMClient = client if client is not None else self.roles.client_for("ground")
@@ -404,6 +407,8 @@ class LLMGrounder:
         out: dict[str, Any] = self._counts.snapshot()
         with self._cost_lock:
             out["cost_usd"] = self._cost
+        # The registered prompt the calls sent, by key: none when no call was made.
+        out["prompts"] = [self.prompt.key] if out["calls"] else []
         out["span"] = self.span_grounder.stats
         return out
 

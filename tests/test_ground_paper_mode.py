@@ -16,6 +16,7 @@ from openodke.ground.llm import (
     render_triple,
 )
 from openodke.llm import ScriptedClient
+from openodke.prompts import get as get_prompt
 from openodke.types import GroundingVerdict, Polarity
 
 TEXT = "Ada Lovelace wrote the first algorithm in 1843. She was born in London."
@@ -50,6 +51,20 @@ def test_the_default_is_unchanged_span_and_three_way() -> None:
     messages, _, schema = client.calls[0]
     assert schema == GROUNDING_SCHEMA
     assert "born in London" not in messages[1].content
+
+
+def test_the_stats_name_the_prompt_the_calls_sent() -> None:
+    """DECISIONS #27: a run says which registered prompt it measured, by key."""
+    span = LLMGrounder(client=ScriptedClient([{"verdict": "supported"}]))
+    assert span.stats["prompts"] == []  # nothing asked, nothing named
+    span.ground(WROTE, DOC)
+    assert span.stats["prompts"] == ["ground.span@1"]
+
+    client = ScriptedClient([{"verdict": True}])
+    paper = LLMGrounder(client=client, context="document", verdicts="binary")
+    paper.ground(WROTE, DOC)
+    assert paper.stats["prompts"] == ["ground.paper@1"]
+    assert client.calls[0][0][0].content == get_prompt("ground.paper@1").text
 
 
 def test_paper_mode_sends_the_papers_prompt_the_whole_document_and_a_boolean_schema() -> None:

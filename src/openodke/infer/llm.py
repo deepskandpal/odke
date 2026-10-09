@@ -63,6 +63,9 @@ class InferenceCall:
     # None when the provider did not report cost: unknown, not free.
     cost_usd: float | None
     repair: bool = False
+    # The key of the registered prompt the call sent: `infer@1`, or on a repair
+    # the repair prompt's (DECISIONS #27).
+    prompt: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,7 +195,7 @@ class LLMProposer:
         return taken
 
     def messages(self, sample: CorpusSample, found: Proposals) -> list[Message]:
-        system = _INSTRUCTIONS.replace("{literals}", ", ".join(LITERAL_RANGES)).replace(
+        system = _PROMPT.text.replace("{literals}", ", ".join(LITERAL_RANGES)).replace(
             "{max_types}", str(self.max_types)
         )
         shown = [
@@ -225,6 +228,7 @@ class LLMProposer:
                     completion_tokens=completion.completion_tokens,
                     cost_usd=completion.cost_usd,
                     repair=attempt > 0,
+                    prompt=(_REPAIR_PROMPT if attempt else _PROMPT).key,
                 )
             )
             data = _contract(completion)
@@ -233,7 +237,7 @@ class LLMProposer:
             messages = [
                 *messages,
                 Message(role="assistant", content=completion.text),
-                Message(role="user", content=_REPAIR),
+                Message(role="user", content=_REPAIR_PROMPT.text),
             ]
         if data is None:
             self._reject("reply", None, "malformed reply")

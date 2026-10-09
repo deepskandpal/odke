@@ -52,7 +52,7 @@ log = logging.getLogger("openodke.extract")
 
 # Registered prompts (DECISIONS #27): the instructions, which the ontology
 # snippets follow in the system message, and the repair turn. The latest version
-# of each is what is sent.
+# of each is what is sent, and every `ModelCall` names the one it sent.
 _PROMPT = get_prompt("extract")
 _REPAIR_PROMPT = get_prompt("extract.repair")
 # The texts under their old names, for anything that imports them.
@@ -74,6 +74,9 @@ class ModelCall:
     cost_usd: float | None
     # A second attempt after a reply that did not follow the contract.
     repair: bool = False
+    # The key of the registered prompt the call sent (DECISIONS #27): `extract@1`,
+    # or on a repair the repair prompt's. None only on a record built elsewhere.
+    prompt: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,9 +196,10 @@ class LLMExtractor:
     `confidence` is a prior, not a probability: the scorer calibrates it (M3).
     `calls`, `rejections`, `empty_extractions` and `malformed` accumulate across
     chunks, so cost, drop rate and silence are counts a caller can read after a
-    run. An extraction that yields nothing also logs a WARNING naming its chunk:
-    a factless passage and a dropped one are not the same event, and a batch job
-    cannot measure recall if they report identically (#78).
+    run. Each call names the registered prompt it sent, and `prompts` lists
+    them. An extraction that yields nothing also logs a WARNING naming its
+    chunk: a factless passage and a dropped one are not the same event, and a
+    batch job cannot measure recall if they report identically (#78).
 
     `extract_many` is the batched path the pipeline uses: many chunks at once,
     with at most `max_workers` model calls in flight, as `LLMGrounder` does.
@@ -248,6 +252,12 @@ class LLMExtractor:
             self._client = resolve(self.spec)
         return self._client
 
+    @property
+    def prompts(self) -> list[str]:
+        """The keys of the registered prompts sent so far, in the order first sent."""
+        with self._lock:
+            return list(dict.fromkeys(c.prompt for c in self.calls if c.prompt))
+
     def snippets(self, ontology: Ontology) -> list[OntologySnippet]:
         names = self.types if self.types is not None else sorted(ontology.types)
         if not names:
@@ -261,7 +271,7 @@ class LLMExtractor:
     def messages(self, chunk: Chunk, snippets: Sequence[OntologySnippet]) -> list[Message]:
         # The passage is the whole user message, so "start" counts from its first
         # character and maps to the chunk with no arithmetic the model can miss.
-        system = "\n\n".join([_INSTRUCTIONS, *(s.render() for s in snippets)])
+        system = "\n\n".join([_PROMPT.text, *(s.render() for s in snippets)])
         return [Message(role="system", content=system), Message(role="user", content=chunk.text)]
 
     def extract(self, chunk: Chunk, ontology: Ontology) -> list[Fact]:
@@ -284,6 +294,7 @@ class LLMExtractor:
                 completion_tokens=completion.completion_tokens,
                 cost_usd=completion.cost_usd,
                 repair=attempt > 0,
+                prompt=(_REPAIR_PROMPT if attempt else _PROMPT).key,
             )
             with self._lock:
                 self.calls.append(call)
@@ -294,7 +305,7 @@ class LLMExtractor:
             messages = [
                 *messages,
                 Message(role="assistant", content=completion.text),
-                Message(role="user", content=_REPAIR),
+                Message(role="user", content=_REPAIR_PROMPT.text),
             ]
         if data is None:
             self._reject(chunk, "malformed reply")
