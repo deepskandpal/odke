@@ -14,8 +14,10 @@ reproduce it, so the paper's claims can be tested as written.
 
 The span check runs first, inside this grounder, every time. The model is only
 asked about a fact whose citation really resolves in the document, and never
-about one the free check already settled. It sets `Fact.verdict` and nothing
-else: `confidence` belongs to the scorer.
+about one the free check already settled. `locate=True` then gives a fact that
+cited nothing the window naming its subject and object (`SpanLocator`), so the
+model reads that window rather than the whole text. Apart from that span, the
+grounder sets `Fact.verdict` and nothing else: `confidence` belongs to the scorer.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Literal
 
+from openodke.ground.locate import SpanLocator
 from openodke.ground.retry import RetryPolicy, call_with_retry
 from openodke.ground.span import Counts, SpanGrounder, located
 from openodke.llm.base import (
@@ -232,6 +235,11 @@ class LLMGrounder:
     missing key or adapter is not a provider failure but configuration: it fails
     every call alike, so it raises instead of leaving the whole run `UNCHECKED`.
 
+    `locate=True` runs `SpanLocator` after the span check: a fact whose span is
+    the whole text it came from (`SpanOrigin.CONTEXT`) is asked about the one
+    or two sentences naming its subject and object instead, when they exist.
+    Its counts are under `"locate"`.
+
     `ground_many` is the batched path: a document's facts at once, with at most
     `max_workers` model calls in flight. `ground_documents` is the same across
     many documents, and is what the pipeline uses, so a corpus of one-row
@@ -250,6 +258,7 @@ class LLMGrounder:
         sleep: Callable[[float], None] = time.sleep,
         context: Context = "span",
         verdicts: Verdicts = "three_way",
+        locate: bool = False,
     ) -> None:
         if max_workers < 1:
             raise ValueError(f"max_workers must be at least 1, got {max_workers}")
@@ -266,6 +275,7 @@ class LLMGrounder:
         self.max_workers = max_workers
         self.retry = retry if retry is not None else RetryPolicy()
         self.span_grounder = SpanGrounder()
+        self.locator = SpanLocator() if locate else None
         self._sleep = sleep
         # The ceiling lives on the call, not the pool, so it also holds for a
         # caller who runs several `ground_many`s — or plain `ground`s — at once.
@@ -340,6 +350,8 @@ class LLMGrounder:
         checked = self.span_grounder.ground(fact, doc)
         if checked.verdict is not GroundingVerdict.UNCHECKED:
             return checked, None
+        if self.locator is not None:
+            checked = self.locator.locate(checked, doc)
         evidence = located(checked, doc)
         # The span check leaves a fact UNCHECKED only when something located it,
         # so this guard is for the type checker, not a path that runs.
@@ -410,6 +422,8 @@ class LLMGrounder:
         # The registered prompt the calls sent, by key: none when no call was made.
         out["prompts"] = [self.prompt.key] if out["calls"] else []
         out["span"] = self.span_grounder.stats
+        if self.locator is not None:
+            out["locate"] = self.locator.stats
         return out
 
 

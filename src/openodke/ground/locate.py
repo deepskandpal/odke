@@ -267,7 +267,8 @@ class SpanLocator:
     `SpanOrigin.LOCATED`. A fact with a citation of its own, a verdict already,
     or no window is returned as it is. Pure and free: no model, no network.
 
-    `stats` counts the facts it looked at, and how many it placed.
+    `LLMGrounder(locate=True)` runs it after the free span check and before
+    the model. `stats` counts the facts it looked at, and how many it placed.
     """
 
     def __init__(self) -> None:

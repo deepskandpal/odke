@@ -67,6 +67,7 @@ def test_the_widths_are_split_by_verdict() -> None:
     assert rows["not_found"] == {
         "n": 7,
         "no_span": 0,
+        "located": 0,
         "min": 6,
         "p25": 7.0,
         "median": 8,
@@ -76,6 +77,7 @@ def test_the_widths_are_split_by_verdict() -> None:
     assert rows["supported"] == {
         "n": 3,
         "no_span": 1,
+        "located": 0,
         "min": 46,
         "p25": 54.75,
         "median": 63.5,
@@ -86,6 +88,7 @@ def test_the_widths_are_split_by_verdict() -> None:
     assert rows["contradicted"] == {
         "n": 1,
         "no_span": 0,
+        "located": 0,
         "min": 30,
         "p25": 30.0,
         "median": 30,
@@ -113,6 +116,7 @@ def test_a_verdict_nothing_carries_a_width_for_keeps_its_row() -> None:
     assert rows["not_found"] == dict.fromkeys(("min", "p25", "median", "p75", "max")) | {
         "n": 0,
         "no_span": 0,
+        "located": 0,
     }
     assert "—" in evaluate_spans([cited(40, "supported")]).render()
 
@@ -210,6 +214,31 @@ def test_the_sink_keeps_who_chose_a_span_and_an_older_file_reads_as_cited(tmp_pa
     ]
 
 
+def test_a_located_span_is_counted_apart_from_the_citations(tmp_path: Path) -> None:
+    """openodke chose it, so its width says nothing about the extractor (DECISIONS #25)."""
+    window = Evidence(
+        doc_id="d1", span=Span(doc_id="d1", start=0, end=120), span_origin=SpanOrigin.LOCATED
+    )
+    placed = cited(120, "not_found").model_copy(update={"evidence": (window,)})
+    report = evaluate_spans([cited(8, "not_found"), cited(60, "supported"), placed])
+    assert report.breakdown["not_found"] == {
+        "n": 2,
+        "no_span": 0,
+        "located": 1,
+        **dict.fromkeys(("min", "median", "max"), 8),
+        "p25": 8.0,
+        "p75": 8.0,
+    }
+    m = report.metrics
+    assert (m["with_span"], m["located"], m["located_median"], m["median_width"]) == (2, 1, 120, 34)
+    assert m["not_found_rate"] == pytest.approx(2 / 3)
+    assert "1 of 3 fact(s) cited nothing and have a span openodke located" in report.notes[1]
+    JsonlSink(tmp_path).write(KnowledgeGraph(facts=(placed,)))
+    result = runner.invoke(app, ["eval", "spans", "--facts", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "located 1 located_median 120" in _flat(result.output)
+
+
 # --------------------------------------------------------------------------- #
 # From the shell
 # --------------------------------------------------------------------------- #
@@ -220,7 +249,7 @@ def test_the_command_reports_the_fixture() -> None:
     assert result.exit_code == 0, result.output
     assert result.output.startswith("spans  (n=13)")
     assert "citations are too narrow" in _flat(result.output)
-    assert "not_found 7 0 6 7.000 8 10.500 13" in _flat(result.output)
+    assert "not_found 7 0 0 6 7.000 8 10.500 13" in _flat(result.output)
 
 
 def test_json_output_is_a_stage_report() -> None:
