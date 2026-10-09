@@ -31,6 +31,11 @@ CONFLICT = "odke.conflict"
 # measured against labels, and re-scoring starts from the extractor's number.
 SCORE = "odke.score"
 
+# On Fact.qualifiers: a fact no source stated in this direction, added because
+# the ontology declares an inverse or a symmetric predicate (DECISIONS #28) —
+# {"rule": "inverse" | "symmetric", "of": <the stated fact's signature>}.
+DERIVED = "odke.derived"
+
 
 def source_forms(value: Any) -> dict[str, tuple[str, ...]]:
     """`qualifiers["odke.source_form"]` read back — tuples in memory, lists after JSON."""
@@ -60,4 +65,12 @@ def unstamped(fact: Fact) -> Fact:
     return fact.model_copy(update={"confidence": confidence, "qualifiers": qualifiers})
 
 
-__all__ = ["CONFLICT", "NAME_KEY", "SCORE", "SOURCE_FORM", "source_forms", "unstamped"]
+__all__ = [
+    "CONFLICT",
+    "DERIVED",
+    "NAME_KEY",
+    "SCORE",
+    "SOURCE_FORM",
+    "source_forms",
+    "unstamped",
+]
