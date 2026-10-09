@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -188,6 +189,35 @@ def test_an_ablation_run_is_scored_row_by_row_against_the_papers_numbers() -> No
     assert report.breakdown[CONFIGURATIONS[0]]["precision"] == pytest.approx(0.5)
     assert report.breakdown[CONFIGURATIONS[1]]["precision"] == pytest.approx(1.0)
     assert "-100%" in report.notes[0] and "ODKE+ reports -35%" in report.notes[0]
+
+
+def test_a_run_without_nltk_stops_before_any_model_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hallucination metrics need NLTK; finding that out after the bill is too late."""
+    calls: list[Any] = []
+
+    def ablate(config: Any) -> AblationRun:  # every model call a run makes is in here
+        calls.append(config)
+        return _run({}, [], [])
+
+    monkeypatch.setattr(text2kgbench, "ablate", ablate)
+    for name in ("nltk", "nltk.stem", "nltk.tokenize"):
+        monkeypatch.setitem(sys.modules, name, None)
+    opener = _fake_opener(
+        {
+            "1_movie_ontology.json": json.dumps(ONTOLOGY).encode(),
+            "ont_1_movie_test.jsonl": _jsonl([{"id": r["id"], "sent": r["sent"]} for r in GOLD]),
+            "ont_1_movie_ground_truth.jsonl": _jsonl(GOLD),
+        }
+    )
+    root = text2kgbench.fetch(tmp_path / "raw", ontologies=["ont_1_movie"], opener=opener)
+    out = text2kgbench.prepare(root, "ont_1_movie", tmp_path / "set")
+    with pytest.raises(ImportError, match=r"openodke\[bench\]"):
+        text2kgbench.run(out)
+    result = CliRunner().invoke(app, ["bench", "run", "text2kgbench", str(out)])
+    assert result.exit_code == 2 and "openodke[bench]" in result.output
+    assert calls == []
 
 
 def test_triples_use_labels_and_land_in_every_cited_document() -> None:
