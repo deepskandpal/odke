@@ -204,3 +204,63 @@ document, read whole, states the triple. It does not say where: there is no
 citation for a reader to check, and a long document lets the grounder join two
 passages that never state the claim together. `odke eval spans` counts these
 facts as having no span of their own.
+
+### LangExtract
+
+`from_langextract` reads what `lx.io.save_annotated_documents` writes, or the
+`AnnotatedDocument`s `lx.extract` returns. An extraction is an entity with
+attributes, so the default reading makes each attribute one triple about it.
+
+| LangExtract | Row |
+|---|---|
+| `document_id`, `text` | The text and its id |
+| `extraction_text` | `subject`; also `quote`, unless `alignment_status` says the match was fuzzy or partial |
+| `extraction_class` | `subject_type` |
+| `attributes` | One row per key and value: the key is the `predicate`, the value the `object` (a list gives a row per item). A literal, unless the ontology's range for the predicate is a type |
+| `char_interval.start_pos`, `.end_pos` | `start`, `end`: a citation |
+| `char_interval: null` | The whole text, marked `context` |
+| no `attributes` | No row: an entity states no claim. A warning counts them |
+| `alignment_status`, `extraction_index`, `group_index`, `description` | Passed to `triples=`, otherwise unread |
+
+```python
+from openodke.interop import from_langextract
+
+company = {
+    "extraction_class": "company",
+    "extraction_text": "Halden Robotics",
+    "char_interval": {"start_pos": 0, "end_pos": 15},
+    "attributes": {"office_in": "Lyon"},
+}
+# One line of the file, as LangExtract wrote it.
+annotated = {"document_id": "halden", "text": text, "extractions": [company]}
+rows, texts = from_langextract([annotated])
+grounder = LLMGrounder(client=client, context="document")
+kg = Pipeline(ontology, TriplesExtractor(rows, documents=texts), grounder=grounder).run(texts)
+print(kg.facts[0].verdict.value, kg.facts[0].evidence[0].span.quote)  # supported Halden Robotics
+```
+
+The cited span is LangExtract's own, often just a name, and an attribute is
+usually stated around it rather than in it (DECISIONS #23). So the example asks
+the grounder about the whole text with `context="document"`, which still checks
+the offsets for free first.
+
+Any other reading is a function from one extraction, in LangExtract's JSON form,
+to the rows it states, passed as `triples=`. The extraction's offsets and quote
+are added to each row. Beside the LangExtract call that wrote the file:
+
+<!-- docs: no-run -->
+```python
+def offices(extraction):  # an "office" extraction names its company and its city
+    attributes = extraction["attributes"] or {}
+    if extraction["extraction_class"] == "office":
+        yield {
+            "subject": attributes["company"],
+            "predicate": "office_in",
+            "object": attributes["city"],
+        }
+
+
+lx.io.save_annotated_documents([lx.extract(text, prompt_description=prompt, examples=examples)])
+# test_output/data.jsonl is where LangExtract writes by default.
+rows, texts = from_langextract("test_output/data.jsonl", triples=offices)
+```
