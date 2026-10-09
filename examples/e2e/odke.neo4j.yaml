@@ -38,7 +38,7 @@ stages:
   resolver: e2e_stages:RegistryResolver
   corroborator: signature
   scorer: evidence
-  validator: verdict
+  gate: verdict
   sink:
     use: neo4j
     uri_env: NEO4J_URI

@@ -30,6 +30,11 @@ from openodke.types import Document, Fact, KnowledgeGraph
 # How many facts a dry run prints before saying how many more there were.
 SAMPLE = 20
 
+# The gate's counts keep their 0.2 key, `stages.validator`: the stats are a
+# format a JSONL manifest and other tools read, and renaming a key there waits
+# for the report's schema version (DECISIONS #26).
+_REPORTED_AS = {"gate": "validator"}
+
 
 class _StandIn:
     """What the pipeline sees in place of a sink: its profile, and a write that does nothing."""
@@ -141,7 +146,7 @@ def collect_stats(built: Built, kg: KnowledgeGraph) -> dict[str, Any]:
     """The pipeline's counts, the graph's shape, and every stage's own counts.
 
     A stage reports by carrying a `stats` mapping, as the grounders and the
-    verdict validator do; a user's stage that does the same is reported the
+    verdict gate do; a user's stage that does the same is reported the
     same way. The extractor's rejections and routing report, and the
     corroborator's conflicts, are read from where those stages keep them.
     """
@@ -165,7 +170,7 @@ def collect_stats(built: Built, kg: KnowledgeGraph) -> dict[str, Any]:
         if name == "corroborator":
             report["conflicts"] = _conflicts(kg.facts)
         if report:
-            stages[name] = report
+            stages[_REPORTED_AS.get(name, name)] = report
     stats["stages"] = stages
     meter = built.context.meter
     if meter is not None:

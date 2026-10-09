@@ -9,13 +9,17 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
 
 from openodke import __version__
 from openodke.ontology import Ontology, OntologyLoadError
+
+if TYPE_CHECKING:
+    from openodke.run import RunConfig
 
 app = typer.Typer(
     name="odke",
@@ -47,6 +51,23 @@ def _load_or_exit(path: Path) -> Ontology:
     except (OntologyLoadError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from None
+
+
+def _load_run_config(path: Path) -> RunConfig:
+    """`load_config`, with what it warned about printed as `warning:` lines.
+
+    Python hides a `DeprecationWarning` raised inside a library, and the reader
+    of a config file is a person at a terminal: a key that still works under an
+    old name (`validator:`, now `gate:`) has to be said where they will see it.
+    """
+    from openodke.run import load_config
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        config = load_config(path)
+    for warning in caught:
+        typer.echo(f"warning: {warning.message}", err=True)
+    return config
 
 
 def _count(n: int, noun: str) -> str:
@@ -204,11 +225,11 @@ def run_command(
     """
     # Imported here so `odke --version` and the ontology commands stay light.
     from openodke.llm.base import ProviderError
-    from openodke.run import ConfigError, execute, load_config
+    from openodke.run import ConfigError, execute
 
     chosen = _qualified(model, model_provider)
     try:
-        loaded = load_config(config)
+        loaded = _load_run_config(config)
         if chosen is not None:
             loaded = loaded.with_model(chosen)
             typer.echo(f"models: every role on {chosen}")
@@ -449,7 +470,6 @@ def eval_stage(
         elif stage == "ablation":
             from openodke.eval.ablation import DESCRIPTION, run_ablation
             from openodke.eval.formats import GoldFact, load_jsonl
-            from openodke.run import load_config
 
             if describe:
                 typer.echo(
@@ -460,7 +480,7 @@ def eval_stage(
                 raise ValueError("ablation runs the config itself; it takes --config and --labels")
             if config is None or labels is None:
                 raise ValueError("ablation needs --config and --labels (or --describe)")
-            report = run_ablation(load_config(config), load_jsonl(labels, GoldFact))
+            report = run_ablation(_load_run_config(config), load_jsonl(labels, GoldFact))
         else:
             if describe:
                 typer.echo(describe_formats(stage))

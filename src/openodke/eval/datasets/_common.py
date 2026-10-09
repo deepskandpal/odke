@@ -139,10 +139,10 @@ def run_config(
     model space to think; lower it for a model with a smaller output cap.
     """
     grounder: dict[str, Any] = {"use": "llm"}
-    validator: dict[str, Any] = {"use": "verdict"}
+    gate: dict[str, Any] = {"use": "verdict"}
     if paper:
         grounder |= {"context": "document", "verdicts": "binary"}
-        validator |= {"refuse_not_found": True}
+        gate |= {"refuse_not_found": True}
     config: dict[str, Any] = {
         "ontology": "ontology.json",
         "inputs": [{"path": "docs", "loader": "directory"}],
@@ -157,7 +157,7 @@ def run_config(
             # does normalise; on these datasets that would only measure the scorer.)
             "corroborator": "signature",
             "scorer": "evidence",
-            "validator": validator,
+            "gate": gate,
         },
     }
     models: dict[str, Any] = {}

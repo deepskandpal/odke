@@ -19,7 +19,7 @@ rather than a stage silently left as the pass-through.
       chunker: {use: sentence, max_words: 120}
       extractor: hybrid                           # the one required stage
       grounder: llm
-      validator: verdict
+      gate: verdict
       sink: {use: jsonl, directory: out}
     bootstrap: false
 
@@ -28,6 +28,9 @@ either may take options: `{use: name, option: value, ...}`. A stage left out is
 the pass-through from `openodke.stages` (DECISIONS #20) — except the scorer,
 which `odke run` fills with `evidence` so that a written fact's confidence
 reflects what the grounder found; `scorer: passthrough` opts out.
+
+`gate` was `validator` in 0.2 (DECISIONS #26). The old key still works, with a
+warning, until 1.0.0.
 """
 
 from __future__ import annotations
@@ -40,6 +43,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, model_validator
 
+from openodke._renamed import deprecated
 from openodke.llm.base import ModelSpec
 from openodke.llm.roles import ModelRoles
 
@@ -54,7 +58,7 @@ STAGES = (
     "resolver",
     "corroborator",
     "scorer",
-    "validator",
+    "gate",
     "sink",
     "constrainer",
     "inferrer",
@@ -178,11 +182,22 @@ class StagesConfig(_Strict):
     corroborator: StageSpec | None = None
     # Left out, `odke run` scores with `evidence` (`run.build.DEFAULTS`).
     scorer: StageSpec | None = None
-    validator: StageSpec | None = None
+    gate: StageSpec | None = None
     # One sink or several; none writes nothing.
     sink: tuple[StageSpec, ...] = ()
     constrainer: StageSpec | None = None
     inferrer: StageSpec | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _old_gate_key(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping) or "validator" not in value:
+            return value
+        if "gate" in value:
+            raise ValueError("`validator` is the old name of `gate`; give `gate` alone")
+        # 3: past pydantic's `model_validate`, to the line that called it.
+        deprecated("stages.validator", "stages.gate", stacklevel=3)
+        return {("gate" if key == "validator" else key): item for key, item in value.items()}
 
     @model_validator(mode="before")
     @classmethod

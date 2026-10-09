@@ -32,6 +32,7 @@ from urllib.parse import unquote, urlsplit
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from openodke._renamed import deprecated
 from openodke.chunking import SentenceChunker
 from openodke.corroborate import (
     EvidenceScorer,
@@ -108,7 +109,7 @@ PROTOCOLS: dict[str, type] = {
     "resolver": Resolver,
     "corroborator": Corroborator,
     "scorer": Scorer,
-    "validator": Gate,
+    "gate": Gate,
     "sink": Sink,
     "constrainer": Constrainer,
     "inferrer": Inferrer,
@@ -380,7 +381,7 @@ _PASSTHROUGH: dict[str, Callable[[], Any]] = {
     "resolver": PassThroughResolver,
     "corroborator": PassThroughCorroborator,
     "scorer": PassThroughScorer,
-    "validator": PassThroughGate,
+    "gate": PassThroughGate,
     "constrainer": PassThroughConstrainer,
     "inferrer": PassThroughInferrer,
 }
@@ -413,7 +414,7 @@ BUILTINS: dict[str, dict[str, Factory]] = {
     "resolver": {"native": _plain(NativeResolver)},
     "corroborator": {"signature": _with_ontology(SignatureCorroborator, "source")},
     "scorer": {"evidence": _scorer},
-    "validator": {"verdict": _plain(VerdictGate)},
+    "gate": {"verdict": _plain(VerdictGate)},
     "constrainer": {"neo4j": _plain(Neo4jConstrainer)},
     "inferrer": {},
 }
@@ -849,6 +850,9 @@ class Built:
     sinks: list[SinkPlan]
 
     def pipeline(self, *, sinks: Sequence[Sink] = (), **overrides: Any) -> Pipeline:
+        if "validator" in overrides:
+            deprecated("Built.pipeline(validator=...)", "Built.pipeline(gate=...)")
+            overrides["gate"] = overrides.pop("validator")
         s = {**self.stages, **overrides}
         return Pipeline(
             self.ontology,
@@ -860,7 +864,7 @@ class Built:
             resolver=s["resolver"],
             corroborator=s["corroborator"],
             scorer=s["scorer"],
-            gate=s["validator"],
+            gate=s["gate"],
             constrainer=s["constrainer"],
             sinks=sinks,
         )

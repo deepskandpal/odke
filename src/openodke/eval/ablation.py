@@ -168,7 +168,7 @@ def ablate(config: RunConfig) -> AblationRun:
     else:
         replay = _Replaying(recording.found)
         grounded = list(Pipeline(ontology, replay, grounder=grounder, **route).run(docs).facts)
-    gate = stages["validator"] if stages["validator"] is not None else VerdictGate()
+    gate = stages["gate"] if stages["gate"] is not None else VerdictGate()
     gated = [f for f in grounded if gate.validate(f, ontology).action != "refuse"]
     all_calls = list(meter.records)
 
