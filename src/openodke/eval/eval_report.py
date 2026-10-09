@@ -43,14 +43,13 @@ from openodke.eval.cost import CallRecord, StageCost
 from openodke.eval.extraction import match_extraction, per_document
 from openodke.eval.formats import GoldFact
 from openodke.eval.report import Metric, StageReport, _fmt, _table, prf
+from openodke.ground.checks import CHECKS, schema_problem
 from openodke.ontology import Ontology
 from openodke.types import Fact, Frozen
 
 SCHEMA_VERSION = "1.0"
 SCHEMA_PATH = Path(__file__).with_name("eval_report.schema.json")
 
-# What `conforms` checks, in order: the relation, then the two ends' types.
-CHECKS = ("predicate", "domain", "range")
 
 Average = Literal["micro", "macro"]
 
@@ -389,20 +388,10 @@ def extraction_units(
 def conforms(fact: Fact, ontology: Ontology) -> bool:
     """Whether `ontology` has room for `fact`: its predicate, its domain, its range.
 
-    The relation must be one of the ontology's predicates; the subject's type,
-    or a type it inherits from, in the predicate's domain when one is declared;
-    and the object an entity of the range type for an edge, a value for a
-    property. The same three checks as the grounder's free checks.
+    The grounder's free checks (`openodke.ground.checks.schema_problem`), so a
+    fact the report counts as conforming is one the free checks let through.
     """
-    predicate = ontology.predicates.get(fact.predicate)
-    if predicate is None:
-        return False
-    if predicate.domain and not ontology.lineage(fact.subject.type) & set(predicate.domain):
-        return False
-    obj = fact.object_entity
-    if predicate.is_edge_in(ontology):
-        return obj is not None and predicate.range in ontology.lineage(obj.type)
-    return obj is None
+    return schema_problem(fact, ontology) is None
 
 
 def conformance(facts: Sequence[Fact], ontology: Ontology | None) -> Conformance | None:
