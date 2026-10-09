@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib.metadata
 import json
 import os
 import shutil
@@ -46,6 +47,8 @@ DEFAULT_MAX_TOKENS = 16000
 USAGE = {"input_tokens": 0, "output_tokens": 0, "calls": 0, "failed_documents": 0}
 LITERAL_NODES = {"date": "Date", "number": "Number", "integer": "Number", "string": "Text"}
 ROLES = {"system": "system", "human": "user", "user": "user", "ai": "assistant"}
+# Whose versions `usage.json` records: a published number names what made it.
+LIBRARIES = ("langchain-experimental", "neo4j-graphrag", "litellm")
 
 
 # --------------------------------------------------------------------------- #
@@ -305,6 +308,17 @@ async def run_neo4j(
 SYSTEMS = {"lgt": run_lgt, "neo4j": run_neo4j}
 
 
+def versions() -> dict[str, str | None]:
+    """Each library in `LIBRARIES` and its installed version; None for one not installed."""
+    out: dict[str, str | None] = {}
+    for name in LIBRARIES:
+        try:
+            out[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            out[name] = None
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # a runnable directory for openodke's verification
 # --------------------------------------------------------------------------- #
@@ -331,6 +345,7 @@ def extract(
         "documents": len(docs),
         "triples_raw": len(raw),
         "triples_in_schema": len(rows),
+        "versions": versions(),
     }
     (out / "usage.json").write_text(json.dumps(usage, indent=2))
     (out / "docs").mkdir()
