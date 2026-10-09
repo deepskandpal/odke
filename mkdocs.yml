@@ -41,6 +41,12 @@ validation:
   unrecognized_links: warn
   anchors: warn
 
+# Pages that were renamed or merged keep their old URLs.
+plugins:
+  - search
+  - redirects:
+      redirect_maps: {}
+
 markdown_extensions:
   - admonition
   - attr_list
