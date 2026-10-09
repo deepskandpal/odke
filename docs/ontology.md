@@ -334,6 +334,8 @@ N-Triples).
 | a bare `rdf:Property` | an edge when its range is a class, and a literal otherwise |
 | `rdfs:domain`, or a domain that is an `owl:unionOf` | `domain`, which is already a union |
 | `owl:FunctionalProperty` | `cardinality="single"`. Every other property is `multi`, because OWL's open world lets a property hold any number of values unless it says otherwise. |
+| `owl:inverseOf`, on either side | `inverse_of`; a property declared its own inverse is `symmetric` |
+| `owl:SymmetricProperty` | `symmetric` |
 | `rdfs:label` / `skos:prefLabel` | a predicate's `label` |
 | `rdfs:comment` / `skos:definition` | `description`; a type with no comment takes its label when the label says more than the name |
 | `skos:altLabel`, `skos:hiddenLabel` | `aliases` |
@@ -343,9 +345,9 @@ Text tagged with `language` wins, then untagged text. `importance` stays at its
 default: nothing in an OWL file says how often a predicate is used.
 
 What the model cannot hold is reported by the subject it was found on:
-restrictions, property characteristics other than functional, inverse and
-sub-properties, equivalence and disjointness, union ranges, unmapped datatypes,
-individuals, and imports. `owl:imports` is not followed; parse the imported
+restrictions, property characteristics other than functional and symmetric,
+sub-properties, an inverse that is not one named property, equivalence and
+disjointness, union ranges, unmapped datatypes, individuals, and imports. `owl:imports` is not followed; parse the imported
 ontology into the same rdflib `Graph` and pass the `Graph`. Annotations outside
 the OWL, RDF, RDFS and SKOS vocabularies, such as Dublin Core or `rdfs:seeAlso`, are
 documentation and are not reported.
@@ -367,20 +369,22 @@ hr_owl = """
 :employer a owl:ObjectProperty, owl:FunctionalProperty ;
     rdfs:label "Employer" ; rdfs:domain :Person ; rdfs:range :Company .
 :born a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range xsd:date .
-:manages a owl:ObjectProperty ; owl:inverseOf :managedBy ; rdfs:domain :Person ; rdfs:range :Person .
+:manages a owl:ObjectProperty, owl:TransitiveProperty ; rdfs:domain :Person ; rdfs:range :Person .
 """
 try:
     Ontology.from_owl(hr_owl)
 except OntologyLoadError as exc:
     print(exc.problems)
-# (':manages: owl:inverseOf is not supported',)
+# (':manages: is a owl:TransitiveProperty, which the ontology model cannot express',)
 
 with warnings.catch_warnings(record=True) as caught:
     warnings.simplefilter("always")
     hr = Ontology.from_owl(hr_owl, name="hr", strict=False)
 (warning,) = caught
 assert warning.category is OntologyImportWarning
-assert warning.message.problems == (":manages: owl:inverseOf is not supported",)
+assert warning.message.problems == (
+    ":manages: is a owl:TransitiveProperty, which the ontology model cannot express",
+)
 
 employer = hr.predicates["employer"]
 assert (employer.domain, employer.range, employer.cardinality, employer.label) == (

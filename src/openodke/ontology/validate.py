@@ -57,6 +57,7 @@ def diagnose(ontology: Ontology) -> list[Diagnostic]:
     for key, predicate in ontology.predicates.items():
         found += _predicate(ontology, key, predicate)
         found += _scope(key, predicate)
+        found += _inverse(ontology, key, predicate)
     found += _aliases("types", ((k, t.aliases) for k, t in ontology.types.items()), "type")
     found += _aliases(
         "predicates", ((k, p.aliases) for k, p in ontology.predicates.items()), "predicate"
@@ -191,6 +192,92 @@ def _scope(key: str, predicate: Predicate) -> Iterable[Diagnostic]:
                 f"it are one claim (DECISIONS #11), so it cannot separate one value from "
                 "another. Declare it `identity: true` or drop it from the scope",
             )
+
+
+def _inverse(ontology: Ontology, key: str, predicate: Predicate) -> Iterable[Diagnostic]:
+    """An inverse joins two edges whose ends swap, and holds both ways (DECISIONS #28).
+
+    Each side checks its own partners: a fact's object becomes its partner's
+    subject, so this predicate's range has to sit inside the inverse's domain.
+    The inverse's own check covers the other half. A range that is neither a
+    type nor a literal is `unknown-range`'s to report, so it is skipped here.
+    """
+    target = predicate.inverse_of
+    if target is None and not predicate.symmetric:
+        return
+    base = f"predicates.{key}"
+    no_inverse = "and a property has no inverse: a value cannot be a subject"
+    if predicate.symmetric:
+        kind = _kind(ontology, key)
+        if target is not None:
+            yield _error(
+                "inverse-not-mutual",
+                f"{base}.inverse_of",
+                f"{key!r} is symmetric, so it is its own inverse; drop inverse_of or symmetric",
+            )
+        elif kind == "property":
+            yield _error(
+                "inverse-not-edge",
+                f"{base}.symmetric",
+                f"{key!r} is a property ({predicate.range}), {no_inverse}",
+            )
+        elif kind == "edge" and set(predicate.domain) != {predicate.range}:
+            shown = ", ".join(predicate.domain) or "open"
+            yield _error(
+                "inverse-domain-range",
+                f"{base}.symmetric",
+                f"a symmetric predicate's partner swaps subject and object, so its domain must "
+                f"be its range, {predicate.range}; it is {shown}",
+            )
+        return
+    if target is None:  # pragma: no cover - returned above; this narrows the type
+        return
+    path = f"{base}.inverse_of"
+    partner = ontology.predicates.get(target)
+    if target == key:
+        yield _error(
+            "inverse-not-mutual",
+            path,
+            f"{key!r} names itself; a predicate that is its own inverse is `symmetric: true`",
+        )
+        return
+    if partner is None:
+        yield _error(
+            "unknown-inverse",
+            path,
+            f"{target!r} is not a predicate{_close(target, ontology.predicates)}",
+        )
+        return
+    kinds = {name: _kind(ontology, name) for name in (key, target)}
+    if "property" in kinds.values():
+        literal = key if kinds[key] == "property" else target
+        yield _error("inverse-not-edge", path, f"{literal!r} is a property, {no_inverse}")
+    elif "unknown" in kinds.values():
+        return
+    elif partner.symmetric or partner.inverse_of != key:
+        if partner.symmetric:
+            why = f"{target!r} is symmetric, so its inverse is itself"
+        elif partner.inverse_of:
+            why = f"{target!r} is the inverse of {partner.inverse_of!r}"
+        else:
+            why = f"{target!r} is named the inverse of more than one predicate"
+        yield _error("inverse-not-mutual", path, f"{why}; a predicate has one inverse")
+    elif partner.domain and not any(d in ontology.lineage(predicate.range) for d in partner.domain):
+        yield _error(
+            "inverse-domain-range",
+            path,
+            f"{key!r} points at {predicate.range}, outside the domain of {target!r} "
+            f"({', '.join(partner.domain)}), so every partner it implies would be too",
+        )
+
+
+def _kind(ontology: Ontology, name: str) -> Literal["edge", "property", "unknown"]:
+    from openodke.ontology import _JSON_TYPES
+
+    range_ = ontology.predicates[name].range
+    if range_ in ontology.types:
+        return "edge"
+    return "property" if range_ in _JSON_TYPES else "unknown"
 
 
 def _aliases(
