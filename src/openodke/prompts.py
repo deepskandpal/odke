@@ -6,9 +6,11 @@ day of the run. So each prompt is registered here as `Prompt(id, version, text,
 source)` under the key `id@version`, and every model call records the key it
 sent (DECISIONS #27).
 
-A registered text is never edited. To change a prompt, register the new text
-as the next version. The old version stays, so a card that names it still names
-a real prompt. `get` without a version gives the latest, and the latest is what
+A registered text is never edited. `prompts.lock.json`, beside this file, holds
+the SHA-256 of every key, and the suite fails when a text no longer matches its
+hash. To change a prompt, register the new text as the next version and add its
+hash to the lock. The old version stays, so a card that names it still names a
+real prompt. `get` without a version gives the latest, and the latest is what
 the stages send.
 
 Only the fixed instruction text is registered. How a claim, a passage or an
@@ -19,7 +21,12 @@ names it.
 from __future__ import annotations
 
 import hashlib
+import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
+
+LOCK = Path(__file__).with_name("prompts.lock.json")
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +85,45 @@ def get(id: str, version: int | None = None) -> Prompt:
 def registered() -> list[Prompt]:
     """Every registered prompt, every version, by id and then version."""
     return [_REGISTRY[id][v] for id in sorted(_REGISTRY) for v in sorted(_REGISTRY[id])]
+
+
+def read_lock(path: Path = LOCK) -> dict[str, str]:
+    """The lock: each key's SHA-256, as recorded when it was registered."""
+    found = json.loads(path.read_text(encoding="utf-8"))
+    return {str(k): str(v) for k, v in found.items()}
+
+
+def check(
+    prompts: Iterable[Prompt] | None = None, lock: Mapping[str, str] | None = None
+) -> list[str]:
+    """What is wrong between the registry and the lock; empty when they agree.
+
+    Three things can be: a text edited in place, which must become the next
+    version instead; a key with no hash yet; and a hash with no key, which is a
+    removed version that an old calibration card may still name.
+    """
+    found = registered() if prompts is None else list(prompts)
+    recorded = read_lock() if lock is None else lock
+    problems: list[str] = []
+    for prompt in found:
+        want = recorded.get(prompt.key)
+        if want is None:
+            problems.append(
+                f'{prompt.key} is not in the lock: add "{prompt.key}": "{prompt.sha256}" '
+                f"to {LOCK.name}"
+            )
+        elif want != prompt.sha256:
+            problems.append(
+                f"bump the version: {prompt.id} (the text of {prompt.key} no longer matches "
+                f"its hash in {LOCK.name}; restore it, and register the new text as the "
+                "next version)"
+            )
+    for key in sorted(set(recorded) - {p.key for p in found}):
+        problems.append(
+            f"{key} is in the lock but no longer registered: restore it, because an old "
+            "calibration card may name it"
+        )
+    return problems
 
 
 # --------------------------------------------------------------------------- #
@@ -203,4 +249,4 @@ _register(
 )
 
 
-__all__ = ["Prompt", "get", "registered"]
+__all__ = ["LOCK", "Prompt", "check", "get", "read_lock", "registered"]
