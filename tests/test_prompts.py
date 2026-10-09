@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import dataclasses
+import json
+import re
+import warnings
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -120,3 +124,82 @@ def test_a_new_version_needs_its_own_entry_and_an_old_one_may_not_go() -> None:
 def test_the_lock_sits_beside_the_registry_and_names_every_key() -> None:
     assert prompts.LOCK.parent == Path(prompts.__file__).parent
     assert set(read_lock()) == {p.key for p in registered()}
+
+
+# --------------------------------------------------------------------------- #
+# Leakage: no prompt may contain a passage from a benchmark gate split
+# --------------------------------------------------------------------------- #
+
+# Where the gate splits live: `bench/labels/**/*gate*.jsonl`, one passage per row
+# in `text`. A prompt that quotes one has been tuned on the test.
+BENCH_LABELS = Path(__file__).resolve().parents[1] / "bench" / "labels"
+# Twelve words in a row is a copied passage, not a shared phrase.
+WINDOW = 12
+
+
+def _words(text: str) -> list[str]:
+    # Words alone, case folded: re-punctuating a copied passage does not hide it.
+    return re.findall(r"\w+", text.casefold())
+
+
+def leaks(labels: Path, texts: Mapping[str, str], window: int = WINDOW) -> list[str]:
+    """Every gate passage that shares `window` consecutive words with a prompt text.
+
+    The prompts' windows go in a set, which is small, and each passage is read
+    once against it, so a large split costs one pass.
+    """
+    shingles: dict[tuple[str, ...], str] = {}
+    for key, text in texts.items():
+        words = _words(text)
+        for at in range(len(words) - window + 1):
+            shingles.setdefault(tuple(words[at : at + window]), key)
+    found: list[str] = []
+    for path in sorted(labels.glob("**/*gate*.jsonl")):
+        with path.open(encoding="utf-8") as rows:
+            for line_number, line in enumerate(rows, 1):
+                passage = json.loads(line).get("text") if line.strip() else None
+                if not isinstance(passage, str):
+                    continue
+                words = _words(passage)
+                for at in range(len(words) - window + 1):
+                    key = shingles.get(tuple(words[at : at + window]))
+                    if key is not None:
+                        quoted = " ".join(words[at : at + window])
+                        found.append(
+                            f"{path.relative_to(labels)}:{line_number} is in {key}: {quoted!r}"
+                        )
+                        break
+    return found
+
+
+def test_no_prompt_contains_a_passage_from_a_benchmark_gate_split() -> None:
+    texts = {p.key: p.text for p in registered()}
+    if not any(BENCH_LABELS.glob("**/*gate*.jsonl")):
+        warnings.warn(
+            "no benchmark gate split under bench/labels yet, so no prompt was checked for leakage",
+            stacklevel=1,
+        )
+        return
+    found = leaks(BENCH_LABELS, texts)
+    assert not found, "\n".join(found)
+
+
+def test_twelve_copied_words_are_a_leak_and_eleven_are_not(tmp_path: Path) -> None:
+    words = _words(get("extract@1").text)[20:32]
+    # Re-cased and re-punctuated, which is still a copy.
+    copied = "; ".join(words).upper()
+    split = tmp_path / "text2kgbench" / "dbpedia.gate.jsonl"
+    split.parent.mkdir()
+    rows = [
+        {"id": "a", "text": "Ada Lovelace was born in London in 1815."},
+        {"id": "b", "text": f"A passage that says: {copied} and goes on."},
+        {"id": "c", "text": " ".join(words[:11])},
+        {"id": "d"},
+    ]
+    split.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    # A split that is not a gate split is not this check's business.
+    (tmp_path / "train.jsonl").write_text(json.dumps(rows[1]) + "\n", encoding="utf-8")
+
+    texts = {p.key: p.text for p in registered()}
+    (found,) = leaks(tmp_path, texts)
+    assert found.startswith("text2kgbench/dbpedia.gate.jsonl:2 is in extract@1: ")
