@@ -900,7 +900,10 @@ odke eval ground --labels ground.jsonl --predictions out/facts.jsonl
   `fact` and an optional `doc_id`. Give every fact an `id`, because predictions
   join on it; `make` warns about any fact that has none.
 - **A pair row** is `{"a": {...}, "b": {...}}`. Each side has a `key` and a
-  `type`, plus an optional `label` (the name as written) and `context`.
+  `type`, plus an optional `label` (the name as written), `context` and
+  `aliases`, shown as "also known as". The [pair judge's](resolution-and-corroboration.md#the-pair-judge)
+  review queue is a file of them, each with the judge's answers under
+  `judge`, which the sheet does not show.
 - **Sheets** are `sheet-01.md`, `sheet-02.md` and so on, and one sheet is one
   sitting. Item ids run across the sheets (`G-0001`, `P-0001`). Beside each
   sheet, `sheet-NN.items.jsonl` keeps its rows, so the markdown only has to

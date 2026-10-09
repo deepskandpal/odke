@@ -337,6 +337,108 @@ demonyms ("Lovelace", "UK", "German"). Identity across documents, and the
 proof path, are measured on T-REx with Wikidata ids in 0.6.0 (#117). In a run
 config the option is [`store_lookup`](run.md#store_lookup).
 
+### The pair judge
+
+`NativeResolver(judge=PairJudge(...))` puts the pairs the rules leave open to a
+model ([DECISIONS #34](decisions.md#34)). A pair is open when no id or domain
+settled it either way and its name score is in the band from the judge's
+`low` (0.7) up to the resolver's `threshold` (0.9). Above the band the rules
+stand, below it nothing is asked, and a pair whose ids disagree is never asked.
+
+- **Both orders.** Each pair is asked as (A, B) and as (B, A), against a
+  model's position bias. "same" counts only when both orders say same, and
+  "different" only when both say different. Anything else is unsure: the
+  orders disagree, one says unsure, or an answer could not be read.
+- **What it makes.** "same" is a `SIMILAR` link with the resolver's name score
+  and a reason naming the judge, its prompt and its model; never a merge, since
+  only a proof re-keys. "different" is a `DIFFERENT` link. Unsure is no link,
+  and neither is a call that failed, which the next run asks again.
+- **What the model reads.** The registered `pair@1` and its user message
+  `pair.user@1` ([Prompts](models.md#prompts)): each mention's name, its type,
+  and its sentence with one either side, from the document its fact cites.
+  `judge.documents` holds the texts; `odke run` and the Validator fill it, and
+  the quote on a span stands in when a document is missing. An entity no fact
+  of the batch mentions is a stored one: it shows its aliases, and its context
+  is what `store_context(entity)` returns, meant as the evidence of its
+  strongest supporting fact. The store keeps offsets, not passages, so without
+  it a stored entity has none. A side with no context is never asked.
+- **The review queue.** With `queue=`, every unsure pair is appended to a
+  JSONL file, once, in the row format `odke label make pair` reads, with the
+  judge's two answers under `judge`, which the sheet does not show. Ticked and
+  read back with `odke label read`, the labels are `reviewed=`: a pair a person
+  decided is decided in the judge's place with no call, and its link's reason
+  starts `person:`. A person's same is a `SIMILAR` too.
+- **The model** is the `ground` role's, the same size of question, asked for
+  `{"because": …, "decision": …}`. A call is retried as the grounder's are; a
+  missing key raises rather than failing every pair.
+
+```python
+from openodke import Document, Span
+from openodke.corroborate import PairJudge
+from openodke.llm import RecordedClient
+
+bio = Document(
+    id="bio",
+    text="Ada Lovelace wrote the first program. She worked with Charles Babbage. "
+    "Lovelace died in London in 1852.",
+)
+
+
+def cited(entity, quote):
+    start = bio.text.index(quote)
+    span = Span(doc_id="bio", start=start, end=start + len(quote))
+    return Fact(
+        subject=entity, predicate="mentioned", object_value=quote,
+        evidence=(Evidence(doc_id="bio", span=span),),
+    )  # fmt: skip
+
+
+ada = Entity(key="p:ada", type="Person", label="Ada Lovelace")
+surname = Entity(key="p:lovelace", type="Person", label="Lovelace")
+# Recorded answers, by the mention each order names first. Drop `client=` to call a model.
+client = RecordedClient(
+    [
+        {"match": 'Mention A: "Ada', "response": {"because": "one woman", "decision": "same"}},
+        {"match": 'Mention A: "Lov', "response": {"because": "her surname", "decision": "same"}},
+    ]
+)
+judge = PairJudge(client=client)
+judge.documents[bio.id] = bio
+resolver = NativeResolver(judge=judge)
+facts = [cited(ada, "Ada Lovelace wrote the first program."), cited(surname, "Lovelace died")]
+resolved, links = resolver.resolve(facts, {})
+for link in links:
+    print(link.kind.value, link.source_key, link.target_key, link.score)
+    print(link.reason)
+# similar p:ada p:lovelace 0.8
+# pair judge (pair@1, anthropic/claude-haiku-4-5-20251001): same in both orders; one woman
+
+assert [f.subject.key for f in resolved] == ["p:ada", "p:lovelace"]  # a link, not a merge
+assert resolver.stats["judge"]["calls"] == 2 and resolver.stats["judge"]["swapped"] == 1
+```
+
+The first of the two calls sent this, and the second the same with the two
+mentions swapped:
+
+```text
+Mention A: "Ada Lovelace" (type: Person)
+Context A: Ada Lovelace wrote the first program. She worked with Charles Babbage.
+
+Mention B: "Lovelace" (type: Person)
+Context B: She worked with Charles Babbage. Lovelace died in London in 1852.
+```
+
+`resolver.stats["judge"]` counts the pairs handed in and `asked`, the `calls`,
+the `swapped` ones (the (B, A) calls), the pairs whose orders `disagreed`,
+each decision, `person`, `queued`, `no_context`, `failed` calls,
+`unparseable` answers, tokens and cost; `stats["prompts"]` names the two
+keys. `judge.decisions` keeps every `PairDecision`, with both answers. In a run
+config the judge is an option of the native resolver,
+[`resolver: {use: native, judge: …}`](run.md#the-pair-judge). The band's 0.7
+was read off Re-DocRED's dev split, where 533 of 2,076 blocked pairs fall in
+it, nearly a third of them one entity; the calibration card on label set R
+(#151) is where the judge and the band are measured.
+
 ## Corroborate
 
 `SignatureCorroborator(ontology=None, *, source=source_of, half_life_days=365.0,

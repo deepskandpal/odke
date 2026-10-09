@@ -137,6 +137,8 @@ the key it sent ([DECISIONS #27](decisions.md#27)).
 | `infer@1` | `LLMProposer` (`odke ontology infer`) | openodke |
 | `infer.repair@1` | `LLMProposer`, after a reply that broke the contract | openodke |
 | `reextract@1` | `LLMExtractor.reextract`, [the re-extract hook](grounding.md#handing-a-gap-back-the-re-extract-hook) | openodke, after GraphRAG's gleaning pass (Edge et al. 2024, arXiv 2404.16130), scoped to one window and grounded after |
+| `pair@1` | `PairJudge`, [the pair judge](resolution-and-corroboration.md#the-pair-judge): two mentions, one entity or two? | openodke, after LLM entity matching (Peeters, Steiner & Bizer 2023, arXiv 2310.11244), asked in both orders for position bias (Zheng et al. 2023, arXiv 2306.05685 §3.4) |
+| `pair.user@1` | `PairJudge`: the user message, a template filled in per pair and order | as `pair@1` |
 
 ```python
 from openodke import prompts
@@ -147,8 +149,9 @@ assert prompts.read_lock()[span.key] == span.sha256
 ```
 
 The keys appear as `ModelCall.prompt`, `LLMExtractor.prompts`,
-`InferenceCall.prompt` and `LLMGrounder.stats["prompts"]`, and on the extractor
-and grounder lines of [`odke run`](run.md#what-a-run-reports).
+`InferenceCall.prompt`, `LLMGrounder.stats["prompts"]` and
+`PairJudge.stats["prompts"]`, and on the extractor, grounder and resolver lines
+of [`odke run`](run.md#what-a-run-reports).
 
 **To change a prompt,** register the new text as the next version
 (`ground.span@2`) and keep the old one, then add the new key's hash to
