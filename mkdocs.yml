@@ -56,11 +56,6 @@ markdown_extensions:
   - pymdownx.details
   - pymdownx.highlight
   - pymdownx.inlinehilite
-  # DECISIONS.md is rendered from the file in the repository root, not copied:
-  # one copy, so the site and the repo cannot disagree about a decision.
-  - pymdownx.snippets:
-      base_path: ["."]
-      check_paths: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid

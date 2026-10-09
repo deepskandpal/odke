@@ -14,7 +14,7 @@ in this order, and the order is the point:
 Both **stamp** `Fact.verdict` (`supported`, `contradicted` or `not_found`), and
 neither drops a fact. The gate decides what is written, and because nothing is
 dropped early, the ablation can count what grounding *would* have removed
-([DECISIONS #20](decisions.md)). Grounding is one step of the verification
+([DECISIONS #20](decisions.md#20)). Grounding is one step of the verification
 layer; [the Validator](validator.md) runs all of it.
 
 ## A graph from somewhere else: `odke ground`
@@ -176,7 +176,7 @@ LLMGrounder(roles=None, *, client=None, max_workers=8, retry=None)
 - `roles.ground` names the model. The default `ModelRoles()` grounds with
   `anthropic/claude-haiku-4-5-20251001` at `max_tokens=256`, a smaller model than
   extraction, on purpose. If this pass cost what extraction costs, people would
-  turn it off ([DECISIONS #7a](decisions.md)). Which provider that string names,
+  turn it off ([DECISIONS #7a](decisions.md#7a)). Which provider that string names,
   which key it reads and who serves it are one page:
   [Models and providers](models.md), or `odke models`.
 - `client` overrides how the model is reached. Pass any `LLMClient`: your
@@ -300,7 +300,7 @@ that paper mode keeps.
 
 ### Widen and retry
 
-The fallback [DECISIONS #23](decisions.md) named, off by default:
+The fallback [DECISIONS #23](decisions.md#23) named, off by default:
 `LLMGrounder(widen=True)`, or `odke run --widen` (`grounder: {use: llm, widen:
 true}`). A fact whose answer is `not_found`, and whose span is narrower than its
 sentence, is asked once more against the whole sentence. The sentence is the
@@ -470,7 +470,7 @@ labelled data, which makes it the cheapest check on a new extractor or prompt.
 ## What extraction left behind: the coverage report
 
 Grounding judges the facts an extractor returned; it cannot see the ones it
-did not. A validator cannot invent those ([DECISIONS #24](decisions.md)), but it
+did not. A validator cannot invent those ([DECISIONS #24](decisions.md#24)), but it
 can count where they are missing, with no model. `odke run` does by default
 (`coverage: false` turns it off), `Pipeline(coverage=True)` does in Python, and
 `openodke.coverage.measure(documents, facts, ontology)` does on any facts. Per

@@ -15,7 +15,6 @@ on:
       - "docs/**"
       - "mkdocs.yml"
       - "src/**"
-      - "DECISIONS.md"          # rendered into the site
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/docs.yml"
@@ -24,7 +23,6 @@ on:
       - "docs/**"
       - "mkdocs.yml"
       - "src/**"
-      - "DECISIONS.md"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/docs.yml"

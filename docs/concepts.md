@@ -11,7 +11,7 @@ and no network.
 `KnowledgeGraph` are frozen pydantic models with `extra="forbid"`. Facts pass
 through several stages and get merged across sources, so a stage that edited one
 in place would make its own provenance wrong. Stages return new objects
-(`model_copy(update=...)`) instead ([DECISIONS #4](decisions.md)).
+(`model_copy(update=...)`) instead ([DECISIONS #4](decisions.md#4)).
 
 ## `Fact`: one class for edges and properties
 
@@ -20,7 +20,7 @@ is either `object_entity` (another `Entity`, which makes the fact an **edge**) o
 `object_value` (a literal, which makes it a **property**). Set one or the other,
 never both. They share one class because both kinds need identical provenance,
 grounding and corroboration, and when they were split every stage had two code
-paths that drifted ([DECISIONS #2](decisions.md)).
+paths that drifted ([DECISIONS #2](decisions.md#2)).
 
 | Field | What it holds |
 |---|---|
@@ -67,11 +67,11 @@ print(p50.signature)
 **Polarity is in the signature.** Before it was a field, "X sells customer data"
 and "X does not sell customer data" shared a signature, so the corroborator merged
 them and each raised the other's `support`. A denial is not the same claim as an
-assertion; it is the opposite one ([DECISIONS #14](decisions.md)).
+assertion; it is the opposite one ([DECISIONS #14](decisions.md#14)).
 
 **Reconcilable qualifiers are not.** "CEO since 2019" and "CEO 2019–2024" are one
 claim told two ways, and if qualifiers were identity both would land in the graph
-as separate edges ([DECISIONS #11](decisions.md)).
+as separate edges ([DECISIONS #11](decisions.md#11)).
 
 **Identity-bearing qualifiers are.** "Uptime 99.9% at p50" and "at p95" are two
 measurements, and merging them inflates `support`. The ontology declares which
@@ -81,7 +81,7 @@ includes those keys. The fact carries the key names, not a reference to the
 ontology, so that a serialised fact still means the same thing after its schema
 has been edited. An extractor that forgets to stamp them gets the reconcilable
 behaviour, which is the safe direction to fail in
-([DECISIONS #15](decisions.md)). Declaring qualifiers is covered in
+([DECISIONS #15](decisions.md#15)). Declaring qualifiers is covered in
 [Ontology](ontology.md#cardinality-and-its-scope).
 
 ```python
@@ -99,7 +99,7 @@ the world. `Evidence.retrieved_at` and `Document.retrieved_at` are the
 **transaction** clock: when we came to believe it. With only one clock, a CEO who
 changed and two sources that disagree look like the same event, and they need
 opposite handling: one is a fact that expired correctly, the other is a conflict
-to resolve ([DECISIONS #17](decisions.md)).
+to resolve ([DECISIONS #17](decisions.md#17)).
 
 Neither clock is in the signature, so an interval is something the corroborator
 reconciles and never a reason for two edges.
@@ -131,7 +131,7 @@ A `Span` is a half-open character range, `[start, end)`, into `Document.text`,
 with an optional `quote`. Spans are offsets, not quoted strings. A model can
 produce a quote that reads perfectly and appears nowhere in the source, but an
 offset either resolves to the claimed text or it does not, and checking costs
-nothing ([DECISIONS #3](decisions.md)). `Span.resolve(doc)` returns the text at
+nothing ([DECISIONS #3](decisions.md#3)). `Span.resolve(doc)` returns the text at
 the offsets; `Span.is_faithful(doc)` is true when the recorded quote is what sits
 there.
 
@@ -146,10 +146,10 @@ the narrower span inside the clause that tells this fact from the others the
 same clause states — `Ireland` in a list of three regions. Both are checked with
 `Span.is_faithful`, the mention must lie inside the clause, and nothing in the
 pipeline reads it: it is there for highlighting and for anyone who wants the
-tightest citation ([DECISIONS #23](decisions.md)).
+tightest citation ([DECISIONS #23](decisions.md#23)).
 
 Tiers are four named levels with fixed weights, because callers reason about
-"curated vs. scraped", not about 0.8 ([DECISIONS #10](decisions.md)):
+"curated vs. scraped", not about 0.8 ([DECISIONS #10](decisions.md#10)):
 
 | `SourceTier` | `weight` |
 |---|---|
@@ -160,7 +160,7 @@ Tiers are four named levels with fixed weights, because callers reason about
 
 ## `Chunk`, and routing
 
-The chunk is the unit of the pipeline ([DECISIONS #19](decisions.md)). A `Chunk`
+The chunk is the unit of the pipeline ([DECISIONS #19](decisions.md#19)). A `Chunk`
 is `doc_id`, `start`, `end`, `text` and `index`, and `text` is exactly
 `doc.text[start:end]`. An extractor that finds evidence at a local offset
 therefore cites `chunk.start + offset` in the document, and provenance survives
@@ -239,7 +239,7 @@ print(kg.stats)
 An `Entity` is a node: `key` (the identity facts merge on), `type`, `label`,
 `aliases`, `external_id`, `attributes`, and `resolution`. That last field is a
 `Resolution(method, score, linker)` recording how the key was decided
-([DECISIONS #18](decisions.md)):
+([DECISIONS #18](decisions.md#18)):
 
 - `caller`: the key arrived with the input.
 - `external_id`: a global identifier settled it, exactly, with no score.
@@ -257,7 +257,7 @@ ignored, and the evidence it was made on is still there. `DIFFERENT` is the kind
 other tools do not record. It is where the disagreement rule lives: a strong
 identifier that disagrees kills a match however similar the names are, and
 `reason` names that identifier, so the rejection can be queried
-([DECISIONS #16](decisions.md)).
+([DECISIONS #16](decisions.md#16)).
 
 ```python
 from openodke import EntityLink, KnowledgeGraph, LinkKind, Resolution
@@ -291,7 +291,7 @@ understand: `entities`, `facts`, `links`, `ontology_name`, `created_at` and
 
 Every stage is a `typing.Protocol` in `openodke.stages`. Any object with the right
 method is a stage: nothing to import from openodke, no registration, no inheritance
-([DECISIONS #5](decisions.md)). Each stage has a pass-through default, and those
+([DECISIONS #5](decisions.md#5)). Each stage has a pass-through default, and those
 defaults are not stubs. A pipeline built from them is a working pipeline that
 routes nothing out, grounds nothing, resolves nothing and accepts everything,
 which is the right shape for a caller who wants recall and will filter later.
@@ -314,7 +314,7 @@ which is the right shape for a caller who wants recall and will filter later.
 
 The paper's two front stages, `Initiator` (what needs refreshing) and
 `Retriever` (fetch it), are declared too, but they are optional and not among the
-thirteen. An SDK is usually handed its documents ([DECISIONS #9](decisions.md)).
+thirteen. An SDK is usually handed its documents ([DECISIONS #9](decisions.md#9)).
 
 ### How `Pipeline` runs them
 
@@ -355,7 +355,7 @@ When the ontology declares an
 predicate gains its partner, the same claim the other way round. It is a step,
 not a fourteenth stage, because the ontology decides everything it does.
 `Pipeline(..., inverses=False)` turns it off; left as `None`, it is on exactly
-when the ontology declares a pair ([DECISIONS #28](decisions.md)).
+when the ontology declares a pair ([DECISIONS #28](decisions.md#28)).
 
 - **Same evidence, same verdict.** The partner cites what its source cites, and
   keeps its verdict, polarity, confidence, both clocks and its qualifiers. It is
@@ -412,7 +412,7 @@ write, GraphPruner prunes, and an RDF store refuses what breaks SHACL. Running
 that stage twice is waste at best. Forbidding it would also be wrong, because the
 two passes differ: openodke's exact match on strong identifiers before the write is
 free and never wrong, while the platform's fuzzy pass on names after the write is
-neither ([DECISIONS #21](decisions.md)).
+neither ([DECISIONS #21](decisions.md#21)).
 
 So the mechanism is small:
 

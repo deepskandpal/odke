@@ -32,7 +32,7 @@ from openodke.corroborate import (
 ## Nothing is overwritten: the reserved `odke.*` keys
 
 `Fact` is frozen and has no free-form metadata slot, and adding one to a frozen
-type is the migration [DECISIONS #4](decisions.md) warns about. `Fact.qualifiers`
+type is the migration [DECISIONS #4](decisions.md#4) warns about. `Fact.qualifiers`
 is already an open mapping, and a key enters `signature` only when it is named in
 `identity_keys`, which a namespaced `odke.` key never is. So each stage records
 what it did under one reserved key, instead of discarding what it replaced:
@@ -123,7 +123,7 @@ Normalising is idempotent: normalising a normalised fact changes nothing.
 `NativeResolver(*, threshold=0.9, nudge_up=0.05, nudge_down=0.15, max_block=100)`
 is the dependency-free resolver. It follows the standard recipe in its standard
 order, and adds the two parts the surveyed resolvers leave out: a disagreement
-rule, and a refusal to destroy anything ([DECISIONS #16](decisions.md)).
+rule, and a refusal to destroy anything ([DECISIONS #16](decisions.md#16)).
 
 ```mermaid
 flowchart TD
@@ -236,8 +236,8 @@ freshness_floor=0.5, intervals=DEFAULT_INTERVALS)` does two jobs, in order.
 ### Merge by signature
 
 Facts sharing a `signature` are one claim. The signature already carries polarity
-and the identity-bearing qualifiers ([DECISIONS #14](decisions.md),
-[#15](decisions.md)), so a denial never merges with its assertion and uptime at
+and the identity-bearing qualifiers ([DECISIONS #14](decisions.md#14),
+[#15](decisions.md#15)), so a denial never merges with its assertion and uptime at
 p50 never merges with uptime at p95. Everything else about the claim is
 reconciled:
 
@@ -266,7 +266,7 @@ their valid intervals overlap. A denial and an assertion of the same object
 conflict on any predicate. Without an ontology, or for a predicate it does not
 declare, no *value* is contested, because picking a winner among values that may
 all be true is the more harmful mistake. A CEO from 2019 to 2024 and another from
-2024 on is a value that changed, not a conflict ([DECISIONS #17](decisions.md)).
+2024 on is a value that changed, not a conflict ([DECISIONS #17](decisions.md#17)).
 
 Every contested claim gets a rank:
 
