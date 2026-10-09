@@ -9,7 +9,7 @@ date read from the sentence above it are one candidate, not two.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -102,6 +102,10 @@ class HybridExtractor:
     no `llm`, prose yields nothing and a mixed document gets the pattern path.
 
     `report` holds a `PathReport` per document id, and `totals()` sums them.
+
+    `extract_many` takes many chunks at once and hands the model path's to the
+    model extractor together, so one that can batch runs its calls concurrently.
+    The facts and the report are what `extract` on each chunk in turn gives.
     """
 
     name = "hybrid"
@@ -119,32 +123,74 @@ class HybridExtractor:
         self.report: dict[str, PathReport] = {}
 
     def extract(self, chunk: Chunk, ontology: Ontology) -> list[Fact]:
+        return self.extract_many([chunk], ontology)[0]
+
+    def extract_many(self, chunks: Sequence[Chunk], ontology: Ontology) -> list[list[Fact]]:
+        docs = [self._document(chunk) for chunk in chunks]
+        reports = [self.report.setdefault(d.id, PathReport(modality=d.modality)) for d in docs]
+        # The free path first, chunk by chunk, so its failure costs no model call.
+        pattern = [
+            _run(self.pattern, chunk, doc, ontology) if doc.modality != "unstructured" else None
+            for chunk, doc in zip(chunks, docs, strict=True)
+        ]
+        prose = [i for i, doc in enumerate(docs) if doc.modality != "structured"]
+        model: dict[int, list[Fact]] = {}
+        if self.llm is not None and prose:
+            found = self._model(
+                self.llm, [chunks[i] for i in prose], [docs[i] for i in prose], ontology
+            )
+            model = dict(zip(prose, found, strict=True))
+        out: list[list[Fact]] = []
+        for i, report in enumerate(reports):
+            report.chunks += 1
+            candidates: list[Fact] = []
+            if (by_pattern := pattern[i]) is not None:
+                report.paths.add("pattern")
+                report.pattern_facts += len(by_pattern)
+                candidates += by_pattern
+            if (by_model := model.get(i)) is not None:
+                report.paths.add("llm")
+                report.llm_facts += len(by_model)
+                candidates += by_model
+            kept = merge(candidates, ontology=ontology)
+            report.merged += len(candidates) - len(kept)
+            out.append(kept)
+        return out
+
+    def _document(self, chunk: Chunk) -> Document:
         doc = self.documents.get(chunk.doc_id)
         if doc is None:
             raise LookupError(
                 f"HybridExtractor has no document {chunk.doc_id!r} to route by; pass the "
                 "documents given to Pipeline.run as HybridExtractor(documents=...)"
             )
-        report = self.report.setdefault(doc.id, PathReport(modality=doc.modality))
-        report.chunks += 1
-        candidates: list[Fact] = []
-        if doc.modality != "unstructured":
-            found = _run(self.pattern, chunk, doc, ontology)
-            report.paths.add("pattern")
-            report.pattern_facts += len(found)
-            candidates += found
-        if doc.modality != "structured" and self.llm is not None:
-            calls = getattr(self.llm, "calls", None)
-            seen = len(calls) if isinstance(calls, list) else 0
-            found = _run(self.llm, chunk, doc, ontology)
-            report.paths.add("llm")
-            report.llm_facts += len(found)
-            for call in calls[seen:] if isinstance(calls, list) else ():
+        return doc
+
+    def _model(
+        self, llm: Extractor, chunks: list[Chunk], docs: list[Document], ontology: Ontology
+    ) -> list[list[Fact]]:
+        """The model path's facts per chunk, with each call counted on its document's report."""
+        calls = getattr(llm, "calls", None)
+        made = calls if isinstance(calls, list) else []
+        many = getattr(llm, "extract_many", None)
+        if not callable(many):
+            found = []
+            for chunk, doc in zip(chunks, docs, strict=True):
+                seen = len(made)
+                found.append(_run(llm, chunk, doc, ontology))
+                for call in made[seen:]:
+                    self.report[doc.id].count_call(call)
+            return found
+        for doc in docs:
+            _register(llm, doc)
+        seen = len(made)
+        batched = [list(facts) for facts in many(chunks, ontology)]
+        # A batch's calls are told apart by the document each one names.
+        for call in made[seen:]:
+            report = self.report.get(getattr(call, "doc_id", ""))
+            if report is not None:
                 report.count_call(call)
-            candidates += found
-        kept = merge(candidates, ontology=ontology)
-        report.merged += len(candidates) - len(kept)
-        return kept
+        return batched
 
     def totals(self) -> PathReport:
         total = PathReport()
@@ -154,10 +200,14 @@ class HybridExtractor:
 
 
 def _run(extractor: Extractor, chunk: Chunk, doc: Document, ontology: Ontology) -> list[Fact]:
+    _register(extractor, doc)
+    return list(extractor.extract(chunk, ontology))
+
+
+def _register(extractor: Extractor, doc: Document) -> None:
     lookup = getattr(extractor, "documents", None)
     if isinstance(lookup, dict):
         lookup.setdefault(doc.id, doc)
-    return list(extractor.extract(chunk, ontology))
 
 
 def _add_cost(total: float | None, cost: float | None) -> float | None:

@@ -239,10 +239,12 @@ class LLMGrounder:
     missing key or adapter is not a provider failure but configuration: it fails
     every call alike, so it raises instead of leaving the whole run `UNCHECKED`.
 
-    `ground_many` is the batched path the pipeline uses when it is there: a
-    document's facts at once, with at most `max_workers` model calls in flight.
-    Both clients are synchronous and the wait is network I/O, so a thread pool
-    is the right tool and needs nothing outside the standard library.
+    `ground_many` is the batched path: a document's facts at once, with at most
+    `max_workers` model calls in flight. `ground_documents` is the same across
+    many documents, and is what the pipeline uses, so a corpus of one-row
+    documents runs as concurrently as one long one. Both clients are
+    synchronous and the wait is network I/O, so a thread pool is the right tool
+    and needs nothing outside the standard library.
     """
 
     def __init__(
@@ -302,22 +304,36 @@ class LLMGrounder:
         must be thread-safe — both built-in clients are; `ScriptedClient`
         answers by position and is not, which is what `RecordedClient` is for.
         """
-        out: list[Fact] = []
-        pending: list[tuple[int, Fact, str]] = []
-        for index, fact in enumerate(facts):
-            prepared, passage = self._prepare(fact, doc)
-            out.append(prepared)
-            if passage is not None:
-                pending.append((index, prepared, passage))
+        return self.ground_documents([(facts, doc)])[0]
+
+    def ground_documents(
+        self, batches: Sequence[tuple[Sequence[Fact], Document]]
+    ) -> list[list[Fact]]:
+        """`ground_many` for several documents at once, their calls sharing one pool.
+
+        Each `(facts, doc)` gets back a list of its facts in the same order, as
+        `ground_many` would return it; the only difference is that the
+        `max_workers` ceiling spans documents rather than stopping at each one.
+        """
+        out: list[list[Fact]] = []
+        pending: list[tuple[int, int, Fact, str]] = []
+        for at, (facts, doc) in enumerate(batches):
+            row: list[Fact] = []
+            for index, fact in enumerate(facts):
+                prepared, passage = self._prepare(fact, doc)
+                row.append(prepared)
+                if passage is not None:
+                    pending.append((at, index, prepared, passage))
+            out.append(row)
         if len(pending) == 1:
-            index, fact, passage = pending[0]
-            out[index] = self._ask(fact, passage)
+            at, index, fact, passage = pending[0]
+            out[at][index] = self._ask(fact, passage)
         elif pending:
             workers = min(self.max_workers, len(pending))
             with ThreadPoolExecutor(workers, thread_name_prefix="openodke-ground") as pool:
-                futures = [(i, pool.submit(self._ask, f, p)) for i, f, p in pending]
-                for index, future in futures:
-                    out[index] = future.result()
+                futures = [(a, i, pool.submit(self._ask, f, p)) for a, i, f, p in pending]
+                for at, index, future in futures:
+                    out[at][index] = future.result()
         return out
 
     def _prepare(self, fact: Fact, doc: Document) -> tuple[Fact, str | None]:

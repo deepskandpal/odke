@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import warnings
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Literal
 
 import pytest
@@ -168,6 +168,41 @@ def test_a_chunk_that_yields_nothing_is_counted_rather_than_silent() -> None:
         Ontology(), _QuietExtractor(), chunker=_LineChunker(), router=_AdRouter()
     ).run([Document(id="d2", text="Ada.\nAD: buy now\n")])
     assert (routed.stats["skipped"], routed.stats["empty_extractions"]) == (1, 0)
+
+
+class _Batcher(_QuietExtractor):
+    """Takes the run's chunks at once; `lose` drops the last chunk's answer."""
+
+    def __init__(self, lose: bool = False) -> None:
+        self.batches: list[list[str]] = []
+        self.lose = lose
+
+    def extract_many(self, chunks: Sequence[Chunk], ontology: Ontology) -> list[list[Fact]]:
+        self.batches.append([f"{c.doc_id}#{c.index}" for c in chunks])
+        found = [list(self.extract(c, ontology)) for c in chunks]
+        return found[:-1] if self.lose else found
+
+
+def test_a_batching_extractor_gets_every_routed_chunk_of_the_run_at_once() -> None:
+    docs = [
+        Document(id="d1", text="Ada.\nNothing here.\n"),
+        Document(id="d2", text="AD: buy now\nAda again.\n"),
+    ]
+    batcher = _Batcher()
+    pipeline = Pipeline(Ontology(), batcher, chunker=_LineChunker(), router=_AdRouter())
+    batched = pipeline.run(docs)
+    assert batcher.batches == [["d1#0", "d1#1", "d2#1"]]
+    one_by_one = Pipeline(
+        Ontology(), _QuietExtractor(), chunker=_LineChunker(), router=_AdRouter()
+    ).run(docs)
+    assert [f.signature for f in batched.facts] == [f.signature for f in one_by_one.facts]
+    assert batched.stats == one_by_one.stats
+
+
+def test_the_pipeline_refuses_a_batch_that_loses_a_chunk() -> None:
+    pipeline = Pipeline(Ontology(), _Batcher(lose=True), chunker=_LineChunker())
+    with pytest.raises(ValueError, match="one list of facts per chunk"):
+        pipeline.run([Document(id="d1", text="Ada.\nAda.\n")])
 
 
 def test_a_chunk_scoped_skip_drops_only_that_chunk() -> None:

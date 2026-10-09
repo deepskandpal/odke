@@ -325,11 +325,17 @@ extractor and the stages you have opinions about. Every stage you leave as
 get them) and does this, in order:
 
 1. **Per chunk:** route, then extract. A chunk routed `skip` or `defer` is counted
-   in `stats` and never extracted.
+   in `stats` and never extracted. If the extractor also has
+   `extract_many(chunks, ontology)`, it gets every routed chunk of the run at once
+   and may run its model calls concurrently; one list of facts must come back per
+   chunk, in order.
 2. **Per document:** ground, then normalise. If the grounder also has
-   `ground_many(facts, doc)`, it gets the whole document's facts at once and may
-   run its model calls concurrently. Either way one fact must come back for each
-   fact that went in: a grounder stamps a verdict, it never drops a fact.
+   `ground_documents(batches)`, it gets every document's facts at once, and if it
+   has `ground_many(facts, doc)`, each document's; either may run its model calls
+   concurrently. Either way one fact must come back for each fact that went in: a
+   grounder stamps a verdict, it never drops a fact.
+
+The batched paths give the same facts, in the same order, as one call at a time.
 3. **Over the batch:** resolve, then corroborate, score and validate. Resolution
    runs before corroboration on purpose: `Fact.signature` merges on
    `subject.key`, so corroboration cannot repair a resolution failure. A fact the
