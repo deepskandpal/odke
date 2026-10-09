@@ -45,38 +45,19 @@ from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
 from openodke.llm.registry import resolve
 from openodke.llm.roles import ModelRoles
 from openodke.ontology import Ontology, OntologySnippet, Predicate
+from openodke.prompts import get as get_prompt
 from openodke.types import Chunk, Entity, Fact, Polarity, Span
 
 log = logging.getLogger("openodke.extract")
 
-_INSTRUCTIONS = """\
-Extract facts from the passage in the user message, using only the entity types \
-and properties listed below. Anything else is ignored.
-
-Every fact needs "quote": the words of the passage that state it, copied exactly, \
-with the same spelling, capitals, punctuation and spacing. Quote the whole clause \
-that supports the fact, not just the word naming the value; where one clause \
-states several facts, quote it in full for each and put the words that tell this \
-one apart in "mention". A fact whose quote is not in the passage is discarded. \
-Give "start", the character offset where the quote begins (the passage's first \
-character is 0); your best count is fine. "mention" is "" when there is nothing \
-to tell the fact apart, and a qualifier the passage does not state is "".
-
-"polarity" is "denied" when the passage says the fact is not so, "partial" when \
-it holds only with a limitation the passage states, and "asserted" otherwise. \
-For a property whose range is an entity type, "value" is that entity's name as \
-the passage writes it.
-
-Reply with one JSON object and nothing else, in this shape:
-{"entities": [{"type": "...", "name": "...", "facts": [{"predicate": "...", \
-"value": "...", "quote": "...", "start": 0, "mention": "...", \
-"polarity": "asserted", "qualifiers": {}}]}]}
-Reply {"entities": []} when the passage states none of these properties."""
-
-_REPAIR = (
-    'That reply was not a JSON object with an "entities" array. Reply again with '
-    "only that object, following the same rules."
-)
+# Registered prompts (DECISIONS #27): the instructions, which the ontology
+# snippets follow in the system message, and the repair turn. The latest version
+# of each is what is sent.
+_PROMPT = get_prompt("extract")
+_REPAIR_PROMPT = get_prompt("extract.repair")
+# The texts under their old names, for anything that imports them.
+_INSTRUCTIONS = _PROMPT.text
+_REPAIR = _REPAIR_PROMPT.text
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 

@@ -40,6 +40,7 @@ from openodke.llm.base import (
     ProviderNotInstalled,
 )
 from openodke.llm.roles import ModelRoles
+from openodke.prompts import get as get_prompt
 from openodke.types import Document, Entity, Fact, GroundingVerdict, Polarity
 
 log = logging.getLogger("openodke.ground")
@@ -48,16 +49,14 @@ log = logging.getLogger("openodke.ground")
 # is asked, or after a call that failed; it is never an answer.
 VERDICTS = (GroundingVerdict.SUPPORTED, GroundingVerdict.CONTRADICTED, GroundingVerdict.NOT_FOUND)
 
-# Short on purpose: this is sent once per fact, and the cost story of the whole
-# stage rests on it being a fraction of the extraction prompt.
-SYSTEM_PROMPT = (
-    "You check one knowledge-graph claim against one passage from its source. "
-    "Judge from the passage alone; ignore anything you know from elsewhere.\n"
-    'Answer "supported" if the passage states the claim or clearly entails it, '
-    '"contradicted" if the passage states the opposite or an incompatible value, '
-    'and "not_found" if the passage does not settle it either way.\n'
-    'Reply with JSON only: {"verdict": "supported" | "contradicted" | "not_found"}'
-)
+# The two prompts this grounder can send, from the registry (DECISIONS #27):
+# `ground.span` by default, and the paper's `ground.paper` (ODKE+ App. B) when
+# `verdicts="binary"`. The latest version of each is what is sent.
+_SPAN = get_prompt("ground.span")
+_PAPER = get_prompt("ground.paper")
+# The texts under their old names, for anything that imports them.
+SYSTEM_PROMPT = _SPAN.text
+PAPER_PROMPT = _PAPER.text
 
 GROUNDING_SCHEMA: dict[str, Any] = {
     "title": "GroundingVerdict",
@@ -67,17 +66,9 @@ GROUNDING_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
-# The paper's grounder prompt (ODKE+ App. B), verbatim but for its worked example.
-# "False" is read as NOT_FOUND: the paper's "No" merges a context that contradicts
-# the triple with one that is silent about it, so a binary run cannot tell them apart.
-PAPER_PROMPT = (
-    "Given a context about a subject and a triple in the format of "
-    "<subject, predicate(qualifier: optional), object>, your task is to verify if the "
-    "given triple can be found from or grounded in the context and only respond with "
-    "True or False. For some object, they may have been listed there in form of a list "
-    "of object, not single."
-)
-
+# The paper's prompt asks for True or False. "False" is read as NOT_FOUND: the
+# paper's "No" merges a context that contradicts the triple with one that is
+# silent about it, so a binary run cannot tell them apart.
 BINARY_SCHEMA: dict[str, Any] = {
     "title": "GroundingJudgement",
     "type": "object",
@@ -160,13 +151,13 @@ def build_messages(fact: Fact, passage: str, *, binary: bool = False) -> list[Me
     """
     if binary:
         return [
-            Message(role="system", content=PAPER_PROMPT),
+            Message(role="system", content=_PAPER.text),
             Message(
                 role="user", content=f"**Context:\n{passage}\n**triple:\n{render_triple(fact)}"
             ),
         ]
     return [
-        Message(role="system", content=SYSTEM_PROMPT),
+        Message(role="system", content=_SPAN.text),
         Message(role="user", content=f"Claim: {render_claim(fact)}\n\nPassage:\n{passage}"),
     ]
 
