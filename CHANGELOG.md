@@ -62,6 +62,58 @@ All notable changes to this project are documented here. The format follows
   still exceed Anthropic's grammar-size limit; use `structured: false` there.
 - The grounder's module docstring credited the paper's precision to "one fact,
   one span"; the paper's grounder judges against the context, not a span.
+- **Grounding no longer turns itself off silently.** A missing API key or an
+  uninstalled provider raised inside the grounder's per-fact isolation, so every
+  fact came back unchecked and an unverified graph was written with exit 0. Those
+  two errors now stop the run; a failed call still only leaves its fact unchecked.
+- **The extractor retries transient provider errors** (429, 5xx), as the
+  grounder does: `LLMExtractor(retry=...)`, or `retry:` under
+  `stages.extractor` in `odke run`. One rate limit no longer loses a run.
+- **A `base_url` call no longer sends a vendor's API key.** With
+  `OPENAI_API_KEY` set, a model on `http://gpu-01:8000/v1` received it over
+  plain HTTP. A redirected call now sends only the key `api_key_env` names.
+- Cost on the LiteLLM path was always unknown; it is read from the response's
+  `_hidden_params`.
+- The verdict parser reads `NotFound` and `notfound` as `not_found`.
+- **Sinks no longer show the value the corroborator voted down.** A fact whose
+  conflict was lost is not projected onto its node (Neo4j, Cypher file, CSV,
+  NetworkX) or written as an RDF plain triple; its claim is still recorded.
+- Evidence that mixed naive and timezone-aware `retrieved_at` crashed every
+  sink at write time. Naive times are written as UTC.
+- **A rewritten fact replaces its properties** (`SET r = ...`, and the
+  NetworkX and CSV equivalents), so a stale value such as an old conflict stamp
+  no longer survives a rerun.
+- RDF writes a literal with its predicate's datatype (`xsd:date`,
+  `xsd:integer`, ...) when the value parses, so typed SPARQL filters find it.
+- `Ontology.from_neo4j` skips openodke's own `odke.*` properties instead of
+  reading them back as schema.
+- **A URL with a path is not a domain.** Two profile pages on one site
+  (`linkedin.com/in/...`) were proof that two people are one entity.
+- Interval qualifiers (`start_time`, `end_time`, ...) are normalised as dates,
+  so merging "2019" with "June 2018" keeps the earlier start.
+- `odke bench run text2kgbench` checks for NLTK before any model call; it used
+  to spend the run, then fail without saving the predictions.
+- `odke bench prepare` refuses an `--out` it did not write, instead of deleting
+  that directory's `docs/`.
+- `odke eval extract` scores a fact merged from several documents in each one
+  it cites, as the ablation already did.
+- `grounding_ablation` scores grounding off and on over the same facts.
+- `bench/`: a competitor run that lost documents exits non-zero, and its set is
+  dropped from the tables instead of averaged in as zero recall; `--env-file`
+  strips quotes and `export`; "rejected by grounder" counts what the gate
+  removed in either mode; `usage.json` records the competitor libraries'
+  versions.
+- Text2KGBench no longer fetches or requires its unread `test` file.
+- **The triples format serves a file name's rows to one document.** With
+  `2023/report.txt` and `2024/report.txt`, a row for `report` became a fact
+  about each. The second now gets none, with a warning, and the stats count
+  `ambiguous_rows`.
+- The hybrid extractor merges a table cell's text with the model's typed value
+  (`"1999"` and `1999`).
+- `__version__` is read from the installed distribution, so it cannot disagree
+  with the release.
+- Inferred type names: "prizes", "sizes" and "caches" are now "Prize", "Size"
+  and "Cache".
 
 ### Changed
 
@@ -73,6 +125,24 @@ All notable changes to this project are documented here. The format follows
   written by an earlier version use the old namespace, and a store holding both
   sees two sets of terms. Nothing rewrites them for you. Moving it now, while
   the sink is new, is cheaper than moving it later.
+- **Python 3.14 is supported.** `requires-python` no longer stops at 3.13, and
+  CI tests 3.11 to 3.14.
+- **Naming only the extraction model grounds on it too** (at 256 output
+  tokens), as the role docstring always said; a config that named only
+  `ollama/...` grounded against Anthropic. `ModelRoles()` with nothing named
+  keeps the two-model default (DECISIONS #7a).
+- **The pipeline makes its model calls concurrently across the run:** every
+  chunk's extraction, then every document's grounding. `LLMExtractor` has
+  `max_workers` (8), so its client must be thread-safe, as the grounder's
+  already was. The output is the same, in the same order, as a serial run.
+- The resolver's `max_block` defaults to 100 (was 500), which bounds the
+  comparisons in a name block.
+- The pattern extractor counts each type's predicates once rather than once per
+  row, and the HTML loader stops nesting inline tags past depth 256, so large
+  ontologies and pages of unclosed tags stay fast.
+- `cardinality_scope()` is deprecated; use `Predicate.scope_keys`.
+- The release workflow's actions are pinned to commit SHAs.
+
 ## [0.2.1] — 2026-09-26
 
 ### Fixed
