@@ -8,7 +8,9 @@ NOTICE for the relationship to that paper.
 """
 
 import importlib.metadata
+from typing import TYPE_CHECKING
 
+from openodke._renamed import Renamed, module_getattr
 from openodke.chunking import SentenceChunker
 from openodke.corroborate import (
     EvidenceScorer,
@@ -17,6 +19,7 @@ from openodke.corroborate import (
     ValueNormalizer,
 )
 from openodke.extract import HybridExtractor, LLMExtractor, PatternExtractor
+from openodke.gate import VerdictGate
 from openodke.ontology import (
     Diagnostic,
     EntityType,
@@ -34,6 +37,7 @@ from openodke.stages import (
     Corroborator,
     Delegated,
     Extractor,
+    Gate,
     Grounder,
     Inferrer,
     Loader,
@@ -43,7 +47,6 @@ from openodke.stages import (
     Router,
     Scorer,
     Sink,
-    Validator,
 )
 from openodke.types import (
     Chunk,
@@ -63,11 +66,30 @@ from openodke.types import (
     SpanOrigin,
     ValidationVerdict,
 )
-from openodke.validators import VerdictValidator
 
 # Read from the installed distribution, so pyproject.toml is the only place the
 # version is written and a wheel cannot report a release it is not.
 __version__ = importlib.metadata.version("openodke")
+
+if TYPE_CHECKING:
+    # What a type checker sees; at run time the 0.2 names come from `__getattr__`.
+    Validator = Gate
+    VerdictValidator = VerdictGate
+
+# The gate's 0.2 names (DECISIONS #26). `Validator` is about to name the whole
+# verification layer rather than the gate, so its warning says so (#129).
+__getattr__ = module_getattr(
+    __name__,
+    {
+        "Validator": Renamed(
+            Gate,
+            "openodke.Gate",
+            "openodke.Validator is about to name the whole verification layer, "
+            "not the gate stage (DECISIONS #26).",
+        ),
+        "VerdictValidator": Renamed(VerdictGate, "openodke.VerdictGate"),
+    },
+)
 
 __all__ = [
     "Chunk",
@@ -85,6 +107,7 @@ __all__ = [
     "EvidenceScorer",
     "Extractor",
     "Fact",
+    "Gate",
     "Grounder",
     "GroundingVerdict",
     "HybridExtractor",
@@ -119,6 +142,7 @@ __all__ = [
     "ValidationVerdict",
     "Validator",
     "ValueNormalizer",
+    "VerdictGate",
     "VerdictValidator",
     "__version__",
 ]

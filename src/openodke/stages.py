@@ -17,13 +17,18 @@ filter themselves.
 The paper's two front stages — the Initiator that decides what to refresh and
 the Retriever that fetches it — stay declared (DECISIONS #9). An SDK is usually
 handed its documents, so they are not among the thirteen.
+
+The tenth stage was `Validator` in 0.2. It is `Gate` now, because "Validator"
+names the whole verification layer (DECISIONS #26); `Validator` and
+`PassThroughValidator` still work here, with a warning, until 1.0.0.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Any, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
 
+from openodke._renamed import Renamed, module_getattr
 from openodke.ontology import Ontology
 from openodke.types import (
     Chunk,
@@ -128,7 +133,7 @@ class Grounder(Protocol):
     This is the precision stage, and it is cheap by construction: a small
     model, one fact and one evidence span at a time, answering yes or no. It
     stamps rather than drops, so the ablation can count what would have gone;
-    the validator is the gate.
+    the gate decides what is written.
     """
 
     def ground(self, fact: Fact, doc: Document) -> Fact: ...
@@ -172,8 +177,12 @@ class Scorer(Protocol):
 
 
 @runtime_checkable
-class Validator(Protocol):
-    """Domain, range, cardinality and polarity against the ontology."""
+class Gate(Protocol):
+    """What gets written: domain, range, cardinality and polarity against the ontology.
+
+    `refuse` keeps a fact out of the graph and says why. The method keeps its
+    0.2 name, `validate`, so a gate written against 0.2 still satisfies this.
+    """
 
     def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict: ...
 
@@ -193,7 +202,7 @@ class PlatformProfile(Frozen):
     resolves: bool = False
     # Enforces the schema itself — uniqueness, cardinality, SHACL.
     constrains: bool = False
-    # Removes what the schema does not allow — what a Validator refuses here.
+    # Removes what the schema does not allow — what a Gate refuses here.
     prunes: bool = False
 
 
@@ -302,7 +311,7 @@ class PassThroughScorer:
         return fact
 
 
-class PassThroughValidator:
+class PassThroughGate:
     """Accepts everything. The store's own constraints are still the second half."""
 
     def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
@@ -337,7 +346,7 @@ class Delegated:
     place for that. A delegated resolver sets `Entity.resolution` to
     `Resolution(method="linker", linker=to)` on every entity that arrives
     unresolved, so a merge the store makes can be read back and scored the same
-    way as one made here. A delegated router or validator names `to` in the
+    way as one made here. A delegated router or gate names `to` in the
     verdict's `reason`. The fact-to-fact stages have no provenance slot and
     pass through unstamped; no surveyed platform grounds, normalises or scores,
     and the field can be added the day one does.
@@ -409,6 +418,19 @@ def _stamped(fact: Fact, stamp: Resolution) -> Fact:
     return fact.model_copy(update={"subject": mark(fact.subject), "object_entity": obj})
 
 
+if TYPE_CHECKING:
+    # What a type checker sees; at run time the 0.2 names come from `__getattr__`.
+    Validator = Gate
+    PassThroughValidator = PassThroughGate
+
+__getattr__ = module_getattr(
+    __name__,
+    {
+        "Validator": Renamed(Gate, "openodke.stages.Gate"),
+        "PassThroughValidator": Renamed(PassThroughGate, "openodke.stages.PassThroughGate"),
+    },
+)
+
 __all__ = [
     "DDL",
     "Chunker",
@@ -418,6 +440,7 @@ __all__ = [
     "Delegated",
     "EntityIndex",
     "Extractor",
+    "Gate",
     "Grounder",
     "Inferrer",
     "Initiator",
@@ -426,6 +449,7 @@ __all__ = [
     "PassThroughChunker",
     "PassThroughConstrainer",
     "PassThroughCorroborator",
+    "PassThroughGate",
     "PassThroughGrounder",
     "PassThroughInferrer",
     "PassThroughLoader",

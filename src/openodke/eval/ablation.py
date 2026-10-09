@@ -6,7 +6,7 @@ run config, scored against one labelled extraction set:
 1. **extraction alone** — the config's loaders, chunker, router and extractor.
    Every candidate is kept.
 2. **+ grounding** — the same candidates through the config's grounder, then its
-   gate: the configured validator, or `VerdictValidator` when it names none.
+   gate: the configured one, or `VerdictGate` when it names none.
 3. **+ corroboration** — the whole configured pipeline: normalise, resolve,
    corroborate and score, then the same gate.
 
@@ -141,9 +141,9 @@ class AblationRun:
 def ablate(config: RunConfig) -> AblationRun:
     """Run `config` three ways and keep the facts. Extraction and grounding run once."""
     # Imported here: `openodke.run` imports `openodke.eval.cost`, and so this package.
+    from openodke.gate import VerdictGate
     from openodke.run.build import build
     from openodke.run.execute import register_documents
-    from openodke.validators import VerdictValidator
 
     # Metered whatever the config says: calls and cost are a column of the table.
     metered = config.model_copy(update={"models": config.models.model_copy(update={"meter": True})})
@@ -168,12 +168,12 @@ def ablate(config: RunConfig) -> AblationRun:
     else:
         replay = _Replaying(recording.found)
         grounded = list(Pipeline(ontology, replay, grounder=grounder, **route).run(docs).facts)
-    gate = stages["validator"] if stages["validator"] is not None else VerdictValidator()
+    gate = stages["validator"] if stages["validator"] is not None else VerdictGate()
     gated = [f for f in grounded if gate.validate(f, ontology).action != "refuse"]
     all_calls = list(meter.records)
 
     full = built.pipeline(
-        extractor=_Replaying(recording.found), grounder=_Stamped(grounded), validator=gate
+        extractor=_Replaying(recording.found), grounder=_Stamped(grounded), gate=gate
     )
     corroborated = list(full.run(docs).facts)
     return AblationRun(
@@ -263,7 +263,7 @@ def _gate_view(
     else:
         drop = frozenset(DROPPED)
         notes.append(
-            "the configured validator does not say which verdicts it refuses, so the view "
+            "the configured gate does not say which verdicts it refuses, so the view "
             "below assumes contradicted and not_found"
         )
     off = grounding_ablation(labels, grounded, drop=drop).breakdown

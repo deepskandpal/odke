@@ -71,7 +71,7 @@ def run_extract(
 ) -> list[Fact]:
     """Extract from every document in-process, each fact citing its document.
 
-    No router, grounder or validator: this measures the extractor alone, which
+    No router, grounder or gate: this measures the extractor alone, which
     is the baseline every later stage is an ablation against.
     """
     chunker = chunker or PassThroughChunker()

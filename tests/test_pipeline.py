@@ -25,7 +25,7 @@ from openodke import (
     ValidationVerdict,
 )
 from openodke.sinks import JsonlSink
-from openodke.stages import DDL, EntityIndex, EntityLink
+from openodke.stages import DDL, EntityIndex, EntityLink, PassThroughGate
 
 
 class _StubExtractor:
@@ -64,7 +64,7 @@ class _StampingGrounder:
         return fact.model_copy(update={"verdict": verdict})
 
 
-class _RefusingValidator:
+class _RefusingGate:
     """The gate: what the grounder contradicted does not reach the sink."""
 
     def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
@@ -134,7 +134,7 @@ def test_entities_are_collected_from_subjects_and_edge_objects() -> None:
     assert {e.key for e in kg.entities} == {"p:d1", "c:1"}
 
 
-def test_the_grounder_stamps_and_the_validator_gates() -> None:
+def test_the_grounder_stamps_and_the_gate_refuses() -> None:
     """A grounder sets the verdict rather than dropping, so the ablation can count what went."""
     stamped = Pipeline(Ontology(), _StubExtractor(), grounder=_StampingGrounder()).run(
         [Document(id="d1", text="Ada.")]
@@ -147,7 +147,7 @@ def test_the_grounder_stamps_and_the_validator_gates() -> None:
         Ontology(),
         _StubExtractor(),
         grounder=_StampingGrounder(),
-        validator=_RefusingValidator(),
+        gate=_RefusingGate(),
     ).run([Document(id="d1", text="Ada.")])
     assert [f.predicate for f in gated.facts] == ["name"]
     assert gated.facts[0].verdict is GroundingVerdict.SUPPORTED
@@ -242,7 +242,7 @@ def test_explicit_defaults_and_none_are_the_same_pipeline() -> None:
         resolver=stages.PassThroughResolver(),
         corroborator=stages.PassThroughCorroborator(),
         scorer=stages.PassThroughScorer(),
-        validator=stages.PassThroughValidator(),
+        gate=stages.PassThroughGate(),
         constrainer=stages.PassThroughConstrainer(),
     ).run(docs)
     assert [f.signature for f in implicit.facts] == [f.signature for f in explicit.facts]
@@ -254,7 +254,7 @@ def test_explicit_defaults_and_none_are_the_same_pipeline() -> None:
     ("kwarg", "stage", "flag"),
     [
         ("resolver", _KeyResolver(), "resolves"),
-        ("validator", _RefusingValidator(), "prunes"),
+        ("gate", _RefusingGate(), "prunes"),
         ("constrainer", _NoConstrainer(), "constrains"),
     ],
 )
@@ -329,13 +329,37 @@ def test_the_default_router_passes_everything() -> None:
     assert verdict.label is None
 
 
+def test_validator_is_the_old_name_of_gate_and_warns() -> None:
+    """`Pipeline(validator=...)` and `.validator` still work until 1.0.0 (DECISIONS #26)."""
+    gate = _RefusingGate()
+    with pytest.warns(DeprecationWarning, match=r"Pipeline\(validator=\.\.\.\) is deprecated"):
+        pipeline = Pipeline(
+            Ontology(), _StubExtractor(), grounder=_StampingGrounder(), validator=gate
+        )
+    assert pipeline.gate is gate
+    with pytest.warns(DeprecationWarning, match=r"Pipeline\.validator is deprecated"):
+        assert pipeline.validator is gate
+    assert pipeline.run([Document(id="d1", text="Ada.")]).stats["refused"] == 1
+
+    other = PassThroughGate()
+    with pytest.warns(DeprecationWarning, match=r"Pipeline\.validator is deprecated"):
+        pipeline.validator = other
+    assert pipeline.gate is other
+
+
+def test_gate_and_its_old_name_together_are_refused() -> None:
+    with pytest.raises(TypeError, match="gate= alone"):
+        Pipeline(Ontology(), _StubExtractor(), gate=_RefusingGate(), validator=_RefusingGate())
+
+
 def test_stub_stages_satisfy_the_declared_protocols() -> None:
     """If a stub stops matching, callers' own implementations would break too."""
-    from openodke.pipeline import Chunker, Extractor, Grounder, Router, Sink, Validator
+    from openodke.pipeline import Chunker, Extractor, Grounder, Router, Sink
+    from openodke.stages import Gate
 
     assert isinstance(_StubExtractor(), Extractor)
     assert isinstance(_StampingGrounder(), Grounder)
-    assert isinstance(_RefusingValidator(), Validator)
+    assert isinstance(_RefusingGate(), Gate)
     assert isinstance(_LineChunker(), Chunker)
     assert isinstance(_AdRouter(), Router)
     assert isinstance(JsonlSink("/tmp/unused"), Sink)

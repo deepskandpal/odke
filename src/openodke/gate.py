@@ -1,10 +1,13 @@
-"""The gate: the grounder stamps a verdict, the validator decides what is written.
+"""The gate: the grounder stamps a verdict, the gate decides what is written.
 
 DECISIONS #20 keeps the grounder from dropping anything, so an ablation can count
 what grounding would have removed. Something still has to refuse, or a fact the
 cited passage contradicts goes into the graph with `verdict: contradicted` on it
-and every query has to remember to filter it out. That something is a
-`Validator`, and this is the one `odke run` ships.
+and every query has to remember to filter it out. That something is a `Gate`,
+and this is the one `odke run` ships.
+
+In 0.2 it was `openodke.validators.VerdictValidator`. That name still works,
+with a warning, until 1.0.0 (DECISIONS #26).
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ _REASONS = {
 }
 
 
-class VerdictValidator:
+class VerdictGate:
     """Refuses a fact its own cited passage contradicts, and on request one it cannot find.
 
     `CONTRADICTED` is always refused: the source was read, and it says something
@@ -62,4 +65,4 @@ class VerdictValidator:
         return {"accepted": self._accepted, "refused": dict(self._refused)}
 
 
-__all__ = ["VerdictValidator"]
+__all__ = ["VerdictGate"]

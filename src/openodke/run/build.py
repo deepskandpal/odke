@@ -41,6 +41,7 @@ from openodke.corroborate import (
 )
 from openodke.eval.cost import CostMeter
 from openodke.extract import HybridExtractor, LLMExtractor, PatternExtractor, RecordMapping
+from openodke.gate import VerdictGate
 from openodke.ground import LLMGrounder, RetryPolicy, SpanGrounder
 from openodke.interop import TriplesExtractor
 from openodke.llm.base import LLMClient
@@ -74,6 +75,7 @@ from openodke.stages import (
     Corroborator,
     Delegated,
     Extractor,
+    Gate,
     Grounder,
     Inferrer,
     Loader,
@@ -81,22 +83,20 @@ from openodke.stages import (
     PassThroughChunker,
     PassThroughConstrainer,
     PassThroughCorroborator,
+    PassThroughGate,
     PassThroughGrounder,
     PassThroughInferrer,
     PassThroughNormalizer,
     PassThroughResolver,
     PassThroughRouter,
     PassThroughScorer,
-    PassThroughValidator,
     PlatformProfile,
     Resolver,
     Router,
     Scorer,
     Sink,
-    Validator,
 )
 from openodke.types import Document, GroundingVerdict, KnowledgeGraph, SourceTier
-from openodke.validators import VerdictValidator
 
 PROTOCOLS: dict[str, type] = {
     "loader": Loader,
@@ -108,7 +108,7 @@ PROTOCOLS: dict[str, type] = {
     "resolver": Resolver,
     "corroborator": Corroborator,
     "scorer": Scorer,
-    "validator": Validator,
+    "validator": Gate,
     "sink": Sink,
     "constrainer": Constrainer,
     "inferrer": Inferrer,
@@ -380,7 +380,7 @@ _PASSTHROUGH: dict[str, Callable[[], Any]] = {
     "resolver": PassThroughResolver,
     "corroborator": PassThroughCorroborator,
     "scorer": PassThroughScorer,
-    "validator": PassThroughValidator,
+    "validator": PassThroughGate,
     "constrainer": PassThroughConstrainer,
     "inferrer": PassThroughInferrer,
 }
@@ -413,7 +413,7 @@ BUILTINS: dict[str, dict[str, Factory]] = {
     "resolver": {"native": _plain(NativeResolver)},
     "corroborator": {"signature": _with_ontology(SignatureCorroborator, "source")},
     "scorer": {"evidence": _scorer},
-    "validator": {"verdict": _plain(VerdictValidator)},
+    "validator": {"verdict": _plain(VerdictGate)},
     "constrainer": {"neo4j": _plain(Neo4jConstrainer)},
     "inferrer": {},
 }
@@ -860,7 +860,7 @@ class Built:
             resolver=s["resolver"],
             corroborator=s["corroborator"],
             scorer=s["scorer"],
-            validator=s["validator"],
+            gate=s["validator"],
             constrainer=s["constrainer"],
             sinks=sinks,
         )

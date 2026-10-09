@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from openodke import Document, Entity, Evidence, Fact, Span
+from openodke.gate import VerdictGate
 from openodke.ground import LLMGrounder
 from openodke.ground.llm import (
     BINARY_SCHEMA,
@@ -16,7 +17,6 @@ from openodke.ground.llm import (
 )
 from openodke.llm import ScriptedClient
 from openodke.types import GroundingVerdict, Polarity
-from openodke.validators import VerdictValidator
 
 TEXT = "Ada Lovelace wrote the first algorithm in 1843. She was born in London."
 DOC = Document(id="d1", text=TEXT)
@@ -87,7 +87,7 @@ def test_with_the_strict_gate_only_affirmed_facts_survive() -> None:
     """The paper keeps 'only those facts that receive an affirmative grounding judgment'."""
     client = ScriptedClient([{"verdict": False}])
     grounded = LLMGrounder(client=client, context="document", verdicts="binary").ground(WROTE, DOC)
-    gate = VerdictValidator(refuse_not_found=True)
+    gate = VerdictGate(refuse_not_found=True)
     assert gate.validate(grounded, ontology=None).action == "refuse"  # type: ignore[arg-type]
 
 

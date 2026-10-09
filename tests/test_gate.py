@@ -1,21 +1,27 @@
-"""The shipped gate: the grounder stamps, `VerdictValidator` refuses."""
+"""The shipped gate: the grounder stamps, `VerdictGate` refuses."""
 
 from __future__ import annotations
 
+import importlib
+import subprocess
+import sys
 from collections.abc import Iterable
+
+import pytest
 
 from openodke import (
     Chunk,
     Document,
     Entity,
     Fact,
+    Gate,
     GroundingVerdict,
     Ontology,
     Pipeline,
-    Validator,
-    VerdictValidator,
+    VerdictGate,
 )
 from openodke.eval.grounding import kept
+from openodke.stages import PassThroughGate
 
 ADA = Entity(key="Person:ada", type="Person", label="Ada")
 
@@ -25,14 +31,14 @@ def _fact(verdict: GroundingVerdict, value: str = "1815") -> Fact:
 
 
 def test_a_contradicted_fact_is_refused_with_a_reason() -> None:
-    verdict = VerdictValidator().validate(_fact(GroundingVerdict.CONTRADICTED), Ontology())
+    verdict = VerdictGate().validate(_fact(GroundingVerdict.CONTRADICTED), Ontology())
     assert verdict.action == "refuse"
     assert verdict.reason is not None and "contradicted" in verdict.reason
 
 
 def test_not_found_and_unchecked_are_accepted_by_default() -> None:
     """A passage that does not settle a claim is not evidence against it."""
-    gate = VerdictValidator()
+    gate = VerdictGate()
     for verdict in (
         GroundingVerdict.NOT_FOUND,
         GroundingVerdict.UNCHECKED,
@@ -42,7 +48,7 @@ def test_not_found_and_unchecked_are_accepted_by_default() -> None:
 
 
 def test_refusing_not_found_is_a_choice_and_unchecked_still_passes() -> None:
-    gate = VerdictValidator(refuse_not_found=True)
+    gate = VerdictGate(refuse_not_found=True)
     assert gate.validate(_fact(GroundingVerdict.NOT_FOUND), Ontology()).action == "refuse"
     assert gate.validate(_fact(GroundingVerdict.UNCHECKED), Ontology()).action == "accept"
 
@@ -50,13 +56,13 @@ def test_refusing_not_found_is_a_choice_and_unchecked_still_passes() -> None:
 def test_refused_is_the_drop_set_the_ablation_scores_with() -> None:
     """One definition of the gate, so `odke eval ablation` measures what the run refuses."""
     facts = [_fact(v) for v in GroundingVerdict]
-    for gate in (VerdictValidator(), VerdictValidator(refuse_not_found=True)):
+    for gate in (VerdictGate(), VerdictGate(refuse_not_found=True)):
         by_gate = [gate.validate(f, Ontology()).action == "accept" for f in facts]
         assert by_gate == [kept(f, gate.refused) for f in facts]
 
 
 def test_it_counts_what_it_accepted_and_why_it_refused() -> None:
-    gate = VerdictValidator(refuse_not_found=True)
+    gate = VerdictGate(refuse_not_found=True)
     for verdict in (
         GroundingVerdict.CONTRADICTED,
         GroundingVerdict.NOT_FOUND,
@@ -86,11 +92,79 @@ class _DoubtsTheSecond:
 
 
 def test_in_a_pipeline_the_contradicted_fact_never_reaches_the_graph() -> None:
-    gate = VerdictValidator()
-    assert isinstance(gate, Validator)
-    kg = Pipeline(Ontology(), _TwoBirthYears(), grounder=_DoubtsTheSecond(), validator=gate).run(
+    gate = VerdictGate()
+    assert isinstance(gate, Gate)
+    kg = Pipeline(Ontology(), _TwoBirthYears(), grounder=_DoubtsTheSecond(), gate=gate).run(
         [Document(id="d1", text="Ada was born in 1815.")]
     )
     assert [f.object_value for f in kg.facts] == ["1815"]
     assert kg.stats["refused"] == 1
     assert gate.stats["refused"] == {"contradicted": 1}
+
+
+# --------------------------------------------------------------------------- #
+# The 0.2 names (DECISIONS #26): each still works, and says it is going
+# --------------------------------------------------------------------------- #
+
+OLD_NAMES = [
+    ("openodke", "Validator", Gate),
+    ("openodke", "VerdictValidator", VerdictGate),
+    ("openodke.stages", "Validator", Gate),
+    ("openodke.stages", "PassThroughValidator", PassThroughGate),
+    ("openodke.pipeline", "Validator", Gate),
+    ("openodke.pipeline", "PassThroughValidator", PassThroughGate),
+    ("openodke.validators", "VerdictValidator", VerdictGate),
+]
+
+
+@pytest.mark.parametrize(
+    ("module", "old", "new"), OLD_NAMES, ids=lambda v: getattr(v, "__name__", v)
+)
+def test_every_old_name_is_the_new_class_and_warns(module: str, old: str, new: type) -> None:
+    found = importlib.import_module(module)
+    with pytest.warns(
+        DeprecationWarning, match=rf"{module}\.{old} is deprecated: use .*{new.__name__}"
+    ):
+        assert getattr(found, old) is new
+
+
+def test_the_old_names_stay_in_all_beside_the_new_ones() -> None:
+    import openodke
+    from openodke import stages
+
+    assert {"Gate", "VerdictGate", "Validator", "VerdictValidator"} <= set(openodke.__all__)
+    assert {"Gate", "PassThroughGate", "Validator", "PassThroughValidator"} <= set(stages.__all__)
+
+
+def test_an_old_import_warns_at_the_line_that_wrote_it() -> None:
+    with pytest.warns(DeprecationWarning) as record:
+        from openodke.validators import VerdictValidator
+    assert record[0].filename == __file__
+    gate = VerdictValidator(refuse_not_found=True)
+    assert isinstance(gate, VerdictGate)
+    assert gate.validate(_fact(GroundingVerdict.NOT_FOUND), Ontology()).action == "refuse"
+
+
+def test_the_top_level_validator_warns_that_it_is_about_to_change_meaning() -> None:
+    """#129 makes `openodke.Validator` the layer, so its warning says more than "renamed"."""
+    import openodke
+
+    with pytest.warns(DeprecationWarning, match="whole verification layer"):
+        assert openodke.Validator is Gate
+
+
+def test_an_unknown_name_is_still_an_attribute_error() -> None:
+    import openodke
+
+    with pytest.raises(AttributeError, match="no attribute 'Nothing'"):
+        openodke.Nothing  # noqa: B018
+
+
+def test_nothing_in_the_package_uses_an_old_name() -> None:
+    """The warning is for callers: importing openodke itself must not raise one."""
+    modules = (
+        "openodke, openodke.run, openodke.cli.main, openodke.eval.ablation, openodke.validators"
+    )
+    subprocess.run(
+        [sys.executable, "-W", "error::DeprecationWarning", "-c", f"import {modules}"], check=True
+    )

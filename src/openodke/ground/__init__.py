@@ -10,8 +10,8 @@ order is the point:
    and the one locatability alone cannot answer. A model can cite a span that
    genuinely exists and does not support the fact it was attached to.
 
-Both stamp `Fact.verdict` and neither drops a fact (DECISIONS #20): the validator
-is the gate, and the ablation counts what would have gone.
+Both stamp `Fact.verdict` and neither drops a fact (DECISIONS #20): the gate
+decides what is written, and the ablation counts what would have gone.
 """
 
 from openodke.ground.llm import LLMGrounder, build_messages, parse_verdict, render_claim
