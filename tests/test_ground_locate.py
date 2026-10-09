@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from openodke import (
@@ -10,11 +12,17 @@ from openodke import (
     Evidence,
     Fact,
     GroundingVerdict,
+    Ontology,
+    Pipeline,
     Span,
     SpanOrigin,
 )
 from openodke.corroborate import NAME_KEY
-from openodke.ground import SpanLocator, check_span, locate_span
+from openodke.eval.spans import evaluate_spans
+from openodke.ground import LLMGrounder, SpanLocator, check_span, locate_span
+from openodke.interop import TriplesExtractor
+from openodke.llm import RecordedClient
+from openodke.run import build, parse_config
 
 TEXT = (
     "Halden Robotics was founded in Leeds in 2014 by Mara Quist. "
@@ -232,3 +240,85 @@ def test_only_a_fact_that_cited_nothing_is_located() -> None:
     assert locator.stats == {"facts": 0, "located": 0, "not_located": 0}
     locator.locate(fact(HALDEN, "founded_in", entity("Leeds", "City")), DOC)
     assert locator.stats == {"facts": 1, "located": 1, "not_located": 0}
+
+
+# --------------------------------------------------------------------------- #
+# In the grounder, the pipeline and `odke run`
+# --------------------------------------------------------------------------- #
+
+
+def _passage(client: RecordedClient) -> str:
+    (messages, _, _), *_ = client.calls
+    return messages[1].content.split("Passage:\n", 1)[1]
+
+
+def test_the_grounder_asks_about_the_window_when_locating() -> None:
+    client = RecordedClient([{"match": "Leeds", "response": {"verdict": "supported"}}])
+    grounder = LLMGrounder(client=client, locate=True)
+    grounded = grounder.ground(fact(HALDEN, "founded_in", entity("Leeds", "City")), DOC)
+    assert grounded.verdict is GroundingVerdict.SUPPORTED
+    assert grounded.evidence[0].span_origin is SpanOrigin.LOCATED
+    assert _passage(client) == "Halden Robotics was founded in Leeds in 2014 by Mara Quist."
+    assert grounder.stats["locate"] == {"facts": 1, "located": 1, "not_located": 0}
+
+
+def test_without_a_window_or_with_locating_off_the_whole_text_is_asked() -> None:
+    answers = [{"match": "Claim", "response": {"verdict": "not_found"}}]
+    for locate, obj in ((True, entity("Berlin", "City")), (False, entity("Leeds", "City"))):
+        client = RecordedClient(answers)
+        grounder = LLMGrounder(client=client, locate=locate)
+        grounded = grounder.ground(fact(HALDEN, "office_in", obj), DOC)
+        assert grounded.evidence[0].span_origin is SpanOrigin.CONTEXT
+        assert _passage(client) == TEXT
+        assert ("locate" in grounder.stats) is locate
+
+
+def test_whole_document_mode_still_reads_the_document_and_records_the_window() -> None:
+    client = RecordedClient([{"match": "Leeds", "response": {"verdict": True}}])
+    grounder = LLMGrounder(client=client, context="document", verdicts="binary", locate=True)
+    grounded = grounder.ground(fact(HALDEN, "founded_in", entity("Leeds", "City")), DOC)
+    assert grounded.evidence[0].span_origin is SpanOrigin.LOCATED
+    (messages, _, _), *_ = client.calls
+    assert TEXT in messages[1].content
+
+
+def test_a_pipeline_of_bare_triples_comes_out_located() -> None:
+    rows = [
+        {"doc": "halden", "subject": "Halden Robotics", "predicate": "office_in", "object": "Lyon"},
+        {
+            "doc": "halden",
+            "subject": "Halden Robotics",
+            "predicate": "office_in",
+            "object": "Berlin",
+        },
+    ]
+    client = RecordedClient(
+        [
+            {"match": "Lyon", "response": {"verdict": "supported"}},
+            {"match": "Berlin", "response": {"verdict": "not_found"}},
+        ]
+    )
+    kg = Pipeline(
+        Ontology(),
+        TriplesExtractor(rows, documents=[DOC]),
+        grounder=LLMGrounder(client=client, locate=True),
+    ).run([DOC])
+    origins = [(f.object_entity.label, f.evidence[0].span_origin) for f in kg.facts]
+    assert origins == [("Lyon", SpanOrigin.LOCATED), ("Berlin", SpanOrigin.CONTEXT)]
+    report = evaluate_spans(kg)
+    assert (report.metrics["located"], report.metrics["no_span"]) == (1, 1)
+
+
+def test_odke_run_turns_it_on_in_the_grounders_options(tmp_path: Path) -> None:
+    (tmp_path / "o.json").write_text('{"name": "o"}', encoding="utf-8")
+    (tmp_path / "docs").mkdir()
+    config = {
+        "ontology": "o.json",
+        "inputs": [{"path": "docs", "loader": "directory"}],
+        "models": {"ground": "ollama/qwen2.5:3b"},
+        "stages": {"extractor": "pattern", "grounder": {"use": "llm", "locate": True}},
+    }
+    grounder = build(parse_config(config, base_dir=tmp_path)).stages["grounder"]
+    assert isinstance(grounder.locator, SpanLocator)
+    config["stages"]["grounder"] = "llm"
+    assert build(parse_config(config, base_dir=tmp_path)).stages["grounder"].locator is None

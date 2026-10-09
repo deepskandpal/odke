@@ -11,7 +11,8 @@ order is the point:
    genuinely exists and does not support the fact it was attached to.
 
 A fact whose extractor cited nothing is grounded against its whole text, unless
-`SpanLocator` finds the sentence naming its subject and object first.
+`LLMGrounder(locate=True)` has `SpanLocator` find the sentence naming its
+subject and object first.
 
 Both stamp `Fact.verdict` and neither drops a fact (DECISIONS #20): the gate
 decides what is written, and the ablation counts what would have gone.
