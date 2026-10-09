@@ -161,7 +161,7 @@ def test_fetch_then_prepare_writes_a_config_that_builds(tmp_path: Path) -> None:
     assert len(built.documents()) == 1
     grounder = built.stages["grounder"]
     assert grounder.context == "document" and grounder.binary
-    assert GroundingVerdict.NOT_FOUND in built.stages["validator"].refused
+    assert GroundingVerdict.NOT_FOUND in built.stages["gate"].refused
     with pytest.raises(ValueError, match="not a wikidata_tekgen ontology"):
         text2kgbench.files("wikidata_tekgen", "ont_99_nothing")
 

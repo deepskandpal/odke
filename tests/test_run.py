@@ -31,6 +31,7 @@ from openodke.sinks import neo4j as neo4j_module
 from openodke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink
 from openodke.sinks.networkx import NetworkXSink
 from openodke.sinks.rdf import RdfSink
+from openodke.stages import PassThroughGate
 from test_neo4j_sink import FakeDriver
 
 runner = CliRunner()
@@ -124,7 +125,7 @@ def _config(**overrides: Any) -> dict[str, Any]:
             "normalizer": {"use": "value", "person_types": ["Person"]},
             "corroborator": "signature",
             "scorer": "evidence",
-            "validator": "verdict",
+            "gate": "verdict",
             "sink": {"use": "jsonl", "directory": "out"},
         },
     }
@@ -261,9 +262,9 @@ def test_a_config_that_names_no_scorer_still_scores_from_the_grounding_verdict(
 
     `odke run` writes a graph somebody is about to filter, so it scores whether
     or not the config says to. The gate is off here to keep the contradicted
-    fact, which the default validator refuses.
+    fact, which the default gate refuses.
     """
-    config = _config(stages__validator="passthrough")
+    config = _config(stages__gate="passthrough")
     del config["stages"]["scorer"]
     facts = {
         (f.predicate, f.object_value): f
@@ -294,6 +295,48 @@ def test_models_accept_a_bare_model_string() -> None:
     assert config.models.roles() == ModelRoles(
         extract=ModelSpec(model="ollama/llama3.1"), ground=ModelSpec(model="ollama/qwen2.5:3b")
     )
+
+
+def _with_old_gate_key() -> dict[str, Any]:
+    config = _config()
+    config["stages"]["validator"] = config["stages"].pop("gate")
+    return config
+
+
+def test_the_gate_s_old_key_warns_and_runs_the_same(project: Path) -> None:
+    """`validator:` is the 0.2 name of `gate:` (DECISIONS #26): the same run, and a warning."""
+    with pytest.warns(
+        DeprecationWarning, match=r"stages\.validator is deprecated: use stages\.gate"
+    ):
+        old = parse_config(_with_old_gate_key(), base_dir=project)
+    assert old.stages.gate == StageSpec(use="verdict")
+    renamed, current = execute(old), execute(parse_config(_config(), base_dir=project))
+    assert [f.signature for f in renamed.graph.facts] == [f.signature for f in current.graph.facts]
+    # The report keeps the gate's counts under their 0.2 key, whichever spelling ran.
+    counts = {"accepted": 5, "refused": {"contradicted": 1}}
+    assert renamed.stats["stages"]["validator"] == current.stats["stages"]["validator"] == counts
+    assert "gate" not in current.stats["stages"]
+
+
+def test_the_command_prints_the_old_key_s_warning(project: Path) -> None:
+    """Python hides a library's DeprecationWarning; a config's reader still has to see it."""
+    result = runner.invoke(app, ["run", "--dry-run", str(_write(project, _with_old_gate_key()))])
+    assert result.exit_code == 0, result.output
+    assert "warning: stages.validator is deprecated: use stages.gate" in result.stderr
+
+
+def test_the_gate_and_its_old_key_together_are_refused() -> None:
+    config = _config()
+    config["stages"]["validator"] = "passthrough"
+    with pytest.raises(ConfigError, match="`validator` is the old name of `gate`"):
+        parse_config(config)
+
+
+def test_built_pipeline_takes_the_gate_s_old_name_with_a_warning(project: Path) -> None:
+    built = build(parse_config(_config(), base_dir=project))
+    with pytest.warns(DeprecationWarning, match=r"Built\.pipeline\(validator=\.\.\.\)"):
+        pipeline = built.pipeline(validator=PassThroughGate())
+    assert isinstance(pipeline.gate, PassThroughGate)
 
 
 # --------------------------------------------------------------------------- #
