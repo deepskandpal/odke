@@ -47,6 +47,7 @@ from typing import Any, NamedTuple
 
 from pydantic import Field
 
+from openodke._batch import failed_summary
 from openodke.corroborate import (
     EvidenceScorer,
     NativeResolver,
@@ -118,11 +119,17 @@ class ValidationReport(Frozen):
     coverage: dict[str, Any] | None = None
     # `KnowledgeGraph.stats["stopped"]`: where a budget stopped the job, and why.
     stopped: dict[str, Any] | None = None
+    # Texts left out because something failed for them alone, with why (#162).
+    failed: dict[str, str] = Field(default_factory=dict)
 
     def render(self) -> str:
         lines = ["odke validate — dry run, no model called" if self.dry_run else "odke validate"]
         if self.stopped is not None:
             lines.append(_row("stopped", stopped_summary(self.stopped)))
+        if self.failed:
+            lines.append(
+                _row("failed", failed_summary(self.failed, of=self.documents, noun="text"))
+            )
         unmatched = f"; {self.unmatched} name a text that was not given" if self.unmatched else ""
         lines.append(
             _row("in", f"{_n(self.facts_in, 'fact')} from {_n(self.documents, 'text')}{unmatched}")
@@ -327,6 +334,7 @@ class Validator:
         resolved = getattr(stages["resolver"], "stats", None)
         store = resolved.get("store") if isinstance(resolved, Mapping) else None
         stopped = kg.stats.get("stopped")
+        failed = kg.stats.get("failed")
         return ValidationReport(
             dry_run=dry_run,
             documents=int(kg.stats.get("documents", 0)),
@@ -354,6 +362,7 @@ class Validator:
             prompts=tuple(str(p) for p in grounding.get("prompts", ())),
             coverage=dict(coverage) if isinstance(coverage, Mapping) else None,
             stopped=dict(stopped) if isinstance(stopped, Mapping) else None,
+            failed=dict(failed) if isinstance(failed, Mapping) else {},
         )
 
 

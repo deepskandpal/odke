@@ -280,6 +280,7 @@ def run_command(
     typer.echo(result.render())
     if result.stats.get("stopped"):
         raise typer.Exit(EXIT_BUDGET)
+    _every_document_failed(result.stats.get("failed"), int(result.stats.get("documents", 0)))
 
 
 # --------------------------------------------------------------------------- #
@@ -581,6 +582,8 @@ def ground_command(
         typer.echo(f"wrote odke_verdict on {_count(written, 'relationship')}")
     if grounded.summary.stopped:
         raise typer.Exit(EXIT_BUDGET)
+    if grounded.summary.failed and not grounded.summary.facts:
+        _every_document_failed(grounded.summary.failed, len(grounded.summary.failed))
 
 
 # --------------------------------------------------------------------------- #
@@ -779,6 +782,21 @@ def validate_command(
         typer.echo(f"{verb:<13} {line}")
     if report.stopped:
         raise typer.Exit(EXIT_BUDGET)
+    _every_document_failed(report.failed, report.documents)
+
+
+def _every_document_failed(failed: Any, documents: int) -> None:
+    """Exit 1 when every document failed on its own: the run did nothing.
+
+    One document's failure is left out of the graph and named in the report,
+    and the run goes on (#162). When that is every document, the cause is
+    almost certainly not in the documents, and a zero exit would hide it.
+    """
+    if documents and isinstance(failed, dict) and len(failed) >= documents:
+        typer.echo(
+            f"error: every document failed; the first: {next(iter(failed.values()))}", err=True
+        )
+        raise typer.Exit(1)
 
 
 def _close(driver: Any, sinks: list[Any]) -> None:
