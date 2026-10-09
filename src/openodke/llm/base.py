@@ -75,6 +75,9 @@ class Completion(BaseModel):
     # which is honest, where 0.0 would be a lie.
     cost_usd: float | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
+    # Answered from a response cache (`openodke.llm.cache`): no call was made, so
+    # the tokens are 0 and the cost is 0.0, which here is a measurement.
+    cached: bool = False
 
 
 @runtime_checkable
