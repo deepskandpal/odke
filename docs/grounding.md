@@ -322,3 +322,56 @@ their claim cluster in `not_found`, clause-width ones in `supported`.
 
 [`odke eval spans`](evaluation.md#spans) reports that split. It needs no
 labelled data, which makes it the cheapest check on a new extractor or prompt.
+
+## What extraction left behind: the coverage report
+
+Grounding judges the facts an extractor returned; it cannot see the ones it
+did not. A validator cannot invent those ([DECISIONS #24](decisions.md)), but it
+can count where they are missing, with no model. `odke run` does by default
+(`coverage: false` turns it off), `Pipeline(coverage=True)` does in Python, and
+`openodke.coverage.measure(documents, facts, ontology)` does on any facts. Per
+document:
+
+- **Entities in no fact.** A known name is a label or alias of any subject or
+  edge object in the batch. One the text mentions that no fact of that document
+  names is reported, at its first mention.
+- **Sentences no fact covers.** A sentence naming two or more known entities is
+  one a fact could have come from. It is covered when any fact's evidence span
+  overlaps it; the rest are reported with their text. A sentence naming fewer is
+  not counted, because most of those are narrative. A span nobody chose
+  (`context`) overlaps every sentence, so it covers only the sentences naming
+  both ends of its fact. A chunk the router skipped is not a gap.
+- **Relations never offered.** Predicates the extractor was not shown, from its
+  `offered(ontology)` (`LLMExtractor`: its snippets, so a type left out of
+  `types` or a predicate past `snippet_limit`), and the shown predicates no fact
+  used. An extractor without `offered` reports the first as unknown.
+
+Names match as [`name_key`](resolution-and-corroboration.md) token runs, longest
+first: case, accents, a dotted initialism, a leading "the" and a legal suffix do
+not matter. It is a small matcher until the span locator's (#112) lands. `odke
+run` prints one line, and `odke eval ablation` adds the same line to its notes:
+
+```
+coverage      1 of 3 sentences naming two known entities uncovered, 1 entities in no fact, 2 relations never offered, 0 unused
+```
+
+These are gaps, not errors: a sentence naming two entities may relate them in
+no way the ontology has. They are what the re-extract hook (#102) hands back.
+
+```python
+from openodke import Document, Entity, Evidence, Fact, Ontology, Span
+from openodke.coverage import measure
+
+text = "Ada Lovelace worked with Babbage. She wrote to Babbage for years. Ada Lovelace met Babbage in 1834."
+doc = Document(id="d1", text=text)
+cited = Span(doc_id="d1", start=0, end=33, quote="Ada Lovelace worked with Babbage.")
+fact = Fact(
+    subject=Entity(key="p:ada", type="Person", label="Ada Lovelace"),
+    predicate="collaborator",
+    object_entity=Entity(key="p:babbage", type="Person", label="Babbage"),
+    evidence=(Evidence(doc_id="d1", span=cited),),
+)
+(record,) = measure([doc], [fact], Ontology()).documents
+assert record.sentences == 2  # "She wrote to Babbage" names one known entity
+assert [s.quote for s in record.uncovered] == ["Ada Lovelace met Babbage in 1834."]
+```

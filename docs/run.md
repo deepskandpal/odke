@@ -50,6 +50,7 @@ stages:
   gate: verdict
   sink: {use: jsonl, directory: out}
 bootstrap: false
+coverage: true
 ```
 
 | Key | Required | What it is |
@@ -60,6 +61,7 @@ bootstrap: false
 | `models` | no | Which model does which job, recorded responses, and the cost meter. |
 | `stages` | yes | Which implementation fills each of the thirteen stages. Only `extractor` is required. |
 | `bootstrap` | no, default `false` | Apply the ontology's constraints through the sink before the first write. |
+| `coverage` | no, default `true` | Count what extraction left behind in each document, with no model ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)). |
 
 Every relative path (the ontology, each input, `pythonpath`, replay files, a sink's
 output) resolves against the directory the config file is in, so a config runs the
@@ -273,6 +275,7 @@ stage:
 | `stages.validator` | the gate's `accepted`, and `refused` by reason. The key keeps its 0.2 name ([DECISIONS #26](decisions.md)) |
 | `stages.<name>` | anything else a stage reports by carrying a `stats` mapping, your own stages included |
 | `cost` | with `meter: true`: calls, tokens, USD and latency, in total and per role |
+| `coverage` | with `coverage: true`, the default: totals, the relations never offered and never used, and each document's uncovered sentences and missed entities ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)) |
 
 A `DoubleStageWarning` raised while the pipeline is built is printed as a
 `warning:` line on standard error.
