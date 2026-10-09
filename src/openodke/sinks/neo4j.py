@@ -468,8 +468,9 @@ class Neo4jSink:
     Every fact relationship carries its provenance: evidence document ids,
     uris, span offsets and who chose them, tiers, extractor, verdict,
     confidence, support, both clocks, and the reconcilable qualifiers as
-    properties. "Why is this edge here?" is a read of the edge; "forget this
-    source" is `MATCH ()-[r]->() WHERE $doc IN r.evidence_doc_ids DELETE r`.
+    properties. "Why is this edge here?" is a read of the edge. Forgetting a
+    source is not a delete: other sources may back the same fact, and its
+    `:Claim` and projected value would stay. That is the reconciler's job (#116).
 
     A single-valued predicate with two objects is written as two edges, not
     replaced: the store holds the conflict and a check query reports it

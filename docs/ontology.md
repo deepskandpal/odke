@@ -265,7 +265,7 @@ flat setting to get wrong. Declaring keys makes the scope visible in the schema.
 `validate()` requires every declared key to be an identity-bearing qualifier,
 because a reconcilable one cannot separate one value from another.
 `Predicate.scope_keys` is the resolved, sorted tuple. It is what the
-[Neo4j cardinality check](neo4j.md#what-neo4j-cannot-enforce) groups by, so the
+[Neo4j cardinality check](stores.md#check) groups by, so the
 schema and the store cannot disagree about what counts as a conflict.
 
 ```python
@@ -293,7 +293,7 @@ assert codes == ["scope-not-identity"]
 France contains Brittany has also said Brittany is located in France, so the
 pipeline adds that partner itself, with no model call
 ([Concepts](concepts.md#inverse-and-symmetric-partners),
-[DECISIONS #28](decisions.md)). Declare an inverse on one side: loading fills in
+[DECISIONS #28](decisions.md#28)). Declare an inverse on one side: loading fills in
 the other, as `owl:inverseOf` holds both ways. `Ontology.inverses` maps every
 predicate that implies a partner to the partner's predicate.
 
@@ -337,7 +337,7 @@ included), ranked by `importance` and then by name, and cut at `limit` (25 by
 default). That cut is how the prompt stays a fixed size as the ontology grows. A
 snippet is data, rendered two ways from one object: `render()` produces prose for
 a prompt and `json_schema()` produces a schema for structured output, so the two
-cannot drift apart ([DECISIONS #6](decisions.md)).
+cannot drift apart ([DECISIONS #6](decisions.md#6)).
 
 ```python
 snippet = ontology.snippet("Service")
@@ -447,7 +447,7 @@ assert hr.types["Company"].keys == ("legal_name",)
 ```
 
 `RdfSink` writes this same vocabulary when it is given an ontology, so a schema it
-wrote reads back ([Sinks](sinks.md#rdf)).
+wrote reads back ([Write to a store](stores.md#rdf)).
 
 ### From a live Neo4j graph
 
@@ -481,7 +481,7 @@ projected property and the claims behind it are one predicate; and the `SAME_AS`
 What the store cannot say is not invented. Labels have no hierarchy, so there are
 no parents. Edges are `multi`, because how many one node holds is not in the
 schema. Qualifiers are reconcilable, because whether one bears identity is a
-decision ([DECISIONS #15](decisions.md)) that no count reveals. A value type with no
+decision ([DECISIONS #15](decisions.md#15)) that no count reveals. A value type with no
 literal range, a relationship that ends at several labels (read as the most-used
 one), and one name used by both a relationship and a property are reported.
 
@@ -505,7 +505,7 @@ A corpus with no schema at all can get a draft: `Ontology.infer(documents)`, or
 candidate types and predicates with the spans that produced them, a model
 optionally names and ranks them, and the result is marked `inferred=True` for a
 person to review, edit and `freeze()`. It is a bootstrap, never a mode
-([DECISIONS #8](decisions.md)). [Ontology inference](inference.md) covers it end to
+([DECISIONS #8](decisions.md#8)). [Ontology inference](inference.md) covers it end to
 end.
 
 ## From the shell

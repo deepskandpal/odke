@@ -160,7 +160,7 @@ would have to be a Python object, such as a corroborator's `source` callable.
 | `corroborator` | `signature`, `passthrough`, `delegated` | `SignatureCorroborator` | `half_life_days`, `freshness_floor`, `intervals` |
 | `scorer` | `evidence` (the default), `passthrough`, `delegated` | `EvidenceScorer` | `prior`, `verdict_weights` |
 | `gate` | `verdict`, `passthrough`, `delegated` | `VerdictGate` | `refuse_not_found` |
-| `sink` | `jsonl`, `neo4j`, `cypher_file`, `neo4j_admin_csv`, `rdf`, `networkx` | the [sinks](sinks.md) | see [below](#sinks) |
+| `sink` | `jsonl`, `neo4j`, `cypher_file`, `neo4j_admin_csv`, `rdf`, `networkx` | the [sinks](stores.md) | see [below](#sinks) |
 | `constrainer` | `neo4j`, `passthrough`, `delegated` | `Neo4jConstrainer` | — |
 | `inferrer` | `passthrough` only | — | `odke run` never infers ([below](#the-inferrer)) |
 
@@ -170,12 +170,12 @@ would have to be a Python object, such as a corroborator's `source` callable.
 
 | `use` | Writes | Options |
 |---|---|---|
-| `jsonl` | [`JsonlSink`](sinks.md#jsonl) | `directory` (required) |
-| `neo4j` | [`Neo4jSink`](neo4j.md) | `uri` or `uri_env` (one required); `user` or `user_env` (default `neo4j`); `password_env` (default `NEO4J_PASSWORD`); `database`; `batch_size` (default 500) |
-| `cypher_file` | [`CypherFileSink`](sinks.md#cypher-file) | `path` (required); `batch_size` (default 500) |
-| `neo4j_admin_csv` | [`Neo4jAdminCsvSink`](sinks.md#neo4j-admin-csv) | `directory` (required); `delimiter` (default `,`); `array_delimiter` (default `;`) |
-| `rdf` | [`RdfSink`](sinks.md#rdf), needs `rdf` | `path` (required); `format` (`turtle`, `nt`, `json-ld`; default from the suffix); `base`; `schema` |
-| `networkx` | [`NetworkXSink`](sinks.md#networkx), needs `networkx` | `path`: where to write the filled graph as node-link JSON. Without it the graph is filled in memory and written nowhere, so give it a `path`. |
+| `jsonl` | [`JsonlSink`](stores.md#jsonl) | `directory` (required) |
+| `neo4j` | [`Neo4jSink`](stores.md#neo4j) | `uri` or `uri_env` (one required); `user` or `user_env` (default `neo4j`); `password_env` (default `NEO4J_PASSWORD`); `database`; `batch_size` (default 500) |
+| `cypher_file` | [`CypherFileSink`](stores.md#cypher-file) | `path` (required); `batch_size` (default 500) |
+| `neo4j_admin_csv` | [`Neo4jAdminCsvSink`](stores.md#neo4j-admin-csv) | `directory` (required); `delimiter` (default `,`); `array_delimiter` (default `;`) |
+| `rdf` | [`RdfSink`](stores.md#rdf), needs `rdf` | `path` (required); `format` (`turtle`, `nt`, `json-ld`; default from the suffix); `base`; `schema` |
+| `networkx` | [`NetworkXSink`](stores.md#networkx), needs `networkx` | `path`: where to write the filled graph as node-link JSON. Without it the graph is filled in memory and written nowhere, so give it a `path`. |
 
 `odke run` supplies the ontology to every sink but `jsonl`, so projections of
 multi-valued predicates are lists, the Cypher script opens with the constraint DDL,

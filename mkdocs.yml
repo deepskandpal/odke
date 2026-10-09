@@ -47,6 +47,8 @@ plugins:
   - redirects:
       redirect_maps:
         loaders-and-extraction.md: loading.md
+        sinks.md: stores.md
+        neo4j.md: stores.md#neo4j
 
 markdown_extensions:
   - admonition
@@ -77,9 +79,7 @@ nav:
   - "Triples from any extractor": triples.md
   - Grounding: grounding.md
   - "Resolution & corroboration": resolution-and-corroboration.md
-  - Sinks:
-      - "All sinks": sinks.md
-      - Neo4j: neo4j.md
+  - "Write to a store": stores.md
   - "odke run": run.md
   - "Evaluation (BYOLD)": evaluation.md
   - Benchmarks: benchmarks.md

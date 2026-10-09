@@ -66,13 +66,13 @@ openodke is pre-alpha. This site documents what is on `main`:
 | Data model, the thirteen Protocols, the pipeline | `openodke.types`, `openodke.stages`, `openodke.pipeline` | released in 0.1.0 — [Concepts](concepts.md) |
 | Ontology loading, validation and diff | `openodke.ontology`, `odke ontology …` | released in 0.1.0 — [Ontology](ontology.md) |
 | Grounding: span verification and a second model | `openodke.ground` | released in 0.1.0 — [Grounding](grounding.md) |
-| Neo4j sink and constraint bootstrap | `openodke.sinks.neo4j` | released in 0.1.0 — [Neo4j sink](neo4j.md) |
+| Neo4j sink and constraint bootstrap | `openodke.sinks.neo4j` | released in 0.1.0 — [Write to a store](stores.md#neo4j) |
 | Evaluation against your own labels | `openodke.eval`, `odke eval` | released in 0.1.0 — [Evaluation](evaluation.md) |
 | Loaders (text, Markdown, records, HTML, PDF, DOCX), the sentence chunker, pattern / LLM / hybrid extractors | `openodke.loaders`, `openodke.chunking`, `openodke.extract` | released in 0.1.0 — [Loading documents](loading.md), [Reference extractor](reference-extractor.md) |
 | Normalise, resolve, corroborate, score | `openodke.corroborate` | released in 0.1.0 — [Resolution & corroboration](resolution-and-corroboration.md) |
 | Ontology import from OWL, RDFS, SKOS and a live Neo4j graph | `Ontology.from_owl`, `Ontology.from_neo4j` | released in 0.1.0 — [Ontology](ontology.md#importing-a-schema-you-already-have) |
 | Ontology inference: a draft to review, then freeze | `openodke.infer`, `odke ontology infer`, `odke ontology freeze` | released in 0.1.0 — [Ontology inference](inference.md) |
-| JSONL, Cypher-file, neo4j-admin CSV, RDF and NetworkX sinks | `openodke.sinks` | released in 0.1.0 — [Sinks](sinks.md) |
+| JSONL, Cypher-file, neo4j-admin CSV, RDF and NetworkX sinks | `openodke.sinks` | released in 0.1.0 — [Write to a store](stores.md) |
 | The whole pipeline from one config file | `openodke.run`, `odke run` | released in 0.1.0 — [`odke run`](run.md) |
 | The ablation: extraction alone, + grounding, + corroboration | `openodke.eval.run_ablation`, `odke eval ablation` | released in 0.1.0 — [Evaluation](evaluation.md#ablation) |
 | Citation width by grounding verdict — the evaluator that needs no labels | `openodke.eval.evaluate_spans`, `odke eval spans` | released in 0.1.1 — [Evaluation](evaluation.md#spans) |
