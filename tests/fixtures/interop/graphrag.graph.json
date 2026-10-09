@@ -1,0 +1,175 @@
+{
+ "nodes": [
+  {
+   "id": "halden",
+   "label": "Document",
+   "properties": {
+    "path": "notes/halden.txt",
+    "createdAt": "2026-10-09T00:00:00+00:00"
+   },
+   "embedding_properties": {}
+  },
+  {
+   "id": "chunk-0",
+   "label": "Chunk",
+   "properties": {
+    "text": "Halden Robotics was founded in Leeds in 2014 by Mara Quist.",
+    "index": 0
+   },
+   "embedding_properties": {}
+  },
+  {
+   "id": "chunk-1",
+   "label": "Chunk",
+   "properties": {
+    "text": "It builds warehouse robots, and it opened a second office in Lyon in 2019.",
+    "index": 1
+   },
+   "embedding_properties": {}
+  },
+  {
+   "id": "chunk-0:0",
+   "label": "Company",
+   "properties": {
+    "name": "Halden Robotics",
+    "founded": 2014
+   },
+   "embedding_properties": {}
+  },
+  {
+   "id": "chunk-0:1",
+   "label": "City",
+   "properties": {
+    "name": "Leeds"
+   },
+   "embedding_properties": {}
+  },
+  {
+   "id": "chunk-0:2",
+   "label": "Person",
+   "properties": {
+    "name": "Mara Quist"
+   },
+   "embedding_properties": {}
+  },
+  {
+   "id": "chunk-1:0",
+   "label": "Company",
+   "properties": {
+    "name": "Halden Robotics"
+   },
+   "embedding_properties": {}
+  },
+  {
+   "id": "chunk-1:1",
+   "label": "City",
+   "properties": {
+    "name": "Lyon"
+   },
+   "embedding_properties": {}
+  },
+  {
+   "id": "chunk-1:2",
+   "label": "City",
+   "properties": {
+    "name": "Berlin"
+   },
+   "embedding_properties": {}
+  }
+ ],
+ "relationships": [
+  {
+   "start_node_id": "chunk-0",
+   "end_node_id": "halden",
+   "type": "FROM_DOCUMENT",
+   "properties": {},
+   "embedding_properties": {}
+  },
+  {
+   "start_node_id": "chunk-0",
+   "end_node_id": "chunk-1",
+   "type": "NEXT_CHUNK",
+   "properties": {},
+   "embedding_properties": {}
+  },
+  {
+   "start_node_id": "chunk-1",
+   "end_node_id": "halden",
+   "type": "FROM_DOCUMENT",
+   "properties": {},
+   "embedding_properties": {}
+  },
+  {
+   "start_node_id": "chunk-0:0",
+   "end_node_id": "chunk-0:1",
+   "type": "FOUNDED_IN",
+   "properties": {},
+   "embedding_properties": {}
+  },
+  {
+   "start_node_id": "chunk-0:0",
+   "end_node_id": "chunk-0:2",
+   "type": "FOUNDED_BY",
+   "properties": {},
+   "embedding_properties": {}
+  },
+  {
+   "start_node_id": "chunk-0:0",
+   "end_node_id": "chunk-0",
+   "type": "FROM_CHUNK",
+   "properties": {},
+   "embedding_properties": {}
+  },
+  {
+   "start_node_id": "chunk-0:1",
+   "end_node_id": "chunk-0",
+   "type": "FROM_CHUNK",
+   "properties": {},
+   "embedding_properties": {}
+  },
+  {
+   "start_node_id": "chunk-0:2",
+   "end_node_id": "chunk-0",
+   "type": "FROM_CHUNK",
+   "properties": {},
+   "embedding_properties": {}
+  },
+  {
+   "start_node_id": "chunk-1:0",
+   "end_node_id": "chunk-1:1",
+   "type": "OFFICE_IN",
+   "properties": {
+    "since": 2019
+   },
+   "embedding_properties": {}
+  },
+  {
+   "start_node_id": "chunk-1:0",
+   "end_node_id": "chunk-1:2",
+   "type": "OFFICE_IN",
+   "properties": {},
+   "embedding_properties": {}
+  },
+  {
+   "start_node_id": "chunk-1:0",
+   "end_node_id": "chunk-1",
+   "type": "FROM_CHUNK",
+   "properties": {},
+   "embedding_properties": {}
+  },
+  {
+   "start_node_id": "chunk-1:1",
+   "end_node_id": "chunk-1",
+   "type": "FROM_CHUNK",
+   "properties": {},
+   "embedding_properties": {}
+  },
+  {
+   "start_node_id": "chunk-1:2",
+   "end_node_id": "chunk-1",
+   "type": "FROM_CHUNK",
+   "properties": {},
+   "embedding_properties": {}
+  }
+ ]
+}
