@@ -268,6 +268,15 @@ class LLMExtractor:
         found = [ontology.snippet(name, limit=self.snippet_limit) for name in names]
         return [snippet for snippet in found if snippet.predicates]
 
+    def offered(self, ontology: Ontology) -> list[str]:
+        """The predicates the prompt shows the model, in snippet order.
+
+        The coverage report subtracts these from the ontology to name the
+        relations the model was never asked about: a type left out of `types`,
+        or a predicate past `snippet_limit`, is one.
+        """
+        return list(dict.fromkeys(p.name for s in self.snippets(ontology) for p in s.predicates))
+
     def messages(self, chunk: Chunk, snippets: Sequence[OntologySnippet]) -> list[Message]:
         # The passage is the whole user message, so "start" counts from its first
         # character and maps to the chunk with no arithmetic the model can miss.
