@@ -306,4 +306,42 @@ From a store, with the driver and the `LexicalGraphConfig` the pipeline used:
 <!-- docs: no-run -->
 ```python
 rows, texts = read_graphrag(GraphDatabase.driver(uri, auth=auth), config=LexicalGraphConfig())
+
+### A Neo4j graph
+
+`read_neo4j(driver)` reads a graph back so it can be grounded where it stands.
+A graph `Neo4jSink` wrote carries every fact's evidence on its relationship, so
+each row cites exactly what the run cited. The texts are not in the graph:
+pass the documents it was built from. Any other graph names the relationship
+property that holds each relationship's source text. Reading never writes.
+`write_verdicts` writes the verdicts back, and only when called.
+
+| Neo4j | Row |
+|---|---|
+| relationship `type` | `predicate` |
+| each end: its `label` on a node the sink wrote, else `name_property` (`name`), else its `key` or element id | `subject`, `object` |
+| node labels other than the sink's `Entity` | `subject_type`, `object_type` |
+| a `Claim` end's `value` | `object`, a literal |
+| the relationship's element id | `id`, which `write_verdicts` writes back by |
+| the sink's `polarity`, `extractor`, `confidence` and qualifiers | The same fields. `qualifier_` prefixes are undone, and `odke.` stamps are read as mappings |
+| each entry of `evidence_doc_ids` | One row each. Its text is the document with that id, else the one with that URI |
+| `evidence_starts`, `evidence_ends` of a `cited` span | `start`, `end`. A `context` or `located` span is the whole text again |
+| `text_property=` on another graph's relationship | The text, grounded whole and marked `context`; the other properties are `qualifiers` |
+| none of these | Left out, and a warning counts them |
+
+Not read back: valid times, support and verdicts, which grounding and
+corroboration recompute, and a key a resolver changed. Keys are made again from
+type and label, as openodke's extractors make them.
+
+<!-- docs: no-run -->
+```python
+from neo4j import GraphDatabase
+
+from openodke.interop import read_neo4j, write_verdicts
+
+driver = GraphDatabase.driver(uri, auth=auth)
+rows, texts = read_neo4j(driver, documents=corpus)  # or text_property="sentence"
+stage = TriplesExtractor(rows, documents=texts)
+kg = Pipeline(ontology, stage, grounder=LLMGrounder()).run(texts)
+write_verdicts(driver, kg.facts)  # sets odke_verdict on each relationship read
 ```
