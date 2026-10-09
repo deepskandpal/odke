@@ -64,7 +64,16 @@ python bench/tables.py runs/cmp        # the tables, priced from LiteLLM's table
 
 # a smoke test of one competitor on three documents:
 bench/.venv/bin/python bench/competitors.py extract lgt "$CMP/t2k/ont_1_movie" --limit 3
+
+# inverse and symmetric partners (#106) on the saved predictions, no model:
+python bench/inverses.py runs/cmp --out /tmp/inverses
 ```
+
+`inverses.py` re-scores every saved `predictions/<row>.jsonl` with the partner
+of each triple added, by the same step `Pipeline` runs, after declaring the
+pairs Wikidata declares among Re-DocRED's relations in a copy of its ontology.
+It also sorts each partner by what the gold says of it and of the fact it came
+from. No Text2KGBench ontology holds both ends of a pair, which it reports.
 
 Keys come from the environment, under the names LiteLLM reads
 (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …); `ODKE_ENV_FILE`, or `--env-file` on
