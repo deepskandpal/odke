@@ -51,7 +51,20 @@ def test_every_prompt_says_where_it_came_from() -> None:
         "ground.span@1": "openodke",
         "infer.repair@1": "openodke",
         "infer@1": "openodke",
+        "reextract@1": (
+            "openodke, after GraphRAG's gleaning pass (Edge et al. 2024, arXiv 2404.16130), "
+            "scoped to one window and grounded after"
+        ),
     }
+
+
+def test_the_reextract_rules_are_extract_s_unchanged() -> None:
+    """The same reply shape and span checks as extraction, so the same parser reads it."""
+    rules = get("extract", 1).text
+    rules = rules[rules.index('Every fact needs "quote"') :]
+    text = get("reextract", 1).text
+    assert text.startswith("You find facts that an earlier extraction missed in one passage.")
+    assert text.endswith("\n\n" + rules)
 
 
 def test_a_prompt_is_frozen_and_named_by_its_key_and_hash() -> None:

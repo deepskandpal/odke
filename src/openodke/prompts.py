@@ -204,6 +204,31 @@ _register(
     source="openodke",
 )
 
+# The re-extract hook's instructions (`LLMExtractor.reextract`, #102): one gap
+# window the coverage report found, the properties that could fill it, and the
+# facts already taken from it. The idea is GraphRAG's "gleaning" pass (Edge et
+# al. 2024, arXiv 2404.16130), scoped to one window, and the grounder checks
+# what comes back like any other fact. After its first paragraph it is extract@1
+# from "Every fact needs" to the end, unchanged, so the reply has the same shape
+# and passes the same span checks. The flagged properties' snippets follow it.
+_EXTRACT_RULES = _REGISTRY["extract"][1].text
+_EXTRACT_RULES = _EXTRACT_RULES[_EXTRACT_RULES.index('Every fact needs "quote"') :]
+_register(
+    "reextract",
+    1,
+    (
+        "You find facts that an earlier extraction missed in one passage. Use only the "
+        "properties listed below. The facts already extracted from this passage are listed "
+        "in the user message: do not return any of them again, even in other words. Return "
+        "only facts the passage itself states.\n\n"
+    )
+    + _EXTRACT_RULES,
+    source=(
+        "openodke, after GraphRAG's gleaning pass (Edge et al. 2024, arXiv 2404.16130), "
+        "scoped to one window and grounded after"
+    ),
+)
+
 # The ontology proposer's instructions (`openodke.infer.LLMProposer`). A template:
 # `{literals}` and `{max_types}` are filled in per run, and the hash is of the
 # template, since the values are the run's settings rather than the prompt.
