@@ -1,0 +1,260 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "openodke eval report",
+  "description": "One run of the Evaluator, scored. schema_version is major.minor: a minor version adds fields, a major one changes them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "title",
+    "n",
+    "run",
+    "bootstrap",
+    "rows",
+    "stages",
+    "notes",
+    "diagnosis",
+    "fixes",
+    "comparison",
+    "calibration"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^1\\.[0-9]+$"},
+    "title": {"type": "string", "description": "What was scored: a stage, the ablation, a benchmark set."},
+    "n": {"type": "integer", "minimum": 0, "description": "Rows scored: gold facts, or labelled rows for a stage."},
+    "run": {"$ref": "#/$defs/run"},
+    "bootstrap": {
+      "description": "How the ranges were drawn; null when there are no rows.",
+      "anyOf": [{"type": "null"}, {"$ref": "#/$defs/bootstrap"}]
+    },
+    "rows": {
+      "type": "array",
+      "description": "One per configuration scored against gold facts; empty for a stage that scores something else.",
+      "items": {"$ref": "#/$defs/row"}
+    },
+    "stages": {
+      "type": "array",
+      "description": "The StageReports the rows were computed beside, as 0.x printed them.",
+      "items": {"$ref": "#/$defs/stage_report"}
+    },
+    "notes": {"type": "array", "items": {"type": "string"}},
+    "diagnosis": {
+      "type": "array",
+      "description": "Reserved for #140: every miss in one cause bucket.",
+      "items": {"type": "object"}
+    },
+    "fixes": {
+      "type": "array",
+      "description": "Reserved for #141: ranked fixes with their expected gain.",
+      "items": {"type": "object"}
+    },
+    "comparison": {
+      "description": "Reserved for #142: this run against a baseline.",
+      "anyOf": [{"type": "null"}, {"type": "object"}]
+    },
+    "calibration": {
+      "type": "array",
+      "description": "Reserved for #135: the grounder's calibration cards.",
+      "items": {"type": "object"}
+    }
+  },
+  "$defs": {
+    "metric": {"type": ["integer", "number", "null"]},
+    "share": {"type": ["number", "null"]},
+    "count": {"type": "integer", "minimum": 0},
+    "average": {"enum": ["micro", "macro"]},
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["openodke", "models", "prompts", "dataset"],
+      "properties": {
+        "openodke": {"type": "string", "description": "The package version that wrote the report."},
+        "models": {
+          "type": "object",
+          "description": "Role (extract, ground) -> provider-qualified model.",
+          "additionalProperties": {"type": "string"}
+        },
+        "prompts": {
+          "type": "array",
+          "description": "Registered prompt keys the stages sent, id@version.",
+          "items": {"type": "string"}
+        },
+        "dataset": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/dataset"}]}
+      }
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "path", "documents", "labels", "details"],
+      "properties": {
+        "name": {"type": "string"},
+        "path": {"type": ["string", "null"]},
+        "documents": {"type": ["integer", "null"]},
+        "labels": {"type": ["integer", "null"]},
+        "details": {
+          "type": "object",
+          "additionalProperties": {"type": ["string", "integer", "number", "boolean", "null"]}
+        }
+      }
+    },
+    "bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "units", "resamples", "seed", "level", "method"],
+      "properties": {
+        "unit": {"const": "document"},
+        "units": {"$ref": "#/$defs/count"},
+        "resamples": {"$ref": "#/$defs/count"},
+        "seed": {"type": "integer"},
+        "level": {"type": "number"},
+        "method": {"const": "percentile"}
+      }
+    },
+    "estimate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "low", "high"],
+      "properties": {
+        "value": {"$ref": "#/$defs/share"},
+        "low": {"$ref": "#/$defs/share"},
+        "high": {"$ref": "#/$defs/share"}
+      }
+    },
+    "performance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["precision", "recall", "f1", "average"],
+      "properties": {
+        "precision": {"$ref": "#/$defs/estimate"},
+        "recall": {"$ref": "#/$defs/estimate"},
+        "f1": {"$ref": "#/$defs/estimate"},
+        "average": {"$ref": "#/$defs/average"}
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hits",
+        "over_extraction",
+        "under_extraction",
+        "predicted",
+        "gold",
+        "unscored",
+        "documents"
+      ],
+      "properties": {
+        "hits": {"$ref": "#/$defs/count"},
+        "over_extraction": {"$ref": "#/$defs/count"},
+        "under_extraction": {"$ref": "#/$defs/count"},
+        "predicted": {"$ref": "#/$defs/count"},
+        "gold": {"$ref": "#/$defs/count"},
+        "unscored": {"$ref": "#/$defs/count"},
+        "documents": {"$ref": "#/$defs/count"}
+      }
+    },
+    "conformance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rate", "conformant", "facts", "checks", "average"],
+      "properties": {
+        "rate": {"$ref": "#/$defs/share"},
+        "conformant": {"$ref": "#/$defs/count"},
+        "facts": {"$ref": "#/$defs/count"},
+        "checks": {"type": "array", "items": {"enum": ["predicate", "domain", "range"]}},
+        "average": {"$ref": "#/$defs/average"}
+      }
+    },
+    "hallucination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["definition", "hallucinated", "facts", "rate", "subject", "relation", "object"],
+      "properties": {
+        "definition": {"type": "string"},
+        "hallucinated": {"$ref": "#/$defs/count"},
+        "facts": {"$ref": "#/$defs/count"},
+        "rate": {"$ref": "#/$defs/share"},
+        "subject": {"$ref": "#/$defs/share"},
+        "relation": {"$ref": "#/$defs/share"},
+        "object": {"$ref": "#/$defs/share"}
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "calls",
+        "prompt_tokens",
+        "completion_tokens",
+        "usd",
+        "priced_usd",
+        "unpriced_calls"
+      ],
+      "properties": {
+        "calls": {"$ref": "#/$defs/count"},
+        "prompt_tokens": {"$ref": "#/$defs/count"},
+        "completion_tokens": {"$ref": "#/$defs/count"},
+        "usd": {"type": ["number", "null"], "description": "null when any call was unpriced."},
+        "priced_usd": {"type": "number"},
+        "unpriced_calls": {"$ref": "#/$defs/count"}
+      }
+    },
+    "latency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["calls", "seconds", "per_call"],
+      "properties": {
+        "calls": {"$ref": "#/$defs/count"},
+        "seconds": {"type": "number"},
+        "per_call": {"$ref": "#/$defs/share"}
+      }
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "performance",
+        "counts",
+        "conformance",
+        "hallucination",
+        "cost",
+        "latency"
+      ],
+      "properties": {
+        "name": {"type": "string"},
+        "performance": {"$ref": "#/$defs/performance"},
+        "counts": {"$ref": "#/$defs/counts"},
+        "conformance": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/conformance"}]},
+        "hallucination": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/hallucination"}]},
+        "cost": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/cost"}]},
+        "latency": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/latency"}]}
+      }
+    },
+    "stage_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage", "n", "metrics", "breakdown", "confusion", "notes"],
+      "properties": {
+        "stage": {"type": "string"},
+        "n": {"$ref": "#/$defs/count"},
+        "metrics": {"type": "object", "additionalProperties": {"$ref": "#/$defs/metric"}},
+        "breakdown": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {"$ref": "#/$defs/metric"}
+          }
+        },
+        "confusion": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {"type": "integer"}
+          }
+        },
+        "notes": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}
