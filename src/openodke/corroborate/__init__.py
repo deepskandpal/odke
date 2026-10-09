@@ -23,6 +23,7 @@ from openodke.corroborate.normalize import (
     normalize_value,
 )
 from openodke.corroborate.provenance import (
+    CHECK,
     CONFLICT,
     DERIVED,
     NAME_KEY,
@@ -40,6 +41,7 @@ from openodke.corroborate.resolve import (
 from openodke.corroborate.score import DEFAULT_VERDICT_WEIGHTS, EvidenceScorer, combine
 
 __all__ = [
+    "CHECK",
     "CONFLICT",
     "DEFAULT_INTERVALS",
     "DEFAULT_VERDICT_WEIGHTS",
