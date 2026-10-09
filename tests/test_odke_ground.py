@@ -371,3 +371,23 @@ def test_a_models_file_is_checked_like_a_run_config(here: Path, config: str, mes
     assert result.exit_code == 2, result.output
     assert message in result.output
 
+
+def test_the_documented_example_prints_what_the_page_shows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """docs/grounding.md's `odke ground` example, run from a clone, as the page shows it."""
+    page = (REPO / "docs" / "grounding.md").read_text(encoding="utf-8")
+    section = page.split("## A graph from somewhere else: `odke ground`\n", 1)[1]
+    command = section.split("```bash\n", 1)[1].split("```", 1)[0]
+    shown = section.split("```text\n", 1)[1].split("```", 1)[0]
+    args = command.replace("\\\n", " ").split()
+    assert args[:2] == ["odke", "ground"]
+    shutil.copytree(
+        REPO / "examples" / "triples", tmp_path / "examples" / "triples", ignore=_no_out
+    )
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, args[1:])
+    assert result.exit_code == 0, result.output
+    for line in shown.splitlines():
+        if line.strip() not in ("", "…"):
+            assert line in result.output.splitlines(), line
