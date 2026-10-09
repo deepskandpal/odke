@@ -842,7 +842,9 @@ def eval_stage(
         None, "--run", help="package.module:Name — run that stage over the labels instead."
     ),
     ontology: Path | None = typer.Option(
-        None, "--ontology", help="Ontology JSON, for --run with extract or validate."
+        None,
+        "--ontology",
+        help="Ontology JSON: for --run with extract or validate, and extract's conformance.",
     ),
     documents: Path | None = typer.Option(
         None, "--documents", help="Document JSONL, for --run with extract."
@@ -856,7 +858,7 @@ def eval_stage(
     describe: bool = typer.Option(
         False, "--describe", help="Print what a label row and a prediction row are, and exit."
     ),
-    as_json: bool = typer.Option(False, "--json", help="Emit the report as JSON."),
+    as_json: bool = typer.Option(False, "--json", help="Emit the stage's report as JSON."),
     items: Path | None = typer.Option(
         None,
         "--items",
@@ -889,6 +891,9 @@ def eval_stage(
         "--fail-on-inconclusive",
         help="compare: exit 1 on inconclusive as well, a change this set cannot tell from noise.",
     ),
+    report_to: Path | None = typer.Option(
+        None, "--report", help="Also write the versioned eval report, as JSON, here."
+    ),
 ) -> None:
     """Score one stage against your own labelled data.
 
@@ -909,14 +914,19 @@ def eval_stage(
     smallest change the set can detect. It exits 1 when B is worse, which makes
     it a CI gate; `--fail-under` adds a floor and `--fail-on-inconclusive` a
     stricter bar.
+
+    Extraction and the ablation print precision, recall and F1 with 95% ranges
+    over your documents. `--report` writes the versioned eval report;
+    `--json` prints the stage's own report, as 0.x did.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
     from openodke.eval.compare import gate
+    from openodke.eval.eval_report import Dataset, Run, from_stage
     from openodke.eval.formats import describe as describe_formats
-    from openodke.eval.runner import load_inputs, score
+    from openodke.eval.runner import load_inputs, report_inputs
     from openodke.llm.base import ProviderError
 
-    inputs = (labels, predictions, run, ontology, documents, config, facts, items)
+    inputs = (labels, predictions, run, ontology, documents, config, facts, items, report_to)
     compare_flags = [
         flag
         for flag, used in (
@@ -966,9 +976,10 @@ def eval_stage(
                 raise ValueError(
                     "spans needs --facts: a run's facts.jsonl, or the directory a sink wrote"
                 )
-            report = evaluate_spans(load_facts(source))
+            dataset = Dataset(name=Path(source).name, path=str(source))
+            report = from_stage(evaluate_spans(load_facts(source)), run=Run(dataset=dataset))
         elif stage == "ablation":
-            from openodke.eval.ablation import DESCRIPTION, run_ablation
+            from openodke.eval.ablation import DESCRIPTION, report_ablation
             from openodke.eval.formats import GoldFact, load_jsonl
 
             if describe:
@@ -980,7 +991,9 @@ def eval_stage(
                 raise ValueError("ablation runs the config itself; it takes --config and --labels")
             if config is None or labels is None:
                 raise ValueError("ablation needs --config and --labels (or --describe)")
-            report = run_ablation(_load_run_config(config), load_jsonl(labels, GoldFact))
+            report = report_ablation(
+                _load_run_config(config), load_jsonl(labels, GoldFact), labels=labels
+            )
         else:
             if describe:
                 typer.echo(describe_formats(stage))
@@ -994,16 +1007,23 @@ def eval_stage(
             rows, predicted = load_inputs(
                 stage, labels, predictions, run=run, ontology=ontology, documents=documents
             )
-            report = score(stage, rows, predicted)
+            report = report_inputs(stage, rows, predicted, labels=labels, ontology=ontology)
             if items is not None:
                 _write_items(items, stage, rows, predicted)
+        if report_to is not None:
+            report.write(report_to)
     except (ValueError, OSError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from exc
     except ProviderError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
-    typer.echo(report.model_dump_json(indent=2) if as_json else report.render())
+    if as_json:
+        typer.echo(report.stages[0].model_dump_json(indent=2))
+        return
+    typer.echo(report.render())
+    if report_to is not None:
+        typer.echo(f"wrote {report_to}")
 
 
 def _write_items(path: Path, stage: str, rows: Any, predicted: Any) -> None:
@@ -1206,25 +1226,36 @@ def bench_prepare(
 def bench_run(
     dataset: str = typer.Argument(..., help="text2kgbench or redocred."),
     prepared: Path = typer.Argument(..., help="A directory `odke bench prepare` wrote."),
-    as_json: bool = typer.Option(False, "--json", help="The report as JSON."),
+    as_json: bool = typer.Option(False, "--json", help="The dataset's own report as JSON."),
+    report_to: Path | None = typer.Option(
+        None, "--report", help="Where to write the eval report. Default: <prepared>/report.json."
+    ),
 ) -> None:
     """Run the prepared config three ways and score each row. Calls the models it names.
 
     Extraction and grounding are each called once; + grounding and + corroboration
-    replay them, so the bill is one run's, not three.
+    replay them, so the bill is one run's, not three. Each row's precision,
+    recall and F1 carry a 95% range over the documents, and the versioned eval
+    report is written beside the predictions.
     """
     from openodke.llm.base import ProviderError
 
     module = _dataset(dataset)
+    target = report_to if report_to is not None else prepared / "report.json"
     try:
-        report = module.run(prepared)
+        report = module.evaluate(prepared)
+        report.write(target)
     except (ValueError, OSError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from exc
     except ProviderError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
-    typer.echo(report.model_dump_json(indent=2) if as_json else report.render())
+    if as_json:
+        typer.echo(report.stages[0].model_dump_json(indent=2))
+        return
+    typer.echo(report.render())
+    typer.echo(f"wrote {target}")
 
 
 if __name__ == "__main__":  # pragma: no cover
