@@ -165,10 +165,13 @@ no key ([DECISIONS #30](decisions.md#30)).
 
 - **The key** is the SHA-256 of one canonical JSON object: the
   provider-qualified model and its `base_url`; every message, role and content,
-  in order; the response schema; `temperature`, `max_tokens` and `extra`; and
-  the `id@version` of each [registered prompt](#prompts) the messages carry.
-  `timeout` and `api_key_env` are not in it. Change anything else and the
-  request misses.
+  in order; the response schema; `temperature`, `max_tokens` and `extra`; the
+  `id@version` of each [registered prompt](#prompts) the messages carry; and
+  `repeat`, the draw's index, when it is not 0, because
+  [gold adjudication](evaluation.md#is-the-gold-complete) asks one question
+  three times on purpose. Draw 0 adds nothing, so no key from before it existed
+  changed. `timeout` and `api_key_env` are not in it. Change anything else and
+  the request misses.
 - **An error is never stored**, so a failed call is made again next time. A reply
   the caller rejects is stored: the repair turn after a malformed extraction has
   its own messages, so its own key, and a rerun replays both.
