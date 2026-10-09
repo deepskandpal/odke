@@ -25,21 +25,29 @@ compared, so the work grows with block sizes rather than with the square of the
 corpus. A name block too large to compare — a first token like "bank" — is split
 by `country` where entities carry one, and skipped where it is still too large;
 exact-key blocks that large are compared as a star, since `SAME_AS` is transitive.
+
+**Against the store.** Given a `StoreLookup`, the batch is also resolved against
+what the store already holds, without loading it: the lookup returns, per
+entity, the store's entities sharing a block key with it, and each pair is
+judged by the same rules. A proof re-keys the *incoming* facts onto the store's
+key, carrying the store's entity exactly as the store holds it, so writing it
+changes nothing on the node; anything weaker is a `SIMILAR` link. Store
+entities are never compared with each other (DECISIONS #31).
 """
 
 from __future__ import annotations
 
 import re
-from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections import Counter, defaultdict
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from itertools import combinations
-from typing import Any
+from typing import Any, NamedTuple
 
 from openodke.corroborate.normalize import name_key
 from openodke.corroborate.provenance import NAME_KEY
-from openodke.stages import EntityIndex
+from openodke.stages import EntityIndex, StoreLookup
 from openodke.types import Entity, EntityLink, Fact, LinkKind, Resolution
 
 # What `Entity.resolution.linker` says when this resolver decided.
@@ -143,6 +151,30 @@ def _profile(entity: Entity) -> _Profile:
     return _Profile(entity, tuple(n for n in names if n), ids, frozenset(domains), attributes)
 
 
+class BlockKeys(NamedTuple):
+    """What blocking compares an entity on. Within one type, one shared key is enough."""
+
+    # The first and last token of each name key.
+    tokens: frozenset[str]
+    # (scheme, compacted value): `wikidata:Q95` is ("wikidata", "q95").
+    ids: frozenset[tuple[str, str]]
+    domains: frozenset[str]
+
+
+def block_keys(entity: Entity) -> BlockKeys:
+    """The keys the resolver blocks `entity` on, which a `StoreLookup` looks up by."""
+    return _keys(_profile(entity))
+
+
+def _keys(p: _Profile) -> BlockKeys:
+    tokens: set[str] = set()
+    for name in p.names:
+        words = name.split()
+        tokens.update((words[0], words[-1]))
+    ids = frozenset((scheme, value) for scheme, (value, _) in p.ids.items())
+    return BlockKeys(frozenset(tokens), ids, p.domains)
+
+
 def _fold(value: Any) -> Any:
     return value.strip().casefold() if isinstance(value, str) else value
 
@@ -152,15 +184,12 @@ def _candidate_indices(profiles: Sequence[_Profile], max_block: int) -> set[tupl
     exact_blocks: dict[tuple[str, ...], list[int]] = defaultdict(list)
     for i, p in enumerate(profiles):
         kind = p.entity.type
-        tokens: set[str] = set()
-        for name in p.names:
-            words = name.split()
-            tokens.update((words[0], words[-1]))
-        for token in tokens:
+        keys = _keys(p)
+        for token in keys.tokens:
             name_blocks[(kind, token)].append(i)
-        for found in p.domains:
+        for found in keys.domains:
             exact_blocks[("domain", kind, found)].append(i)
-        for scheme, (value, _) in p.ids.items():
+        for scheme, value in keys.ids:
             exact_blocks[("id", kind, scheme, value)].append(i)
 
     pairs: set[tuple[int, int]] = set()
@@ -216,6 +245,17 @@ class NativeResolver:
     each `DIFFERENT`. An identity decided upstream keeps its own provenance, and
     an entity the caller keyed (`method="caller"`) is the canonical one whenever
     it is in a merge.
+
+    `lookup` resolves the batch against the store as well (DECISIONS #31). Each
+    entity of the batch is compared with the candidates the lookup returns for
+    it, within its type, by the same rules and the same `threshold`. On proof,
+    its facts take the store's key and the store's entity exactly as the store
+    holds it, so writing them changes nothing on the node. A batch that states
+    the stored key itself, or a key the caller chose, keeps its own entity, as
+    it would with no store. Anything weaker is a `SIMILAR` link to the store
+    entity. Store entities are never compared with each other, and `stats`
+    counts what the last call found in the store. Without a lookup, nothing
+    here differs from a resolver that has never heard of one.
     """
 
     def __init__(
@@ -225,11 +265,15 @@ class NativeResolver:
         nudge_up: float = 0.05,
         nudge_down: float = 0.15,
         max_block: int = 100,
+        lookup: StoreLookup | None = None,
     ) -> None:
         self.threshold = threshold
         self.nudge_up = nudge_up
         self.nudge_down = nudge_down
         self.max_block = max_block
+        self.lookup = lookup
+        # What the last `resolve()` found in the store; None while there is no lookup.
+        self.stats: dict[str, Any] | None = None
 
     def resolve(
         self, facts: Iterable[Fact], index: EntityIndex
@@ -237,10 +281,19 @@ class NativeResolver:
         facts = list(facts)
         mentioned = [e for f in facts for e in (f.subject, f.object_entity) if e is not None]
         profiles = [_profile(e) for e in _distinct([*index.values(), *mentioned])]
+        size = len(profiles)
+        pairs = sorted(_candidate_indices(profiles, self.max_block))
+        # The same node by key: a store entity the batch also states.
+        same_node: list[tuple[int, int]] = []
+        if self.lookup is not None:
+            store_pairs, same_node = self._stored(profiles, _distinct(mentioned))
+            pairs += store_pairs
 
         links: list[EntityLink] = []
         proofs: list[tuple[int, int, EntityLink, bool]] = []
-        for i, j in sorted(_candidate_indices(profiles, self.max_block)):
+        # Links to a store entity, by kind: what `stats` reports.
+        to_store: Counter[str] = Counter()
+        for i, j in pairs:
             decided = self._judge(profiles[i], profiles[j])
             if decided is None:
                 continue
@@ -249,6 +302,8 @@ class NativeResolver:
                 proofs.append((i, j, link, by_id))
             else:
                 links.append(link)
+                if j >= size:
+                    to_store[link.kind.value] += 1
 
         parent = list(range(len(profiles)))
         cluster_ids = [dict(p.ids) for p in profiles]
@@ -260,6 +315,12 @@ class NativeResolver:
                 parent[i] = parent[parent[i]]
                 i = parent[i]
             return i
+
+        for i, j in same_node:
+            ri, rj = find(i), find(j)
+            if ri != rj:
+                parent[rj] = ri
+                cluster_ids[ri] = {**cluster_ids[rj], **cluster_ids[ri]}
 
         for i, j, link, by_id in proofs:
             ri, rj = find(i), find(j)
@@ -282,6 +343,8 @@ class NativeResolver:
                             f"would have joined them)",
                         )
                     )
+                    if j >= size:
+                        to_store[LinkKind.DIFFERENT.value] += 1
                     continue
                 parent[rj] = ri
                 cluster_ids[ri] = {**cluster_ids[rj], **cluster_ids[ri]}
@@ -289,16 +352,26 @@ class NativeResolver:
             root = find(i)
             by_id_only[root] = by_id_only[root] and by_id
             links.append(link)
+            if j >= size:
+                to_store[LinkKind.SAME_AS.value] += 1
 
-        clusters: dict[int, list[Entity]] = defaultdict(list)
-        for i, p in enumerate(profiles):
-            clusters[find(i)].append(p.entity)
+        clusters: dict[int, list[int]] = defaultdict(list)
+        for i in range(len(profiles)):
+            clusters[find(i)].append(i)
         known = set(index.keys())
         replacement: dict[str, Entity] = {}
         for root, members in clusters.items():
-            if len(members) > 1:
-                merged = _merge(members, known, by_id_only[root])
-                replacement.update(dict.fromkeys((m.key for m in members), merged))
+            batch = [profiles[i].entity for i in members if i < size]
+            stored = [profiles[i].entity for i in members if i >= size]
+            if stored and not _states(batch, stored):
+                # Proof against the store: the incoming facts take the stored
+                # entity as it is, and none of the batch's names land on it.
+                canonical = min(stored, key=lambda e: e.key)
+                replacement.update(dict.fromkeys((m.key for m in batch), canonical))
+            elif len(batch) > 1:
+                prefer = {e.key for e in stored} if stored else known
+                merged = _merge(batch, prefer, by_id_only[root])
+                replacement.update(dict.fromkeys((m.key for m in batch), merged))
 
         unmerged = Resolution(method="linker", linker=LINKER)
 
@@ -318,7 +391,77 @@ class NativeResolver:
             )
             for f in facts
         ]
+        self.stats = (
+            None
+            if self.lookup is None
+            else self._store_stats(profiles[size:], to_store, replacement, mentioned)
+        )
         return resolved, links
+
+    def _stored(
+        self, profiles: list[_Profile], incoming: list[Entity]
+    ) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+        """The store's candidates appended to `profiles`, and the pairs to judge.
+
+        Each incoming entity is paired with each candidate the lookup returned for
+        it, within its type. A candidate with the incoming entity's own key is the
+        same node and is never judged. A store entity whose key the batch states
+        is that node too, so it joins the batch's entity without a link.
+        """
+        assert self.lookup is not None
+        found = self.lookup.candidates(incoming)
+        at = {p.key: i for i, p in enumerate(profiles)}
+        # A key is unique within a type, so a stored entity is known by both.
+        stored: dict[tuple[str, str], int] = {}
+
+        def add(candidate: Entity) -> int:
+            known = (candidate.type, candidate.key)
+            if known not in stored:
+                stored[known] = len(profiles)
+                profiles.append(_profile(candidate))
+            return stored[known]
+
+        pairs: set[tuple[int, int]] = set()
+        for entity in incoming:
+            for candidate in found.get(entity.key, ()):
+                if candidate.type != entity.type:
+                    continue
+                if candidate.key == entity.key:
+                    add(candidate)
+                else:
+                    pairs.add((at[entity.key], add(candidate)))
+        same_node = [
+            (at[key], index)
+            for (kind, key), index in stored.items()
+            if key in at and profiles[at[key]].entity.type == kind
+        ]
+        return sorted(pairs), sorted(same_node)
+
+    def _store_stats(
+        self,
+        stored: Sequence[_Profile],
+        to_store: Mapping[str, int],
+        replacement: Mapping[str, Entity],
+        mentioned: Sequence[Entity],
+    ) -> dict[str, Any]:
+        keys = {p.key for p in stored}
+        incoming = {e.key for e in mentioned}
+        # An incoming key whose facts now carry a key the store already held.
+        rekeyed = sum(
+            1 for key in incoming if key in replacement and replacement[key].key in keys - {key}
+        )
+        stats: dict[str, Any] = {
+            "store": {
+                "looked_up": len(incoming),
+                "candidates": len(keys),
+                "rekeyed": rekeyed,
+                **{kind.value: to_store.get(kind.value, 0) for kind in LinkKind},
+            }
+        }
+        own = getattr(self.lookup, "stats", None)
+        if isinstance(own, Mapping):
+            stats["lookup"] = dict(own)
+        return stats
 
     def _judge(self, a: _Profile, b: _Profile) -> tuple[EntityLink, bool] | None:
         agree: list[str] = []
@@ -370,6 +513,17 @@ class NativeResolver:
         return EntityLink(source_key=a.key, target_key=b.key, kind=kind, score=score, reason=reason)
 
 
+def _caller(entity: Entity) -> bool:
+    return entity.resolution is not None and entity.resolution.method == "caller"
+
+
+def _states(batch: Sequence[Entity], stored: Sequence[Entity]) -> bool:
+    """Whether the batch keeps its own entity in a cluster with the store: it
+    states a stored key itself, or the caller chose one of its keys."""
+    keys = {e.key for e in stored}
+    return any(_caller(e) or e.key in keys for e in batch)
+
+
 def _merge(members: list[Entity], known: set[str], by_id: bool) -> Entity:
     """One entity for a `SAME_AS` cluster, keeping every name any member had."""
 
@@ -410,4 +564,12 @@ def _merge(members: list[Entity], known: set[str], by_id: bool) -> Entity:
     )
 
 
-__all__ = ["LINKER", "NativeResolver", "candidate_pairs", "domain_of", "name_similarity"]
+__all__ = [
+    "LINKER",
+    "BlockKeys",
+    "NativeResolver",
+    "block_keys",
+    "candidate_pairs",
+    "domain_of",
+    "name_similarity",
+]

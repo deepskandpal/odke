@@ -47,6 +47,7 @@ from openodke.stages import (
     Router,
     Scorer,
     Sink,
+    StoreLookup,
 )
 from openodke.types import (
     Chunk,
@@ -131,6 +132,7 @@ __all__ = [
     "SourceTier",
     "Span",
     "SpanOrigin",
+    "StoreLookup",
     "ValidationReport",
     "ValidationVerdict",
     "Validated",
