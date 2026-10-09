@@ -84,7 +84,9 @@ minted by the run.
 
 `extract`, `ground` and `infer` are each a model string or a full `ModelSpec`
 (`model`, `temperature`, `max_tokens`, `timeout`, `base_url`, `api_key_env`, `extra`); left out,
-a role takes its `ModelRoles` default. Keys never go in the file: a provider reads
+a role takes its `ModelRoles` default. Once `extract` is named, that default is the
+extraction model, for grounding too (at `max_tokens: 256`), so passages go nowhere
+the file did not name. Keys never go in the file: a provider reads
 its own environment variable, or the one `api_key_env` names. Which providers can
 be named, and which variable each reads, is
 [Models and providers](models.md) — or `odke models`, which also says whether the

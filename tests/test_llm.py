@@ -24,6 +24,8 @@ from openodke.llm import (
     unregister,
 )
 from openodke.llm.litellm_client import LiteLLMClient
+from openodke.llm.roles import DEFAULT_EXTRACT, DEFAULT_GROUND
+from openodke.run.config import ModelsConfig
 
 
 def _openai_body(content: str = "hi", model: str = "llama3.1") -> dict[str, Any]:
@@ -268,6 +270,29 @@ def test_no_role_defaults_to_a_temperature() -> None:
 
 def test_infer_defaults_to_the_extraction_model() -> None:
     assert ModelRoles().infer == ModelRoles().extract
+
+
+def test_naming_only_the_extraction_model_grounds_on_it_too() -> None:
+    """A local extract model alone must not send its passages to the default's vendor."""
+    local = ModelSpec(model="ollama/llama3.1", base_url="http://gpu-01:11434/v1")
+    roles = ModelRoles(extract=local)
+    assert roles.ground == local.model_copy(update={"max_tokens": ModelRoles().ground.max_tokens})
+    assert roles.ground.max_tokens < local.max_tokens
+    assert roles.infer == local
+    # The same rule holds for a run config that names only `extract`.
+    config = ModelsConfig.model_validate({"extract": "ollama/llama3.1"})
+    assert config.roles().ground.model == "ollama/llama3.1"
+
+
+def test_with_nothing_named_the_two_model_default_stands() -> None:
+    assert (ModelRoles().extract.model, ModelRoles().ground.model) == (
+        DEFAULT_EXTRACT,
+        DEFAULT_GROUND,
+    )
+    # Naming only the grounder leaves extraction on its default.
+    small = ModelSpec(model="ollama/qwen2.5:3b")
+    assert ModelRoles(ground=small).extract.model == DEFAULT_EXTRACT
+    assert ModelRoles(extract=ModelSpec(model="ollama/llama3.1"), ground=small).ground == small
 
 
 def test_single_uses_one_model_everywhere() -> None:

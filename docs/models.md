@@ -200,8 +200,10 @@ models:
 ```
 
 `ollama/…` defaults to `http://localhost:11434/v1`; set `base_url` for a host
-elsewhere. Mixing is normal — a capable hosted model to extract, a small local one
-to ground:
+elsewhere. Leave `ground` out and it follows `extract`, at its own small
+`max_tokens`: naming one local model never sends a passage anywhere else.
+
+Mixing is normal — a capable hosted model to extract, a small local one to ground:
 
 ```python
 from openodke.llm import ModelSpec
