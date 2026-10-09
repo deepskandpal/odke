@@ -7,14 +7,18 @@ and a counting client says how many requests got past the cache.
 from __future__ import annotations
 
 import json
+import shutil
+import sys
 import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 import pytest
+from typer.testing import CliRunner
 
 from openodke import Chunk, Ontology, prompts
+from openodke.cli.main import app
 from openodke.eval.cost import CostMeter
 from openodke.extract import LLMExtractor
 from openodke.ground import LLMGrounder
@@ -31,9 +35,15 @@ from openodke.llm import (
     ScriptedClient,
 )
 from openodke.llm.cache import FORMAT, cache_key, prompt_keys, request
+from openodke.run import build, load_config
+from openodke.run.execute import run_built
+from test_run import EXTRACT, NOTES, PEOPLE, _config, _write
+from test_run import GROUND as VERDICTS
 
+runner = CliRunner()
 SPEC = ModelSpec(model="test/model", max_tokens=64)
 MESSAGES = [Message(role="system", content="Judge."), Message(content="Claim: x. Passage: y.")]
+REPO = Path(__file__).parent.parent
 
 
 class _Counting:
@@ -307,6 +317,123 @@ def test_the_meter_records_a_hit_as_a_cached_call_that_cost_nothing() -> None:
     stage = report.as_stage_report()
     assert stage.metrics["cached_calls"] == 1
     assert stage.breakdown["ground"]["cached_calls"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# odke run, odke ground, odke validate
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def project(tmp_path: Path, people: Ontology) -> Path:
+    """`test_run`'s project: a note and a CSV row, an ontology and recorded responses."""
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "notes.md").write_text(NOTES, encoding="utf-8")
+    (corpus / "people.csv").write_text(PEOPLE, encoding="utf-8")
+    (tmp_path / "ontology.json").write_text(people.model_dump_json(), encoding="utf-8")
+    (tmp_path / "extract.json").write_text(json.dumps(EXTRACT), encoding="utf-8")
+    (tmp_path / "ground.json").write_text(json.dumps(VERDICTS), encoding="utf-8")
+    return tmp_path
+
+
+def test_a_second_identical_run_makes_no_model_call(project: Path) -> None:
+    config = load_config(_write(project, _config(models__cache="cache")))
+    first = build(config)
+    run_built(first, dry_run=True)
+    asked = {role: len(client.calls) for role, client in first.context._replays.items()}
+    assert asked == {"extract": 1, "ground": 6}
+
+    again = build(config)
+    result = run_built(again, dry_run=True)
+    assert {role: len(c.calls) for role, c in again.context._replays.items()} == {
+        "extract": 0,
+        "ground": 0,
+    }
+    cost = result.stats["cost"]["metrics"]
+    assert (cost["calls"], cost["cached_calls"], cost["cost_usd"]) == (7, 7, 0.0)
+    assert result.stats["cache"] == {
+        "directory": str(project / "cache"),
+        "hits": 7,
+        "misses": 0,
+        "failed": 0,
+    }
+    assert result.stats["stages"]["grounder"]["cached"] == 6
+    assert result.stats["stages"]["extractor"]["cached_calls"] == 1
+    rendered = result.render()
+    assert "cost          7 model calls (7 from the cache), 0 tokens, $0.0000" in rendered
+    assert f"cache         7 answered from {project / 'cache'}, 0 asked and stored" in rendered
+
+
+def test_a_rerun_from_the_cache_needs_neither_a_recording_nor_a_provider(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `--cache` is read against the working directory, as any path on the command line is.
+    monkeypatch.chdir(project)
+    result = runner.invoke(app, ["run", str(_write(project, _config())), "--cache", "c"])
+    assert result.exit_code == 0, result.output
+    shutil.rmtree(project / "out")
+
+    def refuse(spec: ModelSpec) -> Any:
+        raise AssertionError(f"a rerun resolved a client for {spec.model}")
+
+    # `openodke.run.build` the attribute is the function; the module is in sys.modules.
+    monkeypatch.setattr(sys.modules["openodke.run.build"], "resolve_client", refuse)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    # No replay files: anything not in the cache would have to reach a provider.
+    config = _config(models={"extract": "anthropic/claude-sonnet-5", "meter": True})
+    again = runner.invoke(app, ["run", str(_write(project, config)), "--cache", "c"])
+    assert again.exit_code == 0, again.output
+    assert "7 model calls (7 from the cache)" in again.output
+    assert (project / "c").is_dir()
+    assert len((project / "out" / "facts.jsonl").read_text(encoding="utf-8").splitlines()) == 5
+
+
+def test_a_cache_directory_that_cannot_be_one_is_a_config_error(project: Path) -> None:
+    (project / "taken").write_text("a file", encoding="utf-8")
+    result = runner.invoke(app, ["run", str(_write(project, _config(models__cache="taken")))])
+    assert result.exit_code == 2
+    assert "models.cache: cannot use" in result.output
+
+
+@pytest.fixture
+def triples(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    shutil.copytree(REPO / "examples" / "triples", tmp_path / "triples")
+    (tmp_path / "models.yaml").write_text(
+        "models:\n  ground: anthropic/claude-haiku-4-5-20251001\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    return tmp_path
+
+
+TRIPLES = ["--facts", "triples/triples.jsonl", "--texts", "triples/texts", "-o", "out"]
+
+
+def test_odke_ground_answers_a_rerun_from_the_cache(triples: Path) -> None:
+    first = runner.invoke(
+        app, ["ground", *TRIPLES, "--config", "triples/odke.yaml", "--cache", "c"]
+    )
+    assert first.exit_code == 0, first.output
+    # Without the recording, and with no key: every answer comes from the cache.
+    again = runner.invoke(app, ["ground", *TRIPLES, "--config", "models.yaml", "--cache", "c"])
+    assert again.exit_code == 0, again.output
+    summary = json.loads((triples / "out" / "summary.json").read_text(encoding="utf-8"))
+    assert (summary["calls"], summary["cached"], summary["tokens"]) == (4, 4, 0)
+    assert "4 calls (4 from the cache)" in again.output
+
+
+def test_odke_validate_reads_the_cache_from_the_models_block(triples: Path) -> None:
+    (triples / "cached.yaml").write_text(
+        "models:\n  replay: {ground: triples/recorded/ground.json}\n  cache: c\n",
+        encoding="utf-8",
+    )
+    first = runner.invoke(app, ["validate", *TRIPLES, "--config", "cached.yaml"])
+    assert first.exit_code == 0, first.output
+    (triples / "rerun.yaml").write_text("models:\n  cache: c\n", encoding="utf-8")
+    again = runner.invoke(app, ["validate", *TRIPLES, "--config", "rerun.yaml"])
+    assert again.exit_code == 0, again.output
+    assert "4 model calls (4 from the cache), 0 tokens, $0.0000" in again.output
 
 
 # --------------------------------------------------------------------------- #
