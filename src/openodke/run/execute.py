@@ -209,6 +209,26 @@ def _extractor_stats(extractor: Any) -> dict[str, Any]:
     return out
 
 
+def prompts_sent(stages: Mapping[str, Any]) -> list[str]:
+    """The registered prompt keys every stage sent, in stage order (DECISIONS #27).
+
+    Read where the stages keep them: an extractor's `prompts`, its inner model
+    extractor's, or a `stats["prompts"]` as the model grounder reports it.
+    """
+    keys: dict[str, None] = {}
+    for stage in stages.values():
+        for source in (stage, getattr(stage, "llm", None)):
+            if source is None:
+                continue
+            sent = getattr(source, "prompts", None)
+            own = getattr(source, "stats", None)
+            if isinstance(own, Mapping) and isinstance(own.get("prompts"), list | tuple):
+                sent = [*(sent if isinstance(sent, list | tuple) else ()), *own["prompts"]]
+            if isinstance(sent, list | tuple):
+                keys.update(dict.fromkeys(str(key) for key in sent))
+    return list(keys)
+
+
 def _conflicts(facts: tuple[Fact, ...]) -> dict[str, int]:
     found = Counter(
         str(stamp.get("status"))
@@ -345,6 +365,7 @@ __all__ = [
     "collect_stats",
     "execute",
     "jsonable",
+    "prompts_sent",
     "register_documents",
     "render",
     "run_built",
