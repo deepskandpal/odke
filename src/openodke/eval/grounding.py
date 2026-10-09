@@ -21,7 +21,16 @@ from __future__ import annotations
 from collections.abc import Collection, Iterable, Sequence
 
 from openodke.eval.formats import GroundingLabel
-from openodke.eval.report import Metric, StageReport, accuracy, macro_f1, per_class, prf, ratio
+from openodke.eval.report import (
+    Metric,
+    StageReport,
+    accuracy,
+    join_by_id,
+    macro_f1,
+    per_class,
+    prf,
+    ratio,
+)
 from openodke.stages import Grounder
 from openodke.types import Fact, GroundingVerdict
 
@@ -45,7 +54,12 @@ def evaluate_grounding(
     labels: Sequence[GroundingLabel], predictions: Iterable[Fact] | None = None
 ) -> StageReport:
     """Accuracy per verdict, the confusion, and the two errors that cost differently."""
-    pairs, notes = _join(labels, predictions)
+    # Without predictions, each label row's own fact is scored as it stands.
+    pairs, notes = (
+        ([(row, row.fact) for row in labels], [])
+        if predictions is None
+        else join_by_id(labels, predictions, lambda row: row.fact.id)
+    )
     by_verdict, confusion = per_class(
         ((row.verdict, f.verdict.value) for row, f in pairs), VERDICTS
     )
@@ -95,7 +109,7 @@ def grounding_ablation(
     is kept when its grounded verdict is not in `drop`. Recall is the share of
     true facts still kept, which is the price of the precision grounding buys.
     """
-    pairs, notes = _join(labels, grounded)
+    pairs, notes = join_by_id(labels, grounded, lambda row: row.fact.id)
     off = [(row, True) for row, _ in pairs]
     on = [(row, kept(f, drop)) for row, f in pairs]
     rows = {"off": _kept(off), "on": _kept(on)}
@@ -118,24 +132,6 @@ def grounding_ablation(
     return StageReport(
         stage="ground:ablation", n=len(pairs), metrics=metrics, breakdown=rows, notes=tuple(notes)
     )
-
-
-def _join(
-    labels: Sequence[GroundingLabel], predictions: Iterable[Fact] | None
-) -> tuple[list[tuple[GroundingLabel, Fact]], list[str]]:
-    if predictions is None:
-        return [(row, row.fact) for row in labels], []
-    by_id = {f.id: f for f in predictions}
-    pairs = [(row, by_id[row.fact.id]) for row in labels if row.fact.id in by_id]
-    notes = []
-    if len(pairs) < len(labels):
-        notes.append(
-            f"{len(labels) - len(pairs)} labelled fact(s) had no prediction and were not scored"
-        )
-    known = {row.fact.id for row in labels}
-    if stray := sum(1 for key in by_id if key not in known):
-        notes.append(f"{stray} prediction(s) matched no labelled fact and were ignored")
-    return pairs, notes
 
 
 def _kept(rows: Sequence[tuple[GroundingLabel, bool]]) -> dict[str, Metric]:
