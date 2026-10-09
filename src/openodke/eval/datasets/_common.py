@@ -11,11 +11,11 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
 
 from openodke.eval.ablation import AblationRun
 from openodke.eval.cost import StageCost
 from openodke.eval.report import Metric, StageReport
+from openodke.interop.triples import _file_name
 from openodke.types import Document, Fact
 
 Triple = tuple[str, str, str]
@@ -176,8 +176,8 @@ def doc_names(documents: Sequence[Document]) -> dict[str, str]:
     """Document id -> the dataset's own id, read back from the file's stem."""
     out: dict[str, str] = {}
     for doc in documents:
-        if doc.uri:
-            out[doc.id] = Path(unquote(urlparse(doc.uri).path)).stem
+        if (name := _file_name(doc)) is not None:
+            out[doc.id] = name
     return out
 
 
