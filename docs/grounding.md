@@ -339,16 +339,18 @@ document:
   one a fact could have come from. It is covered when any fact's evidence span
   overlaps it; the rest are reported with their text. A sentence naming fewer is
   not counted, because most of those are narrative. A span nobody chose
-  (`context`) overlaps every sentence, so it covers only the sentences naming
-  both ends of its fact. A chunk the router skipped is not a gap.
+  (`context`) overlaps every sentence, so it covers only the window the
+  [span locator](#locating-spans) finds for its fact, or nothing when there is
+  none. A chunk the router skipped is not a gap.
 - **Relations never offered.** Predicates the extractor was not shown, from its
   `offered(ontology)` (`LLMExtractor`: its snippets, so a type left out of
   `types` or a predicate past `snippet_limit`), and the shown predicates no fact
   used. An extractor without `offered` reports the first as unknown.
 
-Names match as [`name_key`](resolution-and-corroboration.md) token runs, longest
-first: case, accents, a dotted initialism, a leading "the" and a legal suffix do
-not matter. It is a small matcher until the span locator's (#112) lands. `odke
+Names are found by [the locator's rules](#locating-spans): a label or alias as
+written or as its name key, whole words, and a capitalised name only capitalised
+and never inside a longer one. The locator asks where one fact's two names are;
+the report indexes every known name once and reads each sentence once. `odke
 run` prints one line, and `odke eval ablation` adds the same line to its notes:
 
 ```

@@ -18,7 +18,7 @@ from openodke import (
     Span,
     SpanOrigin,
 )
-from openodke.coverage import NameMatcher, known_names, measure, offered_by, summary
+from openodke.coverage import NameMatcher, known_entities, measure, offered_by, summary
 from openodke.extract import LLMExtractor
 from openodke.llm import ScriptedClient
 from openodke.run import execute, load_config, parse_config
@@ -148,30 +148,38 @@ def test_relations_unknown_to_have_been_withheld_are_only_counted_as_unused() ->
     assert report.unused == ("born_in", "founded", "headquarters")
 
 
-def test_names_match_as_name_keys_and_the_longest_wins() -> None:
-    matcher = NameMatcher(["Zoë Smith", "Acme, Inc.", "Acme Cloud", "U.S.", "The Beatles", "A"])
-    text = "ZOE SMITH met acme cloud staff and Acme in the U.S. with the Beatles."
-    found = [(key, text[s:e]) for key, s, e in matcher.find(text)]
+def _named(*labels: str) -> list[Entity]:
+    return [Entity(key=f"x:{label}", type="X", label=label) for label in labels]
+
+
+def test_names_are_found_by_the_span_locator_s_rules() -> None:
+    entities = _named("Zoë Smith", "Acme, Inc.", "Acme Cloud", "U.S.", "The Beatles", "Africa", "A")
+    matcher = NameMatcher(entities)
+    text = "ZOE SMITH met Acme Cloud staff and Acme in the U.S. with the Beatles in South Africa."
+    found = [(sorted(keys), text[s:e]) for keys, s, e in matcher.find(text)]
     assert found == [
-        ("zoe smith", "ZOE SMITH"),
-        ("acme cloud", "acme cloud"),
-        ("acme", "Acme"),
-        ("us", "U.S."),
-        ("beatles", "Beatles"),
+        (["zoe smith"], "ZOE SMITH"),
+        (["acme cloud"], "Acme Cloud"),
+        (["acme"], "Acme"),
+        (["us"], "U.S."),
+        (["beatles"], "Beatles"),
     ]
+    # A capitalised name is found only capitalised, and never inside a longer one:
+    # `acme cloud` is not Acme Cloud, and `Africa` is not in `South Africa`.
+    assert [text[s:e] for _, s, e in matcher.find("acme cloud in South Africa")] == []
     # A one-character name would match nearly everything, so it is left out.
-    assert len(matcher) == 5
+    assert len(matcher) == 6
 
 
-def test_known_names_are_every_label_and_alias_in_the_batch() -> None:
-    aliased = ADA.model_copy(update={"aliases": ("Countess of Lovelace",)})
-    fact = EMPLOYED.model_copy(update={"subject": aliased})
-    assert known_names([fact, BASED]) == [
-        "Ada Lovelace",
-        "Countess of Lovelace",
-        "Analytical Engines",
-        "London",
-    ]
+def test_two_entities_sharing_a_name_are_one_mention() -> None:
+    city = Entity(key="City:paris", type="City", label="Paris")
+    person = Entity(key="Person:paris", type="Person", label="Paris")
+    (mention,) = NameMatcher([city, person]).find("Paris spoke.")
+    assert mention[0] == frozenset({"paris"})
+
+
+def test_known_entities_are_every_subject_and_edge_object_once() -> None:
+    assert known_entities([EMPLOYED, BASED, EMPLOYED]) == [ADA, ENGINES, LONDON]
 
 
 class _Replay:

@@ -17,88 +17,88 @@ Three counts, deterministic and free:
 
 A span nobody chose (`SpanOrigin.CONTEXT`, DECISIONS #25) overlaps every
 sentence and so says nothing about which one holds the fact. A fact cited that
-way covers the sentences naming both its subject and its object instead, which
-is where the span locator (#112) will put it.
+way covers the window the span locator (#112) finds for it, the sentence or two
+naming both its subject and its object, and nothing when there is none.
 
-Names are compared as `name_key` token runs: casefolded, accents dropped, a
-dotted initialism closed up, a leading "the" and a trailing legal form ignored.
-The matcher here is a small one until the span locator's lands; then the two
-should be one.
+Names are found by the span locator's rules (`openodke.ground.locate`): a
+label or alias as written or as its name key, whole words, case and accents
+ignored, except that a capitalised name is found only capitalised and never
+inside a longer capitalised name (`Africa` is not in `South Africa`).
 """
 
 from __future__ import annotations
 
-import re
-import unicodedata
 from bisect import bisect_left
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import Any
 
 from openodke.chunking import sentences
 from openodke.corroborate.normalize import name_key
+from openodke.ground.locate import _entity_names, _extends, _sentences, locate_span
 from openodke.ground.span import SpanStatus, check_span
 from openodke.ontology import Ontology
 from openodke.types import Document, Entity, Fact, Frozen, Span, SpanOrigin
 
-# A dotted initialism is one token, as `name_key` closes "U.S." up into "us";
-# "&" is a token too, because `name_key` reads it as "and".
-_TOKEN = re.compile(r"(?:[^\W_]\.){2,}|[^\W_]+|&")
-_WORD = re.compile(r"[^\W_]+")
-
 Region = tuple[int, int]
+# Which known entities one mention names: usually one, more when two share a name.
+Mention = tuple[frozenset[str], int, int]
+
+
+def identity(entity: Entity) -> str | None:
+    """What two mentions of one known entity share: its label's name key, or None."""
+    names = _names(entity)
+    key = name_key(names[0]) if names else ""
+    return key or None
 
 
 class NameMatcher:
-    """Finds known names in a text: `name_key` token runs, the longest first.
+    """Finds known entities in a text, by the span locator's rules.
 
-    A name whose key is a single character is left out, because it matches
-    nearly everything. Deliberately small; see the module's last paragraph.
+    Each entity is found by the forms `openodke.ground.locate` finds it by, and
+    held back by the same two checks. The locator asks where one fact's two
+    names are; this asks which of every known entity a text names, so the forms
+    are indexed once and each sentence is read once, longest form first.
     """
 
-    def __init__(self, names: Iterable[str]) -> None:
-        self._keys: dict[tuple[str, ...], str] = {}
-        for name in names:
-            key = name_key(name)
-            if len(key.replace(" ", "")) > 1:
-                self._keys.setdefault(tuple(key.split()), key)
-        self._lengths = sorted({len(k) for k in self._keys}, reverse=True)
+    def __init__(self, entities: Iterable[Entity]) -> None:
+        self._forms: dict[tuple[str, ...], list[tuple[str, bool]]] = {}
+        for entity in entities:
+            key = identity(entity)
+            if key is None:
+                continue
+            for name in _entity_names(entity):
+                entry = (key, name.capital)
+                if entry not in self._forms.setdefault(name.keys, []):
+                    self._forms[name.keys].append(entry)
+        self._lengths = sorted({len(k) for k in self._forms}, reverse=True)
 
     def __len__(self) -> int:
-        return len(self._keys)
+        """How many known entities can be found: those with a usable name."""
+        return len({key for entries in self._forms.values() for key, _ in entries})
 
-    def find(self, text: str) -> list[tuple[str, int, int]]:
-        """`(key, start, end)` of every known name in `text`, in order and never overlapping."""
-        if not self._keys:
-            return []
-        tokens = _tokens(text)
-        found: list[tuple[str, int, int]] = []
-        i = 0
-        while i < len(tokens):
-            for n in self._lengths:
-                if i + n > len(tokens):
-                    continue
-                key = self._keys.get(tuple(t for t, _, _ in tokens[i : i + n]))
-                if key is not None:
-                    found.append((key, tokens[i][1], tokens[i + n - 1][2]))
-                    i += n
-                    break
-            else:
-                i += 1
+    def find(self, text: str) -> list[Mention]:
+        """Every mention of a known entity in `text`, in order and never overlapping."""
+        found: list[Mention] = []
+        for sentence in _sentences(text) if self._forms else ():
+            words = sentence.words
+            keys = [w.key for w in words]
+            i = 0
+            while i < len(words):
+                step = 1
+                for n in self._lengths:
+                    if i + n > len(words):
+                        continue
+                    named = frozenset(
+                        key
+                        for key, capital in self._forms.get(tuple(keys[i : i + n]), ())
+                        if words[i].capital or not capital
+                    )
+                    if named and not (words[i].capital and _extends(text, words, i, i + n)):
+                        found.append((named, words[i].start, words[i + n - 1].end))
+                        step = n
+                        break
+                i += step
         return found
-
-
-def _tokens(text: str) -> list[tuple[str, int, int]]:
-    """Each word of `text` folded as `name_key` folds it, with the offsets it came from."""
-    out: list[tuple[str, int, int]] = []
-    for match in _TOKEN.finditer(text):
-        raw = match.group()
-        if raw == "&":
-            out.append(("and", match.start(), match.end()))
-            continue
-        folded = unicodedata.normalize("NFKD", raw.replace(".", ""))
-        folded = "".join(ch for ch in folded if not unicodedata.combining(ch)).casefold()
-        out.extend((part, match.start(), match.end()) for part in _WORD.findall(folded))
-    return out
 
 
 def _entities(fact: Fact) -> tuple[Entity, ...]:
@@ -111,13 +111,13 @@ def _names(entity: Entity) -> list[str]:
     return [name for name in (entity.label, *entity.aliases) if name]
 
 
-def known_names(facts: Iterable[Fact]) -> list[str]:
-    """Every subject's and edge object's label and aliases: the names a batch knows."""
-    found: dict[str, None] = {}
+def known_entities(facts: Iterable[Fact]) -> list[Entity]:
+    """Every subject and edge object in the batch, once each: the entities a batch knows."""
+    found: dict[str, Entity] = {}
     for fact in facts:
         for entity in _entities(fact):
-            found.update(dict.fromkeys(_names(entity)))
-    return list(found)
+            found.setdefault(entity.key, entity)
+    return list(found.values())
 
 
 class Coverage(Frozen):
@@ -206,7 +206,7 @@ def measure(
     out, the whole text counts.
     """
     every = list(facts)
-    matcher = NameMatcher(known_names(every))
+    matcher = NameMatcher(known_entities(every))
     by_doc: dict[str, list[Fact]] = {}
     for fact in every:
         for doc_id in dict.fromkeys(e.doc_id for e in fact.evidence):
@@ -236,22 +236,26 @@ def _document(
         return regions is None or any(start < e and s < end for s, e in regions)
 
     hits = [hit for hit in matcher.find(doc.text) if inside(hit[1], hit[2])]
-    named = {name_key(n) for fact in facts for entity in _entities(fact) for n in _names(entity)}
-    missed: dict[str, Span] = {}
-    for key, start, end in hits:
-        if key not in named and key not in missed:
-            missed[key] = _span(doc, start, end)
+    named = {identity(entity) for fact in facts for entity in _entities(fact)}
+    missed: dict[frozenset[str], Span] = {}
+    for keys, start, end in hits:
+        if not keys & named and keys not in missed:
+            missed[keys] = _span(doc, start, end)
 
+    # Where the facts are: each cited or located span, and for a fact whose span
+    # is only the whole text, the window the span locator finds for it.
     cited: list[Region] = []
-    uncited: list[Fact] = []
     for fact in facts:
         for evidence in fact.evidence:
             if evidence.span is None or check_span(evidence, doc) is not SpanStatus.LOCATED:
                 continue
-            if evidence.span_origin is SpanOrigin.CONTEXT:
-                uncited.append(fact)
-            else:
-                cited.append((evidence.span.start, evidence.span.end))
+            span = (
+                locate_span(fact, doc)
+                if evidence.span_origin is SpanOrigin.CONTEXT
+                else evidence.span
+            )
+            if span is not None:
+                cited.append((span.start, span.end))
 
     starts = [start for _, start, _ in hits]
     counted = 0
@@ -260,29 +264,14 @@ def _document(
         if not inside(start, end):
             continue
         at = bisect_left(starts, start)
-        keys = {key for key, s, _ in hits[at : bisect_left(starts, end)]}
-        if len(keys) < 2:
+        if len({keys for keys, _, _ in hits[at : bisect_left(starts, end)]}) < 2:
             continue
         counted += 1
-        if any(s < end and start < e for s, e in cited):
-            continue
-        text = doc.text[start:end]
-        if any(_names_its_claim(fact, keys, text) for fact in uncited):
-            continue
-        uncovered.append(_span(doc, start, end))
+        if not any(s < end and start < e for s, e in cited):
+            uncovered.append(_span(doc, start, end))
     return Coverage(
         doc_id=doc.id, sentences=counted, uncovered=tuple(uncovered), missed=tuple(missed.values())
     )
-
-
-def _names_its_claim(fact: Fact, keys: set[str], text: str) -> bool:
-    """Whether a sentence names a context-cited fact's subject, and its object or value."""
-    if not {name_key(n) for n in _names(fact.subject)} & keys:
-        return False
-    if fact.object_entity is not None:
-        return bool({name_key(n) for n in _names(fact.object_entity)} & keys)
-    value = str(fact.object_value).strip().casefold() if fact.object_value is not None else ""
-    return bool(value) and value in text.casefold()
 
 
 def _span(doc: Document, start: int, end: int) -> Span:
@@ -293,7 +282,8 @@ __all__ = [
     "Coverage",
     "CoverageReport",
     "NameMatcher",
-    "known_names",
+    "identity",
+    "known_entities",
     "measure",
     "offered_by",
     "summary",
