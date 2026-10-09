@@ -28,6 +28,7 @@ def _load(name: str) -> ModuleType:
 
 
 competitors = _load("competitors")
+inverses = _load("inverses")
 tables = _load("tables")
 
 
@@ -176,3 +177,54 @@ def test_rejected_by_grounder_is_what_the_gate_removed(tmp_path: Path) -> None:
     rows = [ln for ln in lines if " | + grounding | " in ln or " | + corroboration | " in ln]
     assert rows[0].startswith("|  | + grounding |") and rows[0].endswith("| 8 | 2 |")
     assert rows[1].endswith("| 6 | 2 |")
+
+
+# --------------------------------------------------------------------------- #
+# inverses.py
+# --------------------------------------------------------------------------- #
+
+
+def test_inverse_partners_are_scored_with_the_datasets_own_scorer(tmp_path: Path) -> None:
+    """Saved triples, no model: the partner the gold wants is recovered, and said to be."""
+    from openodke.eval.datasets import redocred
+    from openodke.eval.datasets._common import snake
+
+    located, contains = (redocred.RELATIONS[p] for p in ("P131", "P150"))
+    ontology = {
+        "types": {"Location": {}},
+        "predicates": {
+            snake(label): {"domain": ["Location"], "range": "Location"}
+            for label in redocred.RELATIONS.values()
+        },
+    }
+    labels = {snake(label): label for label in redocred.RELATIONS.values()}
+    _write(tmp_path, "ontology.json", ontology)
+    _write(tmp_path, "dataset.json", {"relation_labels": labels})
+    gold = {
+        "id": "test_0000",
+        "text": "Rennes is in Brittany. Brittany is in France.",
+        "entities": [["Rennes"], ["Brittany"], ["France"]],
+        "facts": [[1, located, 2], [2, contains, 1], [0, located, 1]],
+    }
+    (tmp_path / "gold.jsonl").write_text(json.dumps(gold) + "\n")
+    saved = {
+        "id": "test_0000",
+        "triples": [["Brittany", located, "France"], ["Rennes", located, "Paris"]],
+    }
+    (tmp_path / "predictions").mkdir()
+    (tmp_path / "predictions" / "extraction-alone.jsonl").write_text(json.dumps(saved) + "\n")
+
+    measured = inverses.measure_redocred(tmp_path)
+    first = measured["results"][0]
+    assert (first["pairs"], first["system"], first["row"]) == (
+        "#106's six",
+        "openodke",
+        "extraction alone",
+    )
+    assert (first["recall_before"], first["recall_after"]) == (1 / 3, 2 / 3)
+    assert (first["precision_before"], first["precision_after"]) == (1 / 2, 2 / 4)
+    assert first["partners"] == {"in gold": 1, "unlabelled": 0, "from a wrong fact": 1}
+    # The copy the pairs were added to loads strictly, and declares them.
+    issue = measured["ontologies"]["#106's six"]["predicates"]
+    assert issue[snake(located)]["inverse_of"] == snake(contains)
+    assert issue["spouse"]["symmetric"] is True
