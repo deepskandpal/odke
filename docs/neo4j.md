@@ -77,6 +77,7 @@ loser.
 | `retrieved_at` | the freshest evidence: the last time a source confirmed it |
 | `extracted_at` | `KnowledgeGraph.created_at` |
 | `evidence_doc_ids`, `evidence_uris`, `evidence_starts`, `evidence_ends`, `evidence_tiers`, `evidence_retrieved_at` | parallel lists, one position per piece of evidence |
+| `evidence_span_origins` | a parallel list too: who chose each span, `cited`, `located` or `context`, the last being the whole text and not a citation ([DECISIONS #25](decisions.md)) |
 
 Neo4j lists hold no nulls and no maps. A missing uri is therefore `""` and a
 missing span is `-1`, and position *i* in every list is the same piece of
