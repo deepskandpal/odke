@@ -213,7 +213,7 @@ predicate, and the run report prints how many were added.
 `odke run never infers an ontology`. Inference is a bootstrap, not a mode
 ([DECISIONS #8](decisions.md#8)): run `odke ontology infer` once, review and freeze
 the result, and name the file under `ontology`. See
-[Ontology inference](inference.md).
+[Ontology](ontology.md#drafting-one-parked).
 
 ## Checked before anything runs
 
