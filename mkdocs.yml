@@ -69,18 +69,22 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Installation: installation.md
+  - Install: installation.md
+  - Quickstart: quickstart.md
   - Concepts: concepts.md
-  - "The Validator": validator.md
-  - "Models & providers": models.md
-  - Ontology: ontology.md
-  - "Loading documents": loading.md
-  - "Reference extractor": reference-extractor.md
-  - Inputs: inputs.md
-  - Grounding: grounding.md
-  - "Resolution & corroboration": resolution-and-corroboration.md
-  - "Write to a store": stores.md
-  - "odke run": run.md
-  - "Evaluation (BYOLD)": evaluation.md
-  - Benchmarks: benchmarks.md
-  - Decisions: decisions.md
+  - Verify:
+      - "The Validator": validator.md
+      - Inputs: inputs.md
+      - "Loading documents": loading.md
+      - Grounding: grounding.md
+      - "Resolution & corroboration": resolution-and-corroboration.md
+      - "Write to a store": stores.md
+      - "odke run": run.md
+  - Evaluate:
+      - Evaluation: evaluation.md
+      - Benchmarks: benchmarks.md
+  - Reference:
+      - "Models & providers": models.md
+      - Ontology: ontology.md
+      - "Reference extractor": reference-extractor.md
+      - Decisions: decisions.md

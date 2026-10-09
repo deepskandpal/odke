@@ -1,8 +1,9 @@
 # Inputs
 
 openodke reads any extractor's output in one format: one triple per JSON Lines
-row, next to the texts the triples came from. Four
-[adapters](#from-other-libraries) write it from other libraries' output.
+row, next to the texts the triples came from. The [quickstart](quickstart.md)
+runs it end to end, and four [adapters](#from-other-libraries) write it from
+other libraries' output.
 
 ## The row
 
