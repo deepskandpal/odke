@@ -22,6 +22,7 @@ rather than a stage silently left as the pass-through.
       gate: verdict
       sink: {use: jsonl, directory: out}
     bootstrap: false
+    coverage: true                   # what extraction left behind; no model
 
 A stage is a built-in's short name, or `package.module:Name` for your own, and
 either may take options: `{use: name, option: value, ...}`. A stage left out is
@@ -231,6 +232,8 @@ class RunConfig(_Strict):
     # Add each edge's inverse or symmetric partner (DECISIONS #28). Left out, it
     # is on exactly when the ontology declares one; `false` turns it off.
     inverses: bool | None = None
+    # Count what extraction left behind in each document (`openodke.coverage`). Free.
+    coverage: bool = True
 
     _base_dir: Path = PrivateAttr(default_factory=Path.cwd)
 

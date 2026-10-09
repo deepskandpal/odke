@@ -34,10 +34,12 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from openodke._renamed import Renamed, deprecated, module_getattr
 from openodke.corroborate.inverses import partners
+from openodke.coverage import measure as measure_coverage
+from openodke.coverage import offered_by
 from openodke.ontology import Ontology
 from openodke.stages import (
     DDL,
@@ -86,6 +88,9 @@ class Pipeline:
     from `openodke.stages`, so a caller names only the stages they have opinions
     about and the rest are identity functions.
 
+    `coverage=True` counts what extraction left behind in each document, with
+    no model (`openodke.coverage`), into `KnowledgeGraph.stats["coverage"]`.
+
     `validator=` is the 0.2 name of `gate=`, and works with a warning until
     1.0.0 (DECISIONS #26).
     """
@@ -108,6 +113,7 @@ class Pipeline:
         inverses: bool | None = None,
         sinks: Sequence[Sink] = (),
         validator: Gate | None = None,
+        coverage: bool = False,
     ) -> None:
         if validator is not None:
             if gate is not None:
@@ -133,6 +139,7 @@ class Pipeline:
         self.sinks = tuple(sinks)
         # On whenever the ontology declares a pair, unless the caller says not.
         self.inverses = bool(ontology.inverses) if inverses is None else inverses
+        self.coverage = coverage
 
         # Once, at configuration, so a long-running pipeline says it one time
         # rather than once per run. Nothing here changes what runs.
@@ -180,7 +187,7 @@ class Pipeline:
     def run(self, docs: Sequence[Document]) -> KnowledgeGraph:
         # Counts, not a log: enough to see that routing or the gate did
         # something, which is the first question when a graph comes back small.
-        stats = {
+        stats: dict[str, Any] = {
             "documents": len(docs),
             "chunks": 0,
             "skipped": 0,
@@ -220,9 +227,17 @@ class Pipeline:
                     stats["empty_extractions"] += 1
                 candidates.extend(extracted)
             batches.append((candidates, doc))
-        facts: list[Fact] = []
-        for grounded in _ground(self.grounder, batches):
-            facts.extend(self.normalizer.normalize(fact) for fact in grounded)
+        grounded = _ground(self.grounder, batches)
+        if self.coverage:
+            # What extraction left behind, before anything merges or refuses.
+            stats["coverage"] = measure_coverage(
+                [doc for doc, chunks in routed if chunks],
+                [fact for row in grounded for fact in row],
+                self.ontology,
+                offered=offered_by(self.extractor, self.ontology),
+                regions={doc.id: [(c.start, c.end) for c in chunks] for doc, chunks in routed},
+            ).stats()
+        facts = [self.normalizer.normalize(fact) for row in grounded for fact in row]
 
         resolved, links = self.resolver.resolve(facts, _entities_of(facts))
         if self.inverses:

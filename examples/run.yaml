@@ -84,3 +84,8 @@ stages:
 # sink that can (neo4j). Every statement is IF NOT EXISTS, so it is safe on
 # every run.
 bootstrap: false
+
+# Count what extraction left behind in each document — known entities no fact
+# names, sentences naming two of them that no fact cites, relations the extractor
+# was never shown — with no model. On by default; the report is stats.coverage.
+coverage: true
