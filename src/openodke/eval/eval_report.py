@@ -5,7 +5,7 @@ shape is whatever that stage partitions on. That suits a person reading one
 table. It does not suit a CI job, a dashboard, or a second run to compare
 against, because each of those needs to know where precision is without
 knowing which stage made the report. So an Evaluator run also writes an
-`EvalReport`, whose shape is fixed and versioned (`schema_version`, "1.0"):
+`EvalReport`, whose shape is fixed and versioned (`schema_version`, "1.1"):
 
 - **rows**: one per configuration scored against gold facts (a single
   extraction, or the ablation's three), each with precision, recall and F1
@@ -19,6 +19,10 @@ knowing which stage made the report. So an Evaluator run also writes an
   nothing a 0.x reader used is lost (DECISIONS #24);
 - **diagnosis**, **fixes**, **comparison** and **calibration**: empty, and
   typed, until the issues that fill them land (#140, #141, #142, #135).
+
+1.1 adds the sections that score without gold, each `null` when not asked
+for: **judged_precision**, a judge's precision corrected by a labelled sample
+(#144, `openodke.eval.ppi`).
 
 `eval_report.schema.json`, beside this file, is the contract. `check_report`
 holds a report to it in plain Python, with no dependency; every report the
@@ -48,7 +52,7 @@ from openodke.ground.checks import CHECKS, schema_problem
 from openodke.ontology import Ontology
 from openodke.types import Fact, Frozen
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 SCHEMA_PATH = Path(__file__).with_name("eval_report.schema.json")
 
 
@@ -216,6 +220,57 @@ class Run(Frozen):
     dataset: Dataset | None = None
 
 
+# --------------------------------------------------------------------------- #
+# Without gold (#144)
+# --------------------------------------------------------------------------- #
+
+
+class CoverageTotals(Frozen):
+    """The coverage report's totals (`openodke.coverage`): where facts could be and none are.
+
+    With no gold, nothing says what a pipeline missed. These counts are the
+    nearest thing, and they need no model: sentences naming two known entities
+    that no fact covers, and known entities no fact of their document names.
+    """
+
+    documents: int = Field(ge=0)
+    sentences: int = Field(ge=0)
+    uncovered: int = Field(ge=0)
+    missed_entities: int = Field(ge=0)
+    not_offered: tuple[str, ...] | None
+    unused: tuple[str, ...]
+
+
+class JudgedPrecision(Frozen):
+    """Precision with no gold (#144): a judge graded every fact, a person a random sample.
+
+    `judge_only` is the share of the `facts` the judge called supported. It has
+    no range, because a range would only say how precisely the judge is biased.
+    `corrected` is the prediction-powered estimate (`method`): the judge's
+    share plus the mean gap between the labels and the judge on the `labels`
+    sample, with its interval at `level`. `labels_only` is the labels' own
+    share and classical interval. Under `minimum` labels the corrected number
+    is an uncalibrated estimate, and `calibrated` is false. `false_support`
+    and `lost_support` are the judge's two errors on the sample.
+    """
+
+    facts: int = Field(ge=0)
+    supported: int = Field(ge=0)
+    labels: int = Field(ge=0)
+    labelled_supported: int = Field(ge=0)
+    false_support: int = Field(ge=0)
+    lost_support: int = Field(ge=0)
+    judge_only: Estimate
+    corrected: Estimate
+    labels_only: Estimate
+    level: float
+    method: Literal["ppi-closed-form"] = "ppi-closed-form"
+    minimum: int = Field(ge=0)
+    calibrated: bool
+    # The coverage report over the judged facts; None without their documents.
+    coverage: CoverageTotals | None = None
+
+
 class EvalReport(Frozen):
     """One run, scored: the versioned document `odke eval` and `odke bench run` write."""
 
@@ -236,6 +291,9 @@ class EvalReport(Frozen):
     comparison: Comparison | None = None
     # and the grounder's calibration cards (#135).
     calibration: tuple[dict[str, Any], ...] = ()
+    # Added in 1.1, so a 1.0 report has none of them: precision with no gold,
+    # the judge corrected by a labelled sample (#144).
+    judged_precision: JudgedPrecision | None = None
 
     def as_json(self) -> str:
         return self.model_dump_json(indent=2)
@@ -265,6 +323,7 @@ class EvalReport(Frozen):
             lines += ["", *_rows_table(self.rows)]
             if self.bootstrap is not None:
                 lines.append(f"  {_ranges(self.bootstrap)}")
+        lines += _without_gold(self)
         for stage in self.stages:
             if stage.breakdown and set(stage.breakdown) == names:
                 body = [f"  - {note}" for note in stage.notes]
@@ -623,6 +682,60 @@ def _count(n: int, noun: str) -> str:
     return f"{n} {noun}{'' if n == 1 else 's'}"
 
 
+def _without_gold(report: EvalReport) -> list[str]:
+    """The sections that score without gold, or with gold that is incomplete, as text."""
+    lines: list[str] = []
+    if report.judged_precision is not None:
+        lines += ["", *_judged(report.judged_precision)]
+    return lines
+
+
+def _level(level: float) -> str:
+    return f"{level:.0%}" if math.isclose(level * 100, round(level * 100)) else f"{level:.1%}"
+
+
+def _judged(section: JudgedPrecision) -> list[str]:
+    labelled = _count(section.labels, "label") if section.labels else "no labels"
+    level = _level(section.level)
+    body = [
+        ["judge only", _estimate(section.judge_only), "the judge's verdicts, uncorrected"],
+        ["corrected", _estimate(section.corrected), f"prediction-powered (PPI), {level}"],
+        ["labels only", _estimate(section.labels_only), f"the labels alone, {level}"],
+    ]
+    if not section.labels:
+        body[1][2] = "label a random sample of the facts to correct the judge"
+        body[2][2] = ""
+    lines = [f"precision without gold  ({_count(section.facts, 'fact')} judged, {labelled})"]
+    lines += _table(["", "", ""], body)[1:]
+    if section.labels:
+        lines.append(
+            f"  the judge on the sample: {section.false_support} false support, "
+            f"{section.lost_support} lost support"
+        )
+    if section.labels and not section.calibrated:
+        lines.append(
+            f"  uncalibrated estimate: {_count(section.labels, 'label')}, under the "
+            f"{section.minimum} a calibrated one needs"
+        )
+    if section.coverage is not None:
+        lines.append(f"  coverage, in place of recall: {_coverage(section.coverage)}")
+    return [line.rstrip() for line in lines]
+
+
+def _coverage(totals: CoverageTotals) -> str:
+    from openodke.coverage import summary
+
+    return summary(
+        {
+            "sentences": totals.sentences,
+            "uncovered": totals.uncovered,
+            "missed_entities": totals.missed_entities,
+            "not_offered": totals.not_offered,
+            "unused": totals.unused,
+        }
+    )
+
+
 def _provenance(report: EvalReport) -> list[str]:
     run = report.run
     lines = [f"  openodke {run.openodke} · eval report {report.schema_version}"]
@@ -649,10 +762,12 @@ __all__ = [
     "Conformance",
     "Cost",
     "Counts",
+    "CoverageTotals",
     "Dataset",
     "Estimate",
     "EvalReport",
     "Hallucination",
+    "JudgedPrecision",
     "Latency",
     "Performance",
     "Row",

@@ -56,6 +56,10 @@
       "type": "array",
       "description": "Reserved for #135: the grounder's calibration cards.",
       "items": {"type": "object"}
+    },
+    "judged_precision": {
+      "description": "Added in 1.1, so not required: precision with no gold, a judge corrected by a labelled sample (#144); null when not asked for.",
+      "anyOf": [{"type": "null"}, {"$ref": "#/$defs/judged_precision"}]
     }
   },
   "$defs": {
@@ -324,6 +328,55 @@
           }
         },
         "notes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "coverage_totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["documents", "sentences", "uncovered", "missed_entities", "not_offered", "unused"],
+      "properties": {
+        "documents": {"$ref": "#/$defs/count"},
+        "sentences": {"$ref": "#/$defs/count"},
+        "uncovered": {"$ref": "#/$defs/count"},
+        "missed_entities": {"$ref": "#/$defs/count"},
+        "not_offered": {"anyOf": [{"type": "null"}, {"type": "array", "items": {"type": "string"}}]},
+        "unused": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "judged_precision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "facts",
+        "supported",
+        "labels",
+        "labelled_supported",
+        "false_support",
+        "lost_support",
+        "judge_only",
+        "corrected",
+        "labels_only",
+        "level",
+        "method",
+        "minimum",
+        "calibrated",
+        "coverage"
+      ],
+      "properties": {
+        "facts": {"$ref": "#/$defs/count"},
+        "supported": {"$ref": "#/$defs/count"},
+        "labels": {"$ref": "#/$defs/count"},
+        "labelled_supported": {"$ref": "#/$defs/count"},
+        "false_support": {"$ref": "#/$defs/count"},
+        "lost_support": {"$ref": "#/$defs/count"},
+        "judge_only": {"$ref": "#/$defs/estimate"},
+        "corrected": {"$ref": "#/$defs/estimate"},
+        "labels_only": {"$ref": "#/$defs/estimate"},
+        "level": {"type": "number"},
+        "method": {"const": "ppi-closed-form"},
+        "minimum": {"$ref": "#/$defs/count"},
+        "calibrated": {"type": "boolean"},
+        "coverage": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/coverage_totals"}]}
       }
     }
   }

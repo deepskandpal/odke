@@ -200,7 +200,10 @@ def test_a_metric_the_rows_cannot_give_is_refused(
             ["eval", "extract", "--labels", "x.jsonl", "--metric", "f1"],
             "--metric: for compare only",
         ),
-        (["eval", "extract", "--labels", "x.jsonl", "--seed", "3"], "--seed: for compare only"),
+        (
+            ["eval", "extract", "--labels", "x.jsonl", "--seed", "3"],
+            "--seed: for compare and precision only",
+        ),
     ],
 )
 def test_compare_mistakes_exit_2(args: list[str], message: str) -> None:
