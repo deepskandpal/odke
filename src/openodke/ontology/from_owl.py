@@ -53,6 +53,7 @@ from openodke.ontology.load import (
     load_dict,
     report_problems,
 )
+from openodke.ontology.validate import _norm
 
 if TYPE_CHECKING:
     from rdflib import Graph
@@ -219,10 +220,6 @@ def _sniff(text: str) -> str:
         return "json-ld"
     # N-Triples is a subset of Turtle, so Turtle reads both.
     return "turtle"
-
-
-def _norm(text: str) -> str:
-    return " ".join(text.casefold().replace("_", " ").split())
 
 
 class _Reader:
