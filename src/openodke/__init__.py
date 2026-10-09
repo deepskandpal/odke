@@ -66,29 +66,21 @@ from openodke.types import (
     SpanOrigin,
     ValidationVerdict,
 )
+from openodke.validator import Validated, ValidationReport, Validator
 
 # Read from the installed distribution, so pyproject.toml is the only place the
 # version is written and a wheel cannot report a release it is not.
 __version__ = importlib.metadata.version("openodke")
 
 if TYPE_CHECKING:
-    # What a type checker sees; at run time the 0.2 names come from `__getattr__`.
-    Validator = Gate
+    # What a type checker sees; at run time the 0.2 name comes from `__getattr__`.
     VerdictValidator = VerdictGate
 
-# The gate's 0.2 names (DECISIONS #26). `Validator` is about to name the whole
-# verification layer rather than the gate, so its warning says so (#129).
+# The gate's 0.2 name (DECISIONS #26). `openodke.Validator` named the gate too,
+# until 1.0.0 gave the name to the whole layer (#129); `stages.Validator` still
+# names the gate, with a warning.
 __getattr__ = module_getattr(
-    __name__,
-    {
-        "Validator": Renamed(
-            Gate,
-            "openodke.Gate",
-            "openodke.Validator is about to name the whole verification layer, "
-            "not the gate stage (DECISIONS #26).",
-        ),
-        "VerdictValidator": Renamed(VerdictGate, "openodke.VerdictGate"),
-    },
+    __name__, {"VerdictValidator": Renamed(VerdictGate, "openodke.VerdictGate")}
 )
 
 __all__ = [
@@ -139,7 +131,9 @@ __all__ = [
     "SourceTier",
     "Span",
     "SpanOrigin",
+    "ValidationReport",
     "ValidationVerdict",
+    "Validated",
     "Validator",
     "ValueNormalizer",
     "VerdictGate",
