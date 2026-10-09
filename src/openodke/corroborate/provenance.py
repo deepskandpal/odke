@@ -41,6 +41,10 @@ DERIVED = "odke.derived"
 # The evidence span is the wider one only when that answer was "supported".
 WIDEN = "odke.widen"
 
+# On Fact.qualifiers: why the free checks refused a fact before any model was
+# asked about it — {"check": "predicate" | "domain" | "range", "reason": <a sentence>}.
+CHECK = "odke.check"
+
 
 def source_forms(value: Any) -> dict[str, tuple[str, ...]]:
     """`qualifiers["odke.source_form"]` read back — tuples in memory, lists after JSON."""
@@ -71,6 +75,7 @@ def unstamped(fact: Fact) -> Fact:
 
 
 __all__ = [
+    "CHECK",
     "CONFLICT",
     "DERIVED",
     "NAME_KEY",
