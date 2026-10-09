@@ -1,7 +1,7 @@
 # bench/labels — sets a person labels by hand
 
-Labels for what no public benchmark scores: here, whether a passage supports a
-fact. Each set keeps the script that drew it, so it can be drawn again, and
+Labels for what no public benchmark scores: whether a passage supports a fact
+(G), and whether two mentions name one entity (R). Each set keeps the script that drew it, so it can be drawn again, and
 quotes public data only, under its sources' licences ([LICENSES.md](LICENSES.md)).
 
 ## G: grounding (#133)
@@ -124,3 +124,99 @@ Once ticked, they are read back with `odke label read <vault>/labels/G -o
 bench/labels/G/labels.jsonl`, which writes each labelled row as given plus its
 `verdict`, and notes beside it. A label joins `items.private.jsonl` on
 `fact.id` = `fact_id`.
+
+## R: entity pairs (#151)
+
+600 pairs of mentions, each with the text around it, for the
+[pair judge](../../docs/resolution-and-corroboration.md#the-pair-judge): one
+entity or two? Every label is the dataset's own, so R costs no labelling. The
+owner audits 100 of them by hand, which says how far the dataset's labels can
+be trusted. 200 are to tune on (dev) and 400 to gate the release on (gate).
+
+### Where the pairs come from
+
+Re-DocRED's own test file, `test_revised.json` (500 documents), which groups
+each document's mentions into entity clusters, with a type and a position for
+each mention. Within a document that is the gold: two mentions of one cluster
+name the same entity, and two clusters name two.
+
+```bash
+uv run python bench/labels/make_r.py data/redocred/test_revised.json   # seed 151
+```
+
+No model is called, and the same input and seed write the same bytes.
+
+### How they were drawn
+
+- **Names.** A mention's name is its tokens joined as the text joins them
+  (`Assassin's Creed`), keyed by `name_key`. TIME and NUM mentions are values
+  and are left out. A cluster is typed by its mentions' majority type (Person,
+  Organization, Location, Misc). Two names with one key are never a pair: the
+  rules settle them, so they never reach a judge, and such a pair across two
+  clusters is more often a gold slip than two entities.
+- **Strata**, all within one document and one type:
+  - `same` (300): two names of one cluster, `Clapton` and `Eric Clapton`.
+  - `hard` (200): two clusters whose names blocking would compare (a shared
+    first or last token) or whose name score is at least 0.5: `Maryland` and
+    `Maryland State House`.
+  - `other` (100): two clusters of the type, any other names.
+
+  The pools hold 1,329, 2,625 and 25,397 name pairs. Each pair is one mention
+  of each name, drawn per pair. `score` is the resolver's name score with no
+  normaliser, and `band` whether it is in the judge's band, [0.7, 0.9): 92 of
+  the 600 are.
+- **Context.** Each mention's sentence and one either side, from Re-DocRED's
+  own sentences, joined as `odke bench` joins them: what the judge reads.
+- **Splits**: a third of the documents (167 of 500) are dev and the rest gate,
+  shuffled by seed, so no passage is read in both. Each split's share of each
+  stratum is drawn one pair a document a pass, so the pairs spread over 394
+  documents, at most three from one.
+- **Blinding**: all 600 are shuffled together. A mention's key is its place,
+  `test_0291:s7:11-13` (document, sentence, tokens), never its cluster, and
+  both sides of a pair show one type. A sheet shows two names, a type and two
+  passages, nothing more.
+- **The audit**: 100 items, 50 `same`, 40 `hard` and 10 `other`, so hard
+  negatives are 40% of the audit against 33% of R. Drawn by seed within each
+  stratum, then shuffled.
+- **Across documents**: none. Re-DocRED has no ids, so nothing says whether a
+  cluster in one document is one in another. Identity across documents comes
+  from T-REx with Wikidata ids (#117, in 0.6.0); `Plan.across` is its slot and
+  `scope` is `within` on every row today.
+
+| Stratum | Label | dev | gate | Total | In the band | Audited |
+|---|---|---:|---:|---:|---:|---:|
+| same | same | 100 | 200 | 300 | 52 | 50 |
+| hard | different | 67 | 133 | 200 | 40 | 40 |
+| other | different | 33 | 67 | 100 | 0 | 10 |
+| **all** |  | 200 | 400 | 600 | 92 | 100 |
+
+The 600 are 208 Location, 177 Person, 112 Organization and 103 Misc pairs.
+
+### Files in `R/`
+
+- `items.jsonl`: the 600 rows, in id order, so row n is item `R-n`: `a` and
+  `b`, each a mention's `key`, `type`, `label` and `context`, the row
+  `odke label make pair` reads and the pair judge's `Mention`.
+- `labels.jsonl`: each item's label from the dataset, a `PairLabel` on the two
+  keys, in the same order: the `--labels` of `odke eval resolve`.
+- `items.private.jsonl`: per item id, its `doc`, `split`, `scope`, `stratum`,
+  `same`, `clusters` (Re-DocRED's indices), `names`, `score`, `band` and
+  `audit` (its sheet id, or null). No sheet shows it.
+- `gate.jsonl`: each gate document's whole text, so the prompt-leakage test in
+  `tests/test_prompts.py` checks every gate passage.
+- `audit.jsonl`: the 100 audited rows, in sheet order, so row n is `P-n`.
+
+### Labelling
+
+The audit sheet is not in this repository. It lives in the owner's vault at
+`deepanshu-kandpal/openodke.dev/labels/R/`: one sheet of 100, made with
+
+```bash
+odke label make pair bench/labels/R/audit.jsonl -o <vault>/labels/R --per-sheet 100
+```
+
+Once ticked, it is read back with `odke label read <vault>/labels/R -o
+bench/labels/R/audit.labels.jsonl`, which writes each labelled pair as a
+`PairLabel`, the unsure ones beside it. An audit label joins
+`items.private.jsonl` on `audit` = its sheet id, and the dataset's label on the
+two keys.
