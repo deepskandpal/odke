@@ -4,6 +4,9 @@ rule that kills a match however alike the names are."""
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
+
+import pytest
 
 from openodke import (
     Chunk,
@@ -260,6 +263,28 @@ def test_an_oversized_name_block_is_split_by_country_or_skipped() -> None:
 
     assert len(candidate_pairs(banks(True), max_block=50)) == 3 * (40 * 39 // 2)
     assert candidate_pairs(banks(False), max_block=50) == set()
+
+
+def test_the_default_cap_bounds_the_comparisons_in_a_name_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Comparing is quadratic inside a block: 300 people called John are 44,850 pairs."""
+    resolver = NativeResolver()
+    judged: list[tuple[str, str]] = []
+    judge = resolver._judge
+
+    def counted(a: Any, b: Any) -> Any:
+        judged.append((a.key, b.key))
+        return judge(a, b)
+
+    monkeypatch.setattr(resolver, "_judge", counted)
+    johns = [Entity(key=f"j{i:03d}", type="Person", label=f"John X{i}") for i in range(300)]
+    janes = [Entity(key=f"k{i:03d}", type="Person", label=f"Jane Y{i}") for i in range(100)]
+    _resolve(*johns, *janes, resolver=resolver)
+    cap = 100 * 99 // 2
+    assert len([pair for pair in judged if pair[0].startswith("j")]) <= cap
+    # A block at the cap is still compared whole.
+    assert len([pair for pair in judged if pair[0].startswith("k")]) == cap
 
 
 def test_an_oversized_exact_block_is_a_star_and_still_merges_everyone() -> None:

@@ -115,7 +115,7 @@ Normalising is idempotent: normalising a normalised fact changes nothing.
 
 ## Resolve
 
-`NativeResolver(*, threshold=0.9, nudge_up=0.05, nudge_down=0.15, max_block=500)`
+`NativeResolver(*, threshold=0.9, nudge_up=0.05, nudge_down=0.15, max_block=100)`
 is the dependency-free resolver. It follows the standard recipe in its standard
 order, and adds the two parts the surveyed resolvers leave out: a disagreement
 rule, and a refusal to destroy anything ([DECISIONS #16](decisions.md)).
@@ -140,7 +140,8 @@ the first or last token of a name, a domain or an external id are ever compared,
 so the work grows with block sizes rather than with the square of the corpus. A
 name block larger than `max_block` (a first token like "bank") is split by the
 entities' `country` attribute where they carry one, and skipped where it is still
-too large. `candidate_pairs(entities)` returns exactly the pairs blocking lets
+too large. A block is compared pair by pair, so the cap is what bounds the work:
+100 entities are 4,950 comparisons, where 500 would be 124,750. `candidate_pairs(entities)` returns exactly the pairs blocking lets
 through, so the cost of a configuration can be measured before it runs.
 
 **Strong identifiers** are `Entity.external_id` and the domains among an entity's
