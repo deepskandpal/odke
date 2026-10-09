@@ -512,3 +512,28 @@ meaning instead of disappearing, so code that ignored its warning will not
 fail at import; it will fail later, wherever it used the name as the gate. And
 until the report's schema moves, a config that says `gate:` produces a report
 whose line says `validator`.
+
+### 27. A prompt is a registered, versioned object
+
+A calibration card says what it measured: a model, a prompt, a dataset. "The
+grounder's prompt" names no prompt, because it is whatever the source said on the
+day of the run. A one-word edit changes the instrument, and a card measured before
+the edit then describes a grounder nobody can run.
+
+So every prompt openodke sends is registered in `openodke.prompts` as
+`id@version`, with its text, its SHA-256 and its source, and every model call
+records the key it sent. A text is never edited in place. `prompts.lock.json`
+holds each key's hash, and the suite fails on a mismatch with "bump the version".
+A change is the next version, and the old one stays registered, so an old card
+still names a prompt that exists. The stages send the latest.
+
+Only the fixed instruction text is registered. How a claim, a passage or an
+ontology snippet is rendered into the message is code, and the package version
+names it.
+
+The same suite fails when a prompt shares twelve words in a row with a passage
+from a benchmark gate split. A prompt tuned on the test makes the test
+meaningless.
+
+*Cost:* fixing a typo is a new version, and the next run names a different
+prompt from the last. That is correct: it sent one.

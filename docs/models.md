@@ -285,6 +285,48 @@ answer = client.complete([Message(content="…")], spec=ModelSpec(model="test/mo
 assert answer.parsed == {"verdict": "supported"}
 ```
 
+## Prompts
+
+Every prompt openodke sends is registered in `openodke.prompts` under a key,
+`id@version`, with its text, its SHA-256 and its source. Each model call records
+the key it sent, so a run, and any calibration card built on it, names exactly the
+prompt it measured ([DECISIONS #27](decisions.md)).
+
+| Key | Sent by | Source |
+|---|---|---|
+| `ground.span@1` | `LLMGrounder`: one claim against its cited span | openodke |
+| `ground.paper@1` | `LLMGrounder(verdicts="binary")`, [paper mode](grounding.md#paper-mode-the-odke-grounder-as-written) | ODKE+ App. B, verbatim |
+| `extract@1` | `LLMExtractor`, followed by the ontology snippets | openodke |
+| `extract.repair@1` | `LLMExtractor`, after a reply that broke the contract | openodke |
+| `infer@1` | `LLMProposer` (`odke ontology infer`); `{literals}` and `{max_types}` are filled per run | openodke |
+| `infer.repair@1` | `LLMProposer`, after a reply that broke the contract | openodke |
+
+```python
+from openodke import prompts
+
+span = prompts.get("ground.span@1")  # or get("ground.span", 1); no version is the latest
+assert (span.id, span.version, span.source) == ("ground.span", 1, "openodke")
+assert prompts.read_lock()[span.key] == span.sha256
+```
+
+The keys appear as `ModelCall.prompt` and `LLMExtractor.prompts`,
+`InferenceCall.prompt`, `LLMGrounder.stats["prompts"]`, and as `prompts` on the
+extractor and grounder lines of [`odke run`](run.md#what-a-run-reports) and in its
+manifest. Only instruction text is registered; how a claim, a passage or a snippet
+is rendered into the message is code, and the package version names it.
+
+**Changing a prompt.** A registered text is never edited in place.
+`src/openodke/prompts.lock.json` maps each key to its hash, and the suite fails on
+an edit with `bump the version: <id>`. To change one:
+
+1. restore the old text, and register the new one beneath it as the next version,
+   `ground.span@2`. The old version stays, because an old card may name it;
+2. add the new key's hash to the lock. The failing test prints the exact line.
+
+The stages send the latest version. The suite also fails when a prompt shares
+twelve words in a row with a passage in a benchmark gate split,
+`bench/labels/**/*gate*.jsonl`.
+
 ## What openodke does not ship
 
 - **No key storage.** No command writes a credential anywhere. The environment is

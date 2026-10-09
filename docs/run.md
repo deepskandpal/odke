@@ -260,8 +260,8 @@ stage:
 |---|---|
 | `documents`, `chunks`, `skipped`, `deferred`, `refused` | the pipeline's own counts |
 | `graph` | `facts`, `edges`, `properties`, `entities`, and `links` by kind |
-| `stages.extractor` | `paths` (the hybrid's `PathReport` totals), `rejections` by reason, or `model_calls`; for `triples`, rows by how their evidence was made (`cited`, `quoted`, `quote_not_found`, `context`), `unmatched_rows` and `ambiguous_rows` |
-| `stages.grounder` | calls, retries, failures, a count per verdict, tokens, `cost_usd`, and the span check's own counts |
+| `stages.extractor` | `paths` (the hybrid's `PathReport` totals), `rejections` by reason, or `model_calls`; `prompts`, the keys of the [registered prompts](models.md#prompts) the model sent; for `triples`, rows by how their evidence was made (`cited`, `quoted`, `quote_not_found`, `context`), `unmatched_rows` and `ambiguous_rows` |
+| `stages.grounder` | calls, retries, failures, a count per verdict, tokens, `cost_usd`, `prompts`, and the span check's own counts |
 | `stages.corroborator` | `conflicts`: how many facts `won`, `lost` or `tied` a contest |
 | `stages.validator` | the gate's `accepted`, and `refused` by reason. The key keeps its 0.2 name ([DECISIONS #26](decisions.md)) |
 | `stages.<name>` | anything else a stage reports by carrying a `stats` mapping, your own stages included |
@@ -358,8 +358,8 @@ odke run examples/e2e/odke.yaml
 ```text
 odke run
 documents     8 (8 chunks; 0 skipped, 0 deferred, 0 empty)
-extractor     paths (paths llm+pattern, chunks 8, pattern_facts 20, llm_facts 18, merged 2, model_calls 3), rejections (quote not in the passage 1)
-grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, supported 20, contradicted 1, not_found 15, span (facts 36, located 36)
+extractor     paths (paths llm+pattern, chunks 8, pattern_facts 20, llm_facts 18, merged 2, model_calls 3), rejections (quote not in the passage 1), prompts extract@1
+grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, supported 20, contradicted 1, not_found 15, prompts ground.span@1, span (facts 36, located 36)
 corroborator  conflicts (lost 1, won 2)
 validator     accepted 25, refused (contradicted 1)
 refused       1
