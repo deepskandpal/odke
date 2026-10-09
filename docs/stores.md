@@ -118,14 +118,78 @@ These rules hold for every graph sink.
 - **A rerun into Neo4j or NetworkX** finds each node, relationship and claim by
   its key and updates it. `SET r =` replaces a relationship's properties, so a
   stale qualifier does not survive. Node attributes and projected values
-  accumulate (`SET n +=`), and nothing is ever deleted. Retracting a source is the reconciler's job, which
-  is not built yet ([#116](https://github.com/deepskandpal/odke/issues/116)).
+  accumulate (`SET n +=`), and nothing is ever deleted. Through the Validator,
+  a fact the store already holds is first [merged with the store](#merge-with-the-store),
+  so what replaces the properties carries every source. Retracting a source is
+  the reconciler's job, which is not built yet
+  ([#116](https://github.com/deepskandpal/odke/issues/116)).
+
+## Merge with the store
+
+A claim the store already holds, stated again by another source, gains that
+source. It does not gain a second edge, and it does not lose the sources it had
+([DECISIONS #35](decisions.md#35)). Rewriting the relationship alone would
+replace its support list with the batch's.
+
+- **The sink reads; the corroborator merges.** A sink that can say what it
+  already holds is a `FactLookup`: `stored(facts)` returns, by signature, the
+  stored fact for each one the store holds. `SignatureCorroborator(store=...)`
+  merges each stored fact into its claim as one more member, after the batch
+  merges and before the scorer and the gate. The support list grows by the
+  batch's new sources, and the score counts them all.
+- **`Neo4jSink.stored`** is one read transaction per write: for each
+  predicate, an `UNWIND` of the batch's signature keys through the index its
+  relationship uniqueness constraint brings, which `bootstrap()` creates. A
+  predicate with no index is not read, and it warns rather than scan, so a
+  store never bootstrapped is written as before, without merging. The
+  evidence comes back from the relationship's lists, without quotes or
+  mentions, which it never held.
+- **`JsonlSink(directory, merge=True)`** makes the files a store. A write keeps
+  what they hold, replaces each entity, fact and link the graph restates, and
+  adds the rest; `stored` reads `facts.jsonl`. Without `merge`, each write
+  replaces the files and there is nothing to merge with.
+- **A statement wins** across the store as within a batch
+  ([DECISIONS #28](decisions.md#28)). A derived fact merges only with a derived
+  one. A derived twin of a stored statement is dropped, and a statement
+  replaces a stored derived twin. A derived fact then shares its parent's
+  merged list.
+- **The Validator merges by default.** It hands every sink that is a
+  `FactLookup` to its default corroborator, and `report.restated` counts the
+  facts merged with the store. A corroborator you pass in merges with the
+  `store` you gave it. A dry run reads no sink. `odke validate` merges with a
+  config's sinks, with a `jsonl` sink that has `merge: true`, and with `-o`
+  given `--merge`. `odke run` does not merge yet.
+
+```python
+from openodke import Document, Validator
+from openodke.sinks import JsonlSink
+from openodke.stages import PassThroughGate, PassThroughGrounder
+
+store = JsonlSink(out / "store", merge=True)
+validator = Validator(
+    ontology, grounder=PassThroughGrounder(), gate=PassThroughGate(), sinks=[store]
+)
+
+
+def employed(doc_id):
+    cited = Evidence(doc_id=doc_id, span=Span(doc_id=doc_id, start=0, end=14))
+    return Fact(subject=ada, predicate="employer", object_entity=acme, evidence=(cited,))
+
+
+validator.validate([employed("ar-2025")], [Document(id="ar-2025", text="Ada joined Acme.")])
+_, report = validator.validate(
+    [employed("ar-2026")], [Document(id="ar-2026", text="Ada is at Acme.")]
+)
+(held,) = store.stored([employed("any")]).values()
+print(report.restated, held.support, [s.source for s in held.supported_by])
+# 1 2 ['doc:ar-2025', 'doc:ar-2026']
+```
 
 ## Choose a sink
 
 | Class | `odke run` name | Extra | Writes | On a second `write` |
 |---|---|---|---|---|
-| `openodke.sinks.JsonlSink` | `jsonl` | — | `entities.jsonl`, `facts.jsonl`, `links.jsonl`, `manifest.json` | rewrites the files |
+| `openodke.sinks.JsonlSink` | `jsonl` | — | `entities.jsonl`, `facts.jsonl`, `links.jsonl`, `manifest.json` | rewrites the files; with `merge=True`, merges into them |
 | `openodke.sinks.neo4j.Neo4jSink` | `neo4j` | `neo4j` | a live Neo4j | updates in place |
 | `openodke.sinks.bulk.CypherFileSink` | `cypher_file` | — | a `.cypher` script | rewrites the file; replaying it updates in place |
 | `openodke.sinks.bulk.Neo4jAdminCsvSink` | `neo4j_admin_csv` | — | CSV files for `neo4j-admin database import` | rewrites the files |
@@ -317,9 +381,10 @@ assert inspector.graph.nodes["c:acme"]["hq"] == "Munich"
 
 ## JSONL
 
-`JsonlSink(directory)` writes every entity, fact and link as JSON Lines, with
-the stage counts in `manifest.json`. `facts.jsonl` is a predictions file for
-[`odke eval`](evaluation.md).
+`JsonlSink(directory, *, merge=False)` writes every entity, fact and link as
+JSON Lines, with the stage counts in `manifest.json`. `facts.jsonl` is a
+predictions file for [`odke eval`](evaluation.md). With `merge=True` the files
+are a store, and a write [merges with it](#merge-with-the-store).
 
 ## Your own sink
 

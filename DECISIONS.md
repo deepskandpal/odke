@@ -790,3 +790,44 @@ leave a count its list disagrees with.
 `support_from` rather than as one property. And the list can be recounted
 from the evidence, yet is kept beside it, so a store can be reconciled without
 the `source` function that made it.
+
+### 35. A write merges with the store, in the corroborator, before the score
+
+A rerun into Neo4j found each relationship by its signature and replaced its
+properties (`SET r =`). So a claim stated again by a second source replaced
+the first source's support instead of adding to it, which loses exactly what a
+support list (#33) exists to keep. Now a fact the store already holds merges
+with an incoming one by signature, and its list grows (#153).
+
+Four calls come with it.
+
+**The sink reads; the corroborator merges.** A `FactLookup`
+(`stored(facts)`) says what the store holds under each signature in the
+batch. The corroborator merges each stored fact into its claim as one more
+member, after the batch merges and before the scorer and the gate. So the
+score counts every source, and the receipts written back agree with each
+other. A merge in the sink, at write time, would write a support of two
+beside a score computed on one.
+
+**One read per write, through the signature index.** `Neo4jSink.stored` is
+one read transaction: per predicate, an `UNWIND` of the batch's signature keys
+through the index the relationship uniqueness constraint brings. A predicate
+with no index is not read and warns, because a read that scans is a load
+(#31). `JsonlSink` is a store only when asked (`merge=True`). By default each
+write replaces its files, so there is nothing to merge with.
+
+**A statement wins across the store, as within a batch (#28).** A derived
+fact merges only with a derived one. A derived twin of a stored statement is
+dropped, and a statement replaces a stored derived twin. A derived fact then
+takes its parent's merged list, so the two stay shared.
+
+**The Validator merges by default.** It hands every sink that is a
+`FactLookup` to its default corroborator. A corroborator passed in merges
+with the stores it was given, and a dry run reads no sink. `odke run` does
+not merge yet: its corroborator comes from the config, which has no key for a
+store.
+
+*Cost:* a read transaction before every write. A stored fact's receipts come
+back from the relationship's properties, which hold no quotes or mentions, so
+its evidence returns without them. A store never bootstrapped has no
+signature index, so nothing merges with it, and the warning is the only sign.

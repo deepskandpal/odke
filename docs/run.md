@@ -185,7 +185,7 @@ would have to be a Python object, such as a corroborator's `source` callable.
 
 | `use` | Writes | Options |
 |---|---|---|
-| `jsonl` | [`JsonlSink`](stores.md#jsonl) | `directory` (required) |
+| `jsonl` | [`JsonlSink`](stores.md#jsonl) | `directory` (required); `merge` (default `false`): keep what the files hold and [merge with it](stores.md#merge-with-the-store) |
 | `neo4j` | [`Neo4jSink`](stores.md#neo4j) | `uri` or `uri_env` (one required); `user` or `user_env` (default `neo4j`); `password_env` (default `NEO4J_PASSWORD`); `database`; `batch_size` (default 500) |
 | `cypher_file` | [`CypherFileSink`](stores.md#cypher-file) | `path` (required); `batch_size` (default 500) |
 | `neo4j_admin_csv` | [`Neo4jAdminCsvSink`](stores.md#neo4j-admin-csv) | `directory` (required); `delimiter` (default `,`); `array_delimiter` (default `;`) |
