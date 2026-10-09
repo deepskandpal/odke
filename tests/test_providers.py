@@ -15,11 +15,13 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
+from openodke import Document, Entity, Evidence, Fact, Span
 from openodke.cli.main import app
-from openodke.ground import is_transient
+from openodke.ground import LLMGrounder, is_transient
 from openodke.llm import (
     Message,
     MissingAPIKey,
+    ModelRoles,
     ModelSpec,
     OpenAICompatClient,
     register,
@@ -212,6 +214,24 @@ def test_the_litellm_client_refuses_before_it_calls_the_provider() -> None:
         LiteLLMClient().complete(
             [Message(content="hi")], spec=ModelSpec(model="anthropic/claude-sonnet-5")
         )
+
+
+def test_a_grounder_with_no_key_raises_rather_than_leaving_every_fact_unchecked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Swallowed per fact, this was a run that verified nothing and exited 0."""
+    monkeypatch.setattr(urllib.request, "urlopen", _never)
+    doc = Document(text="Ada Lovelace was born in 1815.")
+    span = Span(doc_id=doc.id, start=0, end=len(doc.text), quote=doc.text)
+    fact = Fact(
+        subject=Entity(key="ada", type="Person"),
+        predicate="born",
+        object_value="1815",
+        evidence=(Evidence(doc_id=doc.id, span=span),),
+    )
+    grounder = LLMGrounder(ModelRoles.single("openai/gpt-5.5"))
+    with pytest.raises(MissingAPIKey, match="OPENAI_API_KEY"):
+        grounder.ground(fact, doc)
 
 
 class _FakeHTTP:

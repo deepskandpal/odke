@@ -31,7 +31,14 @@ from typing import Any, Literal
 
 from openodke.ground.retry import RetryPolicy, call_with_retry
 from openodke.ground.span import Counts, SpanGrounder, located
-from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
+from openodke.llm.base import (
+    Completion,
+    LLMClient,
+    Message,
+    MissingAPIKey,
+    ModelSpec,
+    ProviderNotInstalled,
+)
 from openodke.llm.roles import ModelRoles
 from openodke.types import Document, Entity, Fact, GroundingVerdict, Polarity
 
@@ -226,7 +233,9 @@ class LLMGrounder:
     fails in a way retrying cannot fix, the fact is left `UNCHECKED` and logged.
     `ground` never raises for a provider failure — one bad call must not lose a
     run of ten thousand — and an `UNCHECKED` fact is exactly what the next run
-    picks up, because a verdict already on a fact stands and costs no call.
+    picks up, because a verdict already on a fact stands and costs no call. A
+    missing key or adapter is not a provider failure but configuration: it fails
+    every call alike, so it raises instead of leaving the whole run `UNCHECKED`.
 
     `ground_many` is the batched path the pipeline uses when it is there: a
     document's facts at once, with at most `max_workers` model calls in flight.
@@ -348,6 +357,10 @@ class LLMGrounder:
                 sleep=self._sleep,
                 on_retry=on_retry,
             )
+        except (MissingAPIKey, ProviderNotInstalled):
+            # Not one fact's problem: every call would fail the same way, and a
+            # gate that accepts UNCHECKED would write the run as if it were checked.
+            raise
         except Exception as exc:  # isolation: one failed call never fails the batch
             self._counts.bump("failed")
             log.warning("grounding call failed for fact %s, left unchecked: %s", fact.id, exc)

@@ -131,7 +131,9 @@ so prose counts as a failed answer rather than a guess.
 `ground` never raises for a provider failure, because one bad call must not lose
 a run of ten thousand. A failed or unreadable call leaves the fact `UNCHECKED`
 and logs a warning. The next run picks it up, since a verdict already on a fact
-stands and costs no call.
+stands and costs no call. A missing key (`MissingAPIKey`) or adapter
+(`ProviderNotInstalled`) does raise: it is configuration, it would fail every
+call alike, and the run would otherwise write a graph nothing had checked.
 
 ```python
 chatty = LLMGrounder(
