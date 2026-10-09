@@ -20,6 +20,7 @@ literal, makes it a **property**. Set exactly one
 | `evidence` | A tuple of `Evidence` |
 | `extractor`, `confidence` | Who extracted it; the scorer's number |
 | `verdict`, `support` | The grounder's verdict; how many sources agree |
+| `supported_by` | Which sources: one `Support` per independent source, the corroborator's [support list](resolution-and-corroboration.md#support-lists) |
 | `id` | A fresh id per extraction. Identity is `signature` |
 
 ## `Evidence` { #spans-evidence-and-trust }
