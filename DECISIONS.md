@@ -625,6 +625,38 @@ pass/fail verdicts only, not a corpus F1 resampled by document, and needs Python
 limit can ship. The limit printed beside it says how big that could be, and the
 A/A test holds the false-alarm rate near 5%.
 
+### 30. A cached answer is keyed on everything that changes it, and costs 0.0
+
+A batch rerun after a crash, a sink change or a gate change asks the models
+the same questions again, and pays for them again. So `CachedClient` answers
+a request it has seen from a store (#156). A cache is only as good as its key,
+and a key that leaves something out replays an answer to a different
+question. So the key holds everything that changes the answer: the model and
+its `base_url`, every message, the schema, `temperature`, `max_tokens`,
+`extra`, and the registered prompts the messages carry (#27). It leaves out
+only `timeout` and `api_key_env`, which decide whether a call succeeds, not
+what it says. A miss costs one call. A false hit is a wrong fact that looks
+grounded.
+
+An error is never stored, because the next run should ask again. A reply the
+caller rejects is stored, because rejecting it is the caller's reading, and the
+repair turn that follows has a key of its own.
+
+A hit costs `0.0`, not `None`. `None` means the provider did not say (#7), and
+here nobody was asked: nothing was spent. The meter records the hit as a call,
+marked `cached`, so a run that cost nothing still says why.
+
+The store is files: one JSON file per key, renamed into place. It needs nothing
+beyond the standard library, a person can read it, and threads and processes
+can share it without a lock. SQLite was the alternative. It is in the
+standard library too, but its write lock makes concurrent writers wait, and
+nothing here needs a query.
+
+*Cost:* a cached run is not a fresh sample. At a temperature above zero the
+rerun replays the draw it made the first time, and nothing expires. Asking
+again means deleting the directory or naming a new one. Two threads asking the
+same new question at once both pay for it.
+
 ### 31. The store is looked up, never loaded, and a lookup never changes it
 
 #24 put resolution against the store in scope "through a lookup rather than a
