@@ -213,6 +213,25 @@ def test_litellm_adapter_normalises_to_the_same_completion() -> None:
     assert captured["model"] == "anthropic/claude-sonnet-5"
 
 
+def test_litellm_cost_is_read_from_where_litellm_keeps_it() -> None:
+    """A real `ModelResponse` holds its cost in `_hidden_params`, which `model_dump()` drops."""
+    litellm = pytest.importorskip("litellm")
+    response = litellm.ModelResponse(
+        model="claude-sonnet-5",
+        choices=[{"message": {"role": "assistant", "content": "ok"}}],
+        usage={"prompt_tokens": 7, "completion_tokens": 2, "total_tokens": 9},
+    )
+    response._hidden_params["response_cost"] = 0.0004
+    client = LiteLLMClient(completion_fn=lambda **kwargs: response)
+    spec = ModelSpec(model="anthropic/claude-sonnet-5")
+    completion = client.complete([Message(content="hi")], spec=spec)
+    assert (completion.text, completion.prompt_tokens, completion.completion_tokens) == ("ok", 7, 2)
+    assert completion.cost_usd == 0.0004
+    # A response with no cost is still unknown, not free.
+    del response._hidden_params["response_cost"]
+    assert client.complete([Message(content="hi")], spec=spec).cost_usd is None
+
+
 def _litellm_kwargs(spec: ModelSpec) -> dict[str, Any]:
     """The kwargs the adapter would hand litellm — asserted instead of a live call."""
     captured: dict[str, Any] = {}
