@@ -366,12 +366,15 @@ def _entity_cypher(label: str) -> str:
 
 
 def _edge_cypher(subject_type: str, predicate: str, object_type: str) -> str:
+    # `=`, not `+=`: a rewritten fact replaces what its relationship says, so a
+    # conflict stamp from a run that had a rival does not outlive the rival. The
+    # props carry the signature, so the key the MERGE matched on survives.
     return (
         "UNWIND $rows AS row\n"
         f"MATCH (s:{_ident(subject_type)} {{key: row.subject_key}})\n"
         f"MATCH (o:{_ident(object_type)} {{key: row.object_key}})\n"
         f"MERGE (s)-[r:{_ident(predicate)} {{signature: row.signature}}]->(o)\n"
-        "SET r += row.props"
+        "SET r = row.props"
     )
 
 
@@ -383,7 +386,7 @@ def _claim_cypher(subject_type: str, predicate: str) -> str:
         "SET c.predicate = row.predicate, c.subject_key = row.subject_key,\n"
         "    c.subject_type = row.subject_type, c.value = row.value\n"
         f"MERGE (s)-[r:{_ident(predicate)} {{signature: row.signature}}]->(c)\n"
-        "SET r += row.props"
+        "SET r = row.props"
     )
 
 
@@ -440,7 +443,8 @@ class Neo4jSink:
     - An edge fact is `(s)-[:predicate {signature, …}]->(o)`, MERGEd on the
       fact's signature — subject, predicate, object, polarity and the
       identity-bearing qualifiers (DECISIONS #14, #15) — so a second run finds
-      the edge it wrote and updates it rather than adding another. Two facts
+      the edge it wrote and replaces its properties rather than adding another
+      edge; what the fact no longer carries goes with the rewrite. Two facts
       that differ only in a reconcilable qualifier are one edge; uptime at p50
       and at p95 are two; a denial is its own edge with `polarity: 'denied'`.
     - A literal fact has the same shape with a `:Claim` node as its object:

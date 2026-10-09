@@ -336,9 +336,11 @@ fact is an edge to a claim node `claim:<signature>` holding `kind="claim"` and t
 Neo4j; a link is an edge keyed `SAME_AS`, `SIMILAR` or `DIFFERENT` with
 `kind="link"`, `score` and `reason`, drawn only between nodes the graph holds.
 
-Writing adds and updates and never removes, as `MERGE … SET +=` does, so writing one
-graph twice, or re-running a pipeline into the same `graph`, leaves the counts where
-they were. The node id is the key alone, as in RDF, so a key two types share is one
+Writing adds and updates and never removes a node or an edge. A node's attributes
+are updated, as `MERGE … SET n +=` does, and a fact edge's are replaced, as
+`SET r = props` does, so nothing a rewritten fact no longer carries survives it.
+Writing one graph twice, or re-running a pipeline into the same `graph`, leaves the
+counts where they were. The node id is the key alone, as in RDF, so a key two types share is one
 node. `to_graph(kg)` returns a new graph and leaves `sink.graph` untouched.
 
 ```python

@@ -308,11 +308,17 @@ def test_claims_are_nodes_in_one_space_and_a_denial_keeps_its_polarity(tmp_path:
 def test_rows_the_driver_would_merge_into_one_are_one_row(tmp_path: Path) -> None:
     acme = Entity(key="c:acme", type="Company")
     ada = Entity(key="p:ada", type="Person")
-    once = Fact(subject=ada, predicate="employer", object_entity=acme, confidence=0.4)
-    again = once.model_copy(update={"id": "second", "confidence": 0.8})
-    claim = Fact(subject=acme, predicate="hq", object_value="Berlin")
+    once = Fact(
+        subject=ada,
+        predicate="employer",
+        object_entity=acme,
+        confidence=0.4,
+        qualifiers={"odke.conflict": "stale"},
+    )
+    again = once.model_copy(update={"id": "second", "confidence": 0.8, "qualifiers": {}})
+    claim = Fact(subject=acme, predicate="hq", object_value="Berlin", qualifiers={"note": "x"})
     graph = KnowledgeGraph(
-        facts=(once, again, claim, claim.model_copy(update={"id": "c2"})),
+        facts=(once, again, claim, claim.model_copy(update={"id": "c2", "qualifiers": {}})),
         links=(
             EntityLink(source_key="c:acme", target_key="p:ada", kind=LinkKind.SIMILAR, score=0.1),
             EntityLink(source_key="c:acme", target_key="p:ada", kind=LinkKind.SIMILAR, score=0.2),
@@ -320,10 +326,12 @@ def test_rows_the_driver_would_merge_into_one_are_one_row(tmp_path: Path) -> Non
     )
     rows = _read(_written_csv(tmp_path, graph))
     (edge,) = [r for f, rs in rows.items() if f.startswith("odke_edges_") for r in rs]
-    # The later SET wins, as `SET r += row.props` over two rows would leave it.
+    # The later row replaces the earlier, as `SET r = row.props` over two rows would.
     assert (edge["fact_id:string"], edge["confidence:double"]) == ("second", "0.8")
+    assert "odke.conflict:string" not in edge
     assert len([r for f, rs in rows.items() if f.startswith("odke_claims_") for r in rs]) == 1
-    assert len([r for f, rs in rows.items() if f.startswith("odke_claim_edges_") for r in rs]) == 1
+    (claim_edge,) = [r for f, rs in rows.items() if f.startswith("odke_claim_edges_") for r in rs]
+    assert "note:string" not in claim_edge
     (link,) = [r for f, rs in rows.items() if f.startswith("odke_links_") for r in rs]
     assert link["score:double"] == "0.2"
 

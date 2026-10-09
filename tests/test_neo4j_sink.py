@@ -324,12 +324,27 @@ PROVENANCE = {
 def test_every_fact_relationship_carries_provenance() -> None:
     graph = _graph()
     driver = _written(graph)
-    rows = _rows_where(driver, "SET r += row.props")
+    rows = _rows_where(driver, "(s)-[r:")
     assert len(rows) == len(graph.facts)
     for row in rows:
         assert set(row["props"]) >= PROVENANCE
         assert row["props"]["evidence_doc_ids"], "an edge with no document cannot be traced"
         assert len(row["props"]["evidence_starts"]) == len(row["props"]["evidence_doc_ids"])
+
+
+def test_a_rewritten_fact_replaces_its_properties_rather_than_adding_to_them() -> None:
+    """Run 1 stamped a claim lost; run 2 found no rival. The stale stamp must not survive it."""
+    fact_statements = [(c, p) for c, p in _written(_graph()).writes if "(s)-[r:" in c]
+    assert {c.split("(s)-[r:", 1)[1].split(" ", 1)[0] for c, _ in fact_statements} == {
+        "`employer`",
+        "`uptime`",
+        "`name`",
+        "`sells`",
+    }
+    for cypher, params in fact_statements:
+        assert cypher.endswith("SET r = row.props")
+        # Replacing keeps what the MERGE matched on: the key is in the payload.
+        assert all(row["props"]["signature"] == row["signature"] for row in params["rows"])
 
 
 def test_provenance_traces_an_edge_to_a_document_and_a_character_range() -> None:
@@ -680,6 +695,27 @@ def test_naive_and_aware_clocks_write_to_a_live_neo4j() -> None:
         ).records
         assert record["at"].to_native() == datetime(2025, 1, 1, tzinfo=UTC)
         assert len(record["clocks"]) == 2
+
+
+@pytest.mark.skipif(not os.environ.get("NEO4J_URI"), reason="NEO4J_URI is not set")
+def test_a_rewrite_clears_what_the_fact_no_longer_has_in_a_live_neo4j() -> None:
+    """Run 1 stamped the claim lost; run 2 found no rival, so the stamp must be gone."""
+    with _live_people() as (sink, driver, person):
+        ada = Entity(key="p:ada", type=person)
+        stamped = Fact(
+            subject=ada,
+            predicate="born",
+            object_value="1815",
+            qualifiers={CONFLICT: {"status": "lost", "to": "'1816'"}},
+        )
+        sink.write(KnowledgeGraph(facts=(stamped,)))
+        sink.write(KnowledgeGraph(facts=(stamped.model_copy(update={"qualifiers": {}}),)))
+        (record,) = driver.execute_query(
+            f"MATCH (:`{person}`)-[r:born]->(c:Claim) "
+            "RETURN keys(r) AS keys, r.signature AS signature, c.value AS value"
+        ).records
+        assert CONFLICT not in record["keys"]
+        assert (record["signature"], record["value"]) == (signature_of(stamped), "1815")
 
 
 def live_graph(suffix: str) -> KnowledgeGraph:
