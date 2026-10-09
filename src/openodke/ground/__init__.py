@@ -10,11 +10,15 @@ order is the point:
    and the one locatability alone cannot answer. A model can cite a span that
    genuinely exists and does not support the fact it was attached to.
 
+A fact whose extractor cited nothing is grounded against its whole text, unless
+`SpanLocator` finds the sentence naming its subject and object first.
+
 Both stamp `Fact.verdict` and neither drops a fact (DECISIONS #20): the gate
 decides what is written, and the ablation counts what would have gone.
 """
 
 from openodke.ground.llm import LLMGrounder, build_messages, parse_verdict, render_claim
+from openodke.ground.locate import SpanLocator, locate_span
 from openodke.ground.retry import RetryPolicy, is_transient
 from openodke.ground.span import SpanGrounder, SpanStatus, check_span, located
 
@@ -22,10 +26,12 @@ __all__ = [
     "LLMGrounder",
     "RetryPolicy",
     "SpanGrounder",
+    "SpanLocator",
     "SpanStatus",
     "build_messages",
     "check_span",
     "is_transient",
+    "locate_span",
     "located",
     "parse_verdict",
     "render_claim",
