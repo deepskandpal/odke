@@ -717,3 +717,34 @@ which indexes exist once, so an index created after its first batch is seen
 by the next lookup. And the first measurement is within documents only:
 Re-DocRED has no ids, so it measures the `SIMILAR` path alone, and identity
 across documents waits for the multi-source benchmark (#117).
+
+### 32. A budget stop keeps what the run has
+
+A batch that runs away costs real money before anyone looks. So a run takes a
+budget (#157): USD, input tokens, output tokens and calls. One ledger counts
+every call from every stage and thread, and a call that would go past a limit
+is refused before it is made. Before the call there is only an estimate:
+characters over four for the input, `max_tokens` for the output, and the run's
+own USD per token for the price. The output estimate is the most the call can
+return, so a run can stop with room left, and never past the limit. The one
+exception is USD before the first priced call: there is no price to estimate
+from, so that check runs after the call, and the run can overshoot by the
+calls already in flight.
+
+The stop is the run's, not the stage's. The first refused call stops the
+ledger, and every call after it is refused too, so a stopped extraction does
+not hand its room to the grounder. The run then ends as if the remaining calls
+had answered nothing. Facts grounded so far keep their verdicts, a fact the
+stop reached first stays `UNCHECKED` and is counted, the sinks write, and the
+report says where it stopped. `UNCHECKED` already means "not asked" (#20), and
+the next run picks those facts up, from the cache for whatever was answered
+before (#30).
+
+Raising was the alternative, and it throws away what was paid for. The CLI
+exits 3, so a scheduler can tell a budget stop from a failure (1) and a bad
+config (2) without parsing the report.
+
+*Cost:* a stopped run writes facts nobody checked, marked `unchecked`, and a
+gate that accepts `unchecked` writes them to the store. The output estimate
+wastes room: a call that would have returned 50 tokens is refused for its
+`max_tokens`. And a provider that reports no cost never reaches a USD limit.
