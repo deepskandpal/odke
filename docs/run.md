@@ -258,7 +258,7 @@ stage:
 |---|---|
 | `documents`, `chunks`, `skipped`, `deferred`, `refused` | the pipeline's own counts |
 | `graph` | `facts`, `edges`, `properties`, `entities`, and `links` by kind |
-| `stages.extractor` | `paths` (the hybrid's `PathReport` totals), `rejections` by reason, or `model_calls`; for `triples`, rows by how their evidence was made (`cited`, `quoted`, `quote_not_found`, `context`) and `unmatched_rows` |
+| `stages.extractor` | `paths` (the hybrid's `PathReport` totals), `rejections` by reason, or `model_calls`; for `triples`, rows by how their evidence was made (`cited`, `quoted`, `quote_not_found`, `context`), `unmatched_rows` and `ambiguous_rows` |
 | `stages.grounder` | calls, retries, failures, a count per verdict, tokens, `cost_usd`, and the span check's own counts |
 | `stages.corroborator` | `conflicts`: how many facts `won`, `lost` or `tied` a contest |
 | `stages.validator` | `accepted`, and `refused` by reason |

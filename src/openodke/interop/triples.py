@@ -26,6 +26,7 @@ unless `object_type` names a literal type, and anything untyped is a `Thing`.
 from __future__ import annotations
 
 import json
+import warnings
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -171,12 +172,14 @@ class TriplesExtractor:
     `odke run` names it `triples`, with the rows' `path`. The documents are
     the run's inputs, and each row finds its text by `Document.id` or by file
     name. In Python, pass `documents=` the same documents the pipeline runs on,
-    or the stage reads each text from the chunk it is handed.
+    or the stage reads each text from the chunk it is handed. A row has one
+    text: when two documents share the file name it gives, the first to arrive
+    gets its rows and the other gets none, with a warning naming both.
 
     Triples are not chunked. A document's triples all arrive with its first
     chunk, so leave the chunker out; a router that skips a first chunk skips
     that document's triples. `stats` counts how each row's evidence was made,
-    and the rows whose text never came.
+    the rows whose text never came, and the rows whose file name was ambiguous.
     """
 
     name = "triples"
@@ -196,7 +199,11 @@ class TriplesExtractor:
             self.rows[row.doc].append(row)
         # Filled by `odke run` with the loaded inputs (DECISIONS #19).
         self.documents: dict[str, Document] = {doc.id: doc for doc in documents}
-        self._served: set[str] = set()
+        # Each row `doc` and the document its rows went to. A file name is not
+        # unique (2023/report.txt and 2024/report.txt are both `report`), and
+        # one row must not become a fact about each text that shares its name.
+        self._served: dict[str, str] = {}
+        self._ambiguous: set[str] = set()
         self._counts = Counts("rows", "cited", "quoted", "quote_not_found", "context")
 
     def extract(self, chunk: Chunk, ontology: Ontology) -> list[Fact]:
@@ -206,7 +213,18 @@ class TriplesExtractor:
         key = doc.id if doc.id in self.rows else _file_name(doc)
         if key is None or key not in self.rows:
             return []
-        self._served.add(key)
+        owner = self._served.setdefault(key, doc.id)
+        if owner != doc.id:
+            # Which of the two the rows meant is not written anywhere, so the
+            # first keeps them and the second is told, rather than given copies.
+            self._ambiguous.add(key)
+            warnings.warn(
+                f"the triples for {key!r} went to document {owner!r}, and document "
+                f"{doc.id!r} answers to {key!r} too, so it gets none; name each text "
+                "by its id to tell them apart",
+                stacklevel=2,
+            )
+            return []
         facts = []
         for row in self.rows[key]:
             fact = to_fact(row, doc, ontology, extractor=self.extractor, confidence=self.confidence)
@@ -217,12 +235,16 @@ class TriplesExtractor:
 
     @property
     def stats(self) -> dict[str, Any]:
-        """Rows replayed, by how their evidence was made, and rows no document matched."""
+        """Rows replayed, by how their evidence was made; rows no document or two matched."""
         counts: dict[str, Any] = dict(self._counts.snapshot())
         unmatched = [doc for doc in self.rows if doc not in self._served]
         counts["unmatched_rows"] = sum(len(self.rows[doc]) for doc in unmatched)
         if unmatched:
             counts["unmatched_docs"] = sorted(unmatched)[:20]
+        ambiguous = sorted(self._ambiguous)
+        counts["ambiguous_rows"] = sum(len(self.rows[doc]) for doc in ambiguous)
+        if ambiguous:
+            counts["ambiguous_docs"] = ambiguous[:20]
         return counts
 
 
