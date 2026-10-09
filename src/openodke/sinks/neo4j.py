@@ -16,6 +16,7 @@ imported the first time a connection is needed, behind the `[neo4j]` extra.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import re
@@ -29,18 +30,30 @@ from typing import Any, NamedTuple
 
 from openodke.corroborate.lookup import Embed, embedding_text
 from openodke.corroborate.merge import _aware
-from openodke.corroborate.provenance import CONFLICT
+from openodke.corroborate.provenance import (
+    CHECK,
+    CONFLICT,
+    DERIVED,
+    NEAR_DUPLICATES,
+    SCORE,
+    SOURCE_FORM,
+    WIDEN,
+)
 from openodke.corroborate.resolve import block_keys
 from openodke.ontology import Ontology, Predicate
 from openodke.stages import DDL, Constrainer, PlatformProfile
 from openodke.types import (
     Entity,
     EntityLink,
+    Evidence,
     Fact,
+    GroundingVerdict,
     KnowledgeGraph,
     Polarity,
     Resolution,
     SourceTier,
+    Span,
+    SpanOrigin,
     Support,
 )
 
@@ -242,6 +255,94 @@ def support_from(props: Mapping[str, Any]) -> tuple[Support, ...]:
         )
         for source, tier, clock in zip(sources, tiers, clocks, strict=True)
     )
+
+
+# The odke.* stamps a relationship keeps as JSON text, read back as the values they were.
+_JSON_STAMPS = frozenset({SOURCE_FORM, CONFLICT, SCORE, DERIVED, NEAR_DUPLICATES, WIDEN, CHECK})
+
+
+def stored_qualifiers(props: Mapping[str, Any]) -> dict[str, Any]:
+    """A relationship's qualifiers, named as the fact named them.
+
+    Every property provenance does not own is a qualifier; one that provenance
+    does own was written as `qualifier_<name>`. An `odke.*` stamp the sink kept
+    as JSON text is read back as the mapping or list it was.
+    """
+    out: dict[str, Any] = {}
+    for name, value in props.items():
+        if name in _PROVENANCE:
+            continue
+        own = name.removeprefix("qualifier_")
+        key = own if own != name and own in _PROVENANCE else name
+        value = _native(value)
+        if key in _JSON_STAMPS and isinstance(value, str):
+            with contextlib.suppress(json.JSONDecodeError):
+                value = json.loads(value)
+        out[key] = value
+    return out
+
+
+def stored_evidence(props: Mapping[str, Any]) -> tuple[Evidence, ...]:
+    """A relationship's evidence lists read back, one `Evidence` per position.
+
+    A missing uri was written `""` and a missing span `-1`. Quotes and mentions
+    are not stored, so neither comes back.
+    """
+    docs = [str(d) for d in props.get("evidence_doc_ids") or ()]
+
+    def column(name: str, default: Any) -> list[Any]:
+        values = list(props.get(name) or ())
+        return (values + [default] * len(docs))[: len(docs)]
+
+    rows = zip(
+        docs,
+        column("evidence_uris", ""),
+        column("evidence_starts", -1),
+        column("evidence_ends", -1),
+        column("evidence_span_origins", SpanOrigin.CITED.value),
+        column("evidence_tiers", SourceTier.UNVERIFIED.value),
+        column("evidence_retrieved_at", None),
+        strict=True,
+    )
+    return tuple(
+        Evidence(
+            doc_id=doc,
+            span=Span(doc_id=doc, start=int(start), end=int(end)) if min(start, end) >= 0 else None,
+            span_origin=SpanOrigin(origin),
+            uri=uri or None,
+            tier=SourceTier(tier),
+            **({"retrieved_at": _native(at)} if at is not None else {}),
+        )
+        for doc, uri, start, end, origin, tier, at in rows
+    )
+
+
+def stored_fact(fact: Fact, props: Mapping[str, Any]) -> Fact:
+    """The fact stored under `fact`'s signature: the claim as `fact` states it, receipts as stored.
+
+    Evidence, support list and count, qualifiers, extractor, verdict,
+    confidence, both clocks and the id are the relationship's. The subject,
+    the object and the identity-bearing qualifiers are `fact`'s, which share
+    the signature: a value or a qualifier stored as JSON text would otherwise
+    read back as a different claim.
+    """
+    qualifiers = stored_qualifiers(props)
+    for key in fact.identity_keys:
+        if key in fact.qualifiers:
+            qualifiers[key] = fact.qualifiers[key]
+    update: dict[str, Any] = {
+        "id": str(props.get("fact_id") or fact.id),
+        "evidence": stored_evidence(props),
+        "supported_by": support_from(props),
+        "support": int(props.get("support") or 0),
+        "qualifiers": qualifiers,
+        "extractor": str(props.get("extractor") or fact.extractor),
+        "verdict": GroundingVerdict(props.get("verdict") or GroundingVerdict.UNCHECKED.value),
+        "confidence": float(props.get("confidence") or 0.0),
+        "valid_from": _native(props.get("valid_from")),
+        "valid_to": _native(props.get("valid_to")),
+    }
+    return fact.model_copy(update=update)
 
 
 def _entity_row(entity: Entity) -> dict[str, Any]:
@@ -538,6 +639,11 @@ class Neo4jSink:
     (09-quality §4) — picking a winner at write time would destroy the
     evidence for the loser.
 
+    `stored(facts)` reads what the store already holds under a batch's
+    signatures, so the corroborator can merge each fact with its stored twin
+    before the write and its support list grows rather than being replaced
+    (#153). The Validator does this by default.
+
     Rows go in batches of `batch_size`, one managed transaction each, so a
     failed batch rolls back whole and never half-writes. Earlier batches stay
     committed; because every statement is a MERGE, recovering is running the
@@ -571,6 +677,8 @@ class Neo4jSink:
         self.batch_size = batch_size
         # Decides whether a projected property is one value or a list.
         self.ontology = ontology
+        # What `stored()` reads through; made on first use, and again after a bootstrap.
+        self._reader: Neo4jLookup | None = None
         if ontology is not None:
             ontology.warn_if_unreviewed("Neo4jSink will shape its writes")
 
@@ -609,6 +717,7 @@ class Neo4jSink:
             with self._driver.session(**self._session_config()) as session:
                 for statement in ddl:
                     session.run(statement).consume()
+            self._reader = None
         return ddl
 
     def check(
@@ -628,6 +737,18 @@ class Neo4jSink:
                 if rows:
                     found[check_target(statement)] = rows
         return found
+
+    def stored(self, facts: Sequence[Fact]) -> dict[tuple[Any, ...], Fact]:
+        """What the store holds under these facts' signatures, as `Neo4jLookup.stored` reads it.
+
+        This makes the sink a `FactLookup`: the Validator hands it to the
+        corroborator, which merges each incoming fact with the one stored under
+        its signature before anything is written (#153). One read transaction,
+        through the signature indexes `bootstrap()` creates.
+        """
+        if self._reader is None:
+            self._reader = self.lookup()
+        return self._reader.stored(facts)
 
     def lookup(self, **options: Any) -> Neo4jLookup:
         """A `Neo4jLookup` on this sink's connection, database and ontology.
@@ -658,7 +779,7 @@ class Neo4jSink:
 
 # Read once per lookup: which indexes the store has, so that no query is sent
 # that would scan for want of one.
-SHOW_INDEXES = "SHOW INDEXES YIELD name, type, labelsOrTypes, properties"
+SHOW_INDEXES = "SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties"
 
 
 class StoreIndexes(NamedTuple):
@@ -672,6 +793,9 @@ class StoreIndexes(NamedTuple):
     ids: frozenset[str]
     # Type -> a full-text index over `label` and `aliases`.
     names: Mapping[str, str]
+    # Relationship types with a range index on `signature`: the uniqueness
+    # constraint's, through which a stored fact is found by its MERGE key.
+    signatures: frozenset[str] = frozenset()
 
 
 def store_indexes(rows: Iterable[Mapping[str, Any]]) -> StoreIndexes:
@@ -679,12 +803,16 @@ def store_indexes(rows: Iterable[Mapping[str, Any]]) -> StoreIndexes:
     keys: set[str] = set()
     ids: set[str] = set()
     names: dict[str, str] = {}
+    signatures: set[str] = set()
     entity_key = False
     for row in sorted(rows, key=lambda r: str(r.get("name"))):
         labels = list(row.get("labelsOrTypes") or ())
         props = list(row.get("properties") or ())
         kind = row.get("type")
-        if kind == "RANGE" and len(labels) == 1 and props == ["key"]:
+        if row.get("entityType") == "RELATIONSHIP":
+            if kind == "RANGE" and len(labels) == 1 and props == ["signature"]:
+                signatures.add(labels[0])
+        elif kind == "RANGE" and len(labels) == 1 and props == ["key"]:
             if labels[0] == ENTITY_LABEL:
                 entity_key = True
             keys.add(labels[0])
@@ -695,7 +823,7 @@ def store_indexes(rows: Iterable[Mapping[str, Any]]) -> StoreIndexes:
                 own = _schema_name("names", label)
                 if label not in names or row.get("name") == own:
                     names[label] = str(row["name"])
-    return StoreIndexes(frozenset(keys), entity_key, frozenset(ids), names)
+    return StoreIndexes(frozenset(keys), entity_key, frozenset(ids), names, frozenset(signatures))
 
 
 class LookupQuery(NamedTuple):
@@ -703,7 +831,8 @@ class LookupQuery(NamedTuple):
 
     cypher: str
     params: dict[str, Any]
-    # The entity type it is scoped to, and how it finds them: key | id | names | vector.
+    # The entity type it is scoped to, and how it finds them: key | id | names |
+    # vector; or the predicate, found by its signature.
     type: str
     kind: str
 
@@ -967,6 +1096,53 @@ class Neo4jLookup:
         """What `candidates()` would read, without reading it (the indexes are read once)."""
         return self._plan(list(entities))[0]
 
+    def stored(self, facts: Sequence[Fact]) -> dict[tuple[Any, ...], Fact]:
+        """The facts the store holds under these facts' signatures, keyed by `Fact.signature`.
+
+        Per predicate, one `UNWIND` of the batch's distinct signature keys
+        through the relationship index the predicate's uniqueness constraint
+        brings, and every predicate in one read transaction. Each relationship
+        found is read back by `stored_fact`: the claim as the batch states it,
+        the receipts as the store holds them. A predicate with no index is not
+        read, and warns once, as a type with no index does.
+        """
+        by_key: dict[str, list[Fact]] = defaultdict(list)
+        for fact in facts:
+            by_key[signature_of(fact)].append(fact)
+        queries = self.fact_statements(facts)
+        if not queries:
+            return {}
+        with self._driver.session(**self._session_config()) as session:
+            results = session.execute_read(_read_all, queries)
+        self.stats["transactions"] += 1
+        self.stats["statements"] += len(queries)
+        out: dict[tuple[Any, ...], Fact] = {}
+        for rows in results:
+            for row in rows:
+                for fact in by_key.get(row["signature"], ()):
+                    out.setdefault(fact.signature, stored_fact(fact, row["props"]))
+        return out
+
+    def fact_statements(self, facts: Sequence[Fact]) -> list[LookupQuery]:
+        """What `stored()` would read, without reading it (the indexes are read once)."""
+        indexes = self.indexes()
+        by_predicate: dict[str, set[str]] = defaultdict(set)
+        for fact in facts:
+            by_predicate[fact.predicate].add(signature_of(fact))
+        queries: list[LookupQuery] = []
+        for predicate in sorted(by_predicate):
+            if predicate not in indexes.signatures:
+                self._unindexed(predicate, "signature")
+                continue
+            cypher = (
+                "UNWIND $rows AS row\n"
+                f"MATCH ()-[r:{_ident(predicate)} {{signature: row.signature}}]->()\n"
+                "RETURN row.signature AS signature, properties(r) AS props"
+            )
+            rows = [{"signature": key} for key in sorted(by_predicate[predicate])]
+            queries.append(LookupQuery(cypher, {"rows": rows}, predicate, "signature"))
+        return queries
+
     def _plan(self, entities: list[Entity]) -> tuple[list[LookupQuery], list[list[str]]]:
         indexes = self.indexes()
         blocks = _Blocks()
@@ -1065,8 +1241,8 @@ class Neo4jLookup:
         self.stats["unindexed"] = sorted(self._warned)
         warnings.warn(
             f"the store has no index for {gap}, so the lookup does not read it rather than "
-            "scan; Neo4jSink.bootstrap(ontology) creates the index for each type in the "
-            "ontology",
+            "scan; Neo4jSink.bootstrap(ontology) creates the index for each type and "
+            "predicate in the ontology",
             stacklevel=2,
         )
 
@@ -1265,5 +1441,8 @@ __all__ = [
     "storable",
     "store_indexes",
     "stored_entity",
+    "stored_evidence",
+    "stored_fact",
+    "stored_qualifiers",
     "support_from",
 ]
