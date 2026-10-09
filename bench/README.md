@@ -91,3 +91,18 @@ leaves that set out of the averages and says so.
 The published comparison (PR #105) ran on `anthropic/claude-sonnet-5-5`
 extracting and `anthropic/claude-haiku-4-5` grounding. No other provider has run
 it end to end yet.
+
+## The span locator
+
+`locator.py` measures the span locator (#112) on a published comparison's
+Re-DocRED set: how many of each competitor's facts it places, how wide the
+windows are, and, with `--live`, the same facts grounded on their located
+window against the saved whole-document verdicts, with a whole-document re-run
+of a sample as the noise floor. It reads the saved run and writes only under
+`--out`; the rule that decides the default is in its docstring.
+
+```bash
+python bench/locator.py "$CMP/redocred" --out out/locator          # free: placement
+python bench/locator.py "$CMP/redocred" --out out/locator --live   # + grounding, priced first
+```
+
