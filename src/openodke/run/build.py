@@ -131,12 +131,13 @@ class Context:
     meter: CostMeter | None = None
     _replays: dict[str, LLMClient] = field(default_factory=dict)
 
-    def client(self, role: str) -> LLMClient | None:
+    def client(self, role: str, *, stage: str | None = None) -> LLMClient | None:
         """The client a model-backed stage should use for `role`, or None to resolve its own.
 
         Recorded responses win when the config names them. A meter, when on,
         wraps whatever the client is, so cost is counted without a stage
-        knowing.
+        knowing: under `stage` when given, so the grounder's widened retries are
+        a cost row of their own, and under the role otherwise.
         """
         inner: LLMClient | None = None
         replay = self.config.models.replay.get(role)  # type: ignore[call-overload]
@@ -148,7 +149,7 @@ class Context:
             return inner
         if inner is None:
             inner = resolve_client(getattr(self.roles, role))
-        return self.meter.client(inner, stage=role)
+        return self.meter.client(inner, stage=stage or role)
 
 
 def _replay_client(path: Path, role: str) -> LLMClient:
@@ -336,8 +337,15 @@ def _hybrid(options: dict[str, Any], ctx: Context, where: str) -> HybridExtracto
 
 def _llm_grounder(options: dict[str, Any], ctx: Context, where: str) -> LLMGrounder:
     injected = {"roles": ctx.roles, "client": ctx.client("ground")}
+    if options.get("widen"):
+        # The retries' calls, metered as their own stage (#102).
+        injected["widen_client"] = ctx.client("ground", stage="ground.widen")
     grounder: LLMGrounder = construct(
-        LLMGrounder, _with_retry(options, where), where, injected=injected, reserved=("sleep",)
+        LLMGrounder,
+        _with_retry(options, where),
+        where,
+        injected=injected,
+        reserved=("sleep", "widen_client"),
     )
     return grounder
 

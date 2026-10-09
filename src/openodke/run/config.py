@@ -251,6 +251,14 @@ class RunConfig(_Strict):
         """
         return self.model_copy(update={"models": self.models.with_model(model)})
 
+    def with_widen(self) -> RunConfig:
+        """This config with the model grounder's widen-and-retry on: what `--widen` applies."""
+        grounder = self.stages.grounder
+        if grounder is None or grounder.use != "llm":
+            raise ConfigError("--widen needs the model grounder: stages.grounder: llm")
+        spec = grounder.model_copy(update={"options": {**grounder.options, "widen": True}})
+        return self.model_copy(update={"stages": self.stages.model_copy(update={"grounder": spec})})
+
 
 def load_config(path: str | Path) -> RunConfig:
     """A config from a YAML (`.yaml`, `.yml`) or JSON file, paths relative to it."""
