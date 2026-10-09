@@ -189,17 +189,10 @@ imports nothing from the library. Hand both to `TriplesExtractor` as above.
 ```python
 from openodke.interop import from_graph_documents
 
-graph_document = {  # GraphDocument.model_dump(); the objects read the same way
-    "nodes": [],
-    "relationships": [
-        {
-            "source": {"id": "Halden Robotics", "type": "Company"},
-            "target": {"id": "Lyon", "type": "City"},
-            "type": "OFFICE_IN",
-        }
-    ],
-    "source": {"page_content": text, "metadata": {"source": "notes/halden.txt"}},
-}
+company, city = {"id": "Halden Robotics", "type": "Company"}, {"id": "Lyon", "type": "City"}
+office = {"source": company, "target": city, "type": "OFFICE_IN"}
+# GraphDocument.model_dump(); the objects read the same way.
+graph_document = {"nodes": [], "relationships": [office], "source": {"page_content": text}}
 rows, texts = from_graph_documents([graph_document])
 stage = TriplesExtractor(rows, extractor="langchain", documents=texts)
 kg = Pipeline(ontology, stage, grounder=LLMGrounder(client=client)).run(texts)
