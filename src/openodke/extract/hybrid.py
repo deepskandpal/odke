@@ -13,6 +13,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from openodke.corroborate.normalize import normalize_value
 from openodke.extract._common import Documents, index_documents
 from openodke.extract.pattern import PatternExtractor
 from openodke.ontology import Ontology
@@ -55,14 +56,35 @@ class PathReport:
         self.cost_usd = _add_cost(self.cost_usd, other.cost_usd)
 
 
-def merge(facts: Iterable[Fact]) -> list[Fact]:
-    """One fact per signature: the most confident, the first on a tie, in first-seen order."""
+def merge(facts: Iterable[Fact], *, ontology: Ontology | None = None) -> list[Fact]:
+    """One fact per claim: the most confident, the first on a tie, in first-seen order.
+
+    A claim is `Fact.signature` with a literal value in its canonical form
+    (`normalize_value`, held to the predicate's range when `ontology` has it).
+    The pattern extractor reads a cell's text, "1999" or "true", and the model
+    answers in the range's type, 1999 or True: one claim, which the signature's
+    `repr` alone would count as two. The fact kept keeps its value as it was read.
+    """
     kept: dict[tuple[Any, ...], Fact] = {}
     for fact in facts:
-        current = kept.get(fact.signature)
+        claim = _claim(fact, ontology)
+        current = kept.get(claim)
         if current is None or fact.confidence > current.confidence:
-            kept[fact.signature] = fact
+            kept[claim] = fact
     return list(kept.values())
+
+
+def _claim(fact: Fact, ontology: Ontology | None) -> tuple[Any, ...]:
+    if fact.is_edge:
+        return fact.signature
+    predicate = ontology.predicates.get(fact.predicate) if ontology is not None else None
+    literal = predicate.range if predicate is not None else None
+    value = normalize_value(fact.object_value, range=literal)
+    if literal == "boolean":
+        # `normalize_value` leaves a boolean's text verbatim; True and "true" agree here.
+        value = str(value).casefold()
+    subject, type_name, name, _, polarity, scoped = fact.signature
+    return (subject, type_name, name, repr(value), polarity, scoped)
 
 
 class HybridExtractor:
@@ -120,7 +142,7 @@ class HybridExtractor:
             for call in calls[seen:] if isinstance(calls, list) else ():
                 report.count_call(call)
             candidates += found
-        kept = merge(candidates)
+        kept = merge(candidates, ontology=ontology)
         report.merged += len(candidates) - len(kept)
         return kept
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from openodke import (
     Chunk,
     Document,
     Entity,
+    EntityType,
     Extractor,
     Fact,
     HybridExtractor,
@@ -19,6 +21,7 @@ from openodke import (
     Ontology,
     Pipeline,
     Polarity,
+    Predicate,
     SentenceChunker,
     SourceTier,
 )
@@ -177,6 +180,42 @@ def test_merge_keeps_the_most_confident_and_never_merges_a_denial() -> None:
     denied = low.model_copy(update={"polarity": Polarity.DENIED})
     assert merge([low, high, tie, denied]) == [high, denied]
     assert merge([low, tie]) == [low]
+
+
+@pytest.mark.parametrize(
+    ("range_", "cell", "typed"), [("integer", "1999", 1999), ("boolean", "true", True)]
+)
+def test_a_cell_and_the_models_typed_value_are_one_claim(
+    range_: str, cell: str, typed: int | bool
+) -> None:
+    # The pattern extractor reads the cell's text; the model answers in the
+    # range's own type, as the response schema asks it to.
+    ontology = Ontology(
+        types={"Company": EntityType(name="Company", keys=("legal_name",))},
+        predicates={
+            "legal_name": Predicate(name="legal_name", domain=("Company",)),
+            "listed": Predicate(name="listed", domain=("Company",), range=range_),
+        },
+    )
+    doc = Document(text=f"Legal name: Acme\nListed: {cell}\n", modality="semi_structured")
+    reply = {
+        "entities": [
+            {
+                "type": "Company",
+                "name": "Acme",
+                "facts": [{"predicate": "listed", "value": typed, "quote": f"Listed: {cell}"}],
+            }
+        ]
+    }
+    llm = LLMExtractor(client=ScriptedClient([json.dumps(reply)]), spec=SONNET, confidence=0.7)
+    hybrid = HybridExtractor(llm, documents=[doc])
+    chunk = Chunk(doc_id=doc.id, start=0, end=len(doc.text), text=doc.text, index=0)
+    facts = hybrid.extract(chunk, ontology)
+    report = hybrid.report[doc.id]
+    assert (report.pattern_facts, report.llm_facts, report.merged) == (2, 1, 1)
+    (listed,) = [f for f in facts if f.predicate == "listed"]
+    # The more confident read is kept, with the value exactly as it was read.
+    assert (listed.extractor, listed.object_value) == ("pattern", cell)
 
 
 def test_it_is_an_extractor() -> None:
