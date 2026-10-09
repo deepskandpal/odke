@@ -123,7 +123,7 @@ keyword argument, and an option it does not take is an error listing the ones it
 does.
 
 **A stage left out is the pass-through** from `openodke.stages`
-([DECISIONS #20](decisions.md)), and the stats say nothing about it.
+([DECISIONS #20](decisions.md#20)), and the stats say nothing about it.
 
 **The scorer is the exception.** Left out, `odke run` fills it with `evidence`
 (`EvidenceScorer`), because the pass-through leaves `Fact.confidence` at whatever
@@ -139,7 +139,7 @@ satisfy the stage's Protocol, which is checked when the config is built rather t
 discovered halfway through a run.
 
 **`delegated`**, with `to:`, marks a stage the store does itself
-([DECISIONS #21](decisions.md)): `resolver: {use: delegated, to: neo4j-graphrag:FuzzyMatchResolver}`.
+([DECISIONS #21](decisions.md#21)): `resolver: {use: delegated, to: neo4j-graphrag:FuzzyMatchResolver}`.
 Every stage but the chunker and the inferrer accepts it.
 
 **What `odke run` sets itself** is refused from the file with
@@ -211,7 +211,7 @@ predicate, and the run report prints how many were added.
 
 `inferrer` accepts only `passthrough`. Anything else is refused:
 `odke run never infers an ontology`. Inference is a bootstrap, not a mode
-([DECISIONS #8](decisions.md)): run `odke ontology infer` once, review and freeze
+([DECISIONS #8](decisions.md#8)): run `odke ontology infer` once, review and freeze
 the result, and name the file under `ontology`. See
 [Ontology inference](inference.md).
 
@@ -274,7 +274,7 @@ stage:
 | `stages.extractor` | `paths` (the hybrid's `PathReport` totals), `rejections` by reason, or `model_calls`; `prompts`, the keys of the [registered prompts](models.md#prompts) the model sent; for `triples`, rows by how their evidence was made (`cited`, `quoted`, `quote_not_found`, `context`), `unmatched_rows` and `ambiguous_rows` |
 | `stages.grounder` | calls, retries, failures, a count per verdict, tokens, `cost_usd`, `prompts`, the span check's own counts, with `locate` the locator's, and with `widen`, under `widen`: `retried`, `recovered` and the retries' own calls, tokens and cost, which `cost` meters as their own row, `ground.widen` |
 | `stages.corroborator` | `conflicts`: how many facts `won`, `lost` or `tied` a contest |
-| `stages.validator` | the gate's `accepted`, and `refused` by reason. The key keeps its 0.2 name ([DECISIONS #26](decisions.md)) |
+| `stages.validator` | the gate's `accepted`, and `refused` by reason. The key keeps its 0.2 name ([DECISIONS #26](decisions.md#26)) |
 | `stages.<name>` | anything else a stage reports by carrying a `stats` mapping, your own stages included |
 | `cost` | with `meter: true`: calls, tokens, USD and latency, in total and per role |
 | `coverage` | with `coverage: true`, the default: totals, the relations never offered and never used, and each document's uncovered sentences and missed entities ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)) |
@@ -285,7 +285,7 @@ A `DoubleStageWarning` raised while the pipeline is built is printed as a
 
 ## The default gate: `VerdictGate`
 
-The grounder stamps a verdict and drops nothing ([DECISIONS #20](decisions.md)), so
+The grounder stamps a verdict and drops nothing ([DECISIONS #20](decisions.md#20)), so
 something has to refuse. `gate: verdict` is that something:
 
 - **`contradicted` is always refused.** The cited passage was read, and it says

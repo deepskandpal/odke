@@ -26,7 +26,7 @@ one. A caller who wants only extract-and-sink gets no-ops for the other eleven
 and never notices them. Every corpus needs a different subset of the thirteen,
 and nothing domain-specific enters the code. Labels, ontologies, tenancy keys and
 qualifier semantics all arrive as data, through one of these seams
-([DECISIONS #20](decisions.md)).
+([DECISIONS #20](decisions.md#20)).
 
 ```mermaid
 flowchart LR
@@ -54,7 +54,7 @@ flowchart LR
 `constrain` and `infer` are not on the `run()` path. The constrainer compiles
 the ontology into the store's own constraints for a sink to apply before its
 first write. The inferrer is a bootstrap, not a mode: it proposes an ontology
-that you review, freeze and then pass in ([DECISIONS #8](decisions.md);
+that you review, freeze and then pass in ([DECISIONS #8](decisions.md#8);
 [Ontology inference](inference.md)).
 
 ## What is here today

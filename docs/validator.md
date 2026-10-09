@@ -1,7 +1,7 @@
 # The Validator
 
 openodke is the verification layer between any extractor and the graph store
-([DECISIONS #24](decisions.md)). The Validator is that layer as one class,
+([DECISIONS #24](decisions.md#24)). The Validator is that layer as one class,
 `openodke.Validator`, and one command, `odke validate`. You give it another
 extractor's triples and the texts they came from. It grounds, normalises,
 resolves, corroborates, gates and writes them, and reports what each step did.
@@ -100,7 +100,7 @@ The run above did five things:
   `located_in`, so France contains Brittany, once from each text, and the two
   copies merge.
 - **Linked one.** The misspelt `Halden Robotic` is a `SIMILAR` link to
-  `Halden Robotics`, not a merge ([DECISIONS #16](decisions.md)).
+  `Halden Robotics`, not a merge ([DECISIONS #16](decisions.md#16)).
 - **Returned the graph and a report.** `validate()` returns the
   `KnowledgeGraph` and a `ValidationReport`, and writes the graph to every
   sink in `sinks=`.
@@ -127,7 +127,7 @@ name's default options:
 | corroborator | `SignatureCorroborator(ontology)` |
 | scorer | `EvidenceScorer()` |
 | gate | `VerdictGate(schema=True)`: refuses what the text contradicts, and what the free checks refused |
-| inverses | on when the ontology declares a pair ([DECISIONS #28](decisions.md)); `inverses=False` turns it off |
+| inverses | on when the ontology declares a pair ([DECISIONS #28](decisions.md#28)); `inverses=False` turns it off |
 | coverage | on: what extraction left behind ([Grounding](grounding.md#what-extraction-left-behind-the-coverage-report)); `coverage=False` turns it off |
 | sinks | none |
 
@@ -159,4 +159,4 @@ it too.
 
 The name `openodke.Validator` meant the gate until 1.0.0. That alias is gone.
 `openodke.Gate` is the gate, and `openodke.stages.Validator` still names it,
-with a warning ([DECISIONS #26](decisions.md)).
+with a warning ([DECISIONS #26](decisions.md#26)).

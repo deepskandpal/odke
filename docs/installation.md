@@ -20,7 +20,7 @@ repository: `pip install "openodke @ git+https://github.com/deepskandpal/odke"`.
 The base install pulls in two dependencies, `pydantic` and `typer`: no model
 provider, no database driver, no HTTP client. Compiling and inspecting an
 ontology is useful offline, and it should not need credentials to exist
-([DECISIONS #1](decisions.md)). This is checked rather than promised:
+([DECISIONS #1](decisions.md#1)). This is checked rather than promised:
 `scripts/verify.sh` step 8 imports the package with the base dependencies alone,
 in a throwaway environment, on every push.
 
