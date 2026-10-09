@@ -6,13 +6,14 @@ came from, and writes the ones that hold up, with their evidence.
 
 ## Verify
 
-Hand it any extractor's triples. It checks each cited span for free, asks a
-second model whether the text supports the claim, resolves entity keys, counts
-the sources behind each claim, gates what is written, and writes to Neo4j, RDF,
-JSONL, a Cypher file, neo4j-admin CSV or NetworkX. Each stage can be left out
-or replaced.
+Hand any extractor's triples to `openodke.Validator`, or to `odke validate` on
+the command line. It runs free checks on each citation and against the
+ontology, asks a second model whether the text supports the claim, resolves entity keys, counts the sources
+behind each claim, gates what is written, and writes to Neo4j, RDF, JSONL, a
+Cypher file, neo4j-admin CSV or NetworkX. Each stage can be left out or
+replaced.
 
-[Quickstart](quickstart.md) · [Inputs](inputs.md) · [Grounding](grounding.md)
+[Quickstart](quickstart.md) · [The Validator](validator.md) · [Inputs](inputs.md)
 
 ## Evaluate
 
@@ -22,7 +23,7 @@ with corroboration.
 
 [Evaluation](evaluation.md) · [Benchmarks](benchmarks.md)
 
-At 1.0 these two halves become the Validator and the Evaluator.
+At 1.0 this half becomes the Evaluator.
 
 ## In short
 

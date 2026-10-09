@@ -156,7 +156,9 @@ Pipeline(ontology, extractor, *, retriever=, chunker=, router=, grounder=,
          inverses=, sinks=, coverage=, reextract=)
 ```
 
-A stage left as `None` is its pass-through. `run(docs)`:
+A stage left as `None` is its pass-through. `openodke.Validator` runs this
+pipeline over triples, with a default for every stage after extraction
+([The Validator](validator.md)). `run(docs)`:
 
 1. **Chunk, route, extract**, per chunk; or triples in, through
    [`TriplesExtractor`](inputs.md).
