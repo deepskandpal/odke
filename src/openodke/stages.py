@@ -178,6 +178,21 @@ class StoreLookup(Protocol):
 
 
 @runtime_checkable
+class FactLookup(Protocol):
+    """What the store already holds of a batch of facts, by signature, without loading it.
+
+    Not a stage: the corroborator's way into the store, as `StoreLookup` is the
+    resolver's (#153). Returns, for each fact whose signature the store holds,
+    the stored fact: its evidence, support list, qualifiers, verdict,
+    confidence and clocks as the store has them. `Neo4jSink` reads its
+    relationships through their signature indexes, and `JsonlSink(merge=True)`
+    reads its file. A lookup reads and never writes.
+    """
+
+    def stored(self, facts: Sequence[Fact]) -> Mapping[tuple[Any, ...], Fact]: ...
+
+
+@runtime_checkable
 class Corroborator(Protocol):
     """Merge the same claim across sources; count `support`; resolve conflicts."""
 
@@ -456,6 +471,7 @@ __all__ = [
     "Delegated",
     "EntityIndex",
     "Extractor",
+    "FactLookup",
     "Gate",
     "Grounder",
     "Inferrer",
