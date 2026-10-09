@@ -79,7 +79,9 @@ loser.
 
 Neo4j lists hold no nulls and no maps. A missing uri is therefore `""` and a
 missing span is `-1`, and position *i* in every list is the same piece of
-evidence. Reconcilable qualifiers become relationship properties. Anything Neo4j
+evidence. Nor may a list mix a naive clock with an aware one, so when a fact's
+evidence has both, the naive ones are written as UTC, which is how the
+corroborator reads them too. Reconcilable qualifiers become relationship properties. Anything Neo4j
 cannot store (a map, a mixed or nested list) is written as JSON text rather than
 dropped.
 
