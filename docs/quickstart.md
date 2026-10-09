@@ -84,7 +84,19 @@ print([fact.object_entity.label for fact in kg.facts], gate.stats)
 # ['Lyon'] {'accepted': 1, 'refused': {'not_found': 2}}
 ```
 
-Pass `sinks=` to write what is kept:
+`openodke.Validator` does all of this in one call, with resolution and
+corroboration added and a default for every stage
+([The Validator](validator.md)):
+
+```python
+from openodke import Validator
+
+kg, report = Validator(ontology, client=client).validate(rows, [doc])
+print(report.facts_in, report.verdicts, report.calls)
+# 3 {'supported': 1, 'contradicted': 0, 'not_found': 2, 'unchecked': 0} 2
+```
+
+Pass `sinks=` to either to write what is kept:
 [Write to a store](stores.md#choose-a-sink) lists the sinks.
 
 To call a real model, drop `client=` and set the provider's key:
@@ -93,7 +105,8 @@ To call a real model, drop `client=` and set the provider's key:
 ## Your extractor
 
 Each adapter below turns one library's output into rows and texts, without
-importing the library. Hand both to `TriplesExtractor` as above.
+importing the library. Hand both to `TriplesExtractor` or `Validator.validate`
+as above.
 
 **LangChain.** `LLMGraphTransformer` returns `GraphDocument`s.
 `from_graph_documents` reads them, or a JSON file of them. They cite nothing, so
@@ -119,9 +132,25 @@ stands, and `write_verdicts` writes the verdicts onto its relationships.
 
 ## From the command line
 
-<!-- add odke validate when #129 lands -->
-`odke run` runs the same pipeline from a config file, with the triples as its
-extractor: [Inputs: from `odke run`](inputs.md#from-odke-run).
+`odke validate` is the Validator as a command. On the five rows in
+`examples/triples/`, with recorded answers and no key:
+
+```bash
+odke validate --facts examples/triples/triples.jsonl --texts examples/triples/texts \
+  --ontology examples/triples/ontology.json --config examples/triples/odke.yaml -o out
+```
+
+It prints what each step did and writes the graph to `out/` as JSONL.
+
+| Flag | Does |
+|---|---|
+| `--dry-run` | Runs the free checks and the deterministic stages only: no model, no write |
+| `--adapter` | Reads `langchain`, `langextract`, `graphrag` or `neo4j` output instead of `triples` |
+| `--config` | With `--facts`, supplies only the `models` block: here, the recorded answers |
+
+`odke ground` runs the grounding step alone
+([Grounding](grounding.md#a-graph-from-somewhere-else-odke-ground)), and
+`odke run` runs a whole config ([Inputs](inputs.md#from-odke-run)).
 
 ## Next
 

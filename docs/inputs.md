@@ -111,8 +111,9 @@ odke eval spans --facts examples/triples/out
 `odke eval spans` then counts three of the five facts as citing no span: the two
 rows with neither, and the quote that is not in the text.
 
-To check rows without writing a config, `odke ground` takes the file, the texts
-and any adapter: [Grounding](grounding.md#a-graph-from-somewhere-else-odke-ground).
+Without a config, `odke validate` takes the file, the texts and any adapter
+([The Validator](validator.md)), and `odke ground` grounds them alone
+([Grounding](grounding.md#a-graph-from-somewhere-else-odke-ground)).
 
 ## From other libraries
 
