@@ -14,6 +14,35 @@ from openodke import EntityType, Ontology, Predicate
 EXAMPLES = Path(__file__).parent.parent / "examples"
 
 
+@pytest.fixture(autouse=True)
+def every_eval_report_is_sound(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Every `EvalReport` any test builds fits the schema, and its ranges hold its numbers (#139).
+
+    Collected as they are made and checked when the test ends, so a builder
+    that drifts from the schema fails whichever test reached it first.
+    """
+    from openodke.eval.eval_report import EvalReport, check_report
+
+    made: list[EvalReport] = []
+    build = EvalReport.__init__
+
+    def init(self: EvalReport, /, **data: object) -> None:
+        build(self, **data)
+        made.append(self)
+
+    monkeypatch.setattr(EvalReport, "__init__", init)
+    yield
+    for report in made:
+        problems = check_report(report.model_dump(mode="json"))
+        assert not problems, f"{report.title}: {problems}"
+        for row in report.rows:
+            for name in ("precision", "recall", "f1"):
+                found = getattr(row.performance, name)
+                if found.value is not None and found.low is not None:
+                    assert found.high is not None
+                    assert found.low <= found.value <= found.high, (row.name, name, found)
+
+
 @pytest.fixture
 def example(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """`examples/e2e/` inside a copy of `examples/`, so a run writes nowhere in the repository.
