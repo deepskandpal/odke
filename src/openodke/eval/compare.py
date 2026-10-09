@@ -35,7 +35,7 @@ from openodke.eval.stats import (
     Paired,
     f1,
     mcnemar,
-    paired_bootstrap,
+    paired_bootstraps,
     precision,
     recall,
     share,
@@ -191,22 +191,25 @@ def compare_items(
         raise ValueError(f"{primary} needs {needed} on every row of both runs")
 
     notes: list[str] = []
-    results: dict[str, Paired] = {}
+    # Metrics that read the same fields share one set of resamples.
+    by_fields: dict[tuple[str, ...], dict[str, MetricFn]] = {}
     for name in [primary, *(m for m in carried if m != primary)]:
         fields, compute = METRICS[name]
-        try:
-            results[name] = paired_bootstrap(
-                [_value(row, fields) for row in rows_a],
-                [_value(row, fields) for row in rows_b],
-                compute,
-                n=resamples,
-                seed=seed,
-            )
-        except ValueError as exc:
-            if name == primary:
-                raise ValueError(f"{name}: {exc}") from exc
-            notes.append(f"guardrail {name} not compared: {exc}")
+        if name != primary and not _defined(compute, rows_a, rows_b, fields):
+            notes.append(f"guardrail {name} not compared: it is undefined on a run as a whole")
+            continue
+        by_fields.setdefault(fields, {})[name] = compute
+    results: dict[str, Paired] = {}
+    for fields, metrics in by_fields.items():
+        results |= paired_bootstraps(
+            [_value(row, fields) for row in rows_a],
+            [_value(row, fields) for row in rows_b],
+            metrics,
+            n=resamples,
+            seed=seed,
+        )
     main = results.pop(primary)
+    results = {name: results[name] for name in carried if name in results}
 
     exact = None
     if METRICS[primary][0] == ("correct",):
@@ -378,6 +381,16 @@ def _some(ids: Sequence[str], shown: int = 5) -> str:
 
 def _carries(rows: Sequence[ItemRow], fields: Sequence[str]) -> bool:
     return all(getattr(row, f) is not None for row in rows for f in fields)
+
+
+def _defined(
+    compute: MetricFn, a: Sequence[ItemRow], b: Sequence[ItemRow], fields: tuple[str, ...]
+) -> bool:
+    return all(compute(_totals(rows, fields), len(rows)) is not None for rows in (a, b))
+
+
+def _totals(rows: Sequence[ItemRow], fields: Sequence[str]) -> tuple[int, ...]:
+    return tuple(sum(int(getattr(row, f)) for row in rows) for f in fields)
 
 
 def _value(row: ItemRow, fields: Sequence[str]) -> Item:
