@@ -48,6 +48,10 @@ models:
   # Answer a call asked before from this directory (relative to this file), and
   # keep every new answer there, so a rerun costs nothing. Off unless named.
   # cache: .odke-cache
+  # The most the run may spend: usd, calls, input_tokens, output_tokens. A call
+  # past it is refused before it is made, and the run keeps and writes what it
+  # has, then exits 3. Off unless named.
+  # budget: {usd: 1.50, calls: 2000}
 
 # The thirteen stages (DECISIONS #20). Each is a built-in's short name or
 # package.module:Name, with options as extra keys: {use: name, option: value}.

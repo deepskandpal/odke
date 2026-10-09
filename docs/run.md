@@ -12,6 +12,7 @@ left as the pass-through.
 odke run examples/e2e/odke.yaml                          # run it and write the graph
 odke run examples/e2e/odke.yaml --dry-run                # load, extract and ground; print what would be written
 odke run examples/e2e/odke.yaml --model ollama/llama3.1  # every role on one model, whatever the config says
+odke run examples/e2e/odke.yaml --budget-usd 1.50        # stop cleanly before spending more, keeping what is done
 ```
 
 | Exit status | Means |
@@ -19,6 +20,7 @@ odke run examples/e2e/odke.yaml --model ollama/llama3.1  # every role on one mod
 | 0 | the run finished (a dry run included) |
 | 2 | the config cannot run: a bad key, a missing file, a missing extra |
 | 1 | the run failed: a provider error, or a file that could not be read or written |
+| 3 | the run stopped at its [budget](#budgets): what it kept was written, and the report says where it stopped |
 
 A YAML config (`.yaml`, `.yml`) needs the `yaml` extra; the same keys as JSON need
 nothing. [`examples/run.yaml`](https://github.com/deepskandpal/odke/blob/main/examples/run.yaml)
@@ -40,6 +42,7 @@ models:
   replay: {extract: recorded/extract.json, ground: recorded/ground.json}
   meter: true
   cache: .odke-cache               # answer a call asked before from here
+  budget: {usd: 1.50, calls: 2000} # stop cleanly here, keeping what is done
 stages:
   chunker: {use: sentence, max_words: 120}
   extractor: hybrid                # the one required stage
@@ -61,7 +64,7 @@ store_lookup: {use: neo4j, tenant: acme}   # off unless named
 | `ontology` | yes | A JSON or YAML ontology (`.yaml`/`.yml` is read as YAML). Loaded strictly, so a schema with validation errors stops the run before anything is spent. |
 | `inputs` | yes, at least one | Files or directories. A string is a path read by the default loader; a mapping is `{path, loader}`. |
 | `pythonpath` | no | Directories put on `sys.path` before a `package.module:Name` stage is imported. |
-| `models` | no | Which model does which job, recorded responses, the cost meter and the response cache. |
+| `models` | no | Which model does which job, recorded responses, the cost meter, the response cache and the budget. |
 | `stages` | yes | Which implementation fills each of the thirteen stages. Only `extractor` is required. |
 | `bootstrap` | no, default `false` | Apply the ontology's constraints through the sink before the first write. |
 | `coverage` | no, default `true` | Count what extraction left behind in each document, with no model ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)). |
@@ -119,6 +122,9 @@ and it is sent exactly as written, `0` included.
 - **`cache`** names a directory of model answers, so a call asked before is
   answered from it for nothing ([the response cache](models.md#the-response-cache)).
   `--cache DIR` overrides it for one run.
+- **`budget`** is the most the run may spend: `usd`, `calls`, `input_tokens`,
+  `output_tokens`, each optional ([Budgets](#budgets)). `--budget-usd` and
+  `--budget-calls` override it for one run.
 
 ### `stages`
 
@@ -294,18 +300,86 @@ stage:
 | `documents`, `chunks`, `skipped`, `deferred`, `refused` | the pipeline's own counts |
 | `graph` | `facts`, `edges`, `properties`, `entities`, and `links` by kind |
 | `stages.extractor` | `paths` (the hybrid's `PathReport` totals), `rejections` by reason, or `model_calls`; `prompts`, the keys of the [registered prompts](models.md#prompts) the model sent; for `triples`, rows by how their evidence was made (`cited`, `quoted`, `quote_not_found`, `context`), `unmatched_rows` and `ambiguous_rows` |
-| `stages.grounder` | calls, retries, failures, a count per verdict, tokens, `cost_usd`, `prompts`, the span check's own counts, with `locate` the locator's, and with `widen`, under `widen`: `retried`, `recovered` and the retries' own calls, tokens and cost, which `cost` meters as their own row, `ground.widen` |
+| `stages.grounder` | calls, retries, failures, a count per verdict, tokens, `cost_usd`, `prompts`, `unasked` (facts a budget stop reached before their call), the span check's own counts, with `locate` the locator's, and with `widen`, under `widen`: `retried`, `recovered` and the retries' own calls, tokens and cost, which `cost` meters as their own row, `ground.widen` |
 | `stages.corroborator` | `conflicts`: how many facts `won`, `lost` or `tied` a contest |
 | `stages.resolver` | with `store_lookup`: under `store`, entities `looked_up`, store `candidates`, incoming keys `rekeyed` onto a stored one, and links to the store by kind; under `lookup`, the lookup's own counts |
 | `stages.validator` | the gate's `accepted`, and `refused` by reason. The key keeps its 0.2 name ([DECISIONS #26](decisions.md#26)) |
 | `stages.<name>` | anything else a stage reports by carrying a `stats` mapping, your own stages included |
 | `cost` | with `meter: true`: calls, tokens, USD and latency, in total and per role, and `cached_calls`, the calls the response cache answered |
 | `cache` | with `models.cache`: the `directory`, and its `hits`, `misses` and `failed` calls |
+| `spent` | always: `calls` (the cache's `cached_calls` among them), `input_tokens`, `output_tokens`, and `usd`, `None` when any call went unpriced. The `cost` line |
+| `budget` | with `models.budget`: the limits set. The `budget` line, each against what was spent |
+| `stopped` | when the budget stopped the run: the `limit`, the `budget`, what was `spent`, the `stage` it stopped in, the chunks left `unextracted` and the facts left `unchecked`. The `stopped` line, first in the report |
 | `coverage` | with `coverage: true`, the default: totals, the relations never offered and never used, and each document's uncovered sentences and missed entities ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)) |
 | `reextract` | with `reextract`: `windows` asked, facts `returned`, `duplicates`, `kept`, `refused` by grounding, and their `verdicts` |
 
 A `DoubleStageWarning` raised while the pipeline is built is printed as a
 `warning:` line on standard error.
+
+## Budgets
+
+`models: {budget: {usd: 1.50, calls: 2000, input_tokens: …, output_tokens: …}}`,
+or `--budget-usd` and `--budget-calls`, caps what one run may spend; a limit left
+out is no limit. `odke validate` and `odke ground` take the same block from
+`--config` and the same flags. One `Ledger` counts every call the run makes, from
+every stage and every thread, and stops the run cleanly at the first limit
+([DECISIONS #32](decisions.md#32)).
+
+- **Checked before each call**, against an estimate: one call; input tokens as
+  the characters of the messages and the schema over four, rounded up, plus four
+  a message; output tokens as the spec's `max_tokens`; USD as the run's own USD
+  per token so far, over the calls a provider priced, times both. A call that
+  fits beside the calls in flight goes out. One that fits only once they settle
+  waits for them. One that does not fit beside what is already spent stops the
+  run, and neither it nor any call after it is made.
+- **USD with nothing to estimate from**, before the first priced call, is
+  checked after each call instead: the call after the one that reached the
+  limit is refused. A provider that prices nothing, a local server say, never
+  reaches a USD limit, so give such a run `calls` or tokens too.
+- **A call that raised is not counted**, and a cache hit is free: neither
+  touches the budget. A budget stop is never retried.
+- **A stop keeps what the run has.** Every chunk extracted and every fact
+  grounded before it stays; a fact the stop reached first stays `unchecked`
+  and is counted, as is a chunk never extracted. The free checks and the cache
+  still answer after a stop, the deterministic stages run, the sinks write, the
+  report opens with a `stopped` line, and the command exits 3.
+
+Every run report has a `cost` line, metered or not: the calls (and how many the
+cache answered), the tokens, and the USD, or `USD unknown` when any call went
+unpriced. With a budget, a `budget` line sets each limit against what was spent.
+
+```text
+odke run
+stopped       at budget, calls 3 of 3, during ground: 4 facts left unchecked
+documents     2 (2 chunks; 0 skipped, 0 deferred, 0 empty)
+…
+grounder      facts 6, calls 2, prompt_tokens 254, completion_tokens 12, supported 2, unasked 4, …
+…
+cost          3 model calls, 886 tokens, USD unknown
+budget        calls 3 of 3
+wrote         jsonl → …/out: entities.jsonl 3, facts.jsonl 6, links.jsonl 0, manifest.json
+```
+
+From Python, `Ledger(budget).client(inner)` holds any client to a budget, and
+`Pipeline.run` and `Validator.validate` return the partial graph with
+`stats["stopped"]` rather than raising:
+
+```python
+from openodke.llm import Budget, BudgetExceeded, Ledger, Message, ModelSpec, RecordedClient
+
+ledger = Ledger(Budget(calls=2, usd=1.50))
+client = ledger.client(RecordedClient([{"match": "Claim", "response": {"verdict": "supported"}}]))
+ask = [Message(content="Claim: … Passage: …")]
+for _ in range(2):
+    client.complete(ask, spec=ModelSpec(model="ollama/llama3.1"))
+try:
+    client.complete(ask, spec=ModelSpec(model="ollama/llama3.1"))
+except BudgetExceeded as exc:
+    print(exc)
+    assert exc.limit == "calls"
+# stopped at budget: calls 2 of 2; no further model call is made
+assert ledger.spent.calls == 2 and ledger.stopped is not None
+```
 
 ## The default gate: `VerdictGate`
 
