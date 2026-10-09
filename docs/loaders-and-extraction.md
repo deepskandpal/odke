@@ -560,8 +560,11 @@ document's modality, which is the whole argument of the paper's hybrid design:
 What comes back from both paths is merged by `Fact.signature`, keeping the more
 confident fact. For a claim both paths found, that is the pattern extractor's,
 at 1.0. So a birth date read from a table cell and from the sentence above it is
-one candidate, not two. With `llm=None`, prose yields nothing and a mixed
-document gets only the pattern path.
+one candidate, not two. A literal is compared in its canonical form
+(`normalize_value`, held to the predicate's range), so a cell's text `"1999"` or
+`"true"` and the model's typed `1999` or `true` are one claim too; the fact kept
+keeps the value it was read with. With `llm=None`, prose yields nothing and a
+mixed document gets only the pattern path.
 
 The document lookup is required here: routing on modality is the whole job, and a
 guessed modality would either spend model calls on a CSV or skip a page of prose.
