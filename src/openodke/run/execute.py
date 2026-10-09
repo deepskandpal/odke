@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from openodke.corroborate.provenance import CONFLICT
 from openodke.coverage import summary as coverage_summary
+from openodke.reextract import summary as reextract_summary
 from openodke.run.build import Built, build
 from openodke.run.config import STAGES, RunConfig
 from openodke.stages import PlatformProfile, Sink
@@ -260,6 +261,8 @@ def render(result: RunResult) -> str:
     lines.append(_row("refused", str(stats.get("refused", 0))))
     if isinstance(gaps := stats.get("coverage"), Mapping):
         lines.append(_row("coverage", coverage_summary(gaps)))
+    if isinstance(asked := stats.get("reextract"), Mapping):
+        lines.append(_row("reextract", reextract_summary(dict(asked))))
     links = graph.get("links", {})
     lines.append(
         _row(

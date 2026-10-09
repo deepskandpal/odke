@@ -23,6 +23,7 @@ rather than a stage silently left as the pass-through.
       sink: {use: jsonl, directory: out}
     bootstrap: false
     coverage: true                   # what extraction left behind; no model
+    reextract: {windows: 3}          # hand those gaps back; off unless named
 
 A stage is a built-in's short name, or `package.module:Name` for your own, and
 either may take options: `{use: name, option: value, ...}`. A stage left out is
@@ -213,6 +214,16 @@ class StagesConfig(_Strict):
         return value
 
 
+class ReextractConfig(_Strict):
+    """Hand the coverage report's gaps back to the extractor (#102): `reextract:` in a config.
+
+    `true` takes the defaults; a mapping sets `windows`, the most windows asked
+    per document. The extractor stage must have a `reextract` method.
+    """
+
+    windows: int = Field(default=3, ge=1)
+
+
 class RunConfig(_Strict):
     """A whole run: inputs, ontology, models, the thirteen stages, and bootstrap.
 
@@ -234,6 +245,15 @@ class RunConfig(_Strict):
     inverses: bool | None = None
     # Count what extraction left behind in each document (`openodke.coverage`). Free.
     coverage: bool = True
+    # Hand those gaps back to the extractor and ground what returns. Off unless named.
+    reextract: ReextractConfig | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reextract_switch(cls, value: Any) -> Any:
+        if isinstance(value, Mapping) and isinstance(value.get("reextract"), bool):
+            return {**value, "reextract": {} if value["reextract"] else None}
+        return value
 
     _base_dir: Path = PrivateAttr(default_factory=Path.cwd)
 
@@ -320,6 +340,7 @@ _KNOWN_KEYS = sorted(
         *StagesConfig.model_fields,
         *ModelsConfig.model_fields,
         *InputSpec.model_fields,
+        *ReextractConfig.model_fields,
         *ModelSpec.model_fields,
     }
 )
@@ -342,6 +363,7 @@ __all__ = [
     "ConfigError",
     "InputSpec",
     "ModelsConfig",
+    "ReextractConfig",
     "RunConfig",
     "StageSpec",
     "StagesConfig",
