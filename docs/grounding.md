@@ -12,8 +12,8 @@ in this order, and the order is the point:
    support the fact it was attached to.
 
 Both **stamp** `Fact.verdict` (`supported`, `contradicted` or `not_found`), and
-neither drops a fact. The validator is the gate, and because nothing is dropped
-early, the ablation can count what grounding *would* have removed
+neither drops a fact. The gate decides what is written, and because nothing is
+dropped early, the ablation can count what grounding *would* have removed
 ([DECISIONS #20](decisions.md)).
 
 ## The free check: `SpanGrounder`
@@ -188,7 +188,7 @@ claims can be tested as written (see [Benchmarks](benchmarks.md)):
 ```yaml
 stages:
   grounder: {use: llm, context: document, verdicts: binary}
-  validator: {use: verdict, refuse_not_found: true}
+  gate: {use: verdict, refuse_not_found: true}
 ```
 
 `verdicts: binary` sends the paper's own prompt and its
@@ -199,10 +199,10 @@ tell them apart. The free span check still runs first, so a fact whose quote is
 not in the document is settled before any call — the one step of openodke's
 that paper mode keeps.
 
-## Grounding is a stamp; the validator is the gate
+## Grounding is a stamp; the gate decides
 
-The pipeline drops only what a validator refuses. To keep ungrounded facts out of
-the graph, pass a validator that refuses them:
+The pipeline drops only what its gate refuses. To keep ungrounded facts out of
+the graph, pass a gate that refuses them:
 
 ```python
 from openodke import Ontology, Pipeline, ValidationVerdict
@@ -229,7 +229,7 @@ pipeline = Pipeline(
         ModelRoles.single("ollama/qwen2.5:3b"),
         client=ScriptedClient([{"verdict": "supported"}]),
     ),
-    validator=RefuseUngrounded(),
+    gate=RefuseUngrounded(),
 )
 kg = pipeline.run([doc])
 

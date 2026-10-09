@@ -289,12 +289,12 @@ assert report.metrics["brier"] > report.metrics["brier_baseline"]  # worse than 
 
 ## validate
 
-The validator is the gate, so its costly disagreements point in opposite
-directions. `wrongly_refused` is silent data loss. `wrongly_written` puts a fact in
-the graph that should not be there. `conflicts_missed` is a contradiction nobody
-will be asked to look at. Agreement is reported as accuracy and as Cohen's kappa:
-a validator that accepts everything scores a high accuracy on a mostly acceptable
-slice, and a kappa of zero.
+This scores a gate. What it refuses is not written, so its costly disagreements
+point in opposite directions. `wrongly_refused` is silent data loss.
+`wrongly_written` puts a fact in the graph that should not be there.
+`conflicts_missed` is a contradiction nobody will be asked to look at. Agreement
+is reported as accuracy and as Cohen's kappa: a gate that accepts everything
+scores a high accuracy on a mostly acceptable slice, and a kappa of zero.
 
 ## sink
 
@@ -357,7 +357,7 @@ runs one [run config](run.md) three ways against one labelled extraction set:
 1. **extraction alone**: the config's loaders, chunker, router and extractor, with
    every candidate kept.
 2. **+ grounding**: the same candidates through the config's grounder, then its
-   gate, which is the configured validator or `VerdictValidator` when it names none.
+   gate, which is the configured one or `VerdictGate` when it names none.
 3. **+ corroboration**: the whole configured pipeline (normalise, resolve,
    corroborate and score), then the same gate.
 
@@ -440,7 +440,7 @@ odke eval resolve --labels pairs.jsonl --predictions links.jsonl --json
 odke eval route --labels route.jsonl --run mypackage.routers:MarketingRouter
 odke eval extract --labels gold.jsonl --run mypackage.extract:MyExtractor \
     --documents documents.jsonl --ontology schema.json
-odke eval validate --labels verdicts.jsonl --run mypackage.gate:MyValidator --ontology schema.json
+odke eval validate --labels verdicts.jsonl --run mypackage.gate:MyGate --ontology schema.json
 odke eval ablation --config examples/e2e/odke.yaml --labels examples/e2e/gold.jsonl
 odke eval spans --facts out/                        # no labels: width by verdict
 ```

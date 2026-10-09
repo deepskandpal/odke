@@ -47,7 +47,7 @@ stages:
   resolver: native
   corroborator: signature
   scorer: evidence
-  validator: verdict
+  gate: verdict
   sink: {use: jsonl, directory: out}
 bootstrap: false
 ```
@@ -155,7 +155,7 @@ would have to be a Python object, such as a corroborator's `source` callable.
 | `resolver` | `native`, `passthrough`, `delegated` | `NativeResolver` | `threshold`, `nudge_up`, `nudge_down`, `max_block` |
 | `corroborator` | `signature`, `passthrough`, `delegated` | `SignatureCorroborator` | `half_life_days`, `freshness_floor`, `intervals` |
 | `scorer` | `evidence` (the default), `passthrough`, `delegated` | `EvidenceScorer` | `prior`, `verdict_weights` |
-| `validator` | `verdict`, `passthrough`, `delegated` | `VerdictValidator` | `refuse_not_found` |
+| `gate` | `verdict`, `passthrough`, `delegated` | `VerdictGate` | `refuse_not_found` |
 | `sink` | `jsonl`, `neo4j`, `cypher_file`, `neo4j_admin_csv`, `rdf`, `networkx` | the [sinks](sinks.md) | see [below](#sinks) |
 | `constrainer` | `neo4j`, `passthrough`, `delegated` | `Neo4jConstrainer` | — |
 | `inferrer` | `passthrough` only | — | `odke run` never infers ([below](#the-inferrer)) |
@@ -263,17 +263,17 @@ stage:
 | `stages.extractor` | `paths` (the hybrid's `PathReport` totals), `rejections` by reason, or `model_calls`; for `triples`, rows by how their evidence was made (`cited`, `quoted`, `quote_not_found`, `context`), `unmatched_rows` and `ambiguous_rows` |
 | `stages.grounder` | calls, retries, failures, a count per verdict, tokens, `cost_usd`, and the span check's own counts |
 | `stages.corroborator` | `conflicts`: how many facts `won`, `lost` or `tied` a contest |
-| `stages.validator` | `accepted`, and `refused` by reason |
+| `stages.validator` | the gate's `accepted`, and `refused` by reason. The key keeps its 0.2 name ([DECISIONS #26](decisions.md)) |
 | `stages.<name>` | anything else a stage reports by carrying a `stats` mapping, your own stages included |
 | `cost` | with `meter: true`: calls, tokens, USD and latency, in total and per role |
 
 A `DoubleStageWarning` raised while the pipeline is built is printed as a
 `warning:` line on standard error.
 
-## The default gate: `VerdictValidator`
+## The default gate: `VerdictGate`
 
 The grounder stamps a verdict and drops nothing ([DECISIONS #20](decisions.md)), so
-something has to refuse. `validator: verdict` is that something:
+something has to refuse. `gate: verdict` is that something:
 
 - **`contradicted` is always refused.** The cited passage was read, and it says
   something else.
@@ -291,9 +291,9 @@ Whether to refuse `not_found` on your corpus is a measurement:
 kept and lost.
 
 ```python
-from openodke import Entity, Fact, GroundingVerdict, Ontology, VerdictValidator
+from openodke import Entity, Fact, GroundingVerdict, Ontology, VerdictGate
 
-gate = VerdictValidator()
+gate = VerdictGate()
 ada = Entity(key="p:ada", type="Person")
 verdicts = [GroundingVerdict.SUPPORTED, GroundingVerdict.NOT_FOUND, GroundingVerdict.CONTRADICTED]
 actions = [
@@ -305,7 +305,7 @@ actions = [
 assert actions == ["accept", "accept", "refuse"]
 print(gate.stats)
 # {'accepted': 2, 'refused': {'contradicted': 1}}
-assert VerdictValidator(refuse_not_found=True).refused == {
+assert VerdictGate(refuse_not_found=True).refused == {
     GroundingVerdict.CONTRADICTED,
     GroundingVerdict.NOT_FOUND,
 }

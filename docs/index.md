@@ -37,14 +37,14 @@ flowchart LR
     ground --> normalise
   end
   subgraph over_the_batch [over the batch]
-    resolve --> corroborate --> score --> validate
+    resolve --> corroborate --> score --> gate
   end
   load --> chunk
   extract --> ground
   normalise --> resolve
-  validate --> sink
+  gate --> sink
   ontology[(Ontology)] -.-> extract
-  ontology -.-> validate
+  ontology -.-> gate
   ontology -.-> constrain
   constrain -.-> store[(graph store)]
   sink --> store
