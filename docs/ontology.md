@@ -420,8 +420,10 @@ a large graph.
 
 A graph `Neo4jSink` wrote reads back as the shape it wrote: `:Entity` and `:Claim`
 are the sink's labels, not types; the entity fields and provenance properties are
-not predicates or qualifiers; a projected property and the claims behind it are one
-predicate; and the `SAME_AS`, `SIMILAR` and `DIFFERENT` links are not predicates.
+not predicates or qualifiers, and neither are the keys the stages record their work
+under (`odke.name_key`, `odke.conflict`, `odke.score` and the rest of `odke.*`); a
+projected property and the claims behind it are one predicate; and the `SAME_AS`,
+`SIMILAR` and `DIFFERENT` links are not predicates.
 
 What the store cannot say is not invented. Labels have no hierarchy, so there are
 no parents. Edges are `multi`, because how many one node holds is not in the
