@@ -64,6 +64,10 @@
     "adjudication": {
       "description": "Added in 1.1, so not required: the predictions the gold lacks that the grounder supports in enough runs, and each row's precision strict and adjudicated (#145); null when not asked for.",
       "anyOf": [{"type": "null"}, {"$ref": "#/$defs/adjudication"}]
+    },
+    "pooled_recall": {
+      "description": "Added in 1.1, so not required: two or more runs' recall relative to the pool of the supported facts they found, with no gold (#146); null when not asked for.",
+      "anyOf": [{"type": "null"}, {"$ref": "#/$defs/pooled_recall"}]
     }
   },
   "$defs": {
@@ -406,6 +410,31 @@
         "questions": {"$ref": "#/$defs/count"},
         "rows": {"type": "array", "items": {"$ref": "#/$defs/adjudicated_row"}},
         "audit": {"type": ["string", "null"], "description": "Where the list was written, as JSONL."}
+      }
+    },
+    "pool_member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "facts", "supported", "unique", "relative_recall", "coverage"],
+      "properties": {
+        "name": {"type": "string"},
+        "facts": {"$ref": "#/$defs/count"},
+        "supported": {"$ref": "#/$defs/count"},
+        "unique": {"$ref": "#/$defs/count"},
+        "relative_recall": {"$ref": "#/$defs/estimate"},
+        "coverage": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/coverage_totals"}]}
+      }
+    },
+    "pooled_recall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pool", "documents", "runs", "bootstrap", "caveat"],
+      "properties": {
+        "pool": {"$ref": "#/$defs/count"},
+        "documents": {"$ref": "#/$defs/count"},
+        "runs": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/pool_member"}},
+        "bootstrap": {"$ref": "#/$defs/bootstrap"},
+        "caveat": {"type": "string"}
       }
     }
   }

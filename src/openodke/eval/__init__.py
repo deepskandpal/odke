@@ -43,7 +43,10 @@ and a person's labels on a random sample, and corrects the judge's precision
 by prediction-powered inference (`openodke.eval.ppi`). With gold that is
 incomplete, `adjudicate` grounds each prediction the gold lacks three times and
 lists those supported in two as possibly missing from gold, for an adjudicated
-precision beside the strict one (`openodke.eval.adjudication`).
+precision beside the strict one (`openodke.eval.adjudication`). And two or
+more pipelines on the same documents give each one's recall relative to the
+pool of what they found together, which overstates true recall and says so
+(`pool`, `openodke.eval.pooling`).
 """
 
 from openodke.eval.ablation import per_document, report_ablation, run_ablation
@@ -78,6 +81,7 @@ from openodke.eval.formats import (
 )
 from openodke.eval.grounding import evaluate_grounding, grounding_ablation, kept, run_ground
 from openodke.eval.harness import evaluate_pipeline
+from openodke.eval.pooling import pool, report_pool
 from openodke.eval.ppi import judged_precision, report_precision
 from openodke.eval.report import StageReport
 from openodke.eval.resolution import as_triples, evaluate_resolution, links_from_clusters
@@ -149,8 +153,10 @@ __all__ = [
     "mcnemar",
     "paired_bootstrap",
     "per_document",
+    "pool",
     "read_report",
     "report_ablation",
+    "report_pool",
     "report_precision",
     "run_ablation",
     "run_extract",

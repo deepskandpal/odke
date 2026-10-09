@@ -24,7 +24,9 @@ knowing which stage made the report. So an Evaluator run also writes an
 incomplete, each `null` when not asked for: **judged_precision**, a judge's
 precision corrected by a labelled sample (#144, `openodke.eval.ppi`), and
 **adjudication**, the predictions the gold lacks that the grounder supports
-(#145, `openodke.eval.adjudication`).
+(#145, `openodke.eval.adjudication`), and **pooled_recall**, two or more
+pipelines' recall relative to the pool of what they found (#146,
+`openodke.eval.pooling`).
 
 `eval_report.schema.json`, beside this file, is the contract. `check_report`
 holds a report to it in plain Python, with no dependency; every report the
@@ -311,6 +313,43 @@ class Adjudication(Frozen):
     audit: str | None = None
 
 
+# --------------------------------------------------------------------------- #
+# Recall relative to a pool (#146)
+# --------------------------------------------------------------------------- #
+
+
+class PoolMember(Frozen):
+    """One run in a pool: its share of what every run found, and its own coverage.
+
+    `supported` is the run's distinct supported facts, per document, after
+    normalisation; `unique`, those no other run found. `relative_recall` is
+    `supported` over the pool's, with its range.
+    """
+
+    name: str
+    facts: int = Field(ge=0)
+    supported: int = Field(ge=0)
+    unique: int = Field(ge=0)
+    relative_recall: Estimate
+    # The coverage report over the run's facts; None without their documents.
+    coverage: CoverageTotals | None = None
+
+
+class PooledRecall(Frozen):
+    """Recall relative to a pool (#146): two or more runs on the same documents, no gold.
+
+    `pool` is every supported fact any run wrote, per document, once each after
+    normalisation; `documents`, the documents it cites, which are the
+    bootstrap's units. `caveat` says why the numbers overstate true recall.
+    """
+
+    pool: int = Field(ge=0)
+    documents: int = Field(ge=0)
+    runs: tuple[PoolMember, ...]
+    bootstrap: Bootstrap
+    caveat: str
+
+
 class EvalReport(Frozen):
     """One run, scored: the versioned document `odke eval` and `odke bench run` write."""
 
@@ -336,6 +375,8 @@ class EvalReport(Frozen):
     judged_precision: JudgedPrecision | None = None
     # gold that is incomplete, adjudicated by the grounder (#145).
     adjudication: Adjudication | None = None
+    # and recall relative to a pool of pipelines, with no gold (#146).
+    pooled_recall: PooledRecall | None = None
 
     def as_json(self) -> str:
         return self.model_dump_json(indent=2)
@@ -731,6 +772,32 @@ def _without_gold(report: EvalReport) -> list[str]:
         lines += ["", *_judged(report.judged_precision)]
     if report.adjudication is not None:
         lines += ["", *_adjudicated(report.adjudication)]
+    if report.pooled_recall is not None:
+        lines += ["", *_pooled(report.pooled_recall)]
+    return lines
+
+
+def _pooled(section: PooledRecall) -> list[str]:
+    lines = [
+        f"recall relative to a pool  ({_count(len(section.runs), 'run')}, "
+        f"{_count(section.pool, 'supported fact')} pooled over "
+        f"{_count(section.documents, 'document')})"
+    ]
+    body = [
+        [run.name, _estimate(run.relative_recall), str(run.supported), str(run.unique)]
+        for run in section.runs
+    ]
+    lines += _table(["", "relative recall", "supported", "found by no other"], body)
+    lines += [f"  {_ranges(section.bootstrap)}", f"  {section.caveat}"]
+    covered = [run for run in section.runs if run.coverage is not None]
+    if covered:
+        lines.append("  coverage, which needs no pool:")
+        width = max(len(run.name) for run in covered)
+        lines += [
+            f"    {run.name:<{width}}  {_coverage(run.coverage)}"
+            for run in covered
+            if run.coverage is not None
+        ]
     return lines
 
 
@@ -836,6 +903,8 @@ __all__ = [
     "EvalReport",
     "Hallucination",
     "JudgedPrecision",
+    "PoolMember",
+    "PooledRecall",
     "Latency",
     "Performance",
     "Row",
