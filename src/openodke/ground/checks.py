@@ -25,6 +25,7 @@ from typing import Any
 from openodke.corroborate.provenance import CHECK
 from openodke.ground.locate import SpanLocator
 from openodke.ground.span import Counts, SpanGrounder
+from openodke.llm.budget import BudgetExceeded
 from openodke.ontology import Ontology
 from openodke.stages import Grounder
 from openodke.types import Document, Fact, GroundingVerdict
@@ -127,7 +128,11 @@ class CheckedGrounder:
         return self.ground_documents([([fact], doc)])[0][0]
 
     def ground_many(self, facts: Sequence[Fact], doc: Document) -> list[Fact]:
-        return self.ground_documents([(facts, doc)])[0]
+        try:
+            return self.ground_documents([(facts, doc)])[0]
+        except BudgetExceeded as stop:
+            stop.partial = stop.partial[0] if isinstance(stop.partial, list) else None
+            raise
 
     def ground_documents(
         self, batches: Sequence[tuple[Sequence[Fact], Document]]
@@ -145,12 +150,23 @@ class CheckedGrounder:
             ([row[i] for i in keep], doc)
             for row, keep, (_, doc) in zip(out, passed, batches, strict=True)
         ]
-        for row, keep, grounded in zip(out, passed, self._ground(work), strict=True):
+        stop: BudgetExceeded | None = None
+        try:
+            answered = self._ground(work)
+        except BudgetExceeded as exc:
+            # The grounder's batch as far as it got; the rest stays as it came.
+            stop = exc
+            partial = exc.partial
+            answered = partial if isinstance(partial, list) else [facts for facts, _ in work]
+        for row, keep, grounded in zip(out, passed, answered, strict=True):
             for index, fact in zip(keep, grounded, strict=True):
                 row[index] = fact
         for row in out:
             for fact in row:
                 self._verdicts.bump(fact.verdict.value)
+        if stop is not None:
+            stop.partial = out
+            raise stop
         return out
 
     def _check(self, fact: Fact) -> Fact:

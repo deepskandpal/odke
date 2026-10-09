@@ -43,6 +43,7 @@ from openodke.extract._common import (
 from openodke.ground.llm import render_claim
 from openodke.ground.retry import RetryPolicy, call_with_retry
 from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
+from openodke.llm.budget import BudgetExceeded
 from openodke.llm.registry import resolve
 from openodke.llm.roles import ModelRoles
 from openodke.ontology import Ontology, OntologySnippet, Predicate
@@ -447,12 +448,22 @@ class LLMExtractor:
         `rejections` and `malformed` are left in the order chunk-by-chunk
         extraction gives, so a batch reads exactly as a loop would. A failure
         that `extract` would raise is raised here too, and the calls not yet
-        started are dropped rather than paid for. The client must be
-        thread-safe: both built-in clients are; `ScriptedClient` answers by
-        position and is not, which is what `RecordedClient` is for.
+        started are dropped rather than paid for. A budget stop
+        (`BudgetExceeded`) is raised once the chunks in flight are done, with
+        what they found as its `partial`: a list of facts per chunk, None for a
+        chunk the stop reached first. The client must be thread-safe: both
+        built-in clients are; `ScriptedClient` answers by position and is not,
+        which is what `RecordedClient` is for.
         """
         if self.max_workers == 1 or len(chunks) < 2:
-            return [self.extract(chunk, ontology) for chunk in chunks]
+            done: list[list[Fact]] = []
+            for chunk in chunks:
+                try:
+                    done.append(self.extract(chunk, ontology))
+                except BudgetExceeded as stop:
+                    stop.partial = [*done, *([None] * (len(chunks) - len(done)))]
+                    raise
+            return done
         with self._lock:
             marks = len(self.calls), len(self.rejections), len(self.malformed)
         workers = min(self.max_workers, len(chunks))
@@ -461,15 +472,24 @@ class LLMExtractor:
             wait(futures, return_when=FIRST_EXCEPTION)
             if any(f.done() and f.exception() is not None for f in futures):
                 pool.shutdown(cancel_futures=True)
-            # Raises the first failure in chunk order: the pool starts chunks in
-            # order, so none before a failed one can have been cancelled.
-            found = [future.result() for future in futures]
+        failures = [f.exception() for f in futures if not f.cancelled() and f.exception()]
+        # The first failure in chunk order that is not a budget stop: the pool
+        # starts chunks in order, so none before a failed one was cancelled.
+        if other := next((e for e in failures if not isinstance(e, BudgetExceeded)), None):
+            raise other
         order = {(c.doc_id, c.index): i for i, c in enumerate(chunks)}
         with self._lock:
             _in_chunk_order(self.calls, marks[0], order)
             _in_chunk_order(self.rejections, marks[1], order)
             _in_chunk_order(self.malformed, marks[2], order)
-        return found
+        if failures:
+            budget = failures[0]
+            assert isinstance(budget, BudgetExceeded)  # every failure left is one
+            budget.partial = [
+                f.result() if not f.cancelled() and f.exception() is None else None for f in futures
+            ]
+            raise budget
+        return [future.result() for future in futures]
 
     def _complete(
         self, chunk: Chunk, messages: list[Message], schema: dict[str, Any] | None

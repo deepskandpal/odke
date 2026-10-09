@@ -16,6 +16,7 @@ from typing import Any
 from openodke.corroborate.normalize import normalize_value
 from openodke.extract._common import Documents, index_documents
 from openodke.extract.pattern import PatternExtractor
+from openodke.llm.budget import BudgetExceeded
 from openodke.ontology import Ontology
 from openodke.stages import Extractor
 from openodke.types import Chunk, Document, Fact
@@ -135,11 +136,25 @@ class HybridExtractor:
         ]
         prose = [i for i, doc in enumerate(docs) if doc.modality != "structured"]
         model: dict[int, list[Fact]] = {}
+        stop: BudgetExceeded | None = None
         if self.llm is not None and prose:
-            found = self._model(
-                self.llm, [chunks[i] for i in prose], [docs[i] for i in prose], ontology
-            )
-            model = dict(zip(prose, found, strict=True))
+            try:
+                found: list[list[Fact] | None] = list(
+                    self._model(
+                        self.llm, [chunks[i] for i in prose], [docs[i] for i in prose], ontology
+                    )
+                )
+            except BudgetExceeded as exc:
+                # The pattern path's facts cost nothing and stand; the model
+                # path keeps the chunks it finished.
+                stop = exc
+                partial = exc.partial
+                found = (
+                    list(partial)
+                    if isinstance(partial, list) and len(partial) == len(prose)
+                    else [None] * len(prose)
+                )
+            model = {i: facts for i, facts in zip(prose, found, strict=True) if facts is not None}
         out: list[list[Fact]] = []
         for i, report in enumerate(reports):
             report.chunks += 1
@@ -155,6 +170,13 @@ class HybridExtractor:
             kept = merge(candidates, ontology=ontology)
             report.merged += len(candidates) - len(kept)
             out.append(kept)
+        if stop is not None:
+            # A chunk with no path finished is one the stop reached first.
+            stop.partial = [
+                None if pattern[i] is None and i in prose and i not in model else facts
+                for i, facts in enumerate(out)
+            ]
+            raise stop
         return out
 
     def offered(self, ontology: Ontology) -> list[str] | None:
@@ -199,22 +221,30 @@ class HybridExtractor:
         made = calls if isinstance(calls, list) else []
         many = getattr(llm, "extract_many", None)
         if not callable(many):
-            found = []
+            found: list[list[Fact]] = []
             for chunk, doc in zip(chunks, docs, strict=True):
                 seen = len(made)
-                found.append(_run(llm, chunk, doc, ontology))
-                for call in made[seen:]:
-                    self.report[doc.id].count_call(call)
+                try:
+                    found.append(_run(llm, chunk, doc, ontology))
+                except BudgetExceeded as stop:
+                    stop.partial = [*found, *([None] * (len(chunks) - len(found)))]
+                    raise
+                finally:
+                    for call in made[seen:]:
+                        self.report[doc.id].count_call(call)
             return found
         for doc in docs:
             _register(llm, doc)
         seen = len(made)
-        batched = [list(facts) for facts in many(chunks, ontology)]
-        # A batch's calls are told apart by the document each one names.
-        for call in made[seen:]:
-            report = self.report.get(getattr(call, "doc_id", ""))
-            if report is not None:
-                report.count_call(call)
+        try:
+            batched = [list(facts) for facts in many(chunks, ontology)]
+        finally:
+            # A batch's calls are told apart by the document each one names; a
+            # batch a budget stopped still made the calls it made.
+            for call in made[seen:]:
+                report = self.report.get(getattr(call, "doc_id", ""))
+                if report is not None:
+                    report.count_call(call)
         return batched
 
     def totals(self) -> PathReport:
