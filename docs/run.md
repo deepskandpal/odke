@@ -19,7 +19,7 @@ odke run examples/e2e/odke.yaml --budget-usd 1.50        # stop cleanly before s
 |---|---|
 | 0 | the run finished (a dry run included) |
 | 2 | the config cannot run: a bad key, a missing file, a missing extra |
-| 1 | the run failed: a provider error, or a file that could not be read or written |
+| 1 | the run failed: a provider error outside any one document, every document failing, or a file that could not be read or written |
 | 3 | the run stopped at its [budget](#budgets): what it kept was written, and the report says where it stopped |
 
 A YAML config (`.yaml`, `.yml`) needs the `yaml` extra; the same keys as JSON need
@@ -43,6 +43,7 @@ models:
   meter: true
   cache: .odke-cache               # answer a call asked before from here
   budget: {usd: 1.50, calls: 2000} # stop cleanly here, keeping what is done
+  limits: {anthropic: 8}           # calls in flight per provider, every stage
 stages:
   chunker: {use: sentence, max_words: 120}
   extractor: hybrid                # the one required stage
@@ -125,6 +126,8 @@ and it is sent exactly as written, `0` included.
 - **`budget`** is the most the run may spend: `usd`, `calls`, `input_tokens`,
   `output_tokens`, each optional ([Budgets](#budgets)). `--budget-usd` and
   `--budget-calls` override it for one run.
+- **`limits`** caps the calls in flight to each provider it names, across every
+  stage: `{anthropic: 8}` ([Concurrency per provider](models.md#concurrency-per-provider)).
 
 ### `stages`
 
@@ -309,12 +312,27 @@ stage:
 | `cache` | with `models.cache`: the `directory`, and its `hits`, `misses` and `failed` calls |
 | `spent` | always: `calls` (the cache's `cached_calls` among them), `input_tokens`, `output_tokens`, and `usd`, `None` when any call went unpriced. The `cost` line |
 | `budget` | with `models.budget`: the limits set. The `budget` line, each against what was spent |
+| `failed` | the documents left out because something failed for them alone, each with its reason: `extract: ProviderError: …` ([below](#when-one-document-fails)). The `failed` line |
 | `stopped` | when the budget stopped the run: the `limit`, the `budget`, what was `spent`, the `stage` it stopped in, the chunks left `unextracted` and the facts left `unchecked`. The `stopped` line, first in the report |
 | `coverage` | with `coverage: true`, the default: totals, the relations never offered and never used, and each document's uncovered sentences and missed entities ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)) |
 | `reextract` | with `reextract`: `windows` asked, facts `returned`, `duplicates`, `kept`, `refused` by grounding, and their `verdicts` |
 
 A `DoubleStageWarning` raised while the pipeline is built is printed as a
 `warning:` line on standard error.
+
+## When one document fails
+
+A document whose chunking, extraction, grounding or normalising raises is left
+out of the graph whole, named with its reason in `stats["failed"]` and the
+report's `failed` line, and the rest of the batch goes on: a provider error
+that outlasted its retries, or a reply nothing could parse, costs one document,
+not the run. The built-in stages say which document failed, so nothing is
+asked twice; a stage of your own whose batch raises without saying is asked
+again one document at a time. With [the cache](models.md#the-response-cache),
+a rerun pays only for the documents that failed. A configuration error is nobody's document and still stops the
+run: a missing key, a missing provider adapter, a missing extra. So does a
+budget. When every document fails, the cause is almost certainly not in the
+documents, and the command exits 1.
 
 ## Budgets
 

@@ -202,3 +202,36 @@ and all three take `--cache DIR`, which overrides it. The cache answers in front
 of `models.replay` and the provider alike, and a rerun answered entirely from it
 needs no provider adapter and no key. The run report gains a `cache` line, hits
 and misses, and `stats["cache"]`.
+
+## Concurrency per provider
+
+The extractor and the grounder each keep up to `max_workers` calls in flight,
+often against one provider account. `models: {limits: {anthropic: 8}}` caps
+the calls in flight to each provider it names, across every stage and every
+run in the process; `odke validate` and `odke ground` read the same key from
+`--config`.
+
+- **The key is the provider**, the model string's prefix, not the model: a
+  provider counts its rate limit per account, so an `anthropic/…` extractor
+  and an `anthropic/…` grounder share one limit. A provider with no limit is
+  not held back.
+- **The stricter wins.** A stage's own `max_workers` still applies, so a
+  grounder with 4 workers under a limit of 8 keeps 4 in flight.
+- **A `Retry-After` pauses the provider.** When a call fails with one, every
+  call to that provider waits it out, not only the one the retry policy will
+  repeat, capped at 30 seconds. The header is read as the
+  [retry policy](grounding.md) reads it.
+
+From Python, `set_limit(provider, n)` sets the process's limit (`None` lifts
+it), and `LimitedClient(client)` holds a client's calls to it. `odke run` wraps
+every model client this way.
+
+```python
+from openodke.llm import LimitedClient, ProviderLimits, set_limit
+
+limits = ProviderLimits()  # set_limit("ollama", 2) sets the process's own
+limits.set("ollama", 2)
+held = LimitedClient(ScriptedClient(['{"verdict": "supported"}']), limits)
+assert held.complete(ask, spec=ModelSpec(model="ollama/llama3.1")).text
+assert limits.limits == {"ollama": 2}
+```
