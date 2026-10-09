@@ -201,6 +201,74 @@ tell them apart. The free span check still runs first, so a fact whose quote is
 not in the document is settled before any call — the one step of openodke's
 that paper mode keeps.
 
+## Locating spans
+
+Most extractors outside openodke cite nothing, so their facts carry the whole
+text they came from as a `context` span ([Triples](triples.md)), and the model
+reads all of it. `LLMGrounder(locate=True)` first looks for the support for
+free: `SpanLocator` finds the narrowest window of one sentence, or two adjacent
+ones in a paragraph, that names both the subject and the object. The window
+becomes the fact's span, marked `SpanOrigin.LOCATED`, and the model reads it
+instead. With no window nothing changes. A citation is never touched, and a
+quote that is not in the text is still refused by the free check.
+
+A wrong window is worse than none: shown a window that names both and does not
+state the fact, the model refuses a fact the whole text supports. So the match
+is strict:
+
+- a name is the label or an alias, as written or as its name key (`name_key`),
+  in whole words, with case, accents and punctuation ignored. `Ann` is not in
+  `Annapolis`;
+- a capitalised name is found only capitalised, and never inside a longer one:
+  `US` is not `us`, and `Africa` is not in `South Africa`;
+- a literal object is found by its words or, for a date or a quantity, its
+  normalised value: `July 15, 1895` is found as `15 July 1895`;
+- the object must be named apart from the subject's own name. One sentence beats
+  two, then the narrower window wins, then the earlier.
+
+```python
+from openodke import SpanOrigin
+from openodke.ground import locate_span
+from openodke.llm import RecordedClient
+
+text = "Halden Robotics was founded in Leeds in 2014. It opened a second office in Lyon in 2019."
+halden = Document(id="halden", text=text)
+company = Entity(key="Company:halden robotics", type="Company", label="Halden Robotics")
+whole = Evidence(  # what a triple with no citation carries
+    doc_id="halden", span=Span(doc_id="halden", start=0, end=len(text)), span_origin="context"
+)
+
+
+def office_in(city):
+    city = Entity(key=f"City:{city.lower()}", type="City", label=city)
+    return Fact(subject=company, predicate="office_in", object_entity=city, evidence=(whole,))
+
+
+lyon, berlin = office_in("Lyon"), office_in("Berlin")
+print(locate_span(lyon, halden).resolve(halden))
+# Halden Robotics was founded in Leeds in 2014. It opened a second office in Lyon in 2019.
+assert locate_span(berlin, halden) is None  # never named: the model reads the whole text
+
+client = RecordedClient([{"match": "— Lyon (City)", "response": {"verdict": "supported"}}])
+locating = LLMGrounder(ModelRoles.single("ollama/qwen2.5:3b"), client=client, locate=True)
+grounded = locating.ground(lyon, halden)
+assert grounded.evidence[0].span_origin is SpanOrigin.LOCATED
+assert locating.stats["locate"] == {"facts": 1, "located": 1, "not_located": 0}
+```
+
+In `odke run` it is `grounder: {use: llm, locate: true}`. With
+`context: document` the model still reads the whole text, and the window is kept
+for a reader. `odke eval spans` counts located spans apart from citations.
+
+It is off by default, because its verdicts differ from whole-document grounding
+by more than the bench's noise. On the published Re-DocRED runs (PR #105) it
+placed 75% of LLMGraphTransformer's facts and 72% of neo4j-graphrag's, in
+windows with a median of 169 characters against documents of 932–984, and cut
+grounding cost by 38% a fact. Precision against gold and the true facts kept did
+not move. But its verdicts matched the whole-document ones on 93% and 92% of
+those facts, where a second whole-document run matched on 99% and 97%.
+`bench/locator.py` is the measurement, and states the rule.
+
 ## Grounding is a stamp; the gate decides
 
 The pipeline drops only what its gate refuses. To keep ungrounded facts out of

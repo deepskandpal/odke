@@ -49,8 +49,8 @@ Most extractors cite nothing, which is the third row. Their facts can still be
 grounded, but the whole text is not a citation, so its span is marked
 `SpanOrigin.CONTEXT` and `odke eval spans` counts it as *no span of its own*
 rather than as one very wide citation. Grounding a fact against a whole
-document costs more than against a sentence; the [span locator](https://github.com/deepskandpal/odke/issues/112) is what
-will find the sentence for you.
+document costs more than against a sentence; `grounder: {use: llm, locate: true}`
+has the [span locator](grounding.md#locating-spans) find that sentence for free.
 
 ## Types
 
