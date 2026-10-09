@@ -253,6 +253,245 @@ def run_command(
     typer.echo(result.render())
 
 
+# --------------------------------------------------------------------------- #
+# odke ground — a graph from somewhere else
+# --------------------------------------------------------------------------- #
+
+ADAPTERS = ("triples", "langchain", "langextract", "graphrag", "neo4j")
+FACTS_HELP = (
+    "The facts: a triples JSONL file, an adapter's output file, or a Neo4j URI "
+    "(bolt://, neo4j://) for neo4j and graphrag."
+)
+TEXTS_HELP = (
+    "The texts the facts cite: a file or a directory. Triples need them; LangChain, "
+    "LangExtract and neo4j-graphrag output carries its own."
+)
+ADAPTER_HELP = "How to read --facts: triples, langchain, langextract, graphrag or neo4j."
+ONTOLOGY_HELP = (
+    "Ontology JSON or YAML: adds the free checks that the relation is in it and the types fit."
+)
+CONFIG_HELP = (
+    "A file with a `models` block (a run config will do): the model and recorded responses."
+)
+TEXT_PROPERTY_HELP = (
+    "neo4j: the relationship property holding its source text, for a graph openodke did not write."
+)
+DATABASE_HELP = "Neo4j: the database to read."
+USER_HELP = "Neo4j: the user."
+PASSWORD_ENV_HELP = "Neo4j: the environment variable holding the password. Never a flag or a file."
+
+
+class _Store:
+    """How to reach a Neo4j source: the sink's settings, the password from the environment."""
+
+    def __init__(
+        self, *, text_property: str | None, database: str | None, user: str, password_env: str
+    ) -> None:
+        self.text_property = text_property
+        self.database = database
+        self.user = user
+        self.password_env = password_env
+
+    def driver(self, uri: str) -> Any:
+        password = os.environ.get(self.password_env)
+        if password is None:
+            raise ValueError(
+                f"{self.password_env} is not set: the Neo4j password is read from the "
+                "environment variable --password-env names, never from a flag or a file"
+            )
+        from openodke.sinks.neo4j import _connect
+
+        return _connect(uri, (self.user, password))
+
+
+def _read_facts(
+    adapter: str, facts: str, texts: Path | None, store: _Store
+) -> tuple[list[Any], list[Any], Any]:
+    """The rows `--facts` holds, the texts they cite, and the driver if a store was read.
+
+    Raises ValueError for input that does not fit the adapter: a usage error.
+    """
+    from openodke import interop
+    from openodke.loaders import DirectoryLoader
+    from openodke.run import with_path_ids
+
+    if adapter not in ADAPTERS:
+        raise ValueError(f"unknown adapter {adapter!r}; one of {', '.join(ADAPTERS)}")
+    uri = "://" in facts
+    if uri and adapter not in ("neo4j", "graphrag"):
+        raise ValueError(f"{adapter} reads a file; only neo4j and graphrag read a Neo4j URI")
+    if adapter == "neo4j" and not uri:
+        raise ValueError("neo4j reads a store: give its URI as --facts, e.g. bolt://localhost:7687")
+    if adapter in ("langchain", "langextract") and texts is not None:
+        raise ValueError(f"{adapter} output carries its own texts; leave --texts out")
+    if adapter == "graphrag" and uri and texts is not None:
+        raise ValueError("a neo4j-graphrag store holds its own chunks; leave --texts out")
+    if store.text_property is not None and adapter != "neo4j":
+        raise ValueError("--text-property is for the neo4j adapter")
+    docs = with_path_ids(list(DirectoryLoader().load(texts)), Path.cwd()) if texts else []
+    if adapter == "triples":
+        if texts is None:
+            raise ValueError("triples cite texts by name: give them as --texts")
+        return interop.read_triples(facts), docs, None
+    if adapter == "langchain":
+        rows, docs = interop.from_graph_documents(facts)
+        return rows, docs, None
+    if adapter == "langextract":
+        rows, docs = interop.from_langextract(facts)
+        return rows, docs, None
+    if adapter == "graphrag" and not uri:
+        if len(docs) > 1:
+            raise ValueError("graphrag takes one text with --texts: the one the graph came from")
+        rows, docs = interop.from_graphrag(facts, document=docs[0] if docs else None)
+        return rows, docs, None
+    if adapter == "neo4j" and texts is None and store.text_property is None:
+        raise ValueError(
+            "neo4j needs --texts (the documents a graph openodke wrote was built from) "
+            "or --text-property (the relationship property holding each one's text)"
+        )
+    driver = store.driver(facts)
+    try:
+        if adapter == "graphrag":
+            rows, docs = interop.read_graphrag(driver, database=store.database)
+        else:
+            rows, read = interop.read_neo4j(
+                driver,
+                documents=docs,
+                text_property=store.text_property,
+                database=store.database,
+            )
+            # Every text given, not only those matched by id or URI: a row that
+            # names a file by its name still finds it in the extractor.
+            docs = list({doc.id: doc for doc in [*docs, *read]}.values())
+    except BaseException:
+        driver.close()
+        raise
+    return rows, docs, driver
+
+
+def _grounder(config: Path | None, chosen: str | None, *, locate: bool, paper: bool) -> Any:
+    """The model grounder `odke run` would build from these models, or the config's replay."""
+    from openodke.ground import LLMGrounder
+    from openodke.run import ModelsConfig, load_models
+    from openodke.run.build import _replay_client
+
+    models, base = load_models(config) if config is not None else (ModelsConfig(), Path.cwd())
+    if chosen is not None:
+        models = models.with_model(chosen)
+        typer.echo(f"models: grounding on {chosen}")
+    replay = models.replay.get("ground")
+    client = _replay_client(base / replay, "ground") if replay is not None else None
+    mode: dict[str, Any] = {"context": "document", "verdicts": "binary"} if paper else {}
+    return LLMGrounder(models.roles(), client=client, locate=locate, **mode)
+
+
+def _strict_ontology(path: Path) -> Ontology:
+    if path.suffix.lower() in {".yaml", ".yml"}:
+        return Ontology.from_yaml(path)
+    return Ontology.from_json(path)
+
+
+def _echo_warnings(caught: list[warnings.WarningMessage]) -> None:
+    for warning in caught:
+        typer.echo(f"warning: {warning.message}", err=True)
+
+
+@app.command("ground")
+def ground_command(
+    facts: str = typer.Option(..., "--facts", help=FACTS_HELP),
+    out: Path = typer.Option(
+        ..., "--out", "-o", help="Directory to write facts.jsonl and summary.json into."
+    ),
+    texts: Path | None = typer.Option(None, "--texts", help=TEXTS_HELP),
+    adapter: str = typer.Option("triples", "--adapter", help=ADAPTER_HELP),
+    ontology: Path | None = typer.Option(None, "--ontology", help=ONTOLOGY_HELP),
+    config: Path | None = typer.Option(None, "--config", help=CONFIG_HELP),
+    model: str | None = typer.Option(None, "--model", help=MODEL_HELP),
+    model_provider: str | None = typer.Option(None, "--model-provider", help=MODEL_PROVIDER_HELP),
+    locate: bool = typer.Option(
+        False, "--locate", help="Find the sentence naming both ends of a fact that cited nothing."
+    ),
+    paper: bool = typer.Option(
+        False, "--paper", help="ODKE+'s own grounder: the whole document, True or False."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="The free checks and the locator only: no model, no cost."
+    ),
+    text_property: str | None = typer.Option(None, "--text-property", help=TEXT_PROPERTY_HELP),
+    database: str | None = typer.Option(None, "--database", help=DATABASE_HELP),
+    user: str = typer.Option("neo4j", "--user", envvar="NEO4J_USER", help=USER_HELP),
+    password_env: str = typer.Option("NEO4J_PASSWORD", "--password-env", help=PASSWORD_ENV_HELP),
+    write_back: bool = typer.Option(
+        False,
+        "--write-verdicts",
+        help="neo4j: set odke_verdict on each relationship read. Off unless asked.",
+    ),
+) -> None:
+    """Ground a graph openodke did not build, and say what is wrong with it.
+
+    Reads the facts through an adapter and checks each in three steps, cheapest
+    first: the free checks (the mention is in the text; with --ontology, the
+    relation is in it and the types fit its domain and range), the span
+    locator with --locate, then the model. A fact the free checks refuse is
+    never sent to the model, and a dry run sends none.
+
+    Writes the same facts back with their verdicts to OUT/facts.jsonl, and a
+    summary to OUT/summary.json and here: counts per verdict, the facts with no
+    span, the `odke eval spans` width split, and the two ways a fact fails:
+    evidence that does not support it, and a citation too narrow for its claim.
+    Models come from --config's `models` block, as in `odke run`.
+
+    Exit 2 is input that cannot be read, exit 1 a run that failed.
+    """
+    # Imported here so `odke --version` and the ontology commands stay light.
+    from openodke.interop import ground_graph, write_verdicts
+    from openodke.llm.base import ProviderError
+    from openodke.run import ConfigError
+
+    chosen = _qualified(model, model_provider)
+    try:
+        if write_back and adapter != "neo4j":
+            raise ValueError("--write-verdicts writes to the Neo4j graph the neo4j adapter read")
+        if write_back and dry_run:
+            raise ValueError("a dry run asks no model, so it has no verdicts to write back")
+        schema = _strict_ontology(ontology) if ontology is not None else None
+        grounder = None if dry_run else _grounder(config, chosen, locate=locate, paper=paper)
+        store = _Store(
+            text_property=text_property, database=database, user=user, password_env=password_env
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            rows, docs, driver = _read_facts(adapter, facts, texts, store)
+    except (ValueError, ConfigError, OntologyLoadError, ImportError, OSError) as exc:
+        _data_error(exc)
+    except ProviderError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    _echo_warnings(caught)
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            # With a model, the grounder locates; a dry run's free checks do it themselves.
+            grounded = ground_graph(
+                rows, docs, ontology=schema, grounder=grounder, locate=locate and dry_run
+            )
+        _echo_warnings(caught)
+        if write_back:
+            written = write_verdicts(driver, grounded.facts, database=database)
+        paths = grounded.write(out)
+    except (ProviderError, OSError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        if driver is not None:
+            driver.close()
+    typer.echo(grounded.summary.render())
+    typer.echo("")
+    typer.echo(f"wrote {', '.join(str(p) for p in paths)}")
+    if write_back:
+        typer.echo(f"wrote odke_verdict on {_count(written, 'relationship')}")
+
+
 @ontology_app.command("infer")
 def ontology_infer(
     paths: list[Path] = typer.Argument(..., help="Files or directories to infer a schema from."),
