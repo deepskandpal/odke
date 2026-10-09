@@ -21,6 +21,7 @@ from openodke.run.config import (
     StagesConfig,
     StageSpec,
     load_config,
+    load_models,
     parse_config,
 )
 from openodke.run.execute import RunResult, collect_stats, execute, run_built
@@ -41,6 +42,7 @@ __all__ = [
     "collect_stats",
     "execute",
     "load_config",
+    "load_models",
     "parse_config",
     "run_built",
     "with_path_ids",

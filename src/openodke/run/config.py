@@ -301,6 +301,41 @@ def load_config(path: str | Path) -> RunConfig:
     return parse_config(data, base_dir=source.parent, where=str(source))
 
 
+def load_models(path: str | Path) -> tuple[ModelsConfig, Path]:
+    """The `models` block of a config file alone, and the directory its paths resolve from.
+
+    What `odke ground` reads: a file that holds only a `models` block, or a whole
+    run config, whose other keys are left to `odke run`. A key that belongs to
+    neither is an error with a suggestion, as in `load_config`.
+    """
+    source = Path(path)
+    if not source.is_file():
+        raise ConfigError(f"{source}: no such file")
+    text = source.read_text(encoding="utf-8")
+    if source.suffix.lower() in {".yaml", ".yml"}:
+        data = _parse_yaml(text, str(source))
+    else:
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ConfigError(
+                f"{source}: line {exc.lineno} column {exc.colno}: {exc.msg}"
+            ) from None
+    if not isinstance(data, Mapping) or not isinstance(data.get("models"), Mapping):
+        raise ConfigError(f"{source}: no `models` block to read")
+    for key in data:
+        if key not in RunConfig.model_fields:
+            close = difflib.get_close_matches(str(key), list(RunConfig.model_fields), n=1)
+            hint = f" — did you mean {close[0]!r}?" if close else ""
+            raise ConfigError(f"{source}: {key}: unknown key{hint}")
+    try:
+        models = ModelsConfig.model_validate(dict(data["models"]))
+    except ValidationError as exc:
+        problems = tuple(_format({**e, "loc": ("models", *e["loc"])}) for e in exc.errors())
+        raise ConfigError(f"{source}: {problems[0]}", problems=problems) from None
+    return models, source.parent.resolve()
+
+
 def parse_config(data: Any, *, base_dir: str | Path = ".", where: str | None = None) -> RunConfig:
     """A config from an already-parsed mapping, with every problem named by its dotted path."""
     prefix = f"{where}: " if where else ""
@@ -368,5 +403,6 @@ __all__ = [
     "StageSpec",
     "StagesConfig",
     "load_config",
+    "load_models",
     "parse_config",
 ]
