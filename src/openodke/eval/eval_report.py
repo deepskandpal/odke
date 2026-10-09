@@ -632,9 +632,13 @@ def _ranges(how: Bootstrap) -> str:
         else f"{how.level:.1%}"
     )
     return (
-        f"{share} ranges: {how.units} documents resampled {how.resamples} times "
+        f"{share} ranges: {_count(how.units, 'document')} resampled {how.resamples} times "
         f"({how.method} bootstrap, seed {how.seed})"
     )
+
+
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
 
 
 def _provenance(report: EvalReport) -> list[str]:
@@ -643,8 +647,8 @@ def _provenance(report: EvalReport) -> list[str]:
     if run.dataset is not None:
         data = run.dataset
         sizes = [
-            f"{data.labels} labels" if data.labels is not None else "",
-            f"{data.documents} documents" if data.documents is not None else "",
+            _count(data.labels, "label") if data.labels is not None else "",
+            _count(data.documents, "document") if data.documents is not None else "",
         ]
         said = ", ".join(s for s in sizes if s)
         lines.append(f"  dataset  {data.name}" + (f" ({said})" if said else ""))

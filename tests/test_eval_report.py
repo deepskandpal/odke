@@ -132,6 +132,15 @@ def test_a_range_never_excludes_its_number() -> None:
         assert e.low <= e.value <= e.high
 
 
+def test_one_document_is_counted_as_one() -> None:
+    ada = Entity(key="ada", type="Person")
+    gold = [GoldFact(doc_id="d", fact=Fact(subject=ada, predicate="p", object_value=1))]
+    said = [Fact(subject=ada, predicate="p", object_value=1, evidence=(Evidence(doc_id="d"),))]
+    rows, how = extraction_rows([("x", said, None)], gold)
+    text = from_stage(evaluate_extraction(gold, said), rows=rows, bootstrap=how).render()
+    assert "95% ranges: 1 document resampled 1000 times" in text
+
+
 def test_conformance_checks_the_relation_and_both_ends(people: Ontology) -> None:
     ada = Entity(key="ada", type="Person")
     acme = Entity(key="acme", type="Company")
