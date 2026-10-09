@@ -22,13 +22,14 @@ from pathlib import Path
 import pytest
 
 from openodke import Chunk, Document, Entity, Evidence, Fact, Ontology, Polarity
-from openodke.eval import GoldFact, load_jsonl
+from openodke.eval import GoldFact, dump_jsonl, load_jsonl
 from openodke.eval.extraction import (
     evaluate_extraction,
     match_extraction,
     normalise_value,
     run_extract,
 )
+from openodke.eval.runner import evaluate_files
 
 FIXTURES = Path(__file__).parent / "fixtures" / "eval"
 GOLD = load_jsonl(FIXTURES / "extract.labels.jsonl", GoldFact)
@@ -107,6 +108,30 @@ def test_a_prediction_from_an_unlabelled_document_is_not_scored() -> None:
     report = evaluate_extraction(GOLD, [*PREDICTIONS, stray])
     assert report.metrics["spurious"] == 1
     assert any("1 prediction(s) cite only documents" in n for n in report.notes)
+
+
+def test_a_merged_fact_is_scored_in_every_document_it_cites(tmp_path: Path) -> None:
+    """One fact, one recall: `odke eval extract` and the ablation must agree on it.
+
+    Corroboration merged Acme's head office from a.txt and b.txt into one fact
+    citing both; each document states it, so each gold fact is found.
+    """
+    acme = Entity(key="acme", type="Company")
+    hq = Fact(subject=acme, predicate="hq", object_value="Dublin")
+    gold = [GoldFact(doc_id=d, fact=hq) for d in ("a.txt", "b.txt")]
+    merged = hq.model_copy(
+        update={"evidence": (Evidence(doc_id="a.txt"), Evidence(doc_id="b.txt"))}
+    )
+    labels, predictions = tmp_path / "gold.jsonl", tmp_path / "facts.jsonl"
+    dump_jsonl(labels, gold)
+    dump_jsonl(predictions, [merged])
+    report = evaluate_files("extract", labels, predictions)
+    assert (report.metrics["recall"], report.metrics["precision"]) == (1.0, 1.0)
+    outcomes = match_extraction(gold, [merged])
+    assert sorted((o.kind, o.doc_id) for o in outcomes) == [
+        ("correct", "a.txt"),
+        ("correct", "b.txt"),
+    ]
 
 
 def test_a_cited_prediction_does_not_match_gold_in_another_document() -> None:

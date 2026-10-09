@@ -83,15 +83,31 @@ def run_extract(
     ]
 
 
+def per_document(facts: Iterable[Fact]) -> list[Fact]:
+    """Each fact once per document it cites, carrying only that document's evidence."""
+    out: list[Fact] = []
+    for fact in facts:
+        cited = list(dict.fromkeys(e.doc_id for e in fact.evidence))
+        if len(cited) <= 1:
+            out.append(fact)
+            continue
+        for doc_id in cited:
+            evidence = tuple(e for e in fact.evidence if e.doc_id == doc_id)
+            out.append(fact.model_copy(update={"evidence": evidence}))
+    return out
+
+
 def match_extraction(gold: Sequence[GoldFact], predictions: Iterable[Fact]) -> list[Outcome]:
     """Pair predictions with gold facts, document by document.
 
-    A prediction is scored in the first labelled document its evidence cites.
-    One citing none is matched, after every document has been, against the
-    gold facts still unmatched anywhere; one citing only unlabelled documents
-    is not scored. Within a scope, pairings go exact match first, then same
-    subject, then same claim about another subject, each in file order, so
-    the result does not depend on how a dict happened to iterate.
+    A prediction is scored once in each labelled document its evidence cites:
+    a fact corroboration merged across documents claims every one of them
+    states it (`per_document`). One citing none is matched, after every
+    document has been, against the gold facts still unmatched anywhere; one
+    citing only unlabelled documents is not scored. Within a scope, pairings
+    go exact match first, then same subject, then same claim about another
+    subject, each in file order, so the result does not depend on how a dict
+    happened to iterate.
     """
     docs = list(dict.fromkeys(g.doc_id for g in gold))
     gold_by_doc: dict[str, list[Fact]] = {d: [] for d in docs}
@@ -99,7 +115,7 @@ def match_extraction(gold: Sequence[GoldFact], predictions: Iterable[Fact]) -> l
         gold_by_doc[g.doc_id].append(g.fact)
     cited: dict[str, list[Fact]] = {d: [] for d in docs}
     uncited: list[Fact] = []
-    for fact in predictions:
+    for fact in per_document(predictions):
         cites = [e.doc_id for e in fact.evidence]
         if not cites:
             uncited.append(fact)
@@ -129,7 +145,7 @@ def match_extraction(gold: Sequence[GoldFact], predictions: Iterable[Fact]) -> l
 
 def evaluate_extraction(gold: Sequence[GoldFact], predictions: Iterable[Fact]) -> StageReport:
     """Per-predicate P/R/F1 with the four-way error split, and the totals."""
-    predictions = list(predictions)
+    predictions = per_document(predictions)
     labelled = {g.doc_id for g in gold}
     unscored = sum(
         1 for p in predictions if p.evidence and not any(e.doc_id in labelled for e in p.evidence)
@@ -254,5 +270,6 @@ __all__ = [
     "evaluate_extraction",
     "match_extraction",
     "normalise_value",
+    "per_document",
     "run_extract",
 ]

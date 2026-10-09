@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from openodke.eval.cost import CallRecord, StageCost
-from openodke.eval.extraction import evaluate_extraction, match_extraction
+from openodke.eval.extraction import evaluate_extraction, match_extraction, per_document
 from openodke.eval.formats import GoldFact, GroundingLabel
 from openodke.eval.grounding import DROPPED, grounding_ablation
 from openodke.eval.report import Metric, StageReport
@@ -96,20 +96,6 @@ class _Stamped:
 
     def ground(self, fact: Fact, doc: Document) -> Fact:
         return self.by_id.get(fact.id, fact)
-
-
-def per_document(facts: Iterable[Fact]) -> list[Fact]:
-    """Each fact once per document it cites, carrying only that document's evidence."""
-    out: list[Fact] = []
-    for fact in facts:
-        cited = list(dict.fromkeys(e.doc_id for e in fact.evidence))
-        if len(cited) <= 1:
-            out.append(fact)
-            continue
-        for doc_id in cited:
-            evidence = tuple(e for e in fact.evidence if e.doc_id == doc_id)
-            out.append(fact.model_copy(update={"evidence": evidence}))
-    return out
 
 
 @dataclass(frozen=True)
@@ -202,7 +188,7 @@ def run_ablation(config: RunConfig, gold: Sequence[GoldFact]) -> StageReport:
 
     breakdown: dict[str, dict[str, Metric]] = {}
     for name, facts, calls in run.configurations():
-        scored = evaluate_extraction(gold, per_document(facts))
+        scored = evaluate_extraction(gold, facts)
         cost = StageCost.of(name, calls)
         breakdown[name] = {
             **{k: scored.metrics[k] for k in ("precision", "recall", "f1", "tp", "fp", "fn")},
@@ -291,7 +277,7 @@ def _labels(
     """Extracted facts labelled true or false by the extraction gold they were matched to."""
     text = {doc.id: doc.text for doc in docs}
     labels = []
-    for outcome in match_extraction(gold, per_document(candidates)):
+    for outcome in match_extraction(gold, candidates):
         fact = outcome.predicted
         if fact is None:
             continue
