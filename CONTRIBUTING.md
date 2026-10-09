@@ -10,7 +10,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh   # if you don't have uv
 
 Ten steps: credentials, interpreter, lock, lint, format, types, tests, the
 base-install guarantee, the build, and a smoke test of the built wheel in a clean
-environment. CI runs this same script on three interpreters — there is no second
+environment. CI runs this same script on four interpreters — there is no second
 list of steps to drift out of sync with this one.
 
 ## Every change is a pull request

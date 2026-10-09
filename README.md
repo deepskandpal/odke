@@ -166,7 +166,7 @@ missing one is named in the error.
 | `docs` | pypdf, python-docx | The document readers together |
 | `all` | all of the above | |
 
-Python 3.11–3.13.
+Python 3.11–3.14.
 
 ## `odke run`
 
