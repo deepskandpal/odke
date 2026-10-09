@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import json
 from pathlib import Path
 from typing import Any
 
@@ -276,6 +277,24 @@ def test_edge_cases_render_deterministically(markup: str, text: str) -> None:
     doc = _load(markup)
     assert doc.text == text
     _assert_map_is_exact(doc, markup)
+
+
+def test_tags_that_never_close_keep_the_map_linear_in_the_page() -> None:
+    # Legacy markup opens a <font> on every line and closes none, so each nested
+    # in the last and every line's path was longer than the one before: 4,000
+    # lines made a 64 MB map. Past the cap an inline tag is not opened at all.
+    def load(lines: int) -> tuple[str, Document]:
+        markup = "".join(f"<font size=2>line {i}<br>\n" for i in range(lines))
+        return markup, _load(markup)
+
+    markup, doc = load(5_000)
+    assert doc.text == "\n".join(f"line {i}" for i in range(5_000))
+    _assert_map_is_exact(doc, markup)
+    source_map = doc.metadata["source_map"]
+    assert max(unit["path"].count("/") for unit in source_map["units"]) <= 256
+    _, half = load(2_500)
+    grew = len(json.dumps(source_map)) - len(json.dumps(half.metadata["source_map"]))
+    assert grew < 100 * 2_500  # bytes for each line added, not a path as long as the page
 
 
 def test_title_modality_and_sources() -> None:

@@ -34,7 +34,9 @@ Standard library only (`html.parser`), so this runs on the base install. That
 parser does not build a tree the way a browser does. The loader closes what HTML
 lets authors leave open — `p`, `li`, `td`, `tr`, `dt`, `dd` — which keeps paths
 right on ordinary pages; on pathological markup a path is a best effort. The
-offsets are not: they come from the parser's own position in the markup.
+offsets are not: they come from the parser's own position in the markup. Nor is
+the cost: past 256 open elements an inline tag is not opened, so legacy markup
+that opens a `<font>` on every line and closes none stays linear in the page.
 """
 
 from __future__ import annotations
@@ -100,6 +102,13 @@ _IMPLIED: dict[str, tuple[frozenset[str], frozenset[str]]] = {
 }
 _P_SCOPE = _TABLE_SCOPE | {"button", "body"}
 _TABLE_PARTS = frozenset({"table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption"})
+# How deep elements nest before an inline one is no longer opened. Each open
+# element lengthens the path of the text inside it, so tags that never close
+# made every path, and the map, grow with the page: 4,000 lines of
+# `<font size=2>line<br>` took 5.6 s and a 64 MB map.
+_MAX_DEPTH = 256
+# Opened at any depth: they change the layout, hide text, or name the title.
+_ALWAYS_OPENED = _BREAKING | _DROPPED | {"title", "svg"}
 
 
 @dataclass
@@ -131,6 +140,9 @@ class _Renderer(HTMLParser):
         self.main = SourceMapBuilder("html")
         self.sinks = [self.main]
         self.stack = [_Frame("", "", dropped=False)]
+        # Inline tags past `_MAX_DEPTH` left unopened, by name, so that their end
+        # tags close nothing either.
+        self.unopened: dict[str, int] = {}
         self.breaks = 0  # newlines owed before the next text
         self.lead = ""  # markup-free syntax owed before the next text: "- ", "## ", ": "
         # A collapsed run of whitespace owed before the next text: its source
@@ -177,6 +189,11 @@ class _Renderer(HTMLParser):
             or tag in _DROPPED
             or (self.strip_boilerplate and (tag in _BOILERPLATE or role in _BOILERPLATE_ROLES))
         )
+        too_deep = len(self.stack) > _MAX_DEPTH and tag not in _ALWAYS_OPENED
+        if too_deep and (parent.dropped or not dropped):
+            # Its text goes to the element around it, which only shortens a path.
+            self.unopened[tag] = self.unopened.get(tag, 0) + 1
+            return
         frame = _Frame(tag, f"{parent.path}/{tag}[{count}]", dropped)
         self.stack.append(frame)
         if not dropped:
@@ -188,6 +205,9 @@ class _Renderer(HTMLParser):
             self.handle_endtag(tag)
 
     def handle_endtag(self, tag: str) -> None:
+        if self.unopened.get(tag):
+            self.unopened[tag] -= 1
+            return
         if tag == "table":
             boundary = _DROPPED
         else:
