@@ -31,6 +31,7 @@ from openodke.extract._common import (
     ChunkContext,
     Documents,
     PredicateNames,
+    TypeSizes,
     applies,
     best_type,
     index_documents,
@@ -106,6 +107,7 @@ class PatternExtractor:
         self.documents = index_documents(documents)
         self.subject_type = subject_type
         self.confidence = confidence
+        self._sizes = TypeSizes()
 
     def extract(self, chunk: Chunk, ontology: Ontology) -> list[Fact]:
         ctx = ChunkContext(chunk, self.documents.get(chunk.doc_id))
@@ -133,7 +135,9 @@ class PatternExtractor:
             type_name = (
                 mapping.subject_type
                 if mapping
-                else best_type(ontology, [p for p, _, _ in pairs], self.subject_type)
+                else best_type(
+                    ontology, [p for p, _, _ in pairs], self.subject_type, sizes=self._sizes
+                )
             )
             if type_name is None:
                 continue
@@ -200,7 +204,9 @@ class PatternExtractor:
     ) -> list[Fact]:
         text = ctx.chunk.text
         columns = [names.match(text[s:e]) for s, e in _cells(text, *rows[0])]
-        type_name = best_type(ontology, [p for p in columns if p], self.subject_type)
+        type_name = best_type(
+            ontology, [p for p in columns if p], self.subject_type, sizes=self._sizes
+        )
         if type_name is None:
             return []
         keys = key_predicates(ontology, type_name)
@@ -236,7 +242,9 @@ class PatternExtractor:
         text = ctx.chunk.text
         matched = [(names.match(key), s, e) for key, s, e in block]
         found = [(p, s, e) for p, s, e in matched if p is not None]
-        type_name = best_type(ontology, [p for p, _, _ in found], self.subject_type)
+        type_name = best_type(
+            ontology, [p for p, _, _ in found], self.subject_type, sizes=self._sizes
+        )
         if type_name is None:
             return []
         found = [m for m in found if applies(ontology, m[0], type_name)]

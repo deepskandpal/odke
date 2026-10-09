@@ -155,6 +155,49 @@ def test_an_unregistered_structured_chunk_still_reads_its_key_value_lines() -> N
     _assert_faithful(facts, doc)
 
 
+def test_the_ontology_is_scanned_once_to_type_rows_not_once_per_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Person and Scientist both fit `name` and `born`; the tie goes to the type with
+    # fewer predicates, and counting them is a scan of every predicate per type.
+    scans = 0
+    predicates_for = Ontology.predicates_for
+
+    def counted(self: Ontology, type_name: str) -> list[Predicate]:
+        nonlocal scans
+        scans += 1
+        return predicates_for(self, type_name)
+
+    monkeypatch.setattr(Ontology, "predicates_for", counted)
+    docs = CsvLoader().load(b"name,born\nAda Lovelace,1815-12-10\nAlan Turing,1912-06-23\n")
+    extractor = PatternExtractor(documents=docs)
+    first = _facts(extractor, docs[0])
+    after_first = scans
+    second = _facts(extractor, docs[1])
+    assert 0 < after_first <= len(ONTOLOGY.types)
+    assert scans == after_first
+    assert {f.subject.key for f in first + second} == {
+        "Person:ada lovelace",
+        "Person:alan turing",
+    }
+
+
+def test_an_ontology_edited_in_place_is_counted_again() -> None:
+    ontology = Ontology(
+        types={
+            "A": EntityType(name="A", keys=("name",)),
+            "B": EntityType(name="B", keys=("name",)),
+        },
+        predicates={"name": Predicate(name="name", domain=("A", "B"))},
+    )
+    doc = Document(text="Name: Ada\n")
+    extractor = PatternExtractor()
+    # A tie on one predicate each goes to the name; one more on A makes B the tighter fit.
+    assert {f.subject.key for f in extractor.extract(_whole(doc), ontology)} == {"A:ada"}
+    ontology.predicates["rank"] = Predicate(name="rank", domain=("A",))
+    assert {f.subject.key for f in extractor.extract(_whole(doc), ontology)} == {"B:ada"}
+
+
 TABLE = (
     "Intro line.\r\n\r\n## Staff\r\n\r\n"
     "| Full name | DATE-OF-BIRTH | Employer | Notes |\r\n"
