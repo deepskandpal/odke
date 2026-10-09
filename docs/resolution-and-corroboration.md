@@ -56,7 +56,10 @@ qualifier, which is why `` r.`odke.conflict` `` can be queried in the
 
 `ValueNormalizer(ontology=None, *, day_first=None, person_types=())` rewrites
 `object_value` and every qualifier value into one canonical form each, and stamps
-each entity's name comparison key. Without it, "10 December 1815", "1815-12-10"
+each entity's name comparison key. The interval bounds the corroborator reconciles
+(`start_time`, `start`, `end_time`, `end`) are read only as dates, so a bare year
+stays `"2019"` rather than become the number 2019, which no ISO date can be
+ordered against. Without it, "10 December 1815", "1815-12-10"
 and "Dec 10, 1815" are three claims with `support = 1` each, where there is one
 claim with `support = 3`.
 

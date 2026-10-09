@@ -27,6 +27,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from openodke.corroborate.merge import DEFAULT_INTERVALS
 from openodke.corroborate.provenance import NAME_KEY, SOURCE_FORM, source_forms
 from openodke.ontology import Ontology
 from openodke.types import Entity, Fact
@@ -273,6 +274,8 @@ class ValueNormalizer:
     Rewrites `object_value` and every qualifier value, records the original
     spelling of each rewritten one under `qualifiers["odke.source_form"]`, and
     stamps each entity's name comparison key into `attributes["odke.name_key"]`.
+    The interval bounds the corroborator reconciles (`DEFAULT_INTERVALS`:
+    `start_time`, `end_time`, …) are read as dates, so they stay comparable.
     Idempotent: normalising a normalised fact changes nothing.
 
     `ontology` supplies predicate ranges; `person_types` names the entity types
@@ -305,7 +308,10 @@ class ValueNormalizer:
         for key, value in fact.qualifiers.items():
             if key == SOURCE_FORM:
                 continue
-            qualifiers[key] = normalize_value(value, day_first=self.day_first)
+            # An interval bound is a date. Read by shape, "2019" would become the
+            # integer 2019, which the corroborator cannot order against "2018-06".
+            bound = "date" if key in DEFAULT_INTERVALS else None
+            qualifiers[key] = normalize_value(value, range=bound, day_first=self.day_first)
             if _changed(value, qualifiers[key]):
                 _record(forms, key, value)
         if forms:

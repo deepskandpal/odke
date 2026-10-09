@@ -133,6 +133,17 @@ def test_identity_qualifiers_split_and_reconcilable_ones_take_the_interval_union
     }
 
 
+def test_a_bare_year_and_a_month_merge_to_the_earlier_start() -> None:
+    """Normalised as a number, "2019" could not be compared with "2018-06", and was kept."""
+    normalizer = ValueNormalizer()
+    facts = [
+        normalizer.normalize(_fact("Jane Doe", _ev(doc), qualifiers={"start_time": start}))
+        for doc, start in (("d1", "2019"), ("d2", "June 2018"))
+    ]
+    (merged,) = SignatureCorroborator().corroborate(facts)
+    assert merged.qualifiers["start_time"] == "2018-06"
+
+
 def test_a_reconcilable_qualifier_that_is_not_a_bound_takes_the_most_trusted_value() -> None:
     low = _fact("Jane Doe", _ev("d1"), predicate="role", qualifiers={"rank": "normal"})
     high = _fact(
