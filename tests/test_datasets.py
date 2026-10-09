@@ -110,7 +110,13 @@ def test_score_is_the_benchmarks_own_arithmetic() -> None:
     assert m["onto_conf"] == pytest.approx((2 / 3 + 1) / 2)
     assert m["rel_halluc"] == pytest.approx((1 / 3) / 2)
     assert m["triples"] == 3
-    assert m["hallucinated_triples"] >= 1  # "made_up" at least, "2011" and "Japan" are not in it
+    # Hallucination is a substring test on stemmed text, as the benchmark's is:
+    # the subject is in the sentence; "Noriyuki Abe" is, "2011" is not, and
+    # "japan" is inside "japanes", the stem of "Japanese". Sentence 2 has no triples.
+    assert m["sub_halluc"] == 0.0
+    assert m["obj_halluc"] == pytest.approx((1 / 3) / 2)
+    # "2011" (its object) and "made_up" (its relation).
+    assert m["hallucinated_triples"] == 2
 
 
 def test_hallucination_metrics_are_optional() -> None:
