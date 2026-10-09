@@ -1,0 +1,695 @@
+"""The Evaluator's harness: point it at your pipeline, and get the eval report (#138).
+
+Your pipeline is whatever turns documents into triples. The harness runs it
+one of three ways, reads what it returned, and scores that with the same
+arithmetic as every other evaluator here:
+
+- **command**: a shell command template that reads a folder of texts and writes
+  triples, `python my_extract.py {in} {out}`. The template is split the way a
+  shell would split it, `{in}` and `{out}` are put into the words, and the
+  words are run with no shell in between, so a path with a space or a `;` in it
+  is one argument and nothing else. It has a timeout, and a command that exits
+  without writing `{out}` is an error that says so.
+- **callable**: `module:function`, or `path/to/file.py:function`, called with
+  the `Document`s and returning triples rows, `TripleRow`s or `Fact`s.
+- **files**: output already written, `--predictions`.
+
+Output is the triples format (`openodke.interop.triples`), or any adapter's
+format by name (`ADAPTERS`): a LangChain `GraphDocument` dump, LangExtract's
+JSON Lines, a neo4j-graphrag graph. A file of `Fact` rows, such as a sink's
+`facts.jsonl`, is read as facts.
+
+What it is scored against is either your labelled sample (`GoldFact` rows and
+the documents they name) or a set `odke bench prepare` wrote, scored with that
+benchmark's own metrics. With `validator` it also runs `openodke.Validator`
+over the same output (#129), and the report has both rows: the pipeline, and
+the pipeline with the Validator: grounded, normalised, resolved, corroborated
+and gated, with what that cost.
+"""
+
+from __future__ import annotations
+
+import importlib
+import importlib.util
+import json
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+import time
+from collections import Counter
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from pydantic import ValidationError
+
+from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED
+from openodke.eval.cost import CallRecord
+from openodke.eval.eval_report import (
+    Bootstrap,
+    Configuration,
+    Dataset,
+    EvalReport,
+    Run,
+    extraction_rows,
+    models_called,
+)
+from openodke.eval.extraction import evaluate_extraction
+from openodke.eval.formats import GoldFact, load_jsonl
+
+# From the modules, not the package: `openodke.interop` imports `openodke.eval`.
+from openodke.interop.graphrag import from_graphrag
+from openodke.interop.langchain import from_graph_documents
+from openodke.interop.langextract import from_langextract
+from openodke.interop.triples import TripleRow, _file_name, read_triples, to_fact
+from openodke.ontology import Ontology
+from openodke.types import Document, Fact
+
+TITLE = "pipeline"
+PIPELINE, VALIDATOR = "pipeline", "+ validator"
+# Seconds a command may run before it is stopped.
+TIMEOUT = 600.0
+
+# Other libraries' output, read into triples rows and the texts they cite.
+Adapter = Callable[[Path], tuple[list[TripleRow], list[Document]]]
+ADAPTERS: dict[str, Adapter] = {
+    "langchain": from_graph_documents,
+    "langextract": from_langextract,
+    "graphrag": from_graphrag,
+}
+FORMATS = ("triples", *ADAPTERS)
+
+DESCRIPTION = """\
+odke eval pipeline (--cmd TEMPLATE | --run MODULE:FUNCTION | --predictions FILE)
+                   (--labels GOLD_FACTS --documents DOCS | --bench PREPARED)
+                   [--adapter NAME] [--ontology FILE] [--validator [--config RUN_CONFIG]]
+
+Runs your pipeline over the documents and scores what it returns.
+
+--cmd       a command template: {in} is a folder with one <name>.txt per
+            document, {out} the file it must write. Run without a shell, with a
+            --timeout (default 600 s).
+--run       module:function or path/file.py:function, called with the
+            Documents; returns triples rows, TripleRows or Facts.
+--predictions  what it already wrote.
+
+Output is triples JSONL, one row per triple: doc (a document's id, or its
+file name without the suffix), subject, predicate, object, and optionally
+subject_type, object_type, start, end, quote. --adapter langchain,
+langextract or graphrag reads that library's output instead. A file of Fact
+rows (a sink's facts.jsonl) is read as facts.
+
+--labels and --documents: GoldFact rows, and the documents they name (a
+folder, each file named by its path inside it, or Document JSONL).
+--bench: a directory `odke bench prepare` wrote, scored with its metrics.
+
+--validator runs the Validator over the same output and reports both rows:
+with the stages and models of --config (a bench set's own odke.json by
+default), or the Validator's defaults."""
+
+
+class PipelineError(RuntimeError):
+    """The pipeline ran and failed: it exited non-zero, timed out, or wrote nothing."""
+
+
+# --------------------------------------------------------------------------- #
+# What is scored
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class Corpus:
+    """The documents a pipeline reads, and what its output is scored against.
+
+    Exactly one of `gold` (a labelled sample) and `scoring` (a prepared set's
+    own metrics) is set. `files` is the name each document's text gets under
+    `{in}`.
+    """
+
+    documents: list[Document]
+    ontology: Ontology | None
+    dataset: Dataset
+    gold: list[GoldFact] | None = None
+    scoring: Any = None
+    files: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.files:
+            self.files = _file_names(self.documents)
+
+
+def labelled(
+    labels: str | Path, documents: str | Path, ontology: str | Path | Ontology | None = None
+) -> Corpus:
+    """Your labelled sample: `GoldFact` rows, and the documents they name.
+
+    `documents` is a folder, read as `odke run` reads one, each document named
+    by its path inside the folder (`halden.txt`, `2024/report.txt`); or a
+    JSON Lines file of `Document` rows, named by their ids.
+    """
+    gold = load_jsonl(labels, GoldFact)
+    docs = load_documents(documents)
+    known = {doc.id for doc in docs}
+    if missing := sorted({g.doc_id for g in gold} - known):
+        raise ValueError(
+            f"{len(missing)} labelled document(s) are not among the documents: "
+            f"{', '.join(missing[:5])}; a gold fact names a document by its id"
+        )
+    return Corpus(
+        documents=docs,
+        ontology=_ontology(ontology),
+        gold=gold,
+        dataset=Dataset(
+            name=Path(labels).name,
+            path=str(labels),
+            documents=len({g.doc_id for g in gold}),
+            labels=len(gold),
+        ),
+    )
+
+
+def prepared(folder: str | Path) -> Corpus:
+    """A set `odke bench prepare` wrote: its documents, ontology and gold."""
+    root = Path(folder)
+    if not (root / "dataset.json").is_file():
+        raise ValueError(
+            f"{root} has no dataset.json: point --bench at what `odke bench prepare` wrote"
+        )
+    meta = json.loads((root / "dataset.json").read_text(encoding="utf-8"))
+    rows = (root / "gold.jsonl").read_text(encoding="utf-8").splitlines()
+    gold = [json.loads(line) for line in rows if line.strip()]
+    scoring = _bench_module(meta).scoring(gold, meta, path=root)
+    docs = [
+        Document(id=path.stem, text=path.read_text(encoding="utf-8"), uri=path.resolve().as_uri())
+        for path in sorted((root / "docs").glob("*.txt"))
+    ]
+    return Corpus(
+        documents=docs,
+        ontology=_ontology(root / "ontology.json"),
+        scoring=scoring,
+        dataset=scoring.dataset,
+    )
+
+
+def load_documents(source: str | Path) -> list[Document]:
+    """A folder of texts, each named by its path inside it, or `Document` JSONL."""
+    path = Path(source)
+    if path.is_dir():
+        from openodke.loaders import DirectoryLoader
+        from openodke.run.build import with_path_ids
+
+        docs = with_path_ids(list(DirectoryLoader().load(path)), path.resolve())
+        if not docs:
+            raise ValueError(f"{path}: no file in it has a loader")
+        return docs
+    if not path.is_file():
+        raise ValueError(f"{path}: no such folder or file")
+    return load_jsonl(path, Document)
+
+
+# --------------------------------------------------------------------------- #
+# Running the pipeline
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class Output:
+    """What a pipeline returned, before it is read as facts."""
+
+    items: list[Any]
+    # The texts an adapter says its rows came from; matched to the corpus's documents.
+    texts: list[Document] = field(default_factory=list)
+    seconds: float | None = None
+    how: str = ""
+
+
+def run_command(
+    template: str, corpus: Corpus, *, adapter: str = "triples", timeout: float = TIMEOUT
+) -> Output:
+    """Run `template` with `{in}` a folder of the corpus's texts and `{out}` a file to write.
+
+    No shell: the template is split into words first, and the paths go into
+    the words, so they are never parsed. Exit non-zero, a timeout, or no file
+    at `{out}` is a `PipelineError` naming which.
+    """
+    if "{in}" not in template or "{out}" not in template:
+        raise ValueError(
+            "--cmd needs {in} and {out}: the folder of texts it reads and the file it writes, "
+            'e.g. --cmd "python my_extract.py {in} {out}"'
+        )
+    words = shlex.split(template)
+    suffix = ".json" if adapter in ("langchain", "graphrag") else ".jsonl"
+    with tempfile.TemporaryDirectory(prefix="odke-pipeline-") as scratch:
+        inbox, out = Path(scratch) / "in", Path(scratch) / "out" / f"predictions{suffix}"
+        inbox.mkdir()
+        out.parent.mkdir()
+        for doc in corpus.documents:
+            (inbox / corpus.files[doc.id]).write_text(doc.text, encoding="utf-8")
+        argv = [w.replace("{in}", str(inbox)).replace("{out}", str(out)) for w in words]
+        start = time.perf_counter()
+        try:
+            done = subprocess.run(
+                argv, capture_output=True, text=True, timeout=timeout, check=False
+            )
+        except FileNotFoundError:
+            raise PipelineError(f"cannot run {argv[0]!r}: no such program") from None
+        except subprocess.TimeoutExpired:
+            raise PipelineError(
+                f"the command ran past {timeout:g} s and was stopped; raise --timeout"
+            ) from None
+        seconds = time.perf_counter() - start
+        if done.returncode != 0:
+            tail = "\n".join(done.stderr.strip().splitlines()[-5:])
+            raise PipelineError(
+                f"the command exited {done.returncode}" + (f":\n{tail}" if tail else "")
+            )
+        if not out.is_file():
+            raise PipelineError(
+                f"the command exited 0 but wrote nothing at {{out}}; it must write its "
+                f"{adapter} output to the path given as {{out}}"
+            )
+        read = read_output(out, adapter=adapter)
+    read.seconds, read.how = seconds, f"command {template!r}"
+    return read
+
+
+def run_callable(spec: str | Callable[..., Any], corpus: Corpus) -> Output:
+    """Call `spec` with the corpus's `Document`s; it returns rows, `TripleRow`s or `Fact`s."""
+    function = load_callable(spec) if isinstance(spec, str) else spec
+    start = time.perf_counter()
+    returned = function(list(corpus.documents))
+    seconds = time.perf_counter() - start
+    if returned is None or isinstance(returned, str | bytes | Mapping):
+        raise PipelineError(
+            f"{_name(spec)} returned {type(returned).__name__}; it must return rows or facts"
+        )
+    return Output(items=list(returned), seconds=seconds, how=f"callable {_name(spec)}")
+
+
+def read_output(path: str | Path, *, adapter: str = "triples") -> Output:
+    """What a pipeline wrote: triples JSONL, `Fact` JSONL, or an adapter's format."""
+    source = Path(path)
+    if not source.is_file():
+        raise ValueError(f"{source}: no such file")
+    if adapter in ADAPTERS:
+        rows, texts = ADAPTERS[adapter](source)
+        return Output(items=list(rows), texts=list(texts), how=f"{adapter} file {source.name}")
+    if adapter != "triples":
+        raise ValueError(f"unknown adapter {adapter!r}; one of {', '.join(FORMATS)}")
+    first = next((ln for ln in source.read_text(encoding="utf-8").splitlines() if ln.strip()), "")
+    if _is_fact(first):
+        return Output(items=load_jsonl(source, Fact), how=f"facts file {source.name}")
+    return Output(items=read_triples(source), how=f"triples file {source.name}")
+
+
+def load_callable(spec: str) -> Callable[..., Any]:
+    """`package.module:function`, or `path/to/file.py:function`; a class is instantiated."""
+    where, _, name = spec.rpartition(":")
+    if not where or not name:
+        raise ValueError(f"--run takes module:function or path/file.py:function, got {spec!r}")
+    try:
+        if where.endswith(".py"):
+            path = Path(where)
+            if not path.is_file():
+                raise ValueError(f"{path}: no such file")
+            loader = importlib.util.spec_from_file_location(f"odke_pipeline_{path.stem}", path)
+            if loader is None or loader.loader is None:
+                raise ValueError(f"cannot import {path}")
+            module = importlib.util.module_from_spec(loader)
+            sys.modules[loader.name] = module
+            loader.loader.exec_module(module)
+        else:
+            module = importlib.import_module(where)
+        found = getattr(module, name)
+    except (ImportError, AttributeError) as exc:
+        raise ValueError(f"cannot load {spec!r}: {exc}") from exc
+    if isinstance(found, type):
+        found = found()
+    if not callable(found):
+        raise ValueError(f"{spec!r} is not callable")
+    return found
+
+
+# --------------------------------------------------------------------------- #
+# Reading the output as facts
+# --------------------------------------------------------------------------- #
+
+
+def as_facts(output: Output, corpus: Corpus) -> tuple[list[Fact], list[str]]:
+    """The output as facts about the corpus's documents, and notes on what did not fit.
+
+    A row names its document by id, by the name its text had under `{in}`
+    without the suffix, or by its source file's name without the suffix. An
+    adapter's own texts are matched to the documents by id, name, or exact
+    text. A row that names no document is left out and counted.
+    """
+    names = _names(corpus)
+    for text in output.texts:
+        match = names.get(text.id) or _by_uri(names, text) or _by_text(corpus, text)
+        if match is not None:
+            names.setdefault(text.id, match)
+    facts: list[Fact] = []
+    unmatched: Counter[str] = Counter()
+    for item in output.items:
+        if isinstance(item, Fact):
+            facts.append(_recited(item, names))
+            continue
+        try:
+            row = item if isinstance(item, TripleRow) else TripleRow.model_validate(item)
+        except ValidationError as exc:
+            error = exc.errors()[0]
+            where = ".".join(str(part) for part in error["loc"])
+            raise ValueError(
+                f"not a triples row: {where + ': ' if where else ''}{error['msg']}"
+            ) from None
+        doc = names.get(row.doc)
+        if doc is None:
+            unmatched[row.doc] += 1
+            continue
+        facts.append(to_fact(row, doc, corpus.ontology, extractor=TITLE))
+    notes = []
+    if unmatched:
+        named = ", ".join(sorted(unmatched)[:5])
+        notes.append(
+            f"{sum(unmatched.values())} row(s) named no document the pipeline was given and were "
+            f"left out: {named}"
+        )
+    return facts, notes
+
+
+# --------------------------------------------------------------------------- #
+# The check: the Validator over the same output
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class Checked:
+    """The pipeline's facts after the Validator, and what it cost."""
+
+    facts: list[Fact]
+    calls: list[CallRecord]
+    prompts: tuple[str, ...]
+    models: dict[str, str]
+    notes: list[str]
+
+
+def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = None) -> Checked:
+    """`openodke.Validator` over the pipeline's facts and the documents they cite (#129).
+
+    With `config`, the Validator gets that run config's stages, models and
+    recorded responses, as `odke validate --config` builds it; a stage the
+    config leaves out is the Validator's default, not a pass-through. Without
+    one, the Validator's own defaults on the default models. Metered either
+    way, so the row has its calls, tokens, cost and latency.
+    """
+    from openodke.eval.cost import CostMeter
+    from openodke.llm.roles import ModelRoles
+    from openodke.validator import Validator
+
+    if config is not None:
+        from openodke.run.build import build
+        from openodke.run.config import load_config
+
+        loaded = load_config(config)
+        built = build(
+            loaded.model_copy(update={"models": loaded.models.model_copy(update={"meter": True})})
+        )
+        meter = built.context.meter
+        assert meter is not None
+        stage = built.stages
+        validator = Validator(
+            corpus.ontology or built.ontology,
+            grounder=stage["grounder"],
+            roles=built.context.roles,
+            client=built.context.client("ground"),
+            normalizer=stage["normalizer"],
+            resolver=stage["resolver"],
+            corroborator=stage["corroborator"],
+            scorer=stage["scorer"],
+            gate=stage["gate"],
+            inverses=loaded.inverses,
+            coverage=loaded.coverage,
+        )
+        configured = {"ground": built.context.roles.ground.model}
+        source = Path(config).name
+    else:
+        roles = ModelRoles()
+        meter = CostMeter()
+        client = meter.client(roles.client_for("ground"), "ground")
+        validator = Validator(corpus.ontology, roles=roles, client=client)
+        configured = {"ground": roles.ground.model}
+        source = "its defaults"
+    graph, done = validator.validate(list(facts), corpus.documents)
+    verdicts = ", ".join(f"{k} {v}" for k, v in done.verdicts.items())
+    refused = ", ".join(f"{v} {k}" for k, v in done.refused_by.items() if v)
+    notes = [
+        f"{VALIDATOR}: openodke.Validator over the same facts, with {source}: grounded "
+        f"{verdicts}; {done.refused} refused" + (f" ({refused})" if refused else "") + ", "
+        f"{done.merged} merged, {done.linked} linked, {done.derived} derived"
+    ]
+    if done.unmatched:
+        notes.append(f"{VALIDATOR}: {done.unmatched} fact(s) cite no text it was given")
+    return Checked(
+        facts=list(graph.facts),
+        calls=list(meter.records),
+        prompts=done.prompts,
+        models=models_called(meter.records, configured),
+        notes=notes,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Scoring
+# --------------------------------------------------------------------------- #
+
+
+def score(
+    corpus: Corpus,
+    facts: Sequence[Fact],
+    *,
+    checked: Checked | None = None,
+    notes: Sequence[str] = (),
+    resamples: int = RESAMPLES,
+    seed: int = SEED,
+    level: float = LEVEL,
+) -> EvalReport:
+    """The pipeline's facts, and the checked ones when there are, as the eval report."""
+    configurations: list[Configuration] = [(PIPELINE, facts, None)]
+    if checked is not None:
+        configurations.append((VALIDATOR, checked.facts, checked.calls))
+    run = Run(
+        models=checked.models if checked is not None else {},
+        prompts=checked.prompts if checked is not None else (),
+        dataset=corpus.dataset,
+    )
+    lines = [*notes, *(checked.notes if checked is not None else ())]
+    if corpus.gold is not None:
+        rows, how = extraction_rows(
+            configurations,
+            corpus.gold,
+            ontology=corpus.ontology,
+            resamples=resamples,
+            seed=seed,
+            level=level,
+        )
+        stages = tuple(
+            evaluate_extraction(corpus.gold, found).model_copy(update={"stage": name})
+            for name, found, _ in configurations
+        )
+        n = len(corpus.gold)
+    else:
+        from openodke.eval.datasets._common import report, score_configurations
+
+        scoring = corpus.scoring
+        scored = score_configurations(
+            configurations, corpus.documents, scoring, resamples=resamples, seed=seed, level=level
+        )
+        n = int(scoring.dataset.documents or 0)
+        labels = ("pipeline", "validator")[: len(configurations)]
+        stages = (report(scoring.stage, n, scored.table, (), labels=labels),)
+        rows = scored.rows
+        how = Bootstrap(units=n, resamples=resamples, seed=seed, level=level)
+    return EvalReport(
+        title=TITLE,
+        n=n,
+        run=run,
+        bootstrap=how,
+        rows=tuple(rows),
+        stages=stages,
+        notes=tuple(lines),
+    )
+
+
+def evaluate_pipeline(
+    *,
+    command: str | None = None,
+    function: str | Callable[..., Any] | None = None,
+    predictions: str | Path | None = None,
+    adapter: str = "triples",
+    labels: str | Path | None = None,
+    documents: str | Path | None = None,
+    bench: str | Path | None = None,
+    ontology: str | Path | None = None,
+    validator: bool = False,
+    config: str | Path | None = None,
+    timeout: float = TIMEOUT,
+) -> EvalReport:
+    """Run a pipeline one way, read its output, validate it if asked, and score it.
+
+    One of `command`, `function` and `predictions`; one of `labels` (with
+    `documents`) and `bench`. `validator` runs `openodke.Validator` over the
+    same output and adds its row; `config` is the run config it takes its
+    stages and models from, a bench set's own `odke.json` by default.
+    """
+    modes = [m for m in (command, function, predictions) if m is not None]
+    if len(modes) != 1:
+        raise ValueError("pipeline takes exactly one of --cmd, --run and --predictions")
+    if (labels is None) == (bench is None):
+        raise ValueError(
+            "pipeline scores against --labels (with --documents) or --bench, one of them"
+        )
+    if adapter not in FORMATS:
+        raise ValueError(f"unknown adapter {adapter!r}; one of {', '.join(FORMATS)}")
+    if function is not None and adapter != "triples":
+        raise ValueError("--adapter reads files; a callable returns rows or facts itself")
+    if config is not None and not validator:
+        raise ValueError("--config is for --validator: the Validator's stages and models")
+    if labels is not None:
+        if documents is None:
+            raise ValueError("--labels needs --documents: the texts the pipeline reads")
+        corpus = labelled(labels, documents, ontology)
+    else:
+        assert bench is not None
+        corpus = prepared(bench)
+        if ontology is not None:
+            corpus.ontology = _ontology(ontology)
+        if validator and config is None:
+            config = Path(bench) / "odke.json"
+    if command is not None:
+        output = run_command(command, corpus, adapter=adapter, timeout=timeout)
+    elif function is not None:
+        output = run_callable(function, corpus)
+    else:
+        assert predictions is not None
+        output = read_output(predictions, adapter=adapter)
+    facts, notes = as_facts(output, corpus)
+    ran = f" in {output.seconds:.1f} s" if output.seconds is not None else ""
+    notes.insert(0, f"{output.how}: {len(output.items)} row(s){ran}, {len(facts)} fact(s)")
+    checked = check(facts, corpus, config) if validator else None
+    return score(corpus, facts, checked=checked, notes=notes)
+
+
+# --------------------------------------------------------------------------- #
+# Helpers
+# --------------------------------------------------------------------------- #
+
+
+def _file_names(documents: Sequence[Document]) -> dict[str, str]:
+    """A distinct, safe `<name>.txt` for each document under `{in}`."""
+    out: dict[str, str] = {}
+    taken: set[str] = set()
+    for doc in documents:
+        stem = re.sub(r"[^\w.-]+", "_", doc.id.removesuffix(".txt")).strip("._") or "document"
+        name, n = stem, 1
+        while name.casefold() in taken:
+            n += 1
+            name = f"{stem}~{n}"
+        taken.add(name.casefold())
+        out[doc.id] = f"{name}.txt"
+    return out
+
+
+def _names(corpus: Corpus) -> dict[str, Document]:
+    """Every name a row may give a document: its id, its name under `{in}`, its file's stem."""
+    names: dict[str, Document] = {doc.id: doc for doc in corpus.documents}
+    for doc in corpus.documents:
+        names.setdefault(Path(corpus.files[doc.id]).stem, doc)
+    stems = Counter(stem for doc in corpus.documents if (stem := _stem(doc)) is not None)
+    for doc in corpus.documents:
+        stem = _stem(doc)
+        if stem is not None and stems[stem] == 1:
+            names.setdefault(stem, doc)
+    return names
+
+
+def _stem(doc: Document) -> str | None:
+    return _file_name(doc)
+
+
+def _by_uri(names: Mapping[str, Document], text: Document) -> Document | None:
+    stem = _stem(text)
+    return names.get(stem) if stem is not None else None
+
+
+def _by_text(corpus: Corpus, text: Document) -> Document | None:
+    same = [doc for doc in corpus.documents if doc.text == text.text]
+    return same[0] if len(same) == 1 else None
+
+
+def _recited(fact: Fact, names: Mapping[str, Document]) -> Fact:
+    """A fact whose evidence names a document by another of its names, renamed to its id."""
+    evidence = []
+    for e in fact.evidence:
+        doc = names.get(e.doc_id)
+        if doc is None or doc.id == e.doc_id:
+            evidence.append(e)
+            continue
+        span = e.span.model_copy(update={"doc_id": doc.id}) if e.span is not None else None
+        evidence.append(e.model_copy(update={"doc_id": doc.id, "span": span}))
+    return fact.model_copy(update={"evidence": tuple(evidence)})
+
+
+def _is_fact(line: str) -> bool:
+    try:
+        row = json.loads(line)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(row, dict) and isinstance(row.get("subject"), dict)
+
+
+def _ontology(source: str | Path | Ontology | None) -> Ontology | None:
+    if source is None or isinstance(source, Ontology):
+        return source
+    path = Path(source)
+    if path.suffix.lower() in {".yaml", ".yml"}:
+        return Ontology.from_yaml(path)
+    return Ontology.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def _bench_module(meta: Mapping[str, Any]) -> Any:
+    from openodke.eval.datasets import DATASETS
+
+    name = meta.get("dataset")
+    if name not in DATASETS:
+        raise ValueError(f"dataset.json names {name!r}; one of {', '.join(DATASETS)}")
+    return DATASETS[name]
+
+
+def _name(spec: Any) -> str:
+    return spec if isinstance(spec, str) else getattr(spec, "__qualname__", repr(spec))
+
+
+__all__ = [
+    "ADAPTERS",
+    "DESCRIPTION",
+    "FORMATS",
+    "TIMEOUT",
+    "Checked",
+    "Corpus",
+    "Output",
+    "PipelineError",
+    "as_facts",
+    "check",
+    "evaluate_pipeline",
+    "labelled",
+    "load_callable",
+    "load_documents",
+    "prepared",
+    "read_output",
+    "run_callable",
+    "run_command",
+    "score",
+]
