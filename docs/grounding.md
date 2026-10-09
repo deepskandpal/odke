@@ -163,6 +163,8 @@ Transient errors are retried under a `RetryPolicy` (`openodke.ground.RetryPolicy
 - `prompt_tokens` and `completion_tokens`
 - `cost_usd`, which stays `None` until a provider reports a cost, rather than a
   misleading `0.0`
+- `prompts`, the key of the [registered prompt](models.md#prompts) the calls
+  sent, such as `ground.span@1`; empty when no call was made
 - the span check's own counts, under `span`
 
 ### Batching
