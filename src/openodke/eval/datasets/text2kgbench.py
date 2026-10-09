@@ -343,6 +343,9 @@ def run(prepared: str | Path, *, hallucination: bool = True) -> StageReport:
     """
     from openodke.run.config import load_config
 
+    if hallucination:
+        # Scoring needs NLTK; without it, say so before the models are paid, not after.
+        _Stems()
     folder = Path(prepared)
     meta = json.loads((folder / "dataset.json").read_text(encoding="utf-8"))
     gold = read_jsonl(folder / "gold.jsonl")
