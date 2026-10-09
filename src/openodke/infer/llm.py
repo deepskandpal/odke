@@ -36,41 +36,20 @@ from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
 from openodke.llm.registry import resolve
 from openodke.llm.roles import ModelRoles
 from openodke.ontology import _JSON_TYPES, Cardinality
+from openodke.prompts import get as get_prompt
 from openodke.types import Chunk, Span
 
 # One prompt on a small local model: ~4,000 tokens of passages.
 DEFAULT_PROMPT_WORDS = 3_000
 LITERAL_RANGES = tuple(sorted(_JSON_TYPES))
 
-_INSTRUCTIONS = """\
-You are drafting a small ontology for a corpus. Deterministic tools have read a \
-sample of it and proposed the candidate entity types and properties in the user \
-message, each with the number of documents that support it and the tool that \
-found it. Your job is to name, merge and rank those candidates, not to invent a \
-schema of your own.
-
-- Name each type in singular PascalCase and each property in snake_case, choosing \
-the name a reader of these documents would expect.
-- Merge candidates that mean the same thing into one entry, and list every \
-candidate it covers, by the name shown, in "from". A candidate you rename goes in \
-"from" too.
-- A property's "domain" lists the types it describes. Its "range" is one of the \
-types you return, or one of: {literals}.
-- Return at most {max_types} types. List types and properties most important first.
-- Propose something no candidate covers only when a passage states it, and give \
-"quote": words of that passage, copied exactly. An entry with neither "from" nor \
-a quote that is in the passages is discarded.
-- Candidates you leave out are kept as found, for a person to review.
-
-Reply with one JSON object and nothing else, in this shape:
-{"types": [{"name": "...", "description": "...", "parents": [], "from": []}], \
-"predicates": [{"name": "...", "description": "...", "domain": ["..."], \
-"range": "...", "cardinality": "single", "from": []}]}"""
-
-_REPAIR = (
-    'That reply was not a JSON object with "types" and "predicates" arrays. Reply '
-    "again with only that object, following the same rules."
-)
+# Registered prompts (DECISIONS #27): the instructions, a template whose
+# `{literals}` and `{max_types}` are filled per run, and the repair turn.
+_PROMPT = get_prompt("infer")
+_REPAIR_PROMPT = get_prompt("infer.repair")
+# The texts under their old names, for anything that imports them.
+_INSTRUCTIONS = _PROMPT.text
+_REPAIR = _REPAIR_PROMPT.text
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 
