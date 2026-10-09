@@ -252,7 +252,7 @@ domain on purpose: data minted under it is visibly unplaced. Pass your own.
 | `Fact` | a **reified statement** `<base>fact/<signature>`: an `rdf:Statement` and `odke:Fact` with `rdf:subject`, `rdf:predicate` and `rdf:object`, carrying `odke:polarity`, `odke:confidence`, `odke:support`, both clocks, `odke:identity_keys`, its qualifiers under `<schema>qualifier/`, and one `odke:evidence` node per source with `odke:doc_id`, `odke:uri`, `odke:start`, `odke:end`, `odke:quote`, `odke:tier` and `odke:retrieved_at` |
 | the plain triple `<s> <schema><predicate> <o>` | written **only** for an asserted fact with no identity-bearing qualifier that the corroborator did not vote down: the same rule that decides the Neo4j projection |
 | `EntityLink` | `owl:sameAs`, `odke:similar_to` or `odke:different_from` between the two entity IRIs, reified the same way so `odke:score`, `odke:reason` and `odke:created_at` can be read |
-| the ontology, when given | `owl:Class` with `rdfs:subClassOf` and `owl:hasKey`; `owl:ObjectProperty` or `owl:DatatypeProperty` with domain, range and `owl:FunctionalProperty` for `single` |
+| the ontology, when given | `owl:Class` with `rdfs:subClassOf` and `owl:hasKey`; `owl:ObjectProperty` or `owl:DatatypeProperty` with domain, range and `owl:FunctionalProperty` for `single`; and each literal value typed with its predicate's range (`"1815-12-10"^^xsd:date`) when its text is a valid form of that type |
 
 `odke:` is `https://openodke.dev/vocab#`. The statement node plays
 the part the relationship plays in Neo4j and carries the same property names, so one
