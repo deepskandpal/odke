@@ -82,8 +82,40 @@ def applies(ontology: Ontology, predicate: Predicate, type_name: str) -> bool:
     return not predicate.domain or any(d in lineage for d in predicate.domain)
 
 
+class TypeSizes:
+    """How many predicates each type carries: `best_type`'s tie-break, kept between rows.
+
+    Counting is a scan of every predicate for every type: most of a second on
+    800 types and 1,400 predicates. The pattern extractor types every row, so a
+    10,000-row file spent two hours counting the same thing. The counts are
+    kept, and redone only when the types' parents or the predicates' domains
+    differ from last time: `Ontology` is mutable, so the same object says
+    nothing about an edit made in place.
+    """
+
+    def __init__(self) -> None:
+        self._kept: tuple[tuple[Any, ...], dict[str, int]] | None = None
+
+    def __call__(self, ontology: Ontology) -> dict[str, int]:
+        shape = (
+            tuple((name, t.parents) for name, t in ontology.types.items()),
+            tuple(p.domain for p in ontology.predicates.values()),
+        )
+        kept = self._kept
+        if kept is None or kept[0] != shape:
+            kept = self._kept = (
+                shape,
+                {name: len(ontology.predicates_for(name)) for name in ontology.types},
+            )
+        return kept[1]
+
+
 def best_type(
-    ontology: Ontology, predicates: Iterable[Predicate], preferred: str | None = None
+    ontology: Ontology,
+    predicates: Iterable[Predicate],
+    preferred: str | None = None,
+    *,
+    sizes: TypeSizes,
 ) -> str | None:
     """The entity type a group of predicates most plausibly describes.
 
@@ -96,11 +128,14 @@ def best_type(
     if preferred is not None:
         return preferred
     voting = [p for p in predicates if p.domain]
+    if not voting:
+        return None
+    size = sizes(ontology)
     best: tuple[int, int, str] | None = None
     for type_name in ontology.types:
         votes = sum(applies(ontology, p, type_name) for p in voting)
         if votes:
-            rank = (-votes, len(ontology.predicates_for(type_name)), type_name)
+            rank = (-votes, size[type_name], type_name)
             best = rank if best is None or rank < best else best
     return None if best is None else best[2]
 
