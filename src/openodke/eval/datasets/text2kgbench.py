@@ -32,22 +32,18 @@ from pathlib import Path
 from typing import Any
 
 from openodke.eval.ablation import AblationRun, ablate
+from openodke.eval.datasets import _common
 from openodke.eval.datasets._common import (
     LITERALS,
     Opener,
     Triple,
     change,
     check_out,
-    doc_names,
     download,
     pascal,
     read_jsonl,
-    report,
     run_config,
-    save_predictions,
     snake,
-    triples_by_doc,
-    verdicts,
     write_documents,
     write_json,
     write_jsonl,
@@ -367,35 +363,30 @@ def score_run(
     save_to: Path | None = None,
 ) -> StageReport:
     """Score an `AblationRun` already made — `run` without the model calls."""
-    labels: Mapping[str, str] = meta["relation_labels"]
-    names = doc_names(ablation.documents)
-    rows = []
-    scored: dict[str, dict[str, Metric]] = {}
-    predictions = {}
-    for name, facts, calls in ablation.configurations():
-        predicted = triples_by_doc(facts, names, lambda p: labels.get(p, p))
-        predictions[name] = predicted
-        metrics = score(gold, predicted, meta["ontology"], hallucination=hallucination)
-        scored[name] = metrics
-        rows.append((name, metrics, calls, len(facts)))
-    if save_to is not None:
-        save_predictions(save_to, predictions)
-    return report(f"{NAME}:{meta['ontology_id']}", len(gold), rows, _notes(scored, ablation))
+    return _common.score_run(
+        ablation,
+        gold,
+        meta,
+        stage=f"{NAME}:{meta['ontology_id']}",
+        score=lambda predicted: score(
+            gold, predicted, meta["ontology"], hallucination=hallucination
+        ),
+        notes=_notes,
+        save_to=save_to,
+    )
 
 
-def _notes(scored: Mapping[str, Mapping[str, Metric]], ablation: AblationRun) -> list[str]:
-    names = [name for name, _, _ in ablation.configurations()]
-    raw, gated, full = (scored[n] for n in names)
+def _notes(
+    raw: Mapping[str, Metric], gated: Mapping[str, Metric], full: Mapping[str, Metric]
+) -> list[str]:
     before, after = _n(raw["hallucinated_triples"]), _n(gated["hallucinated_triples"])
-    notes = [
+    return [
         "hallucinated triples (subject or object not in the sentence, or relation not in "
         f"the ontology): {before:.0f} extracted, {after:.0f} after the gate — "
         f"{change(before, after)} (ODKE+ reports -35%)",
         f"precision: {_pct(raw['precision'])} extracted, {_pct(gated['precision'])} after the gate,"
         f" {_pct(full['precision'])} after corroboration (ODKE+ reports 91% raw, 98.8% ranked)",
     ]
-    notes.append(f"grounder verdicts on the candidates: {verdicts(ablation.grounded)}")
-    return notes + list(ablation.notes)
 
 
 def _n(value: Metric) -> float:

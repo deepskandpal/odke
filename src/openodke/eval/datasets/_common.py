@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from openodke.eval.ablation import AblationRun
 from openodke.eval.cost import StageCost
 from openodke.eval.report import Metric, StageReport
 from openodke.types import Document, Fact
@@ -229,6 +230,42 @@ def report(
         for key in ("precision", "recall", "f1"):
             summary[f"{key}_{label}"] = breakdown[name].get(key)
     return StageReport(stage=stage, n=n, metrics=summary, breakdown=breakdown, notes=tuple(notes))
+
+
+def score_run(
+    ablation: AblationRun,
+    gold: Sequence[Mapping[str, Any]],
+    meta: Mapping[str, Any],
+    *,
+    stage: str,
+    score: Callable[[Mapping[str, Sequence[Triple]]], dict[str, Metric]],
+    notes: Callable[[Mapping[str, Metric], Mapping[str, Metric], Mapping[str, Metric]], list[str]],
+    save_to: Path | None = None,
+) -> StageReport:
+    """Each configuration of an `AblationRun` scored with a dataset's own metrics.
+
+    `score` takes one configuration's triples by document. `notes` takes the
+    three rows' metrics — extracted, after the gate, after corroboration — and
+    writes the dataset's lines beside the paper's numbers; the grounder's
+    verdicts and the run's own notes follow them.
+    """
+    labels: Mapping[str, str] = meta["relation_labels"]
+    names = doc_names(ablation.documents)
+    rows = []
+    predictions = {}
+    for name, facts, calls in ablation.configurations():
+        predicted = triples_by_doc(facts, names, lambda p: labels.get(p, p))
+        predictions[name] = predicted
+        rows.append((name, score(predicted), calls, len(facts)))
+    if save_to is not None:
+        save_predictions(save_to, predictions)
+    raw, gated, full = (metrics for _, metrics, _, _ in rows)
+    lines = [
+        *notes(raw, gated, full),
+        f"grounder verdicts on the candidates: {verdicts(ablation.grounded)}",
+        *ablation.notes,
+    ]
+    return report(stage, len(gold), rows, lines)
 
 
 def verdicts(facts: Iterable[Fact]) -> str:
