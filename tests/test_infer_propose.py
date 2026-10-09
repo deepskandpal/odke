@@ -77,6 +77,19 @@ def _predicate(found: Proposals, name: str, domain: str) -> PredicateCandidate:
         ("addresses", "Address"),
         ("status", "Status"),
         ("ProgrammingLanguage", "ProgrammingLanguage"),
+        # "-es" comes off after a hissing sound; a noun that ends in "e" loses only the "s".
+        ("prizes", "Prize"),
+        ("sizes", "Size"),
+        ("caches", "Cache"),
+        ("headaches", "Headache"),
+        ("matches", "Match"),
+        ("churches", "Church"),
+        ("coaches", "Coach"),
+        ("beaches", "Beach"),
+        ("boxes", "Box"),
+        ("classes", "Class"),
+        ("buzzes", "Buzz"),
+        ("waltzes", "Waltz"),
     ],
 )
 def test_type_names_are_singular_pascal_case(phrase: str, expected: str) -> None:

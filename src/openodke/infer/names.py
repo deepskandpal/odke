@@ -73,7 +73,12 @@ def singular(word: str) -> str:
         return w
     if w.endswith("ies"):
         return w[:-3] + "y"
-    if w.endswith(("sses", "ches", "shes", "xes", "zes")):
+    # "-aches" is a noun in "-ache" (caches, headaches) unless the "ach" follows
+    # "e" or "o" (beaches, coaches). A single "z" is almost always "-ze" (sizes,
+    # prizes); "-zz" and "-tz" take "-es" (buzzes, waltzes).
+    if w.endswith("aches") and not w.endswith(("eaches", "oaches")):
+        return w[:-1]
+    if w.endswith(("sses", "ches", "shes", "xes", "zzes", "tzes")):
         return w[:-2]
     if w.endswith("s"):
         return w[:-1]
