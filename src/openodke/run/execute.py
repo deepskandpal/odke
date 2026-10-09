@@ -186,6 +186,8 @@ def _extractor_stats(extractor: Any) -> dict[str, Any]:
         out["paths"] = jsonable(totals())
     rejections: Counter[str] = Counter()
     calls = 0
+    # Keys of the registered prompts the model path sent (DECISIONS #27).
+    prompts: dict[str, None] = {}
     for source in (extractor, getattr(extractor, "llm", None)):
         found = getattr(source, "rejections", None)
         if isinstance(found, list):
@@ -193,10 +195,15 @@ def _extractor_stats(extractor: Any) -> dict[str, Any]:
         made = getattr(source, "calls", None)
         if isinstance(made, list):
             calls += len(made)
+        sent = getattr(source, "prompts", None)
+        if isinstance(sent, list | tuple):
+            prompts.update(dict.fromkeys(str(key) for key in sent))
     if rejections:
         out["rejections"] = dict(sorted(rejections.items()))
     if calls and "paths" not in out:
         out["model_calls"] = calls
+    if prompts:
+        out["prompts"] = list(prompts)
     return out
 
 

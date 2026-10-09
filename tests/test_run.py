@@ -191,6 +191,12 @@ def test_a_config_runs_end_to_end_into_jsonl_with_every_stage_counted(project: P
     grounder = stages["grounder"]
     assert (grounder["supported"], grounder["contradicted"], grounder["not_found"]) == (4, 1, 1)
     assert (grounder["calls"], grounder["failed"]) == (6, 0)
+    # Which registered prompts the run sent, by key (DECISIONS #27).
+    assert (stages["extractor"]["prompts"], grounder["prompts"]) == (
+        ["extract@1"],
+        ["ground.span@1"],
+    )
+    assert "prompts ground.span@1" in result.output
     assert stages["validator"] == {"accepted": 5, "refused": {"contradicted": 1}}
     # 1906 and 1907 contested a single-valued birth date and tied; the loser's
     # twin was refused, so one stamped fact reached the graph.

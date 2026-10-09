@@ -39,6 +39,7 @@ from openodke.llm import (
     ReplayClient,
     ScriptedClient,
 )
+from openodke.prompts import get as get_prompt
 
 FIXTURES = Path(__file__).parent / "fixtures" / "llm"
 SONNET = ModelSpec(model="anthropic/claude-sonnet-5")
@@ -303,6 +304,11 @@ def test_a_malformed_reply_is_repaired_once(people: Ontology) -> None:
     repair = client.calls[1][0]
     assert [m.role for m in repair] == ["system", "user", "assistant", "user"]
     assert repair[2].content.startswith("Sure!")
+    # Each call names the registered prompt it sent, and that is the text it sent.
+    assert [c.prompt for c in extractor.calls] == ["extract@1", "extract.repair@1"]
+    assert extractor.prompts == ["extract@1", "extract.repair@1"]
+    assert repair[0].content.startswith(get_prompt("extract@1").text)
+    assert repair[3].content == get_prompt("extract.repair@1").text
     assert client.exhausted
     # Neither reply reported a cost: unknown, not zero.
     assert all(c.cost_usd is None for c in extractor.calls)
