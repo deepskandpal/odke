@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from openodke import Document, Fact, Grounder, GroundingVerdict
+from openodke import Document, Entity, Fact, Grounder, GroundingVerdict
 from openodke.eval import GroundingLabel, load_jsonl
 from openodke.eval.grounding import evaluate_grounding, grounding_ablation, kept, run_ground
 
@@ -125,6 +125,39 @@ def test_the_ablation_gate_is_configurable() -> None:
     assert report.metrics["kept_on"] == 5
     assert report.metrics["precision_on"] == pytest.approx(3 / 5)
     assert report.metrics["recall_on"] == 1.0
+
+
+def test_off_and_on_are_scored_over_the_same_facts() -> None:
+    """A labelled fact with no grounded prediction is in neither row, not only in "off".
+
+    f0 and f1 are true, f2 and f3 false; only f0 (supported) and f2
+    (contradicted) were grounded. Over all four, "off" would claim two true
+    facts while "on" could only ever keep one of them.
+    """
+    truth = {"f0": "supported", "f1": "supported", "f2": "contradicted", "f3": "contradicted"}
+    labels = [
+        GroundingLabel(
+            text="",
+            fact=Fact(id=key, subject=Entity(key="acme", type="Company"), predicate="p"),
+            verdict=verdict,
+        )
+        for key, verdict in truth.items()
+    ]
+    stamped = {"f0": GroundingVerdict.SUPPORTED, "f2": GroundingVerdict.CONTRADICTED}
+    grounded = [
+        row.fact.model_copy(update={"verdict": stamped[row.fact.id]})
+        for row in labels
+        if row.fact.id in stamped
+    ]
+    report = grounding_ablation(labels, grounded)
+    m = report.metrics
+    assert report.n == 2
+    assert (m["kept_off"], m["kept_on"]) == (2, 1)
+    assert (m["precision_off"], m["precision_on"], m["recall_on"]) == (0.5, 1.0, 1.0)
+    assert report.notes[0] == (
+        "grounding moved precision from 0.500 to 1.000, keeping 1 of 1 true facts"
+    )
+    assert "2 labelled fact(s) had no prediction and were not scored" in report.notes
 
 
 def test_kept_treats_unchecked_as_the_pass_through_does() -> None:

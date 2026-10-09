@@ -88,13 +88,15 @@ def grounding_ablation(
 ) -> StageReport:
     """Precision and recall of the kept facts with grounding off and on.
 
-    A fact is true when its label is `supported`. Off, every labelled fact is
-    kept, whatever verdict its row happens to carry. On, a fact is kept when
-    its grounded verdict is not in `drop`. Recall is the share of true facts
-    still kept, which is the price of the precision grounding buys.
+    A fact is true when its label is `supported`. Both rows are over the
+    labelled facts that were grounded, so they compare one set of facts; one
+    with no grounded fact is left out of both and counted in the notes. Off,
+    every one is kept, whatever verdict its row happens to carry. On, a fact
+    is kept when its grounded verdict is not in `drop`. Recall is the share of
+    true facts still kept, which is the price of the precision grounding buys.
     """
-    off = [(row, True) for row in labels]
     pairs, notes = _join(labels, grounded)
+    off = [(row, True) for row, _ in pairs]
     on = [(row, kept(f, drop)) for row, f in pairs]
     rows = {"off": _kept(off), "on": _kept(on)}
     p_off, p_on = rows["off"]["precision"], rows["on"]["precision"]
