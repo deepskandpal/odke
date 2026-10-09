@@ -263,4 +263,47 @@ def offices(extraction):  # an "office" extraction names its company and its cit
 lx.io.save_annotated_documents([lx.extract(text, prompt_description=prompt, examples=examples)])
 # test_output/data.jsonl is where LangExtract writes by default.
 rows, texts = from_langextract("test_output/data.jsonl", triples=offices)
+
+### neo4j-graphrag
+
+neo4j-graphrag's extractor reads one chunk at a time, and its lexical graph
+records which: `FROM_CHUNK` links each entity to the `Chunk` it came from. So a
+relationship is grounded against the chunk both its ends came from, which is
+what the extractor read. `from_graphrag` reads the `Neo4jGraph` the extractor
+returns, or its JSON form; `read_graphrag(driver)` reads a store neo4j-graphrag
+has written, in one read transaction. The example is the graph in
+`Neo4jGraph.model_dump()`'s form, a chunk and two entities; the objects read the
+same way.
+
+| neo4j-graphrag | Row |
+|---|---|
+| entity `properties.name`, or the node's id | `subject`, `object` |
+| entity `label` (in a store, its label other than `__Entity__` and `__KGBuilder__`) | `subject_type`, `object_type` |
+| relationship `type` | `predicate` |
+| relationship `properties` | `qualifiers` |
+| other entity properties | One literal row each: the entity is the `subject`, the key the `predicate` |
+| `Chunk.text` of the one chunk both ends link to | The text, marked `context`; its `Document`'s `path` is the URI |
+| ends sharing no single chunk of a document | That document's text: `document=`, or its chunks in order |
+| no chunk at all | Left out, and a warning counts them; in memory, `document=` instead |
+| `LexicalGraphConfig` (`config=`) | The labels, relationship types and properties read |
+
+```python
+from openodke.interop import from_graphrag
+
+chunk = {"id": "c0", "label": "Chunk", "properties": {"text": text, "index": 0}}
+company = {"id": "c0:0", "label": "Company", "properties": {"name": "Halden Robotics"}}
+city = {"id": "c0:1", "label": "City", "properties": {"name": "Lyon"}}
+office = {"start_node_id": "c0:0", "end_node_id": "c0:1", "type": "OFFICE_IN"}
+links = [{"start_node_id": n, "end_node_id": "c0", "type": "FROM_CHUNK"} for n in ("c0:0", "c0:1")]
+rows, texts = from_graphrag({"nodes": [chunk, company, city], "relationships": [office, *links]})
+stage = TriplesExtractor(rows, documents=texts)
+kg = Pipeline(ontology, stage, grounder=LLMGrounder(client=client)).run(texts)
+print(kg.facts[0].verdict.value, kg.facts[0].evidence[0].doc_id)  # supported c0
+```
+
+From a store, with the driver and the `LexicalGraphConfig` the pipeline used:
+
+<!-- docs: no-run -->
+```python
+rows, texts = read_graphrag(GraphDatabase.driver(uri, auth=auth), config=LexicalGraphConfig())
 ```
