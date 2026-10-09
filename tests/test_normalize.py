@@ -172,6 +172,32 @@ def test_a_unit_outside_the_table_stays_as_written(text: str) -> None:
     assert ValueNormalizer().normalize(_fact(text)).object_value == text
 
 
+def test_a_quantity_range_reads_units_and_nothing_else() -> None:
+    """`quantity` is text to the model, so the unit survives structured output."""
+    ontology = Ontology.from_dict(
+        {
+            "types": {"Race": {}},
+            "predicates": {
+                "distance": {"domain": ["Race"], "range": "quantity"},
+                "name": {"domain": ["Race"], "range": "string"},
+            },
+        }
+    )
+    assert ontology.validate() == []
+    schema = ontology.snippet("Race").json_schema()
+    assert schema["properties"]["distance"]["type"] == "string"
+    normalizer = ValueNormalizer(ontology)
+    race = Entity(key="r1", type="Race", label="City 5K")
+
+    def run(pred: str, value: str) -> object:
+        return normalizer.normalize(Fact(subject=race, predicate=pred, object_value=value))
+
+    assert run("distance", "5 kilometres").object_value == "5000 m"
+    assert run("distance", "1,234").object_value == 1234
+    assert run("distance", "Dec 10, 1815").object_value == "Dec 10, 1815"
+    assert run("name", "5 km").object_value == "5 km"
+
+
 def test_normalised_units_corroborate_into_one_claim() -> None:
     normalizer = ValueNormalizer()
     facts = [

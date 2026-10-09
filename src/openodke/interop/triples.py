@@ -55,7 +55,7 @@ THING = "Thing"
 # `object_type` values that name a literal rather than a node: the ontology's
 # literal ranges, and "text", which graph extractors use for a string node.
 LITERAL_TYPES = frozenset(
-    {"string", "text", "integer", "number", "float", "boolean", "date", "datetime"}
+    {"string", "text", "integer", "number", "float", "boolean", "date", "datetime", "quantity"}
 )
 
 

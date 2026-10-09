@@ -305,7 +305,9 @@ def name_key(text: str, *, person: bool = False) -> str:
 # --------------------------------------------------------------------------- #
 
 _DATE_RANGES = frozenset({"date", "datetime"})
-_NUMBER_RANGES = frozenset({"integer", "number", "float"})
+# `quantity` is a number with its unit, held as text so the unit survives a
+# structured-output call that would hold a `number` range to a bare number.
+_NUMBER_RANGES = frozenset({"integer", "number", "float", "quantity"})
 _VERBATIM_RANGES = frozenset({"string", "boolean"})
 
 
@@ -315,8 +317,8 @@ def normalize_value(value: Any, *, range: str | None = None, day_first: bool | N
     `range` is the predicate's range from the ontology when there is one. A
     `string` range is left verbatim apart from whitespace — a registration number
     `"114322"` must not become the integer 114322 — `date` ranges are only read
-    as dates and numeric ranges only as quantities. With no range, the shape of
-    the value decides.
+    as dates, and numeric and `quantity` ranges only as quantities. With no
+    range, the shape of the value decides.
     """
     if isinstance(value, datetime | date):
         return value.isoformat()

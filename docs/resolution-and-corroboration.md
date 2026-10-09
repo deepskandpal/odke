@@ -82,8 +82,8 @@ value left alone costs a missed merge; a wrong rewrite costs a wrong fact.
   megabytes. A leading zero (`0123`) marks an identifier, and it is refused.
 - The ontology's range decides what a value may become. A `string` range is left
   verbatim apart from whitespace (a registration number `"0114322"` must not become
-  an integer), a `date` range is only read as a date, and a numeric range only as a
-  quantity.
+  an integer), a `date` range is only read as a date, and a numeric or `quantity`
+  range only as a quantity.
 - `person_types` names the entity types whose names are people's. Which types
   those are is your schema, not something the package assumes. Initials are kept,
   so `J. Smith` is not made `John Smith`: that is the resolver's call, with a
@@ -98,7 +98,9 @@ Currency is never converted. A symbol becomes an ISO code only when one currency
 owns it (`€`, `£`, `₹`, `US$`); `$`, `¥` and `Rs` are kept as written, after the
 amount. Numbers are read in English notation, with a dot decimal and comma
 thousands. Anything outside the table stays as written: temperature, `pound`,
-`ton`, months, a decimal comma.
+`ton`, months, a decimal comma. A predicate whose values carry units wants the
+range `quantity`: it is text to the model, so the unit survives structured
+output, where a `number` range would drop it.
 
 ```python
 from openodke.corroborate import name_key, normalize_date, normalize_quantity

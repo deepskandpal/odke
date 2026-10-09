@@ -613,6 +613,10 @@ _JSON_TYPES = {
     "boolean": "boolean",
     "date": "string",
     "datetime": "string",
+    # A number with its unit, "5 km": text, because a `number` would make a
+    # structured-output call drop the unit. The normaliser gives it one
+    # canonical unit per dimension.
+    "quantity": "string",
 }
 
 __all__ = [
