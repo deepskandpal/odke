@@ -33,6 +33,11 @@ judged by the same rules. A proof re-keys the *incoming* facts onto the store's
 key, carrying the store's entity exactly as the store holds it, so writing it
 changes nothing on the node; anything weaker is a `SIMILAR` link. Store
 entities are never compared with each other (DECISIONS #31).
+
+**The pair judge.** Given a `PairJudge`, the pairs no rule settled whose name
+score is in the band just below the threshold are put to a model, in both
+orders (DECISIONS #34). Its "same" is a `SIMILAR` link and never a merge, its
+"different" a `DIFFERENT` link, and its unsure no link at all.
 """
 
 from __future__ import annotations
@@ -43,12 +48,17 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from itertools import combinations
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from openodke.corroborate.normalize import name_key
 from openodke.corroborate.provenance import NAME_KEY
 from openodke.stages import EntityIndex, StoreLookup
-from openodke.types import Entity, EntityLink, Fact, LinkKind, Resolution
+from openodke.types import Document, Entity, EntityLink, Fact, LinkKind, Resolution
+
+if TYPE_CHECKING:
+    # Imported where it is used: the judge reaches `openodke.ground`, whose
+    # span locator imports this module.
+    from openodke.corroborate.judge import PairJudge
 
 # What `Entity.resolution.linker` says when this resolver decided.
 LINKER = "odke.native"
@@ -256,6 +266,14 @@ class NativeResolver:
     entity. Store entities are never compared with each other, and `stats`
     counts what the last call found in the store. Without a lookup, nothing
     here differs from a resolver that has never heard of one.
+
+    `judge` puts each pair no rule settled, and whose score is at least the
+    judge's `low` (0.7) and below `threshold`, to a `PairJudge` (DECISIONS
+    #34): asked in both orders, its "same" is a `SIMILAR` link and never a
+    merge, its "different" a `DIFFERENT` link, and anything else no link.
+    A pair with a disagreeing id or domain is never asked. `stats["judge"]`
+    is the judge's own count, and `documents` is where it reads contexts.
+    Without a judge, no pair below the threshold is asked about.
     """
 
     def __init__(
@@ -266,14 +284,26 @@ class NativeResolver:
         nudge_down: float = 0.15,
         max_block: int = 100,
         lookup: StoreLookup | None = None,
+        judge: PairJudge | None = None,
     ) -> None:
+        if judge is not None and judge.low > threshold:
+            raise ValueError(
+                f"the judge's band starts at {judge.low}, above the threshold {threshold}"
+            )
         self.threshold = threshold
         self.nudge_up = nudge_up
         self.nudge_down = nudge_down
         self.max_block = max_block
         self.lookup = lookup
-        # What the last `resolve()` found in the store; None while there is no lookup.
+        self.judge = judge
+        # What the last `resolve()` found in the store, and what the judge has
+        # done; None while there is neither a lookup nor a judge.
         self.stats: dict[str, Any] | None = None
+
+    @property
+    def documents(self) -> dict[str, Document] | None:
+        """The texts the judge reads contexts from, filled as the corroborator's are."""
+        return self.judge.documents if self.judge is not None else None
 
     def resolve(
         self, facts: Iterable[Fact], index: EntityIndex
@@ -291,10 +321,16 @@ class NativeResolver:
 
         links: list[EntityLink] = []
         proofs: list[tuple[int, int, EntityLink, bool]] = []
+        # Pairs no rule settled, scored in the judge's band, with their score.
+        open_pairs: list[tuple[int, int, float]] = []
         # Links to a store entity, by kind: what `stats` reports.
         to_store: Counter[str] = Counter()
         for i, j in pairs:
             decided = self._judge(profiles[i], profiles[j])
+            if isinstance(decided, float):
+                if self.judge is not None and decided >= self.judge.low:
+                    open_pairs.append((i, j, decided))
+                continue
             if decided is None:
                 continue
             link, by_id = decided
@@ -304,6 +340,13 @@ class NativeResolver:
                 links.append(link)
                 if j >= size:
                     to_store[link.kind.value] += 1
+        if self.judge is not None and open_pairs:
+            asked = self._ask(profiles, open_pairs, facts)
+            for (_, j, _), judged in zip(open_pairs, asked, strict=True):
+                if judged is not None:
+                    links.append(judged)
+                    if j >= size:
+                        to_store[judged.kind.value] += 1
 
         parent = list(range(len(profiles)))
         cluster_ids = [dict(p.ids) for p in profiles]
@@ -391,12 +434,37 @@ class NativeResolver:
             )
             for f in facts
         ]
-        self.stats = (
-            None
-            if self.lookup is None
-            else self._store_stats(profiles[size:], to_store, replacement, mentioned)
-        )
+        stats: dict[str, Any] | None = None
+        if self.lookup is not None:
+            stats = self._store_stats(profiles[size:], to_store, replacement, mentioned)
+        if self.judge is not None:
+            stats = stats or {}
+            own = self.judge.stats
+            stats["judge"] = own
+            # Where `prompts_sent` and a run report look for the keys a stage sent.
+            stats["prompts"] = own["prompts"]
+        self.stats = stats
         return resolved, links
+
+    def _ask(
+        self,
+        profiles: Sequence[_Profile],
+        open_pairs: Sequence[tuple[int, int, float]],
+        facts: Sequence[Fact],
+    ) -> list[EntityLink | None]:
+        """The judge's link for each open pair, or None where it made none."""
+        from openodke.corroborate.judge import link_for
+
+        assert self.judge is not None
+        involved = [profiles[k].entity for i, j, _ in open_pairs for k in (i, j)]
+        mentions = self.judge.mentions(involved, facts)
+        decisions = self.judge.judge_many(
+            [
+                (mentions[profiles[i].key], mentions[profiles[j].key], score)
+                for i, j, score in open_pairs
+            ]
+        )
+        return [link_for(decision) for decision in decisions]
 
     def _stored(
         self, profiles: list[_Profile], incoming: list[Entity]
@@ -463,7 +531,9 @@ class NativeResolver:
             stats["lookup"] = dict(own)
         return stats
 
-    def _judge(self, a: _Profile, b: _Profile) -> tuple[EntityLink, bool] | None:
+    def _judge(self, a: _Profile, b: _Profile) -> tuple[EntityLink, bool] | float | None:
+        """The rules' link and whether an id proved it; the score when no rule
+        settled the pair; None when evidence against left nothing to kill."""
         agree: list[str] = []
         against: list[str] = []
         by_id = False
@@ -495,7 +565,7 @@ class NativeResolver:
             return self._link(a, b, LinkKind.SAME_AS, 1.0, "; ".join(agree)), by_id
         if score >= self.threshold:
             return self._link(a, b, LinkKind.SIMILAR, score, None), False
-        return None
+        return score
 
     def _weak(self, a: _Profile, b: _Profile) -> float:
         best = max((name_similarity(x, y) for x in a.names for y in b.names), default=0.0)

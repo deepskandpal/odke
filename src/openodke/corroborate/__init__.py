@@ -7,10 +7,12 @@ records what it did on the objects it returns — under the reserved keys in
 `partners` is the step between resolving and corroborating that adds each fact's
 inverse or symmetric partner, marked `odke.derived` (DECISIONS #28).
 `MemoryLookup` is the in-memory store a resolver looks entities up in
-(DECISIONS #31).
+(DECISIONS #31). `PairJudge` is the model a resolver asks about the pairs its
+rules leave open, in both orders (DECISIONS #34).
 """
 
 from openodke.corroborate.inverses import derived_from, partners
+from openodke.corroborate.judge import Mention, PairDecision, PairJudge
 from openodke.corroborate.lookup import Embed, MemoryLookup
 from openodke.corroborate.merge import (
     DEFAULT_INTERVALS,
@@ -58,12 +60,15 @@ __all__ = [
     "EvidenceScorer",
     "LINKER",
     "MemoryLookup",
+    "Mention",
     "NAME_KEY",
     "NEAR_DUPLICATES",
     "SCORE",
     "SOURCE_FORM",
     "WIDEN",
     "NativeResolver",
+    "PairDecision",
+    "PairJudge",
     "SignatureCorroborator",
     "ValueNormalizer",
     "block_keys",
