@@ -16,6 +16,7 @@ rather than a stage silently left as the pass-through.
       replay: {extract: recorded/extract.json}   # answer from recorded responses
       meter: true                                # cost, per stage
       cache: .odke-cache                         # answer a repeated call from disk
+      budget: {usd: 1.50, calls: 2000}           # stop cleanly here, keeping what is done
     stages:
       chunker: {use: sentence, max_words: 120}
       extractor: hybrid                           # the one required stage
@@ -54,6 +55,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError,
 
 from openodke._renamed import deprecated
 from openodke.llm.base import ModelSpec
+from openodke.llm.budget import Budget
 from openodke.llm.roles import ModelRoles
 
 # The thirteen, in pipeline order (DECISIONS #20).
@@ -128,7 +130,8 @@ class InputSpec(_Strict):
 
 
 class ModelsConfig(_Strict):
-    """`ModelRoles` by job, plus recorded responses, a cost meter and a response cache.
+    """`ModelRoles` by job, plus recorded responses, a cost meter, a response cache
+    and a budget.
 
     `replay` maps a role to a file of recorded responses — a cassette object
     (`openodke.llm.ReplayClient`) or a list of match entries
@@ -136,6 +139,8 @@ class ModelsConfig(_Strict):
     wraps every model client in a `CostMeter` and puts the report in the graph's
     stats. `cache` names a directory of answers (`openodke.llm.cache`): a call
     asked before is answered from it, and every new answer is kept there.
+    `budget` is the most the run may spend (`openodke.llm.budget`): `usd`,
+    `calls`, `input_tokens`, `output_tokens`, each optional.
     """
 
     extract: ModelSpec | None = None
@@ -144,6 +149,7 @@ class ModelsConfig(_Strict):
     replay: dict[Role, str] = Field(default_factory=dict)
     meter: bool = False
     cache: str | None = None
+    budget: Budget | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -161,6 +167,14 @@ class ModelsConfig(_Strict):
             role: spec for role in ("extract", "ground", "infer") if (spec := getattr(self, role))
         }
         return ModelRoles(**given)
+
+    def with_budget(self, *, usd: float | None = None, calls: int | None = None) -> ModelsConfig:
+        """These limits over the block's own budget; a limit given as None is kept as it was."""
+        given = {k: v for k, v in (("usd", usd), ("calls", calls)) if v is not None}
+        if not given:
+            return self
+        current = self.budget.model_dump() if self.budget is not None else {}
+        return self.model_copy(update={"budget": Budget(**{**current, **given})})
 
     def with_model(self, model: str) -> ModelsConfig:
         """Every role on one model, keeping the rest of each role's spec.
@@ -295,6 +309,11 @@ class RunConfig(_Strict):
             update={"models": self.models.model_copy(update={"cache": absolute})}
         )
 
+    def with_budget(self, *, usd: float | None = None, calls: int | None = None) -> RunConfig:
+        """This config with these limits on top of its own: what `--budget-usd` and
+        `--budget-calls` apply."""
+        return self.model_copy(update={"models": self.models.with_budget(usd=usd, calls=calls)})
+
     def with_widen(self) -> RunConfig:
         """This config with the model grounder's widen-and-retry on: what `--widen` applies."""
         grounder = self.stages.grounder
@@ -398,6 +417,7 @@ _KNOWN_KEYS = sorted(
         *InputSpec.model_fields,
         *ReextractConfig.model_fields,
         *ModelSpec.model_fields,
+        *Budget.model_fields,
     }
 )
 

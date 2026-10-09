@@ -186,6 +186,16 @@ CACHE_HELP = (
     "A directory of model answers: a call asked before is answered from it for nothing, "
     "and every new answer is kept there. Overrides models.cache."
 )
+BUDGET_USD_HELP = (
+    "Stop the run cleanly before it spends more than this many US dollars, keeping what is "
+    "done. Overrides models.budget.usd. Exit 3 when it stops."
+)
+BUDGET_CALLS_HELP = (
+    "Stop the run cleanly before it makes more than this many model calls, keeping what is "
+    "done. Overrides models.budget.calls. Exit 3 when it stops."
+)
+# The exit status of a run a budget stopped: what it kept was written.
+EXIT_BUDGET = 3
 
 
 @app.command("models")
@@ -223,13 +233,16 @@ def run_command(
         "grounding call, against the sentence. Needs stages.grounder: llm.",
     ),
     cache: Path | None = typer.Option(None, "--cache", help=CACHE_HELP),
+    budget_usd: float | None = typer.Option(None, "--budget-usd", min=0, help=BUDGET_USD_HELP),
+    budget_calls: int | None = typer.Option(None, "--budget-calls", min=0, help=BUDGET_CALLS_HELP),
 ) -> None:
     """Run the whole pipeline from a config file.
 
     The config names the inputs, the ontology, the models and which
     implementation fills each of the thirteen stages. A dry run still calls
     the models; it is the store it spares. Exit 2 is a config that cannot run,
-    exit 1 a run that failed.
+    exit 1 a run that failed, exit 3 a run its budget stopped, which still
+    wrote what it kept.
 
     `--model` puts every role on one model and prints which, so a run states
     what it called instead of leaving it to be read out of a config; per-role
@@ -237,6 +250,7 @@ def run_command(
     """
     # Imported here so `odke --version` and the ontology commands stay light.
     from openodke.llm.base import ProviderError
+    from openodke.llm.budget import BudgetExceeded
     from openodke.run import ConfigError, execute
 
     chosen = _qualified(model, model_provider)
@@ -249,16 +263,23 @@ def run_command(
             loaded = loaded.with_widen()
         if cache is not None:
             loaded = loaded.with_cache(cache)
+        loaded = loaded.with_budget(usd=budget_usd, calls=budget_calls)
         result = execute(loaded, dry_run=dry_run)
     except (ConfigError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from exc
+    except BudgetExceeded as exc:
+        # Raised by a stage outside the pipeline's reach, so nothing was kept.
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(EXIT_BUDGET) from exc
     except (ProviderError, OSError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
     for warning in result.warnings:
         typer.echo(f"warning: {warning}", err=True)
     typer.echo(result.render())
+    if result.stats.get("stopped"):
+        raise typer.Exit(EXIT_BUDGET)
 
 
 # --------------------------------------------------------------------------- #
@@ -384,14 +405,20 @@ def _grounder(
     locate: bool,
     paper: bool,
     cache: Path | None = None,
+    budget_usd: float | None = None,
+    budget_calls: int | None = None,
 ) -> Any:
     """The model grounder `odke run` would build from these models, or the config's replay.
 
-    The response cache is `--cache` when given, else the `models` block's, and
-    answers in front of whichever client that is.
+    A budget, from the flags over the `models` block's, counts every call that
+    goes out. The response cache is `--cache` when given, else the `models`
+    block's, and answers in front of it, for nothing.
     """
     from openodke.ground import LLMGrounder
+    from openodke.llm.base import ProviderNotInstalled
+    from openodke.llm.budget import Ledger
     from openodke.llm.cache import CachedClient
+    from openodke.llm.registry import resolve as resolve_client
     from openodke.run import ModelsConfig, load_models
     from openodke.run.build import OnFirstCall, _replay_client, response_cache
 
@@ -400,16 +427,27 @@ def _grounder(
         models = models.with_model(chosen)
         typer.echo(f"models: grounding on {chosen}")
     roles = models.roles()
-    replay = models.replay.get("ground")
-    client: Any = _replay_client(base / replay, "ground") if replay is not None else None
+    models = models.with_budget(usd=budget_usd, calls=budget_calls)
     if cache is not None:
         store = response_cache(cache.expanduser(), "--cache")
     elif models.cache is not None:
         store = response_cache(base / Path(models.cache).expanduser())
     else:
         store = None
+    replay = models.replay.get("ground")
+    client: Any = _replay_client(base / replay, "ground") if replay is not None else None
+    if client is None and (store is not None or models.budget is not None):
+        try:
+            client = resolve_client(roles.ground)
+        except ProviderNotInstalled:
+            # Behind a cache, a rerun answered from it needs no adapter at all.
+            if store is None:
+                raise
+            client = OnFirstCall(roles.ground)
+    if models.budget is not None:
+        client = Ledger(models.budget).client(client)
     if store is not None:
-        client = CachedClient(client if client is not None else OnFirstCall(roles.ground), store)
+        client = CachedClient(client, store)
     mode: dict[str, Any] = {"context": "document", "verdicts": "binary"} if paper else {}
     return LLMGrounder(roles, client=client, locate=locate, **mode)
 
@@ -456,6 +494,8 @@ def ground_command(
         help="neo4j: set odke_verdict on each relationship read. Off unless asked.",
     ),
     cache: Path | None = typer.Option(None, "--cache", help=CACHE_HELP),
+    budget_usd: float | None = typer.Option(None, "--budget-usd", min=0, help=BUDGET_USD_HELP),
+    budget_calls: int | None = typer.Option(None, "--budget-calls", min=0, help=BUDGET_CALLS_HELP),
 ) -> None:
     """Ground a graph openodke did not build, and say what is wrong with it.
 
@@ -471,7 +511,8 @@ def ground_command(
     evidence that does not support it, and a citation too narrow for its claim.
     Models come from --config's `models` block, as in `odke run`.
 
-    Exit 2 is input that cannot be read, exit 1 a run that failed.
+    Exit 2 is input that cannot be read, exit 1 a run that failed, exit 3 a run
+    its budget stopped, which still wrote what it grounded.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
     from openodke.interop import ground_graph, write_verdicts
@@ -486,7 +527,17 @@ def ground_command(
             raise ValueError("a dry run asks no model, so it has no verdicts to write back")
         schema = _strict_ontology(ontology) if ontology is not None else None
         grounder = (
-            None if dry_run else _grounder(config, chosen, locate=locate, paper=paper, cache=cache)
+            None
+            if dry_run
+            else _grounder(
+                config,
+                chosen,
+                locate=locate,
+                paper=paper,
+                cache=cache,
+                budget_usd=budget_usd,
+                budget_calls=budget_calls,
+            )
         )
         store = _Store(
             text_property=text_property, database=database, user=user, password_env=password_env
@@ -522,6 +573,8 @@ def ground_command(
     typer.echo(f"wrote {', '.join(str(p) for p in paths)}")
     if write_back:
         typer.echo(f"wrote odke_verdict on {_count(written, 'relationship')}")
+    if grounded.summary.stopped:
+        raise typer.Exit(EXIT_BUDGET)
 
 
 # --------------------------------------------------------------------------- #
@@ -562,6 +615,8 @@ def validate_command(
     user: str = typer.Option("neo4j", "--user", envvar="NEO4J_USER", help=USER_HELP),
     password_env: str = typer.Option("NEO4J_PASSWORD", "--password-env", help=PASSWORD_ENV_HELP),
     cache: Path | None = typer.Option(None, "--cache", help=CACHE_HELP),
+    budget_usd: float | None = typer.Option(None, "--budget-usd", min=0, help=BUDGET_USD_HELP),
+    budget_calls: int | None = typer.Option(None, "--budget-calls", min=0, help=BUDGET_CALLS_HELP),
 ) -> None:
     """Validate another extractor's facts: ground, resolve, corroborate, gate and write.
 
@@ -578,7 +633,8 @@ def validate_command(
     prompts sent and the coverage report. A dry run calls no model and writes
     nothing.
 
-    Exit 2 is input or a config that cannot be read, exit 1 a run that failed.
+    Exit 2 is input or a config that cannot be read, exit 1 a run that failed,
+    exit 3 a run its budget stopped, which still wrote what it kept.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
     from openodke import Validator
@@ -604,7 +660,15 @@ def validate_command(
             grounder = (
                 None
                 if dry_run
-                else _grounder(config, chosen, locate=locate, paper=False, cache=cache)
+                else _grounder(
+                    config,
+                    chosen,
+                    locate=locate,
+                    paper=False,
+                    cache=cache,
+                    budget_usd=budget_usd,
+                    budget_calls=budget_calls,
+                )
             )
             store = _Store(
                 text_property=text_property,
@@ -631,6 +695,7 @@ def validate_command(
                 typer.echo(f"models: every role on {chosen}")
             if cache is not None:
                 loaded = loaded.with_cache(cache)
+            loaded = loaded.with_budget(usd=budget_usd, calls=budget_calls)
             if locate:
                 raise ValueError("with a run config, the locator is the grounder's: locate: true")
             built = build(loaded)
@@ -706,6 +771,8 @@ def validate_command(
         )
     for line in written or ["nothing: give -o, or name a sink in the config"]:
         typer.echo(f"{verb:<13} {line}")
+    if report.stopped:
+        raise typer.Exit(EXIT_BUDGET)
 
 
 def _close(driver: Any, sinks: list[Any]) -> None:

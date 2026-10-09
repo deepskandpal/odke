@@ -38,6 +38,7 @@ from openodke.eval.spans import evaluate_spans
 from openodke.ground.checks import REASONS, VERDICTS, CheckedGrounder, refusals
 from openodke.ground.locate import locate_span
 from openodke.interop.triples import TripleRow, TriplesExtractor, read_triples
+from openodke.llm.budget import stopped_summary
 from openodke.ontology import Ontology
 from openodke.pipeline import Pipeline
 from openodke.stages import Grounder
@@ -86,9 +87,13 @@ class GroundSummary(Frozen):
     too_narrow: FailureShape = FailureShape()
     # `odke eval spans` over the same facts.
     spans: StageReport
+    # Where a budget stopped the grounding, and why: the pipeline's `stats["stopped"]`.
+    stopped: dict[str, Any] | None = None
 
     def render(self) -> str:
         lines = ["odke ground — dry run, no model called" if self.dry_run else "odke ground"]
+        if self.stopped is not None:
+            lines.append(_row("stopped", stopped_summary(self.stopped)))
         unmatched = (
             f"; {self.unmatched_rows} name a text that was not given" if self.unmatched_rows else ""
         )
@@ -175,6 +180,8 @@ def ground_graph(
         dry_run=grounder is None,
         reads_span=reads_span,
     )
+    if isinstance(stopped := kg.stats.get("stopped"), Mapping):
+        summary = summary.model_copy(update={"stopped": dict(stopped)})
     return GroundedGraph(facts, summary)
 
 

@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from openodke.corroborate.provenance import CONFLICT
 from openodke.coverage import summary as coverage_summary
+from openodke.llm.budget import budget_summary, stopped_summary
 from openodke.reextract import summary as reextract_summary
 from openodke.run.build import Built, build
 from openodke.run.config import STAGES, RunConfig
@@ -192,6 +193,10 @@ def collect_stats(built: Built, kg: KnowledgeGraph) -> dict[str, Any]:
     cache = built.context.cache_stats()
     if cache is not None:
         stats["cache"] = cache
+    # Every run says what it spent, metered or not.
+    stats["spent"] = built.context.spent()
+    if limits := built.context.ledger.budget.limits:
+        stats["budget"] = limits
     return stats
 
 
@@ -284,6 +289,8 @@ def render(result: RunResult) -> str:
     stats = result.stats
     graph = stats.get("graph", {})
     lines = ["odke run — dry run, nothing written" if result.dry_run else "odke run"]
+    if isinstance(stopped := stats.get("stopped"), Mapping):
+        lines.append(_row("stopped", stopped_summary(stopped)))
     lines.append(
         _row(
             "documents",
@@ -310,18 +317,9 @@ def render(result: RunResult) -> str:
             f"{sum(links.values())} links" + (f" ({_summary(links)})" if links else ""),
         )
     )
-    cost = stats.get("cost", {}).get("metrics")
-    if cost:
-        usd = cost.get("cost_usd")
-        cached = f" ({cost['cached_calls']} from the cache)" if cost.get("cached_calls") else ""
-        lines.append(
-            _row(
-                "cost",
-                f"{cost.get('calls', 0)} model calls{cached}, "
-                f"{cost.get('prompt_tokens', 0) + cost.get('completion_tokens', 0)} tokens, "
-                + (f"${usd:.4f}" if isinstance(usd, int | float) else "USD unknown"),
-            )
-        )
+    lines.append(_row("cost", _cost(stats)))
+    if isinstance(limits := stats.get("budget"), Mapping):
+        lines.append(_row("budget", budget_summary(limits, stats.get("spent") or {})))
     if isinstance(cache := stats.get("cache"), Mapping):
         failed = cache.get("failed", 0)
         lines.append(
@@ -354,6 +352,26 @@ def render(result: RunResult) -> str:
 
 def _row(label: str, text: str) -> str:
     return f"{label:<13} {text}"
+
+
+def _cost(stats: Mapping[str, Any]) -> str:
+    """USD (or unknown), calls with the cache's share, and tokens: the line every run prints.
+
+    From the run's ledger; a graph whose stats predate it falls back to the meter's.
+    """
+    spent = stats.get("spent")
+    if isinstance(spent, Mapping):
+        calls, cached = spent.get("calls", 0), spent.get("cached_calls", 0)
+        tokens = spent.get("input_tokens", 0) + spent.get("output_tokens", 0)
+        usd = spent.get("usd")
+    else:
+        metrics = (stats.get("cost") or {}).get("metrics") or {}
+        calls, cached = metrics.get("calls", 0), metrics.get("cached_calls", 0)
+        tokens = metrics.get("prompt_tokens", 0) + metrics.get("completion_tokens", 0)
+        usd = metrics.get("cost_usd")
+    hits = f" ({cached} from the cache)" if cached else ""
+    money = f"${usd:.4f}" if isinstance(usd, int | float) else "USD unknown"
+    return f"{calls} model calls{hits}, {tokens} tokens, {money}"
 
 
 def _summary(report: Mapping[str, Any]) -> str:
