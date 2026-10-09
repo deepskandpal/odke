@@ -15,7 +15,17 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from openodke import Document, Entity, Evidence, Fact, LinkKind, Resolution, Span
+from openodke import (
+    Document,
+    Entity,
+    Evidence,
+    Fact,
+    LinkKind,
+    Ontology,
+    Pipeline,
+    Resolution,
+    Span,
+)
 from openodke.cli.main import app
 from openodke.corroborate import (
     MemoryLookup,
@@ -38,7 +48,9 @@ from openodke.corroborate.judge import (
 from openodke.eval.sheets import PairItem
 from openodke.llm import Completion, MissingAPIKey, ModelSpec, RecordedClient
 from openodke.prompts import get, read_lock
+from openodke.run import build, execute, parse_config
 from openodke.run.execute import prompts_sent
+from openodke.validator import Validator
 
 TEXT = (
     "Ada Lovelace wrote the first published program. "
@@ -526,3 +538,154 @@ def test_a_sheet_shows_a_stored_entitys_aliases() -> None:
         b=Mention(key="b", type="Person", label="Ada King", aliases=("Ada Lovelace",)),
     )
     assert "B: Ada King (Person), also known as Ada Lovelace" in PAIR.render(item)
+
+
+# --------------------------------------------------------------------------- #
+# The Validator, the pipeline and `odke run`
+# --------------------------------------------------------------------------- #
+
+PEOPLE = Ontology.from_dict(
+    {
+        "name": "people",
+        "types": {"Person": {}},
+        "predicates": {"death_year": {"domain": ["Person"], "range": "integer"}},
+    }
+)
+ROWS: list[dict[str, Any]] = [
+    {"doc": "d1", "subject": "Ada Lovelace", "subject_type": "Person", "predicate": "death_year",
+     "object": 1852, "quote": "Ada Lovelace wrote the first published program."},
+    {"doc": "d1", "subject": "Lovelace", "subject_type": "Person", "predicate": "death_year",
+     "object": 1852, "quote": "Lovelace died in London in 1852."},
+]  # fmt: skip
+GROUNDED = [
+    {"match": "Claim: ", "response": {"verdict": "supported"}},
+]
+
+
+def test_the_validator_asks_the_judge_and_reports_its_counts_calls_and_prompts() -> None:
+    judge = PairJudge(client=_client("same", "different"))
+    validator = Validator(PEOPLE, client=RecordedClient(GROUNDED), judge=judge)
+    kg, report = validator.validate(ROWS, [DOC])
+
+    assert kg.links == ()
+    assert report.judge == {
+        "pairs": 1,
+        "asked": 1,
+        "calls": 2,
+        "swapped": 1,
+        "disagreed": 1,
+        "same": 0,
+        "different": 0,
+        "unsure": 1,
+        "person": 0,
+        "queued": 0,
+        "no_context": 0,
+        "failed": 0,
+    }
+    # Two grounding calls and the judge's two.
+    assert report.calls == 4
+    assert report.prompts == ("ground.span@1", "pair@1", "pair.user@1")
+    assert (
+        "judge         1 pair in the band: 1 asked in both orders (2 calls, 1 swapped), 0 same, "
+        "0 different, 1 unsure; orders disagreed on 1"
+    ) in report.render()
+    # A second job reports itself alone.
+    _, again = validator.validate(ROWS, [DOC])
+    assert again.judge is not None and again.judge["calls"] == 2 and again.calls == 4
+
+
+def test_a_dry_run_never_asks_the_judge() -> None:
+    client = RecordedClient([])
+    _, report = Validator(PEOPLE, judge=PairJudge(client=client)).validate(
+        ROWS, [DOC], dry_run=True
+    )
+    assert client.calls == [] and report.judge is None and report.calls == 0
+
+
+def test_the_validator_takes_a_judge_only_for_its_own_resolver() -> None:
+    with pytest.raises(ValueError, match=r"NativeResolver\(judge=...\)"):
+        Validator(resolver=NativeResolver(), judge=PairJudge(client=RecordedClient([])))
+
+
+def test_a_pipeline_hands_the_judge_its_texts_through_the_resolver() -> None:
+    class Replay:
+        def extract(self, chunk: Any, ontology: Any) -> list[Fact]:
+            return list(FACTS)
+
+    judge = PairJudge(client=_client("same", "same"))
+    resolver = NativeResolver(judge=judge)
+    assert resolver.documents is judge.documents
+    from openodke.run.execute import register_documents
+
+    register_documents(resolver, [DOC])
+    kg = Pipeline(Ontology(name="x"), Replay(), resolver=resolver).run([DOC])
+    assert [link.kind for link in kg.links] == [LinkKind.SIMILAR]
+
+
+def _run_config(tmp_path: Path, resolver: Any, **extra: Any) -> dict[str, Any]:
+    (tmp_path / "ontology.json").write_text(PEOPLE.model_dump_json(), encoding="utf-8")
+    (tmp_path / "corpus").mkdir(exist_ok=True)
+    (tmp_path / "corpus" / "d1.txt").write_text(TEXT, encoding="utf-8")
+    rows = [{**row, "doc": "corpus/d1.txt"} for row in ROWS]
+    (tmp_path / "rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    replay = [*GROUNDED, _answer("Ada Lovelace", "same"), _answer("Lovelace", "unsure")]
+    (tmp_path / "ground.json").write_text(json.dumps(replay), encoding="utf-8")
+    return {
+        "ontology": "ontology.json",
+        "inputs": ["corpus"],
+        "models": {"replay": {"ground": "ground.json"}, "meter": True},
+        "stages": {
+            "extractor": {"use": "triples", "path": "rows.jsonl"},
+            "grounder": "llm",
+            "resolver": resolver,
+        },
+        **extra,
+    }
+
+
+def test_a_run_config_turns_the_judge_on_with_paths_relative_to_it(tmp_path: Path) -> None:
+    config = _run_config(
+        tmp_path, {"use": "native", "judge": {"low": 0.75, "queue": "review/pairs.jsonl"}}
+    )
+    built = build(parse_config(config, base_dir=tmp_path))
+    judge = built.stages["resolver"].judge
+    assert isinstance(judge, PairJudge)
+    assert (judge.low, judge.queue) == (0.75, tmp_path / "review" / "pairs.jsonl")
+
+    result = execute(parse_config(config, base_dir=tmp_path))
+    resolver = result.stats["stages"]["resolver"]
+    assert (resolver["judge"]["calls"], resolver["judge"]["queued"]) == (2, 1)
+    assert resolver["prompts"] == ["pair@1", "pair.user@1"]
+    # The meter counts the judge's calls as a stage of their own.
+    assert result.stats["cost"]["stages"]["judge"]["calls"] == 2
+    assert (tmp_path / "review" / "pairs.jsonl").is_file()
+
+
+def test_the_judge_is_off_unless_named(tmp_path: Path) -> None:
+    for resolver in ("native", {"use": "native", "judge": False}):
+        built = build(parse_config(_run_config(tmp_path, resolver), base_dir=tmp_path))
+        assert built.stages["resolver"].judge is None
+
+
+def test_a_dry_run_writes_no_queue(tmp_path: Path) -> None:
+    config = _run_config(tmp_path, {"use": "native", "judge": {"queue": "pairs.jsonl"}})
+    result = execute(parse_config(config, base_dir=tmp_path), dry_run=True)
+    assert "dry run: the pair judge's review queue is not written" in result.warnings
+    assert not (tmp_path / "pairs.jsonl").exists()
+
+
+@pytest.mark.parametrize(
+    ("judge", "message"),
+    [
+        ("yes", "stages.resolver.judge: true, or the judge's options"),
+        ({"lo": 0.7}, "stages.resolver.judge: "),
+        ({"reviewed": "missing.jsonl"}, "stages.resolver.judge.reviewed: "),
+        ({"store_context": "x"}, "stages.resolver.judge.store_context: set by odke run"),
+    ],
+)
+def test_a_bad_judge_option_is_a_config_error(tmp_path: Path, judge: Any, message: str) -> None:
+    from openodke.run import ConfigError
+
+    config = _run_config(tmp_path, {"use": "native", "judge": judge})
+    with pytest.raises(ConfigError, match=message):
+        build(parse_config(config, base_dir=tmp_path))

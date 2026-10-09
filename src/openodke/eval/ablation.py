@@ -175,6 +175,7 @@ def ablate(config: RunConfig) -> AblationRun:
     stages = built.stages
     register_documents(stages["extractor"], docs)
     register_documents(stages.get("corroborator"), docs)
+    register_documents(stages.get("resolver"), docs)
     ontology = built.ontology
     # The first two rows are what the extractor found and what the gate kept of
     # it; inverse partners belong to the whole pipeline, the third row.

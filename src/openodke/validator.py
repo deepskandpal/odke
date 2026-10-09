@@ -44,16 +44,23 @@ retract a source first (`openodke.Reconciler`), so the facts the new version
 still states merge with the store again and regain its support, and the rest
 are left with less, or retired.
 
+`judge` asks a model about the pairs the resolver's rules leave open, in both
+orders (DECISIONS #34): a `PairJudge`, handed to the default resolver, which
+reads its contexts from the texts given. Off unless given, and never asked in
+a dry run.
+
 `validate()` returns the graph and a `ValidationReport` of the job: facts in,
-refused, merged, linked and derived; the model calls, tokens and cost; the
-registered prompts sent; and the coverage report. A client held to a budget
-(`openodke.llm.budget`) that stops the job leaves a partial graph, written as
-usual, and the report's `stopped` says where and why. A dry run asks no model and
-writes nothing: the free checks, the locator, and every deterministic stage.
+refused, merged, linked and derived; what the pair judge decided; the model
+calls, tokens and cost; the registered prompts sent; and the coverage report. A
+client held to a budget (`openodke.llm.budget`) that stops the job leaves a
+partial graph, written as usual, and the report's `stopped` says where and why.
+A dry run asks no model and writes nothing: the free checks, the locator, and
+every deterministic stage.
 """
 
 from __future__ import annotations
 
+import copy
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
@@ -65,6 +72,7 @@ from openodke._batch import failed_summary
 from openodke.corroborate import (
     EvidenceScorer,
     NativeResolver,
+    PairJudge,
     SignatureCorroborator,
     ValueNormalizer,
 )
@@ -123,6 +131,9 @@ class ValidationReport(Frozen):
     # Against the store, with a lookup (DECISIONS #31): entities looked up,
     # store candidates, incoming keys re-keyed onto a stored one, links by kind.
     store: dict[str, int] | None = None
+    # The pair judge (DECISIONS #34): pairs handed in and asked, calls, calls in
+    # the swapped order, order disagreements, and each decision's count.
+    judge: dict[str, int] | None = None
     # Inverse and symmetric partners the ontology implied (DECISIONS #28).
     derived: int = 0
     facts_out: int = 0
@@ -172,6 +183,8 @@ class ValidationReport(Frozen):
         )
         if self.store is not None:
             lines.append(_row("store", _store_line(self.store)))
+        if self.judge is not None:
+            lines.append(_row("judge", _judge_line(self.judge)))
         lines.append(_row("derived", f"{self.derived} inverse and symmetric partners"))
         lines.append(
             _row(
@@ -234,12 +247,17 @@ class Validator:
         coverage: bool = True,
         sinks: Sequence[Sink] = (),
         lookup: StoreLookup | None = None,
+        judge: PairJudge | None = None,
     ) -> None:
         if grounder is not None and locate:
             raise ValueError("with a grounder of your own, it locates: LLMGrounder(locate=True)")
         if resolver is not None and lookup is not None:
             raise ValueError(
                 "with a resolver of your own, it looks the store up: NativeResolver(lookup=...)"
+            )
+        if resolver is not None and judge is not None:
+            raise ValueError(
+                "with a resolver of your own, it asks the judge: NativeResolver(judge=...)"
             )
         self.ontology = ontology if ontology is not None else Ontology()
         self.grounder = grounder
@@ -255,6 +273,7 @@ class Validator:
         self.coverage = coverage
         self.sinks = tuple(sinks)
         self.lookup = lookup
+        self.judge = judge
 
     def validate(
         self,
@@ -294,10 +313,15 @@ class Validator:
         if update and not dry_run:
             retracted = Reconciler(self.sinks).delete([doc.id for doc in docs]).counts()
         stages = self._stages(dry_run)
-        # The corroborator reads the texts to count a near-duplicate copy once.
+        # The corroborator reads the texts to count a near-duplicate copy once,
+        # and the pair judge reads its contexts from them.
         register_documents(stages["corroborator"], docs)
+        register_documents(stages["resolver"], docs)
         # A stage given is kept between calls, so its counts are read as a difference.
+        judge = getattr(stages["resolver"], "judge", None)
         spent = _spent(stages["grounder"].grounder)
+        judged = _spent(judge)
+        judged_before = _counted(judge)
         refused_before = _refused_by(stages["gate"])
         # Stand-ins: the double-stage warning sees each sink's platform, and the
         # real sinks write once the report is in the graph's stats.
@@ -316,9 +340,8 @@ class Validator:
             for reason, count in _refused_by(stages["gate"]).items()
             if count - refused_before.get(reason, 0)
         }
-        report = self._report(
-            kg, source, stages, dry_run, _spent(stages["grounder"].grounder, spent), refused_by
-        )
+        spent = _added(_spent(stages["grounder"].grounder, spent), _spent(judge, judged))
+        report = self._report(kg, source, stages, dry_run, spent, refused_by, judged_before)
         if retracted is not None:
             report = report.model_copy(update={"retracted": retracted})
         kg = kg.model_copy(update={"stats": _stats(kg, source, stages, report)})
@@ -338,12 +361,17 @@ class Validator:
             if inner is None:
                 inner = LLMGrounder(self.roles, client=self.client, locate=self.locate)
             grounder = CheckedGrounder(inner, ontology=ontology)
+        resolver = self.resolver
+        if resolver is None:
+            resolver = NativeResolver(lookup=self.lookup, judge=self.judge)
+        if dry_run and isinstance(resolver, NativeResolver) and resolver.judge is not None:
+            # A dry run asks no model: the rules alone, on a copy.
+            resolver = copy.copy(resolver)
+            resolver.judge = None
         return {
             "grounder": grounder,
             "normalizer": _given(self.normalizer, ValueNormalizer, ontology),
-            "resolver": (
-                self.resolver if self.resolver is not None else NativeResolver(lookup=self.lookup)
-            ),
+            "resolver": resolver,
             "corroborator": (
                 self.corroborator
                 if self.corroborator is not None
@@ -361,6 +389,7 @@ class Validator:
         dry_run: bool,
         spent: Mapping[str, Any],
         refused_by: Mapping[str, int],
+        judged_before: Mapping[str, int] | None,
     ) -> ValidationReport:
         own: dict[str, Any] = dict(getattr(source, "stats", {}))
         # A triples stage counts rows that found their text; a replay, facts.
@@ -375,6 +404,10 @@ class Validator:
         failed = kg.stats.get("failed")
         corroborated = getattr(stages["corroborator"], "stats", None)
         held = corroborated.get("store") if isinstance(corroborated, Mapping) else None
+        judge = _counted(getattr(stages["resolver"], "judge", None), judged_before)
+        prompts = dict.fromkeys(str(p) for p in grounding.get("prompts", ()))
+        if judge is not None and judge.get("calls") and isinstance(resolved, Mapping):
+            prompts.update(dict.fromkeys(str(p) for p in resolved.get("prompts", ())))
         return ValidationReport(
             dry_run=dry_run,
             documents=int(kg.stats.get("documents", 0)),
@@ -391,6 +424,7 @@ class Validator:
             store=(
                 {str(k): int(v) for k, v in store.items()} if isinstance(store, Mapping) else None
             ),
+            judge=judge,
             derived=derived,
             facts_out=len(kg.facts),
             edges=len(kg.edges),
@@ -400,7 +434,7 @@ class Validator:
             cached=int(spent.get("cached", 0)),
             tokens=int(spent.get("prompt_tokens", 0)) + int(spent.get("completion_tokens", 0)),
             cost_usd=spent.get("cost_usd"),
-            prompts=tuple(str(p) for p in grounding.get("prompts", ())),
+            prompts=tuple(prompts),
             coverage=dict(coverage) if isinstance(coverage, Mapping) else None,
             stopped=dict(stopped) if isinstance(stopped, Mapping) else None,
             failed=dict(failed) if isinstance(failed, Mapping) else {},
@@ -470,9 +504,9 @@ def _refused_by(gate: Any) -> dict[str, int]:
     return {str(k): int(v) for k, v in refused.items()} if isinstance(refused, Mapping) else {}
 
 
-def _spent(grounder: Any, before: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """The model calls, tokens and cost a grounder reports: since `before`, when given."""
-    stats = getattr(grounder, "stats", None)
+def _spent(stage: Any, before: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """The model calls, tokens and cost a grounder or judge reports: since `before`, when given."""
+    stats = getattr(stage, "stats", None)
     stats = stats if isinstance(stats, Mapping) else {}
     counted = ("calls", "cached", "prompt_tokens", "completion_tokens")
     now: dict[str, Any] = {key: int(stats.get(key, 0)) for key in counted}
@@ -484,6 +518,43 @@ def _spent(grounder: Any, before: Mapping[str, Any] | None = None) -> dict[str, 
     earlier = before.get("cost_usd")
     out["cost_usd"] = None if now["cost_usd"] is None else now["cost_usd"] - (earlier or 0.0)
     return out
+
+
+def _added(one: Mapping[str, Any], other: Mapping[str, Any]) -> dict[str, Any]:
+    """Two stages' spend together; the cost is unknown only when neither reported one."""
+    out: dict[str, Any] = {
+        k: int(one.get(k, 0)) + int(other.get(k, 0))
+        for k in ("calls", "cached", "prompt_tokens", "completion_tokens")
+    }
+    costs = [c for c in (one.get("cost_usd"), other.get("cost_usd")) if c is not None]
+    out["cost_usd"] = sum(costs) if costs else None
+    return out
+
+
+# What the report says of the pair judge, in this order.
+_JUDGED = (
+    "pairs",
+    "asked",
+    "calls",
+    "swapped",
+    "disagreed",
+    "same",
+    "different",
+    "unsure",
+    "person",
+    "queued",
+    "no_context",
+    "failed",
+)
+
+
+def _counted(judge: Any, before: Mapping[str, int] | None = None) -> dict[str, int] | None:
+    """A judge's counts, since `before` when given; None without a judge."""
+    stats = getattr(judge, "stats", None)
+    if not isinstance(stats, Mapping):
+        return None
+    earlier = before or {}
+    return {key: int(stats.get(key, 0)) - int(earlier.get(key, 0)) for key in _JUDGED}
 
 
 def _stats(
@@ -531,6 +602,27 @@ def _store_line(store: Mapping[str, int]) -> str:
         f"{_n(store.get('candidates', 0), 'candidate')} in the store: "
         f"{store.get('rekeyed', 0)} re-keyed onto a stored key; links {kinds}"
     )
+
+
+def _judge_line(judged: Mapping[str, int]) -> str:
+    asked, calls = judged.get("asked", 0), judged.get("calls", 0)
+    decided = ", ".join(f"{judged.get(k, 0)} {k}" for k in ("same", "different", "unsure"))
+    line = (
+        f"{_n(judged.get('pairs', 0), 'pair')} in the band: {asked} asked in both orders "
+        f"({_n(calls, 'call')}, {judged.get('swapped', 0)} swapped), {decided}; "
+        f"orders disagreed on {judged.get('disagreed', 0)}"
+    )
+    extra = [
+        f"{judged[k]} {label}"
+        for k, label in (
+            ("person", "decided by a person"),
+            ("queued", "queued"),
+            ("no_context", "without context"),
+            ("failed", "failed calls"),
+        )
+        if judged.get(k)
+    ]
+    return line + (f"; {', '.join(extra)}" if extra else "")
 
 
 def _n(count: int, noun: str) -> str:
