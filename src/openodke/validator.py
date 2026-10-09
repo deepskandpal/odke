@@ -106,6 +106,8 @@ class ValidationReport(Frozen):
     properties: int = 0
     entities: int = 0
     calls: int = 0
+    # Of `calls`, those a response cache answered (`openodke.llm.cache`).
+    cached: int = 0
     tokens: int = 0
     cost_usd: float | None = None
     prompts: tuple[str, ...] = ()
@@ -146,8 +148,12 @@ class ValidationReport(Frozen):
         else:
             usd = f"${self.cost_usd:.4f}" if self.cost_usd is not None else "USD unknown"
             prompts = f" ({', '.join(self.prompts)})" if self.prompts else ""
+            cached = f" ({self.cached} from the cache)" if self.cached else ""
             lines.append(
-                _row("cost", f"{self.calls} model calls, {self.tokens} tokens, {usd}{prompts}")
+                _row(
+                    "cost",
+                    f"{self.calls} model calls{cached}, {self.tokens} tokens, {usd}{prompts}",
+                )
             )
         if self.coverage is not None:
             lines.append(_row("coverage", coverage_summary(self.coverage)))
@@ -334,6 +340,7 @@ class Validator:
             properties=len(kg.properties),
             entities=len(kg.entities),
             calls=int(spent.get("calls", 0)),
+            cached=int(spent.get("cached", 0)),
             tokens=int(spent.get("prompt_tokens", 0)) + int(spent.get("completion_tokens", 0)),
             cost_usd=spent.get("cost_usd"),
             prompts=tuple(str(p) for p in grounding.get("prompts", ())),
@@ -403,17 +410,13 @@ def _spent(grounder: Any, before: Mapping[str, Any] | None = None) -> dict[str, 
     """The model calls, tokens and cost a grounder reports: since `before`, when given."""
     stats = getattr(grounder, "stats", None)
     stats = stats if isinstance(stats, Mapping) else {}
-    now: dict[str, Any] = {
-        key: int(stats.get(key, 0)) for key in ("calls", "prompt_tokens", "completion_tokens")
-    }
+    counted = ("calls", "cached", "prompt_tokens", "completion_tokens")
+    now: dict[str, Any] = {key: int(stats.get(key, 0)) for key in counted}
     cost = stats.get("cost_usd")
     now["cost_usd"] = float(cost) if isinstance(cost, int | float) else None
     if before is None:
         return now
-    out = {
-        key: now[key] - int(before.get(key, 0))
-        for key in ("calls", "prompt_tokens", "completion_tokens")
-    }
+    out = {key: now[key] - int(before.get(key, 0)) for key in counted}
     earlier = before.get("cost_usd")
     out["cost_usd"] = None if now["cost_usd"] is None else now["cost_usd"] - (earlier or 0.0)
     return out

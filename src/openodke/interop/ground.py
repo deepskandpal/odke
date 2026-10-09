@@ -77,6 +77,8 @@ class GroundSummary(Frozen):
     no_span: int = 0
     located: int = 0
     calls: int = 0
+    # Of `calls`, those a response cache answered (`openodke.llm.cache`).
+    cached: int = 0
     tokens: int = 0
     cost_usd: float | None = None
     prompts: tuple[str, ...] = ()
@@ -106,7 +108,10 @@ class GroundSummary(Frozen):
         else:
             usd = f"${self.cost_usd:.4f}" if self.cost_usd is not None else "USD unknown"
             prompts = f" ({', '.join(self.prompts)})" if self.prompts else ""
-            lines.append(_row("model", f"{self.calls} calls, {self.tokens} tokens, {usd}{prompts}"))
+            cached = f" ({self.cached} from the cache)" if self.cached else ""
+            lines.append(
+                _row("model", f"{self.calls} calls{cached}, {self.tokens} tokens, {usd}{prompts}")
+            )
         lines.append("failures")
         for title, shape in ((UNSUPPORTED, self.unsupported), (TOO_NARROW, self.too_narrow)):
             count = "unknown without the model" if self.dry_run else str(shape.count)
@@ -225,6 +230,7 @@ def summarize(
         no_span=int(spans.metrics.get("no_span") or 0),
         located=int(spans.metrics.get("located") or 0),
         calls=int(stats.get("calls", 0)),
+        cached=int(stats.get("cached", 0)),
         tokens=tokens,
         cost_usd=float(cost) if isinstance(cost, int | float) else None,
         prompts=tuple(str(p) for p in stats.get("prompts", ())),

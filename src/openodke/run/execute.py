@@ -198,7 +198,7 @@ def _extractor_stats(extractor: Any) -> dict[str, Any]:
     if callable(totals):
         out["paths"] = jsonable(totals())
     rejections: Counter[str] = Counter()
-    calls = 0
+    calls = cached = 0
     # Keys of the registered prompts the model path sent (DECISIONS #27).
     prompts: dict[str, None] = {}
     for source in (extractor, getattr(extractor, "llm", None)):
@@ -208,6 +208,7 @@ def _extractor_stats(extractor: Any) -> dict[str, Any]:
         made = getattr(source, "calls", None)
         if isinstance(made, list):
             calls += len(made)
+            cached += sum(1 for call in made if getattr(call, "cached", False) is True)
         sent = getattr(source, "prompts", None)
         if isinstance(sent, list | tuple):
             prompts.update(dict.fromkeys(str(key) for key in sent))
@@ -215,6 +216,9 @@ def _extractor_stats(extractor: Any) -> dict[str, Any]:
         out["rejections"] = dict(sorted(rejections.items()))
     if calls and "paths" not in out:
         out["model_calls"] = calls
+    if cached:
+        # Among the model calls, those the response cache answered.
+        out["cached_calls"] = cached
     if prompts:
         out["prompts"] = list(prompts)
     return out
@@ -306,10 +310,11 @@ def render(result: RunResult) -> str:
     cost = stats.get("cost", {}).get("metrics")
     if cost:
         usd = cost.get("cost_usd")
+        cached = f" ({cost['cached_calls']} from the cache)" if cost.get("cached_calls") else ""
         lines.append(
             _row(
                 "cost",
-                f"{cost.get('calls', 0)} model calls, "
+                f"{cost.get('calls', 0)} model calls{cached}, "
                 f"{cost.get('prompt_tokens', 0) + cost.get('completion_tokens', 0)} tokens, "
                 + (f"${usd:.4f}" if isinstance(usd, int | float) else "USD unknown"),
             )
