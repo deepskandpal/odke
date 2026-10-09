@@ -24,9 +24,10 @@ from typer.testing import CliRunner
 
 from openodke import Entity, Evidence, Fact, Span
 from openodke.cli.main import app
-from openodke.eval import StageReport, load_jsonl, per_document, run_ablation
+from openodke.eval import StageReport, load_jsonl, per_document, report_ablation, run_ablation
 from openodke.eval.formats import GoldFact
 from openodke.run import load_config, parse_config
+from test_eval_report import expected_cells, rendered_rows
 
 runner = CliRunner()
 
@@ -176,3 +177,46 @@ def test_a_merged_fact_is_scored_once_in_each_document_it_cites() -> None:
     split = per_document([merged, single])
     assert [[e.doc_id for e in f.evidence] for f in split] == [["a", "a"], ["b"], ["a"]]
     assert {f.id for f in split} == {merged.id, single.id}
+
+
+# --------------------------------------------------------------------------- #
+# The eval report (#139)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_eval_report_rows_are_the_ablation_s_rows_with_ranges(example: Path) -> None:
+    gold = load_jsonl(example / "gold.jsonl", GoldFact)
+    report = report_ablation(load_config(example / "odke.yaml"), gold, labels="gold.jsonl")
+    (stage,) = report.stages
+    assert stage == run_ablation(load_config(example / "odke.yaml"), gold)
+    assert [row.name for row in report.rows] == list(stage.breakdown)
+    for row in report.rows:
+        line = stage.breakdown[row.name]
+        assert row.performance.precision.value == line["precision"]
+        assert row.performance.recall.value == line["recall"]
+        assert row.performance.f1.value == line["f1"]
+        counts = (row.counts.hits, row.counts.over_extraction, row.counts.under_extraction)
+        assert counts == (line["tp"], line["fp"], line["fn"])
+        assert row.cost is not None and row.cost.calls == line["model_calls"]
+        # Recorded responses carry no price: unknown, never 0.0.
+        assert row.cost.usd is None
+        assert row.conformance is not None and row.conformance.rate == 1.0
+    assert report.bootstrap is not None and report.bootstrap.units == 8
+    assert report.run.prompts == ("extract@1", "ground.span@1")
+    assert set(report.run.models) == {"extract", "ground"}
+    assert report.run.dataset is not None
+    assert (report.run.dataset.name, report.run.dataset.labels) == ("gold.jsonl", 36)
+
+
+def test_the_ablation_renders_its_rows_once_and_keeps_its_notes(example: Path) -> None:
+    gold = load_jsonl(example / "gold.jsonl", GoldFact)
+    report = report_ablation(load_config(example / "odke.yaml"), gold)
+    text = report.render()
+    assert text.startswith("ablation  (n=36)\n")
+    printed = rendered_rows(text, [row.name for row in report.rows])
+    for row in report.rows:
+        assert printed[row.name] == expected_cells(row), row.name
+    # The stage's own table is the rows again: printed once, its notes kept.
+    assert text.count("+ corroboration") == 1
+    assert all(note in text for note in report.stages[0].notes)
+    assert "prompts  extract@1, ground.span@1" in text

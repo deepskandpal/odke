@@ -31,11 +31,21 @@ from __future__ import annotations
 import math
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from openodke.coverage import offered_by
 from openodke.coverage import summary as coverage_summary
+from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED
 from openodke.eval.cost import CallRecord, StageCost
+from openodke.eval.eval_report import (
+    Dataset,
+    EvalReport,
+    Run,
+    extraction_rows,
+    from_stage,
+    models_called,
+)
 from openodke.eval.extraction import evaluate_extraction, match_extraction, per_document
 from openodke.eval.formats import GoldFact, GroundingLabel
 from openodke.eval.grounding import DROPPED, grounding_ablation
@@ -136,6 +146,9 @@ class AblationRun:
     notes: list[str] = field(default_factory=list)
     # What extraction left behind (`CoverageReport.stats()`), measured on the candidates.
     coverage: dict[str, Any] | None = None
+    # The registered prompt keys the stages sent, and role -> model as configured.
+    prompts: tuple[str, ...] = ()
+    models: dict[str, str] = field(default_factory=dict)
 
     def configurations(self) -> list[tuple[str, list[Fact], list[CallRecord]]]:
         """Each configuration's name, its facts, and the calls it took to get them."""
@@ -151,7 +164,7 @@ def ablate(config: RunConfig) -> AblationRun:
     # Imported here: `openodke.run` imports `openodke.eval.cost`, and so this package.
     from openodke.gate import VerdictGate
     from openodke.run.build import build
-    from openodke.run.execute import register_documents
+    from openodke.run.execute import prompts_sent, register_documents
 
     # Metered whatever the config says: calls and cost are a column of the table.
     metered = config.model_copy(update={"models": config.models.model_copy(update={"meter": True})})
@@ -201,12 +214,60 @@ def ablate(config: RunConfig) -> AblationRun:
         gate=gate,
         notes=notes,
         coverage=extracted.stats.get("coverage"),
+        prompts=tuple(prompts_sent(stages)),
+        models={
+            role: spec.model
+            for role in ("extract", "ground", "infer")
+            if (spec := getattr(config.models, role)) is not None
+        },
     )
 
 
 def run_ablation(config: RunConfig, gold: Sequence[GoldFact]) -> StageReport:
     """The three configurations of `config`, scored against `gold`. Writes nothing."""
+    return score_ablation(ablate(config), gold)
+
+
+def report_ablation(
+    config: RunConfig,
+    gold: Sequence[GoldFact],
+    *,
+    labels: str | Path | None = None,
+    resamples: int = RESAMPLES,
+    seed: int = SEED,
+    level: float = LEVEL,
+) -> EvalReport:
+    """`run_ablation` as an eval report: the three rows with their ranges. Writes nothing.
+
+    `labels` names the gold file in the report's dataset.
+    """
     run = ablate(config)
+    rows, how = extraction_rows(
+        run.configurations(),
+        gold,
+        ontology=run.ontology,
+        resamples=resamples,
+        seed=seed,
+        level=level,
+    )
+    dataset = Dataset(
+        name=Path(labels).name if labels is not None else "gold facts",
+        path=str(labels) if labels is not None else None,
+        documents=len({g.doc_id for g in gold}),
+        labels=len(gold),
+    )
+    return from_stage(
+        score_ablation(run, gold),
+        rows=rows,
+        bootstrap=how,
+        run=Run(
+            models=models_called(run.all_calls, run.models), prompts=run.prompts, dataset=dataset
+        ),
+    )
+
+
+def score_ablation(run: AblationRun, gold: Sequence[GoldFact]) -> StageReport:
+    """An `AblationRun` already made, scored against `gold`: `run_ablation` without the run."""
     notes = list(run.notes)
     candidates, grounded, docs, gate = run.candidates, run.grounded, run.documents, run.gate
 
@@ -325,4 +386,13 @@ def _fmt(value: Metric) -> str:
     return "—" if value is None else f"{value:.3f}"
 
 
-__all__ = ["CONFIGURATIONS", "DESCRIPTION", "AblationRun", "ablate", "per_document", "run_ablation"]
+__all__ = [
+    "CONFIGURATIONS",
+    "DESCRIPTION",
+    "AblationRun",
+    "ablate",
+    "per_document",
+    "report_ablation",
+    "run_ablation",
+    "score_ablation",
+]

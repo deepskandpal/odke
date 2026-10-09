@@ -18,6 +18,10 @@ says anything about any extractor, grounder or resolver. There is no corpus,
 no gold slice and no leaderboard. Brier, B-cubed and P/R/F1 are arithmetic,
 so the subpackage adds no dependency to the base install (DECISIONS #1).
 
+Every run the Evaluator scores can also be written as one `EvalReport`: a
+versioned JSON document whose shape does not depend on the stage, with 95%
+ranges on precision, recall and F1 (`openodke.eval.eval_report`).
+
 Cost needs no labels: `CostMeter` wraps the `LLMClient` a stage was built
 with, so a run is measured without any stage Protocol changing.
 
@@ -33,7 +37,7 @@ inconclusive) and the detection limit printed beside every one.
 `compare_items` runs it over two runs' per-item outcomes (`item_rows`).
 """
 
-from openodke.eval.ablation import per_document, run_ablation
+from openodke.eval.ablation import per_document, report_ablation, run_ablation
 from openodke.eval.calibration import evaluate_calibration, run_score
 from openodke.eval.compare import Comparison, ItemRow, compare_files, compare_items, item_rows
 from openodke.eval.cost import (
@@ -44,6 +48,7 @@ from openodke.eval.cost import (
     StageCost,
     compare_costs,
 )
+from openodke.eval.eval_report import EvalReport, check_report, read_report
 from openodke.eval.extraction import evaluate_extraction, match_extraction, run_extract
 from openodke.eval.formats import (
     LABEL_FORMATS,
@@ -85,6 +90,7 @@ __all__ = [
     "Comparison",
     "CostMeter",
     "CostReport",
+    "EvalReport",
     "GoldFact",
     "GroundingLabel",
     "ItemRow",
@@ -103,6 +109,7 @@ __all__ = [
     "assert_idempotent",
     "bootstrap_interval",
     "check_idempotency",
+    "check_report",
     "compare_files",
     "compare_items",
     "compare_costs",
@@ -127,6 +134,8 @@ __all__ = [
     "mcnemar",
     "paired_bootstrap",
     "per_document",
+    "read_report",
+    "report_ablation",
     "run_ablation",
     "run_extract",
     "run_ground",
