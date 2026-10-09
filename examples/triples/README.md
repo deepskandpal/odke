@@ -1,6 +1,6 @@
 # Five triples someone else wrote
 
-The input format from [docs/triples.md](../../docs/triples.md), run once. Five
+The input format from [docs/inputs.md](../../docs/inputs.md), run once. Five
 hand-written triples about one short passage, one of each kind an extractor
 might hand over:
 
@@ -22,5 +22,6 @@ no network. Delete the `replay` lines in `odke.yaml` to ask a real model.
 
 `odke run` reports the extractor's rows by how their evidence was made: 1 cited,
 1 quoted, 1 quote not found, 2 context. The grounder makes four calls for five
-facts. `odke eval spans` counts the two uncited facts as having no span of their
-own, because the whole passage they were checked against is not a citation.
+facts. `odke eval spans` counts three of the five as having no span of their
+own: the two uncited facts, whose whole passage is not a citation, and the
+quote that is not in the text.

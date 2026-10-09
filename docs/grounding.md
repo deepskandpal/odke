@@ -76,7 +76,7 @@ summary, with the ids of every fact of each failure shape.
 | Option | |
 |---|---|
 | `--facts` | A triples file, an adapter's output, or a Neo4j URI |
-| `--adapter` | `triples` (the default), `langchain`, `langextract`, `graphrag` or `neo4j` ([Triples](triples.md#from-other-libraries)) |
+| `--adapter` | `triples` (the default), `langchain`, `langextract`, `graphrag` or `neo4j` ([Inputs](inputs.md#from-other-libraries)) |
 | `--texts` | The texts the facts cite, a file or a directory. Triples need them, and so does a Neo4j graph openodke wrote; the other adapters' output carries its own |
 | `--ontology` | Adds the free checks on the relation and the types |
 | `--config`, `--model`, `--model-provider` | The model, as `odke run` takes it: a file's `models` block, `replay` included |
@@ -348,7 +348,7 @@ assert (grounder.stats["widen"]["retried"], grounder.stats["widen"]["recovered"]
 ## Locating spans
 
 Most extractors outside openodke cite nothing, so their facts carry the whole
-text they came from as a `context` span ([Triples](triples.md)), and the model
+text they came from as a `context` span ([Inputs](inputs.md)), and the model
 reads all of it. `LLMGrounder(locate=True)` first looks for the support for
 free: `SpanLocator` finds the narrowest window of one sentence, or two adjacent
 ones in a paragraph, that names both the subject and the object. The window

@@ -107,7 +107,7 @@ The run above did five things:
 
 `validate(rows, documents)` takes the following inputs:
 
-- any adapter's `(rows, documents)` ([Triples](triples.md#from-other-libraries));
+- any adapter's `(rows, documents)` ([Inputs](inputs.md#from-other-libraries));
 - a triples file and the texts it cites;
 - `Fact`s and their texts.
 

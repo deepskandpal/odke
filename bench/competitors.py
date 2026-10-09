@@ -20,7 +20,7 @@ force a tool choice, which some reasoning models refuse; both run their
 prompt-and-parse paths here.)
 
 Triples go to `competitors/<system>/facts.jsonl` in openodke's triples format
-(docs/triples.md), and the directory is made runnable: the prepared config with
+(docs/inputs.md), and the directory is made runnable: the prepared config with
 the extractor swapped for `triples`, which hands those triples to openodke's
 grounder and corroborator unchanged.
 Both competitors are held to the schema the way LLMGraphTransformer's strict
