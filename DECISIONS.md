@@ -599,3 +599,28 @@ facts, 15 are partners of facts the gold calls right but leaves the other
 direction out of, and 23 come from facts the gold calls wrong. And since the
 step is on by default, adding an `inverse_of` to a live ontology changes the
 next run's graph; `diff` calls that compatible, and calls removing one breaking.
+
+### 29. A comparison has three verdicts, and inconclusive is not a pass
+
+Two runs on the same items are compared item by item: a paired bootstrap over
+the items, the 95% interval of the difference, and *better*, *worse* or
+*inconclusive*. Folding inconclusive into "pass" is how a regression ships on a
+set too small to see it, so inconclusive is never printed as "no regression". It
+carries the detection limit, the smallest change the set could have seen. One
+metric is primary and the rest are guardrails that print and never decide,
+because every metric that decides is one more chance of a false alarm.
+
+The CI gate fails *worse* and passes *inconclusive* unless asked. Failing
+inconclusive by default would fail every small change on a small set, and teach
+people to delete the step.
+
+The bootstrap is the standard library's, not numpy's, so the base install keeps
+its promise (#1). A resample of pass/fail items is a multinomial draw over their
+four pairings, not one draw per item, which keeps 2,000 resamples fast without
+an array library. LangChef's `compare` was the other candidate. It takes
+pass/fail verdicts only, not a corpus F1 resampled by document, and needs Python
+3.12 or 3.13 with numpy, scipy and pyarrow.
+
+*Cost:* an inconclusive result passes CI, so a real regression smaller than the
+limit can ship. The limit printed beside it says how big that could be, and the
+A/A test holds the false-alarm rate near 5%.
