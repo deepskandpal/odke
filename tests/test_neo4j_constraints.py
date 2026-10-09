@@ -170,20 +170,15 @@ def test_identity_qualifiers_scope_the_check() -> None:
     assert "scope" not in _check("employer")
 
 
-class _ScopedPredicate(Predicate):
-    """What M1 may add. The constrainer reads it by name, so this stands in for it."""
-
-    cardinality_scope: tuple[str, ...] = ()
-
-
-def test_m1s_cardinality_scope_is_read_when_it_exists() -> None:
-    predicate = _ScopedPredicate(
+def test_the_check_groups_by_the_predicate_scope_keys() -> None:
+    predicate = Predicate(
         name="ceo", qualifiers={"tier": Qualifier(identity=True)}, cardinality_scope=("region",)
     )
-    assert cardinality_scope(predicate) == ("region", "tier")
-    assert cardinality_scope(Predicate(name="plain")) == ()
     ontology = Ontology(predicates={"ceo": predicate})
     assert "[r.`region`, r.`tier`] AS scope" in _check("ceo", ontology)
+    # The old helper still answers, and says what replaced it.
+    with pytest.warns(DeprecationWarning, match="scope_keys"):
+        assert cardinality_scope(predicate) == predicate.scope_keys == ("region", "tier")
 
 
 def test_a_qualifier_named_like_provenance_is_checked_under_its_prefix() -> None:

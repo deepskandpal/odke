@@ -147,16 +147,3 @@ def test_a_declared_scope_adds_keys_and_can_never_remove_an_identity_key() -> No
     # Judging a declared key is validate()'s job; the union takes it at its word.
     assert Predicate(name="p", cardinality_scope=("b", "a")).scope_keys == ("a", "b")
     assert Predicate.model_validate_json(partial.model_dump_json()) == partial
-
-
-def test_scope_keys_is_exactly_what_the_neo4j_check_groups_by() -> None:
-    """R4 is declared here and compiled in M4; the two must not drift apart."""
-    from openodke.sinks.neo4j import cardinality_scope
-
-    for predicate in (
-        Predicate(name="flat"),
-        Predicate(name="implied", qualifiers=_SCOPED_QUALIFIERS),
-        Predicate(name="partial", qualifiers=_SCOPED_QUALIFIERS, cardinality_scope=("tier",)),
-        Predicate(name="extra", qualifiers=_SCOPED_QUALIFIERS, cardinality_scope=("as_of",)),
-    ):
-        assert cardinality_scope(predicate) == predicate.scope_keys, predicate.name

@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import warnings
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from datetime import date, datetime, time
 from enum import Enum
@@ -596,17 +597,13 @@ def check_target(statement: str) -> str:
 
 
 def cardinality_scope(predicate: Predicate) -> tuple[str, ...]:
-    """The qualifier keys a single-valued predicate is single *per*.
-
-    Always its identity-bearing keys: uptime at p50 and at p95 are two claims
-    (DECISIONS #15), so holding both is not a violation. Plus M1's
-    `cardinality_scope` where that field exists — read by name, because M1
-    lands separately and this must work on either side of it.
-    """
-    declared = getattr(predicate, "cardinality_scope", None) or ()
-    if isinstance(declared, str):
-        declared = (declared,)
-    return tuple(sorted({*predicate.identity_keys, *declared}))
+    """Deprecated: `predicate.scope_keys`, which the constrainer reads itself."""
+    warnings.warn(
+        "cardinality_scope(predicate) is deprecated; use predicate.scope_keys",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return predicate.scope_keys
 
 
 def _schema_name(kind: str, name: str) -> str:
@@ -655,9 +652,10 @@ class Neo4jConstrainer:
       reasoner told "at most one" concludes the two employers are one company
       (09-quality §4). Only asserted, open-ended relationships count: a denial
       is not a value, and one with `valid_to` set expired correctly (DECISIONS
-      #17). The check groups by the predicate's identity-bearing qualifiers,
-      and by M1's `cardinality_scope` where it exists: uptime is single per
-      percentile. Nothing runs these on write; `Neo4jSink.check()` does.
+      #17). The check groups by the predicate's `scope_keys`, its
+      identity-bearing qualifiers and any declared `cardinality_scope`: uptime
+      is single per percentile. Nothing runs these on write;
+      `Neo4jSink.check()` does.
     - existence, property-type and node-key constraints. Neo4j has them in
       Enterprise Edition only, so none is emitted and `EntityType.keys` is not
       compiled — the corroborator, not the store, is where those keys are used.
@@ -703,7 +701,7 @@ class Neo4jConstrainer:
     def checks(self, ontology: Ontology) -> list[str]:
         """One violator-returning query per single-cardinality predicate."""
         return [
-            _cardinality_check(name, cardinality_scope(predicate))
+            _cardinality_check(name, predicate.scope_keys)
             for name, predicate in sorted(ontology.predicates.items())
             if predicate.cardinality == "single"
         ]
