@@ -11,9 +11,7 @@ an object. A row may cite its support with offsets or a `quote`, or cite
 nothing. [Inputs](inputs.md#the-row) has every field.
 
 ```python
-from openodke import Document, Ontology, Pipeline, VerdictGate
-from openodke.ground import LLMGrounder
-from openodke.interop import TriplesExtractor
+from openodke import Document, Ontology, Validator, VerdictGate
 from openodke.llm.testing import RecordedClient
 
 text = (
@@ -40,11 +38,11 @@ The first row quotes its support, the second cites nothing, and the third
 quotes text that is not in the document. On a real run, `rows` is the path to a
 JSON Lines file with one row per line.
 
-## 2. Ground them
+## 2. Validate them
 
-`TriplesExtractor` is the extract stage: it replays the rows as facts.
-`LLMGrounder` checks each cited span against the document for free, then asks a
-model whether the text supports the claim.
+`openodke.Validator` checks each row against its text, asks a model whether the
+text supports the claim, then resolves, corroborates, gates and writes
+([The Validator](validator.md)).
 
 ```python
 # Recorded answers, so this runs with no key. Drop `client=` to call a model.
@@ -54,16 +52,14 @@ client = RecordedClient(
         {"match": "— Berlin (City)", "response": {"verdict": "not_found"}},
     ]
 )
-grounder = LLMGrounder(client=client)
-stage = TriplesExtractor(rows, documents=[doc])
-kg = Pipeline(ontology, stage, grounder=grounder).run([doc])
+kg, report = Validator(ontology, client=client).validate(rows, [doc])
 
 for fact in kg.facts:
     print(fact.object_entity.label, fact.verdict.value, fact.evidence[0].span_origin.value)
 # Lyon supported cited
 # Berlin not_found context
 # Paris not_found cited
-assert grounder.stats["calls"] == 2
+assert report.calls == 2
 ```
 
 Three facts cost two model calls: the free check refused the quote that is not
@@ -72,63 +68,20 @@ in the text. The row with no citation was checked against the whole text, its
 
 ## 3. Keep what holds up
 
-The grounder only stamps verdicts; a gate decides what is written.
-`VerdictGate` refuses `contradicted` facts, and with `refuse_not_found=True`
-refuses `not_found` ones too.
+The default gate refuses what the text contradicts and what the ontology has
+no room for, so all three facts are kept. To refuse `not_found` too:
 
 ```python
-gate = VerdictGate(refuse_not_found=True)
-stage = TriplesExtractor(rows, documents=[doc])
-kg = Pipeline(ontology, stage, grounder=grounder, gate=gate).run([doc])
-print([fact.object_entity.label for fact in kg.facts], gate.stats)
-# ['Lyon'] {'accepted': 1, 'refused': {'not_found': 2}}
+strict = VerdictGate(refuse_not_found=True, schema=True)
+kg, report = Validator(ontology, client=client, gate=strict).validate(rows, [doc])
+print([fact.object_entity.label for fact in kg.facts], report.refused_by)
+# ['Lyon'] {'not_found': 2}
 ```
 
-`openodke.Validator` does all of this in one call, with resolution and
-corroboration added and a default for every stage
-([The Validator](validator.md)):
-
-```python
-from openodke import Validator
-
-kg, report = Validator(ontology, client=client).validate(rows, [doc])
-print(report.facts_in, report.verdicts, report.calls)
-# 3 {'supported': 1, 'contradicted': 0, 'not_found': 2, 'unchecked': 0} 2
-```
-
-Pass `sinks=` to either to write what is kept:
-[Write to a store](stores.md#choose-a-sink) lists the sinks.
-
-To call a real model, drop `client=` and set the provider's key:
+Pass `sinks=` to write what is kept:
+[Write to a store](stores.md#choose-a-sink) lists the sinks. To call a real
+model, drop `client=` and set the provider's key:
 [Models and providers](models.md).
-
-## Your extractor
-
-Each adapter below turns one library's output into rows and texts, without
-importing the library. Hand both to `TriplesExtractor` or `Validator.validate`
-as above.
-
-**LangChain.** `LLMGraphTransformer` returns `GraphDocument`s.
-`from_graph_documents` reads them, or a JSON file of them. They cite nothing, so
-each fact is checked against its whole document.
-[Inputs: LangChain](inputs.md#langchain-graphdocument).
-
-**LangExtract.** `from_langextract` reads the file
-`lx.io.save_annotated_documents` writes, or the documents `lx.extract` returns.
-Each extraction's character interval becomes a citation.
-[Inputs: LangExtract](inputs.md#langextract).
-
-**neo4j-graphrag.** `from_graphrag` reads the graph its extractor returns, and
-`read_graphrag` reads a store it wrote. Each relationship is checked against the
-chunk its two ends came from.
-[Inputs: neo4j-graphrag](inputs.md#neo4j-graphrag).
-
-**A Neo4j graph.** `read_neo4j` reads a graph back so it can be checked where it
-stands, and `write_verdicts` writes the verdicts onto its relationships.
-[Inputs: a Neo4j graph](inputs.md#a-neo4j-graph).
-
-**Anything else.** Write the rows yourself, one JSON object per line:
-[the row](inputs.md#the-row).
 
 ## From the command line
 
@@ -152,9 +105,56 @@ It prints what each step did and writes the graph to `out/` as JSONL.
 ([Grounding](grounding.md#a-graph-from-somewhere-else-odke-ground)), and
 `odke run` runs a whole config ([Inputs](inputs.md#from-odke-run)).
 
+## Your extractor
+
+Each adapter below turns one library's output into rows and texts, without
+importing the library. Pass both to `Validator.validate`, or name the adapter
+with `odke validate --adapter`.
+
+**LangChain.** `from_graph_documents` reads `LLMGraphTransformer`'s
+`GraphDocument`s, or a JSON file of them. They cite nothing, so each fact is
+checked against its whole document.
+[Inputs: LangChain](inputs.md#langchain-graphdocument).
+
+**LangExtract.** `from_langextract` reads the file
+`lx.io.save_annotated_documents` writes, or the documents `lx.extract` returns.
+Each extraction's character interval becomes a citation.
+[Inputs: LangExtract](inputs.md#langextract).
+
+**neo4j-graphrag.** `from_graphrag` reads the graph its extractor returns, and
+`read_graphrag` reads a store it wrote. Each relationship is checked against the
+chunk its two ends came from.
+[Inputs: neo4j-graphrag](inputs.md#neo4j-graphrag).
+
+**A Neo4j graph.** `read_neo4j` reads a graph back so it can be checked where it
+stands, and `write_verdicts` writes the verdicts onto its relationships.
+[Inputs: a Neo4j graph](inputs.md#a-neo4j-graph).
+
+**Anything else.** Write the rows yourself, one JSON object per line:
+[the row](inputs.md#the-row).
+
+## The same thing, stage by stage
+
+The Validator is a `Pipeline` with a default for every stage. To choose each
+stage yourself, `TriplesExtractor` replays the rows as the extract stage:
+
+```python
+from openodke import Pipeline
+from openodke.ground import LLMGrounder
+from openodke.interop import TriplesExtractor
+
+stage = TriplesExtractor(rows, documents=[doc])
+kg = Pipeline(ontology, stage, grounder=LLMGrounder(client=client), gate=strict).run([doc])
+print([fact.object_entity.label for fact in kg.facts], kg.stats["refused"])
+# ['Lyon'] 2
+```
+
+[Concepts](concepts.md#the-order-the-stages-run-in) lists the stages in the
+order they run.
+
 ## Next
 
-- [Concepts](concepts.md): facts, evidence, verdicts and the order the stages run in.
+- [Concepts](concepts.md): facts, evidence, verdicts and the stages.
 - [Grounding](grounding.md): the span check, the model check, paper mode, the
   span locator, and the gate.
 - [Evaluation](evaluation.md): whether grounding helps on your data.
