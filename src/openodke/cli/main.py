@@ -829,17 +829,23 @@ def eval_stage(
     stage: str = typer.Argument(
         ...,
         help="route, extract, ground, resolve, score, validate, ablation (with --config), "
-        "spans (with --facts, and no labels at all), or compare (two runs' --items files).",
+        "spans (with --facts, and no labels at all), compare (two runs' --items files), or "
+        "pipeline (your own, run with --cmd, --run or --predictions).",
     ),
     runs: list[Path] | None = typer.Argument(
         None, help="compare only: run A's --items file, then run B's.", show_default=False
     ),
     labels: Path | None = typer.Option(None, "--labels", help="Your labelled rows, as JSONL."),
     predictions: Path | None = typer.Option(
-        None, "--predictions", help="What the stage produced, as JSONL."
+        None,
+        "--predictions",
+        help="What the stage produced, as JSONL. For pipeline, what it already wrote.",
     ),
     run: str | None = typer.Option(
-        None, "--run", help="package.module:Name — run that stage over the labels instead."
+        None,
+        "--run",
+        help="package.module:Name — run that stage over the labels instead. For pipeline: "
+        "module:function or path/file.py:function, called with the documents.",
     ),
     ontology: Path | None = typer.Option(
         None,
@@ -847,10 +853,15 @@ def eval_stage(
         help="Ontology JSON: for --run with extract or validate, and extract's conformance.",
     ),
     documents: Path | None = typer.Option(
-        None, "--documents", help="Document JSONL, for --run with extract."
+        None,
+        "--documents",
+        help="Document JSONL, for --run with extract. For pipeline, also a folder of texts.",
     ),
     config: Path | None = typer.Option(
-        None, "--config", help="Run config, for ablation: the pipeline to run three ways."
+        None,
+        "--config",
+        help="Run config: for ablation, the pipeline to run three ways; for pipeline "
+        "--validator, the Validator's stages and models.",
     ),
     facts: Path | None = typer.Option(
         None, "--facts", help="For spans: a run's facts.jsonl, or the directory a sink wrote."
@@ -858,7 +869,9 @@ def eval_stage(
     describe: bool = typer.Option(
         False, "--describe", help="Print what a label row and a prediction row are, and exit."
     ),
-    as_json: bool = typer.Option(False, "--json", help="Emit the stage's report as JSON."),
+    as_json: bool = typer.Option(
+        False, "--json", help="Emit the stage's report as JSON; for pipeline, the eval report."
+    ),
     items: Path | None = typer.Option(
         None,
         "--items",
@@ -894,6 +907,29 @@ def eval_stage(
     report_to: Path | None = typer.Option(
         None, "--report", help="Also write the versioned eval report, as JSON, here."
     ),
+    cmd: str | None = typer.Option(
+        None,
+        "--cmd",
+        help="pipeline: a command that reads {in}, a folder of texts, and writes triples to "
+        '{out}, e.g. "python my_extract.py {in} {out}". Run without a shell.',
+    ),
+    bench: Path | None = typer.Option(
+        None, "--bench", help="pipeline: a set `odke bench prepare` wrote, to score against."
+    ),
+    adapter: str = typer.Option(
+        "triples",
+        "--adapter",
+        help="pipeline: the output's format: triples, langchain, langextract or graphrag.",
+    ),
+    validator: bool = typer.Option(
+        False,
+        "--validator",
+        help="pipeline: also run the Validator over the same output, with --config's stages "
+        "and models (a bench set's own odke.json by default), and report both rows.",
+    ),
+    timeout: float = typer.Option(
+        600.0, "--timeout", min=0.0, help="pipeline: seconds --cmd may run before it is stopped."
+    ),
 ) -> None:
     """Score one stage against your own labelled data.
 
@@ -915,14 +951,21 @@ def eval_stage(
     it a CI gate; `--fail-under` adds a floor and `--fail-on-inconclusive` a
     stricter bar.
 
-    Extraction and the ablation print precision, recall and F1 with 95% ranges
-    over your documents. `--report` writes the versioned eval report;
-    `--json` prints the stage's own report, as 0.x did.
+    `pipeline` runs your whole extraction pipeline, a command (--cmd), a
+    function (--run) or output already written (--predictions), and scores
+    its triples against your labels (--labels, --documents) or a prepared
+    benchmark (--bench). --validator adds the row with the Validator's check.
+
+    Extraction, the ablation and pipeline print precision, recall and F1 with
+    95% ranges over your documents. `--report` writes the versioned eval
+    report; `--json` prints the stage's own report, as 0.x did, and for
+    pipeline the eval report itself.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
     from openodke.eval.compare import gate
     from openodke.eval.eval_report import Dataset, Run, from_stage
     from openodke.eval.formats import describe as describe_formats
+    from openodke.eval.harness import PipelineError
     from openodke.eval.runner import load_inputs, report_inputs
     from openodke.llm.base import ProviderError
 
@@ -938,7 +981,17 @@ def eval_stage(
         )
         if used
     ]
+    piped = {
+        "--cmd": cmd is not None,
+        "--bench": bench is not None,
+        "--adapter": adapter != "triples",
+        "--validator": validator,
+        "--timeout": timeout != 600.0,
+    }
     try:
+        if stage != "pipeline" and any(piped.values()):
+            named = ", ".join(flag for flag, given in piped.items() if given)
+            raise ValueError(f"{named}: these are for pipeline")
         if stage == "compare":
             if any(v is not None for v in inputs):
                 raise ValueError("compare reads two --items files and takes no other inputs")
@@ -966,7 +1019,32 @@ def eval_stage(
             raise ValueError(f"unexpected argument {str(runs[0])!r}: only compare takes runs")
         if compare_flags:
             raise ValueError(f"{', '.join(compare_flags)}: for compare only")
-        if stage == "spans":
+        if stage == "pipeline":
+            from openodke.eval.harness import DESCRIPTION, evaluate_pipeline
+
+            if describe:
+                typer.echo(DESCRIPTION)
+                return
+            if facts is not None:
+                raise ValueError("--facts is for spans")
+            if items is not None:
+                raise ValueError("--items is written for extract, ground, validate and route")
+            if config is not None and not validator:
+                raise ValueError("--config is for ablation, and for pipeline with --validator")
+            report = evaluate_pipeline(
+                command=cmd,
+                function=run,
+                predictions=predictions,
+                adapter=adapter,
+                labels=labels,
+                documents=documents,
+                bench=bench,
+                ontology=ontology,
+                validator=validator,
+                config=config,
+                timeout=timeout,
+            )
+        elif stage == "spans":
             from openodke.eval.spans import DESCRIPTION, evaluate_spans, load_facts
 
             if describe:
@@ -1024,11 +1102,13 @@ def eval_stage(
     except (ValueError, OSError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from exc
-    except ProviderError as exc:
+    except (ProviderError, PipelineError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
     if as_json:
-        typer.echo(report.stages[0].model_dump_json(indent=2))
+        # The 0.x stages print their own report, as they did; pipeline has no 0.x form.
+        shown = report if stage == "pipeline" else report.stages[0]
+        typer.echo(shown.model_dump_json(indent=2))
         return
     typer.echo(report.render())
     if report_to is not None:
