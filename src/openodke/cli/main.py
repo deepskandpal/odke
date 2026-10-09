@@ -410,14 +410,16 @@ def _grounder(
 ) -> Any:
     """The model grounder `odke run` would build from these models, or the config's replay.
 
-    A budget, from the flags over the `models` block's, counts every call that
-    goes out. The response cache is `--cache` when given, else the `models`
-    block's, and answers in front of it, for nothing.
+    Every call holds a slot of its provider's limit, from the `models` block's
+    `limits`, process-wide. A budget, from the flags over the block's, counts
+    every call that goes out. The response cache is `--cache` when given, else
+    the block's, and answers in front of both, for nothing.
     """
     from openodke.ground import LLMGrounder
     from openodke.llm.base import ProviderNotInstalled
     from openodke.llm.budget import Ledger
     from openodke.llm.cache import CachedClient
+    from openodke.llm.limits import PROVIDER_LIMITS, LimitedClient
     from openodke.llm.registry import resolve as resolve_client
     from openodke.run import ModelsConfig, load_models
     from openodke.run.build import OnFirstCall, _replay_client, response_cache
@@ -428,6 +430,7 @@ def _grounder(
         typer.echo(f"models: grounding on {chosen}")
     roles = models.roles()
     models = models.with_budget(usd=budget_usd, calls=budget_calls)
+    PROVIDER_LIMITS.update(models.limits)
     if cache is not None:
         store = response_cache(cache.expanduser(), "--cache")
     elif models.cache is not None:
@@ -435,8 +438,10 @@ def _grounder(
     else:
         store = None
     replay = models.replay.get("ground")
-    client: Any = _replay_client(base / replay, "ground") if replay is not None else None
-    if client is None and (store is not None or models.budget is not None):
+    client: Any
+    if replay is not None:
+        client = _replay_client(base / replay, "ground")
+    else:
         try:
             client = resolve_client(roles.ground)
         except ProviderNotInstalled:
@@ -444,6 +449,7 @@ def _grounder(
             if store is None:
                 raise
             client = OnFirstCall(roles.ground)
+    client = LimitedClient(client)
     if models.budget is not None:
         client = Ledger(models.budget).client(client)
     if store is not None:
