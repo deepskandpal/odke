@@ -36,6 +36,11 @@ SCORE = "odke.score"
 # {"rule": "inverse" | "symmetric", "of": <the stated fact's signature>}.
 DERIVED = "odke.derived"
 
+# On Fact.qualifiers: one widen-and-retry attempt by the grounder (#102) —
+# {"from": [start, end], "to": [start, end], "verdict": <the retry's answer>}.
+# The evidence span is the wider one only when that answer was "supported".
+WIDEN = "odke.widen"
+
 
 def source_forms(value: Any) -> dict[str, tuple[str, ...]]:
     """`qualifiers["odke.source_form"]` read back — tuples in memory, lists after JSON."""

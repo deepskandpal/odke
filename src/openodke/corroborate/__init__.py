@@ -22,7 +22,14 @@ from openodke.corroborate.normalize import (
     normalize_quantity,
     normalize_value,
 )
-from openodke.corroborate.provenance import CONFLICT, DERIVED, NAME_KEY, SCORE, SOURCE_FORM
+from openodke.corroborate.provenance import (
+    CONFLICT,
+    DERIVED,
+    NAME_KEY,
+    SCORE,
+    SOURCE_FORM,
+    WIDEN,
+)
 from openodke.corroborate.resolve import (
     LINKER,
     NativeResolver,
@@ -42,6 +49,7 @@ __all__ = [
     "NAME_KEY",
     "SCORE",
     "SOURCE_FORM",
+    "WIDEN",
     "NativeResolver",
     "SignatureCorroborator",
     "ValueNormalizer",
