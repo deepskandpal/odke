@@ -45,12 +45,24 @@ WIDEN = "odke.widen"
 # asked about it — {"check": "predicate" | "domain" | "range", "reason": <a sentence>}.
 CHECK = "odke.check"
 
+# On Fact.qualifiers: the corroborator's groups of evidence documents that are
+# near-duplicates of one another (#154) — ((doc_id, ...), ...), each sorted.
+# Every document's evidence stays on the fact; each group counts as one source.
+NEAR_DUPLICATES = "odke.near_duplicates"
+
 
 def source_forms(value: Any) -> dict[str, tuple[str, ...]]:
     """`qualifiers["odke.source_form"]` read back — tuples in memory, lists after JSON."""
     if not isinstance(value, Mapping):
         return {}
     return {str(k): tuple(v) if isinstance(v, list | tuple) else (v,) for k, v in value.items()}
+
+
+def near_duplicates(value: Any) -> tuple[tuple[str, ...], ...]:
+    """`qualifiers["odke.near_duplicates"]` read back — tuples in memory, lists after JSON."""
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(tuple(str(d) for d in group) for group in value if isinstance(group, list | tuple))
 
 
 def unstamped(fact: Fact) -> Fact:
@@ -79,8 +91,10 @@ __all__ = [
     "CONFLICT",
     "DERIVED",
     "NAME_KEY",
+    "NEAR_DUPLICATES",
     "SCORE",
     "SOURCE_FORM",
+    "near_duplicates",
     "source_forms",
     "unstamped",
 ]
