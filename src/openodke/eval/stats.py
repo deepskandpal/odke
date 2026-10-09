@@ -324,7 +324,8 @@ def _resample(runs: Sequence[Sequence[Totals]], draws: int, seed: int) -> Iterat
     pairings), a resample is how many of each outcome it drew, a multinomial
     draw costing the number of outcomes rather than the number of items. Both
     ways draw from the same distribution; which one runs depends only on the
-    data, so the same items and seed always give the same interval.
+    data, so the same items and seed always give the same interval. Both use
+    only `random()`, whose sequence for a seed Python keeps across versions.
     """
     rng = random.Random(seed)
     n = len(runs[0])
@@ -341,10 +342,11 @@ def _resample(runs: Sequence[Sequence[Totals]], draws: int, seed: int) -> Iterat
             counts = _multinomial(rng, n, sizes)
             yield [tuple(sum(map(mul, counts, col)) for col in cols) for cols in weights]
         return
+    # Item by item, from `random()` alone: Python promises its sequence for a
+    # seed across versions, and promises nothing for `choices` or `randrange`.
     columns = [list(zip(*run, strict=True)) for run in runs]
-    population = range(n)
     for _ in range(draws):
-        picked = rng.choices(population, k=n)
+        picked = [min(int(rng.random() * n), n - 1) for _ in range(n)]
         yield [tuple(sum(map(col.__getitem__, picked)) for col in cols) for cols in columns]
 
 
