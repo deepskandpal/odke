@@ -21,6 +21,7 @@ import json
 import re
 import unicodedata
 import warnings
+from collections import defaultdict
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from datetime import date, datetime, time
 from enum import Enum
@@ -32,7 +33,16 @@ from openodke.corroborate.provenance import CONFLICT
 from openodke.corroborate.resolve import block_keys
 from openodke.ontology import Ontology, Predicate
 from openodke.stages import DDL, Constrainer, PlatformProfile
-from openodke.types import Entity, EntityLink, Fact, KnowledgeGraph, Polarity, Resolution
+from openodke.types import (
+    Entity,
+    EntityLink,
+    Fact,
+    KnowledgeGraph,
+    Polarity,
+    Resolution,
+    SourceTier,
+    Support,
+)
 
 EXTRA_HINT = "the neo4j driver is not installed; run: pip install 'openodke[neo4j]'"
 
@@ -54,6 +64,11 @@ _PROVENANCE = frozenset(
         "verdict",
         "confidence",
         "support",
+        "support_sources",
+        "support_doc_ids",
+        "support_doc_sources",
+        "support_tiers",
+        "support_retrieved_at",
         "valid_from",
         "valid_to",
         "retrieved_at",
@@ -154,14 +169,18 @@ def provenance_of(fact: Fact, extracted_at: datetime) -> dict[str, Any]:
     is the same piece of evidence. `evidence_span_origins` says who chose each
     span, so a whole-text stand-in never reads as a citation (DECISIONS #25).
 
+    The support list is parallel lists too, one position per independent
+    source (`support_sources`, `support_tiers`, `support_retrieved_at`), and
+    its documents are `support_doc_ids`, each beside the source it belongs to
+    in `support_doc_sources`, because a list holds no lists. `support` is the
+    length of `support_sources` whenever the list is filled (#115).
+
     A naive clock beside an aware one is read as UTC, as the corroborator reads
     it: Python cannot compare the two, and to Neo4j they are two types, which no
     list may mix.
     """
-    evidence = fact.evidence
-    clocks = [e.retrieved_at for e in evidence]
-    if len({c.tzinfo is None for c in clocks}) > 1:
-        clocks = [_aware(c) for c in clocks]
+    evidence, sources = fact.evidence, fact.supported_by
+    clocks = _one_kind([e.retrieved_at for e in evidence])
     props: dict[str, Any] = {
         "fact_id": fact.id,
         "signature": signature_of(fact),
@@ -171,6 +190,11 @@ def provenance_of(fact: Fact, extracted_at: datetime) -> dict[str, Any]:
         "verdict": fact.verdict.value,
         "confidence": fact.confidence,
         "support": fact.support,
+        "support_sources": [entry.source for entry in sources],
+        "support_doc_ids": [doc for entry in sources for doc in entry.doc_ids],
+        "support_doc_sources": [entry.source for entry in sources for _ in entry.doc_ids],
+        "support_tiers": [entry.tier.value for entry in sources],
+        "support_retrieved_at": _one_kind([entry.retrieved_at for entry in sources]),
         "valid_from": fact.valid_from,
         "valid_to": fact.valid_to,
         "retrieved_at": max(clocks, default=None),
@@ -186,6 +210,38 @@ def provenance_of(fact: Fact, extracted_at: datetime) -> dict[str, Any]:
     for key, value in fact.qualifiers.items():
         props[qualifier_property(key)] = storable(value)
     return props
+
+
+def _one_kind(clocks: list[datetime]) -> list[datetime]:
+    """Clocks Neo4j can hold in one list: all aware when any is, a naive one read as UTC."""
+    if len({c.tzinfo is None for c in clocks}) > 1:
+        return [_aware(c) for c in clocks]
+    return clocks
+
+
+def support_from(props: Mapping[str, Any]) -> tuple[Support, ...]:
+    """A relationship's support lists read back as the `Fact.supported_by` that wrote them.
+
+    The inverse of `provenance_of`'s `support_*` properties, from Neo4j, a
+    NetworkX edge or a CSV row once its arrays are split. Empty when the fact
+    had no list, as a relationship written before support lists existed has not.
+    """
+    documents: dict[str, list[str]] = defaultdict(list)
+    owners = props.get("support_doc_sources") or ()
+    for doc, owner in zip(props.get("support_doc_ids") or (), owners, strict=True):
+        documents[str(owner)].append(str(doc))
+    sources = [str(s) for s in props.get("support_sources") or ()]
+    tiers = list(props.get("support_tiers") or ())
+    clocks = [_native(c) for c in props.get("support_retrieved_at") or ()]
+    return tuple(
+        Support(
+            source=source,
+            doc_ids=tuple(documents.get(source, ())),
+            tier=SourceTier(tier),
+            retrieved_at=clock,
+        )
+        for source, tier, clock in zip(sources, tiers, clocks, strict=True)
+    )
 
 
 def _entity_row(entity: Entity) -> dict[str, Any]:
@@ -471,10 +527,11 @@ class Neo4jSink:
 
     Every fact relationship carries its provenance: evidence document ids,
     uris, span offsets and who chose them, tiers, extractor, verdict,
-    confidence, support, both clocks, and the reconcilable qualifiers as
-    properties. "Why is this edge here?" is a read of the edge. Forgetting a
-    source is not a delete: other sources may back the same fact, and its
-    `:Claim` and projected value would stay. That is the reconciler's job (#116).
+    confidence, support and the sources it counts, both clocks, and the
+    reconcilable qualifiers as properties. "Why is this edge here?" is a read
+    of the edge. Forgetting a source is not a delete: other sources may back
+    the same fact, and its `:Claim` and projected value would stay. That is
+    the reconciler's job (#116).
 
     A single-valued predicate with two objects is written as two edges, not
     replaced: the store holds the conflict and a check query reports it
@@ -1208,4 +1265,5 @@ __all__ = [
     "storable",
     "store_indexes",
     "stored_entity",
+    "support_from",
 ]

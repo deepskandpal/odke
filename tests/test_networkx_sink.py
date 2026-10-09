@@ -26,7 +26,7 @@ from openodke import (  # noqa: E402
     SpanOrigin,
 )
 from openodke.eval.sinks import assert_idempotent  # noqa: E402
-from openodke.sinks.neo4j import signature_of  # noqa: E402
+from openodke.sinks.neo4j import signature_of, support_from  # noqa: E402
 from openodke.sinks.networkx import EXTRA_HINT, NetworkXSink, claim_node  # noqa: E402
 from test_neo4j_sink import PROVENANCE, _graph  # noqa: E402
 
@@ -118,6 +118,7 @@ def _fact_back(g: Any, u: str, v: str, attrs: dict[str, Any], projected: set[str
         confidence=attrs["confidence"],
         verdict=GroundingVerdict(attrs["verdict"]),
         support=attrs["support"],
+        supported_by=support_from(attrs),
     )
 
 
