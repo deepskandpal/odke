@@ -47,7 +47,7 @@ LINKER = "odke.native"
 
 _DOMAIN = re.compile(
     r"(?:[a-z][a-z0-9+.-]*://)?(?:www\.)?"
-    r"((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,24})\.?(?:[:/?#]\S*)?",
+    r"((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,24})\.?(?::\d+)?/?",
     re.I,
 )
 _SCHEME = re.compile(r"[A-Za-z][\w.-]*")
@@ -56,8 +56,10 @@ _SCHEME = re.compile(r"[A-Za-z][\w.-]*")
 def domain_of(text: str) -> str | None:
     """The host an alias names, lowercased and without `www.`, or `None`.
 
-    `"https://www.acme.com/about"` and `"acme.com"` are both `acme.com`. Text with
-    a space in it is a name, not a domain.
+    `"https://www.acme.com/"` and `"acme.com"` are both `acme.com`. A URL with a
+    path names a page on a host, not the host: two LinkedIn profiles share
+    `linkedin.com` and nothing else, so `"https://www.linkedin.com/in/alice-chen"`
+    is not a domain and is compared as a name. Nor is text with a space in it.
     """
     m = _DOMAIN.fullmatch(text.strip())
     return m[1].lower() if m else None
