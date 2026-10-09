@@ -19,6 +19,7 @@ from openodke import __version__
 from openodke.ontology import Ontology, OntologyLoadError
 
 if TYPE_CHECKING:
+    from openodke.eval.compare import Comparison
     from openodke.run import RunConfig
 
 app = typer.Typer(
@@ -874,6 +875,20 @@ def eval_stage(
     seed: int = typer.Option(
         0, "--seed", help="compare: the resampling seed; the same seed gives the same interval."
     ),
+    fail_under: float | None = typer.Option(
+        None,
+        "--fail-under",
+        min=0.0,
+        max=1.0,
+        help="compare, as a CI gate: also exit 1 when the low end of B's 95% range for the "
+        "primary metric is under this, e.g. 0.80. A worse verdict always exits 1; an "
+        "inconclusive one exits 0 unless --fail-on-inconclusive.",
+    ),
+    fail_on_inconclusive: bool = typer.Option(
+        False,
+        "--fail-on-inconclusive",
+        help="compare: exit 1 on inconclusive as well, a change this set cannot tell from noise.",
+    ),
 ) -> None:
     """Score one stage against your own labelled data.
 
@@ -891,9 +906,12 @@ def eval_stage(
     `compare A B` asks whether the change between two runs was real. Write each
     run's outcomes with `--items`, then compare them: a paired bootstrap over the
     items both scored, with a verdict of better, worse or inconclusive and the
-    smallest change the set can detect.
+    smallest change the set can detect. It exits 1 when B is worse, which makes
+    it a CI gate; `--fail-under` adds a floor and `--fail-on-inconclusive` a
+    stricter bar.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
+    from openodke.eval.compare import gate
     from openodke.eval.formats import describe as describe_formats
     from openodke.eval.runner import load_inputs, score
     from openodke.llm.base import ProviderError
@@ -905,6 +923,8 @@ def eval_stage(
             ("--metric", metric is not None),
             ("--resamples", resamples != 2000),
             ("--seed", seed != 0),
+            ("--fail-under", fail_under is not None),
+            ("--fail-on-inconclusive", fail_on_inconclusive),
         )
         if used
     ]
@@ -912,7 +932,16 @@ def eval_stage(
         if stage == "compare":
             if any(v is not None for v in inputs):
                 raise ValueError("compare reads two --items files and takes no other inputs")
-            _eval_compare(runs or [], describe, as_json, metric, resamples, seed)
+            comparison = _eval_compare(runs or [], describe, as_json, metric, resamples, seed)
+            if comparison is None:
+                return
+            reasons = gate(
+                comparison, fail_under=fail_under, fail_on_inconclusive=fail_on_inconclusive
+            )
+            for reason in reasons:
+                typer.echo(f"gate: fail: {reason}", err=True)
+            if reasons:
+                raise typer.Exit(1)
             return
         if runs:
             raise ValueError(f"unexpected argument {str(runs[0])!r}: only compare takes runs")
@@ -990,16 +1019,17 @@ def _write_items(path: Path, stage: str, rows: Any, predicted: Any) -> None:
 
 def _eval_compare(
     runs: list[Path], describe: bool, as_json: bool, metric: str | None, resamples: int, seed: int
-) -> None:
+) -> Comparison | None:
     from openodke.eval.compare import DESCRIPTION, compare_files
 
     if describe:
         typer.echo(DESCRIPTION)
-        return
+        return None
     if len(runs) != 2:
         raise ValueError(f"compare takes two runs' --items files, A then B; got {len(runs)}")
     comparison = compare_files(runs[0], runs[1], metric=metric, resamples=resamples, seed=seed)
     typer.echo(comparison.model_dump_json(indent=2) if as_json else comparison.render())
+    return comparison
 
 
 # --------------------------------------------------------------------------- #

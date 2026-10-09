@@ -17,7 +17,14 @@ import pytest
 from typer.testing import CliRunner
 
 from openodke.cli.main import app
-from openodke.eval.compare import Comparison, ItemRow, compare_items, item_rows, write_items
+from openodke.eval.compare import (
+    Comparison,
+    ItemRow,
+    compare_items,
+    gate,
+    item_rows,
+    write_items,
+)
 from openodke.eval.runner import load_inputs, score
 
 FIXTURES = Path(__file__).parent / "fixtures" / "eval"
@@ -107,6 +114,7 @@ def test_a_run_against_itself_is_inconclusive_and_says_why(tmp_path: Path) -> No
 def test_a_paired_drop_is_worse_with_its_interval_flips_and_mcnemar(tmp_path: Path) -> None:
     a, b = _pass_fail(both=240, gained=3, lost=27, neither=30)
     result = runner.invoke(app, ["eval", "compare", *_files(tmp_path, a, b)])
+    assert result.exit_code == 1
     text = _flat(result.stdout)
     assert "verdict worse: B is below A, and the whole 95% interval is below zero" in text
     assert "accuracy A 0.890 B 0.810 difference -8.0 points" in text
@@ -211,3 +219,66 @@ def test_an_item_row_carries_an_outcome() -> None:
         ItemRow(id="d1", tp=1, fp=0)
     with pytest.raises(ValueError, match="tp, fp and fn, or correct"):
         ItemRow(id="d1")
+
+
+# --------------------------------------------------------------------------- #
+# The CI gate
+# --------------------------------------------------------------------------- #
+
+
+def test_worse_fails_the_gate_with_the_reason(tmp_path: Path) -> None:
+    a, b = _pass_fail(both=240, gained=3, lost=27, neither=30)
+    result = runner.invoke(app, ["eval", "compare", *_files(tmp_path, a, b)])
+    assert result.exit_code == 1
+    assert "gate: fail: accuracy is worse: -8.0 points, 95% interval" in _flat(result.stderr)
+
+
+def test_inconclusive_passes_unless_asked_to_fail(tmp_path: Path) -> None:
+    """A change too small for 300 items to see is not a regression they saw."""
+    files = _files(tmp_path, *_pass_fail(both=240, gained=14, lost=16, neither=30))
+    passed = runner.invoke(app, ["eval", "compare", *files])
+    assert passed.exit_code == 0, passed.output
+    assert "smallest change it can detect is 5.1 points" in _flat(passed.stdout)
+    strict = runner.invoke(app, ["eval", "compare", *files, "--fail-on-inconclusive"])
+    assert strict.exit_code == 1
+    assert "gate: fail: --fail-on-inconclusive: inconclusive" in _flat(strict.stderr)
+
+
+def test_fail_under_is_a_floor_for_b_with_its_uncertainty(tmp_path: Path) -> None:
+    """B scores 0.890, better than A; its 95% range reaches down to about 0.85."""
+    a, b = _pass_fail(both=240, gained=27, lost=3, neither=30)
+    files = _files(tmp_path, a, b)
+    comparison = compare_items(a, b)
+    low = comparison.primary.b_interval[0]
+    assert comparison.verdict == "better" and 0.84 < low < 0.87
+    cleared = runner.invoke(app, ["eval", "compare", *files, "--fail-under", "0.80"])
+    assert cleared.exit_code == 0, cleared.output
+    # Above B's low end, though below its point estimate of 0.890: B fails the floor.
+    missed = runner.invoke(app, ["eval", "compare", *files, "--fail-under", "0.88"])
+    assert missed.exit_code == 1
+    expected = f"B's accuracy could be as low as {low:.3f} (95% range), under --fail-under 0.88"
+    assert expected in _flat(missed.stderr)
+
+
+def test_the_gate_reads_the_comparison() -> None:
+    better = compare_items(*_pass_fail(both=240, gained=27, lost=3, neither=30))
+    assert gate(better) == [] and gate(better, fail_under=0.5, fail_on_inconclusive=True) == []
+    same = compare_items(*_pass_fail(both=240, gained=0, lost=0, neither=60))
+    assert gate(same) == []
+    assert gate(same, fail_on_inconclusive=True) == [
+        "--fail-on-inconclusive: inconclusive: no item changed between the runs"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["eval", "compare", "a.jsonl", "b.jsonl", "--fail-under", "80"], "--fail-under"),
+        (["eval", "extract", "--labels", "x", "--fail-under", "0.8"], "for compare only"),
+        (["eval", "extract", "--labels", "x", "--fail-on-inconclusive"], "for compare only"),
+    ],
+)
+def test_gate_mistakes_exit_2(args: list[str], message: str) -> None:
+    result = runner.invoke(app, args)
+    assert result.exit_code == 2
+    assert message in _flat(result.output)

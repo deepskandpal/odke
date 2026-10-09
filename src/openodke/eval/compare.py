@@ -67,7 +67,12 @@ metric recomputed for both runs on each resample (a paired bootstrap; for
 corpus precision, recall and F1 the item is the document). The primary metric
 (F1 for counts, accuracy otherwise; --metric to choose) decides the verdict:
 worse or better when its whole 95% interval is one side of zero, inconclusive
-otherwise. The other metrics are guardrails: reported, never deciding."""
+otherwise. The other metrics are guardrails: reported, never deciding.
+
+Exit 1 when the verdict is worse. --fail-under X also exits 1 when the low end
+of B's 95% range for the primary metric is under X; --fail-on-inconclusive
+also exits 1 on inconclusive, which otherwise passes. Exit 2 is files that
+cannot be compared."""
 
 
 class ItemRow(Frozen):
@@ -243,6 +248,37 @@ def compare_files(
     )
 
 
+def gate(
+    comparison: Comparison,
+    *,
+    fail_under: float | None = None,
+    fail_on_inconclusive: bool = False,
+) -> list[str]:
+    """Why a CI step should fail on this comparison; empty when it passes.
+
+    A *worse* verdict always fails. `fail_under` also fails a B whose own 95%
+    range for the primary metric reaches below the threshold: B has to clear
+    the floor with its uncertainty, not with a lucky point estimate. An
+    *inconclusive* verdict passes unless `fail_on_inconclusive`: a change too
+    small for this set to see is not a regression it saw, and the detection
+    limit printed beside it says how small that is.
+    """
+    p, name, reasons = comparison.primary, comparison.metric, []
+    if p.verdict == "worse":
+        reasons.append(
+            f"{name} is worse: {_points(p.difference)} points, {p.level:.0%} interval "
+            f"{_points(p.interval[0])} to {_points(p.interval[1])}"
+        )
+    if fail_under is not None and p.b_interval[0] < fail_under:
+        reasons.append(
+            f"B's {name} could be as low as {p.b_interval[0]:.3f} ({p.level:.0%} range), "
+            f"under --fail-under {fail_under:g}"
+        )
+    if fail_on_inconclusive and p.verdict == "inconclusive":
+        reasons.append(f"--fail-on-inconclusive: {_sentence(p, f'{comparison.unit}s')}")
+    return reasons
+
+
 # --------------------------------------------------------------------------- #
 # Writing a run's items
 # --------------------------------------------------------------------------- #
@@ -385,6 +421,7 @@ __all__ = [
     "ItemRow",
     "compare_files",
     "compare_items",
+    "gate",
     "item_rows",
     "write_items",
 ]
