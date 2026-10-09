@@ -13,7 +13,8 @@ name's default options:
   so a fact the ontology has no room for, or whose quote is not in its text,
   never costs a call. `locate=True` turns the span locator on;
 - normalizer: `ValueNormalizer`; resolver: `NativeResolver`; corroborator:
-  `SignatureCorroborator`; scorer: `EvidenceScorer`;
+  `SignatureCorroborator`, handed the texts so that a near-duplicate copy
+  counts as one source; scorer: `EvidenceScorer`;
 - gate: `VerdictGate(schema=True)`, which refuses what its passage contradicts
   and what the free checks refused. The free checks leave such a fact's
   verdict as it was, so a gate that only read verdicts would write it;
@@ -220,9 +221,13 @@ class Validator:
                 "is the verification layer since 1.0.0, and the gate is openodke.Gate "
                 "(DECISIONS #26)"
             )
+        from openodke.run.execute import register_documents
+
         docs = list(documents)
         source = _source(facts, docs, extractor=extractor, confidence=confidence)
         stages = self._stages(dry_run)
+        # The corroborator reads the texts to count a near-duplicate copy once.
+        register_documents(stages["corroborator"], docs)
         # A stage given is kept between calls, so its counts are read as a difference.
         spent = _spent(stages["grounder"].grounder)
         refused_before = _refused_by(stages["gate"])

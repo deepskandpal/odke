@@ -204,7 +204,8 @@ class SignatureCorroborator:
     claim's documents from different sources whose 5-word shingles have a
     Jaccard similarity of at least `near_duplicates` count as one source, and
     `odke.near_duplicates` records the group; `None` turns the check off.
-    Without the texts nothing is compared. `stats["near_duplicates"]` counts
+    Without the texts nothing is compared. `odke run` and the Validator hand
+    over the documents they were given, and `stats["near_duplicates"]` counts
     the pairs compared and found.
     """
 

@@ -157,7 +157,7 @@ would have to be a Python object, such as a corroborator's `source` callable.
 | `grounder` | `span`, `llm`, `passthrough`, `delegated` | `SpanGrounder`, `LLMGrounder` | `llm`: `max_workers`, `retry` (`attempts`, `base_delay`, `multiplier`, `max_delay`, `jitter`), `context`, `verdicts`, `locate` ([the span locator](grounding.md#locating-spans)), `widen` ([widen and retry](grounding.md#widen-and-retry); `odke run --widen` sets it) |
 | `normalizer` | `value`, `passthrough`, `delegated` | `ValueNormalizer` | `day_first`, `person_types` |
 | `resolver` | `native`, `passthrough`, `delegated` | `NativeResolver` | `threshold`, `nudge_up`, `nudge_down`, `max_block` |
-| `corroborator` | `signature`, `passthrough`, `delegated` | `SignatureCorroborator` | `half_life_days`, `freshness_floor`, `intervals` |
+| `corroborator` | `signature`, `passthrough`, `delegated` | `SignatureCorroborator` | `half_life_days`, `freshness_floor`, `intervals`, `near_duplicates` |
 | `scorer` | `evidence` (the default), `passthrough`, `delegated` | `EvidenceScorer` | `prior`, `verdict_weights` |
 | `gate` | `verdict`, `passthrough`, `delegated` | `VerdictGate` | `refuse_not_found` |
 | `sink` | `jsonl`, `neo4j`, `cypher_file`, `neo4j_admin_csv`, `rdf`, `networkx` | the [sinks](stores.md) | see [below](#sinks) |
