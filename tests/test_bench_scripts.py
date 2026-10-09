@@ -30,6 +30,7 @@ def _load(name: str) -> ModuleType:
 competitors = _load("competitors")
 inverses = _load("inverses")
 locator = _load("locator")
+store_lookup = _load("store_lookup")
 tables = _load("tables")
 
 
@@ -291,3 +292,48 @@ def test_the_locator_bench_rule_passes_agreement_and_fails_a_lost_true_fact(
     assert lost["passes"] is False
     low, high = locator.wilson(95, 100)
     assert low < 0.95 < high and round(low, 3) == 0.888
+
+
+# --------------------------------------------------------------------------- #
+# store_lookup.py
+# --------------------------------------------------------------------------- #
+
+
+def _mention(name: str, sentence: int, kind: str) -> dict[str, Any]:
+    return {"name": name, "sent_id": sentence, "pos": [0, 1], "type": kind}
+
+
+def test_the_store_lookup_bench_scores_links_into_each_documents_own_store(
+    tmp_path: Path,
+) -> None:
+    """First half stored, second half resolved against it, every pair of a document labelled."""
+    doc = {
+        "title": "Acme",
+        "sents": [["a"], ["b"], ["c"], ["d"]],
+        "vertexSet": [
+            # Named in both halves, differently: the link to find.
+            [_mention("Acme Corporation", 0, "ORG"), _mention("Acme Corp", 2, "ORG")],
+            # Stored only, and a near name of a different entity in the second half.
+            [_mention("Acme Widgets", 1, "ORG")],
+            [_mention("Acme Widget", 3, "ORG")],
+            # A value, neither stored nor looked up.
+            [_mention("1906", 0, "TIME"), _mention("1906", 3, "TIME")],
+            # A surname alone: the miss.
+            [_mention("Ada Lovelace", 0, "PER"), _mention("Lovelace", 3, "PER")],
+        ],
+        "labels": [],
+    }
+    data = tmp_path / "test_revised.json"
+    data.write_text(json.dumps([doc, doc]), encoding="utf-8")
+    result = store_lookup.run(data)
+
+    assert result["summary"]["stored_entities"] == 6 and result["findable"] == 4
+    by = {row["threshold"]: row for row in result["thresholds"]}
+    # At the default, one right link and one wrong one per document; the surname is missed.
+    assert (by[0.9]["links"], by[0.9]["link_precision"], by[0.9]["link_recall"]) == (4, 0.5, 0.5)
+    assert by[0.9]["kinds"] == {"similar": 4}
+    # A bar of 1.0 keeps only the exact name key: "Acme Corp" and "Acme Corporation" are "acme".
+    assert (by[1.0]["links"], by[1.0]["link_precision"]) == (2, 1.0)
+    # With no tenant, each document's mentions also link to the other's twin.
+    assert result["unscoped"]["links"] == 8 and result["unscoped"]["cross_document"] == 4
+    assert "| 0.9 (default) | 4 | 50.0 | 50.0 |" in store_lookup.table(result)

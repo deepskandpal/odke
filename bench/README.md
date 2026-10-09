@@ -106,3 +106,17 @@ python bench/locator.py "$CMP/redocred" --out out/locator          # free: place
 python bench/locator.py "$CMP/redocred" --out out/locator --live   # + grounding, priced first
 ```
 
+## Resolving against the store
+
+`store_lookup.py` measures `NativeResolver(lookup=MemoryLookup(...))` (#114,
+#149) on Re-DocRED's entity clusters, offline: no model, no database. Gold
+identity is within a document, so each document's first half of sentences is
+the store and its second half the batch, scoped to the document as its tenant.
+It reports link precision and recall, pairwise P/R and B-cubed per `SIMILAR`
+threshold, and how many links an unscoped store would send to other
+documents. Re-DocRED has no ids, so only the weak path is measured; the
+multi-source benchmark (#117) measures proofs and identity across documents.
+
+```bash
+python bench/store_lookup.py data/redocred/test_revised.json --out out/store-lookup
+```
