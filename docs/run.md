@@ -75,7 +75,7 @@ An input's `loader` is a stage spec like any other: a short name, with options a
 extra keys. An input without one is read by `stages.loader`, and when that is left
 out too, by the `directory` loader, which reads every suffix it knows and warns
 about and skips a file whose extra is missing
-([Loaders](loaders-and-extraction.md#directories)).
+([Loading documents](loading.md#directories)).
 
 **Document ids are source paths.** A document read from a file gets the file's path
 relative to the config as its id, plus `#L<line>` for a record with a source line
