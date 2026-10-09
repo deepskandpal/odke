@@ -34,6 +34,7 @@ from openodke import (
     Sink,
     SourceTier,
     Span,
+    SpanOrigin,
 )
 from openodke.corroborate import CONFLICT, SignatureCorroborator
 from openodke.eval.sinks import assert_idempotent
@@ -129,10 +130,11 @@ class FakeDriver:
 WHEN = datetime(2026, 9, 1, tzinfo=UTC)
 
 
-def _evidence(doc: str, start: int, end: int) -> Evidence:
+def _evidence(doc: str, start: int, end: int, origin: SpanOrigin = SpanOrigin.CITED) -> Evidence:
     return Evidence(
         doc_id=doc,
         span=Span(doc_id=doc, start=start, end=end),
+        span_origin=origin,
         uri=f"https://example.com/{doc}",
         tier=SourceTier.AUTHORITATIVE,
         retrieved_at=WHEN,
@@ -181,7 +183,13 @@ def _graph() -> KnowledgeGraph:
             identity_keys=("percentile",),
             evidence=(_evidence("d3", 20, 25),),
         ),
-        Fact(subject=ada, predicate="name", object_value="Ada", evidence=(_evidence("d1", 0, 3),)),
+        # A bare triple: its span is the whole text it came from, not a citation.
+        Fact(
+            subject=ada,
+            predicate="name",
+            object_value="Ada",
+            evidence=(_evidence("d5", 0, 60, SpanOrigin.CONTEXT),),
+        ),
         Fact(
             subject=acme,
             predicate="sells",
@@ -317,6 +325,7 @@ PROVENANCE = {
     "evidence_uris",
     "evidence_starts",
     "evidence_ends",
+    "evidence_span_origins",
     "evidence_tiers",
 }
 
@@ -366,6 +375,16 @@ def test_provenance_traces_an_edge_to_a_document_and_a_character_range() -> None
     assert props["retrieved_at"] == WHEN
     assert props["extracted_at"] == graph.created_at
     assert props["fact_id"] == graph.facts[0].id
+
+
+def test_a_context_span_is_told_from_a_citation() -> None:
+    """A whole-text stand-in passes the span check but cites nothing (DECISIONS #25)."""
+    driver = _written(_graph())
+    (employer,) = _rows_where(driver, "[r:`employer`")
+    (name,) = _rows_where(driver, "[r:`name`")
+    assert employer["props"]["evidence_span_origins"] == ["cited", "cited"]
+    assert name["props"]["evidence_span_origins"] == ["context"]
+    assert (name["props"]["evidence_starts"], name["props"]["evidence_ends"]) == ([0], [60])
 
 
 def test_reconcilable_qualifiers_are_properties_and_never_overwrite_provenance() -> None:
@@ -662,6 +681,16 @@ def test_against_a_live_neo4j() -> None:
                 "AND size(r.evidence_doc_ids) = 0 RETURN count(r) AS n"
             ).records[0]["n"]
             assert untraced == 0
+            origins = driver.execute_query(
+                mine + "MATCH (n)-[r]->() WHERE r.signature IS NOT NULL "
+                "RETURN type(r) AS predicate, r.evidence_span_origins AS origins"
+            ).records
+            assert {(r["predicate"], tuple(r["origins"])) for r in origins} == {
+                ("employer", ("cited", "cited")),
+                ("uptime", ("cited",)),
+                ("name", ("context",)),
+                ("sells", ("cited",)),
+            }
         finally:
             driver.execute_query(mine + "DETACH DELETE n")
 

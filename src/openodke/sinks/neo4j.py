@@ -58,6 +58,7 @@ _PROVENANCE = frozenset(
         "evidence_uris",
         "evidence_starts",
         "evidence_ends",
+        "evidence_span_origins",
         "evidence_tiers",
         "evidence_retrieved_at",
     }
@@ -146,7 +147,8 @@ def provenance_of(fact: Fact, extracted_at: datetime) -> dict[str, Any]:
     it — with every source's clock kept in `evidence_retrieved_at`. Evidence is
     written as parallel lists because a Neo4j list holds no nulls and no maps:
     a missing uri is `""`, a missing span is `-1`, and position i in every list
-    is the same piece of evidence.
+    is the same piece of evidence. `evidence_span_origins` says who chose each
+    span, so a whole-text stand-in never reads as a citation (DECISIONS #25).
 
     A naive clock beside an aware one is read as UTC, as the corroborator reads
     it: Python cannot compare the two, and to Neo4j they are two types, which no
@@ -173,6 +175,7 @@ def provenance_of(fact: Fact, extracted_at: datetime) -> dict[str, Any]:
         "evidence_uris": [e.uri or "" for e in evidence],
         "evidence_starts": [e.span.start if e.span else -1 for e in evidence],
         "evidence_ends": [e.span.end if e.span else -1 for e in evidence],
+        "evidence_span_origins": [e.span_origin.value for e in evidence],
         "evidence_tiers": [e.tier.value for e in evidence],
         "evidence_retrieved_at": clocks,
     }
@@ -463,10 +466,10 @@ class Neo4jSink:
       Nodes are never merged (DECISIONS #16).
 
     Every fact relationship carries its provenance: evidence document ids,
-    uris and span offsets, tiers, extractor, verdict, confidence, support,
-    both clocks, and the reconcilable qualifiers as properties. "Why is this
-    edge here?" is a read of the edge; "forget this source" is
-    `MATCH ()-[r]->() WHERE $doc IN r.evidence_doc_ids DELETE r`.
+    uris, span offsets and who chose them, tiers, extractor, verdict,
+    confidence, support, both clocks, and the reconcilable qualifiers as
+    properties. "Why is this edge here?" is a read of the edge; "forget this
+    source" is `MATCH ()-[r]->() WHERE $doc IN r.evidence_doc_ids DELETE r`.
 
     A single-valued predicate with two objects is written as two edges, not
     replaced: the store holds the conflict and a check query reports it
