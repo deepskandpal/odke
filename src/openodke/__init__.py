@@ -7,6 +7,8 @@ generalised from one production knowledge graph to a general-purpose SDK. See
 NOTICE for the relationship to that paper.
 """
 
+import importlib.metadata
+
 from openodke.chunking import SentenceChunker
 from openodke.corroborate import (
     EvidenceScorer,
@@ -63,7 +65,9 @@ from openodke.types import (
 )
 from openodke.validators import VerdictValidator
 
-__version__ = "0.2.1"
+# Read from the installed distribution, so pyproject.toml is the only place the
+# version is written and a wheel cannot report a release it is not.
+__version__ = importlib.metadata.version("openodke")
 
 __all__ = [
     "Chunk",
