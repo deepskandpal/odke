@@ -29,6 +29,7 @@ from openodke.llm import (
     Completion,
     LLMClient,
     Message,
+    MissingAPIKey,
     ModelSpec,
     ProviderError,
     ProviderNotInstalled,
@@ -294,6 +295,32 @@ def test_an_exception_the_client_never_wrapped_is_isolated_too() -> None:
     grounder, _ = _grounder(client, max_workers=4)
     grounded = grounder.ground_many(_facts(), DOC)
     assert [f.verdict for f in grounded].count(GroundingVerdict.UNCHECKED) == 1
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        MissingAPIKey("openai/gpt-5.5 needs an API key in OPENAI_API_KEY"),
+        ProviderNotInstalled("litellm is not installed"),
+    ],
+)
+def test_a_configuration_error_stops_the_run_rather_than_skipping_every_fact(
+    error: ProviderError,
+) -> None:
+    """A missing key fails every call the same way. Isolated, it would leave the whole
+    run UNCHECKED, and a gate that accepts UNCHECKED would write it as if it were checked."""
+    grounder, slept = _grounder(_Poisoned(["Sentence"], lambda: error), max_workers=4)
+    (fact,) = _facts(n=1)
+    with pytest.raises(type(error)):
+        grounder.ground(fact, DOC)
+    with pytest.raises(type(error)):
+        grounder.ground_many(_facts(), DOC)
+    with pytest.raises(type(error)):
+        Pipeline(
+            Ontology(), _NumberedExtractor(), chunker=_SentenceChunker(), grounder=grounder
+        ).run([DOC])
+    assert slept == []
+    assert grounder.stats["failed"] == 0
 
 
 def test_a_flaky_batch_recovers_every_fact() -> None:
