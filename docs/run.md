@@ -373,6 +373,7 @@ grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, sup
 corroborator  conflicts (lost 1, won 2)
 validator     accepted 25, refused (contradicted 1)
 refused       1
+coverage      0 of 5 sentences naming two known entities uncovered, 0 entities in no fact, 0 relations never offered, 0 unused
 graph         25 facts (8 edges, 17 properties), 7 entities, 4 links (different 1, similar 3)
 cost          39 model calls, 4980 tokens, USD unknown
 wrote         jsonl → …/examples/e2e/out: entities.jsonl 7, facts.jsonl 25, links.jsonl 4, manifest.json
@@ -400,6 +401,10 @@ Line by line:
   reduced confidence with the reason attached.
 - **validator.** The default gate refused the `contradicted` fact and kept
   `not_found`; refusing `not_found` here would throw away most of the register.
+- **coverage.** Every sentence in the prose that names two known entities is
+  cited by some fact, every known name the text mentions is in a fact of its
+  document, and the model was shown every predicate. A run on real prose is
+  rarely this clean ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)).
 - **graph.** 25 facts on 7 entities, and 4 links: one `DIFFERENT` between two
   companies that share a name and not a registration number, and three `SIMILAR`.
   Nothing was merged away.

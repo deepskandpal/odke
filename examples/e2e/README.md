@@ -38,6 +38,7 @@ grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, sup
 corroborator  conflicts (lost 1, won 2)
 validator     accepted 25, refused (contradicted 1)
 refused       1
+coverage      0 of 5 sentences naming two known entities uncovered, 0 entities in no fact, 0 relations never offered, 0 unused
 graph         25 facts (8 edges, 17 properties), 7 entities, 4 links (different 1, similar 3)
 cost          39 model calls, 4980 tokens, USD unknown
 wrote         jsonl → …/examples/e2e/out: entities.jsonl 7, facts.jsonl 25, links.jsonl 4, manifest.json
@@ -68,6 +69,9 @@ Line by line:
   won, and Sheffield is kept at reduced confidence with the reason attached.
 - **validator.** The default gate refuses `contradicted` and keeps
   `not_found` — refusing `not_found` here would throw away most of the register.
+- **coverage.** What extraction left behind, counted with no model: no sentence
+  naming two known entities is left uncited, and the model was shown every
+  predicate. Real prose is rarely this clean.
 - **graph.** 25 facts on 7 entities, and 4 links between entities: one
   `DIFFERENT`, three `SIMILAR`. Nothing was merged away.
 
