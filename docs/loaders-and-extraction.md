@@ -482,7 +482,9 @@ Nothing is paraphrased into place, and every span that survives has passed
 `Span.is_faithful`. A reply that is not the contract gets `repairs` (default 1)
 more attempts with a repair prompt, then is recorded as a `malformed reply`
 rejection rather than raised, because one bad reply should not end a long run.
-Provider errors still raise.
+A transient provider error (a 429, a timeout) is retried under `retry`, the
+grounder's `RetryPolicy` and default; one that outlasts it, or that waiting
+cannot fix, still raises.
 
 An extraction that yields nothing is counted and logged, never silent. The same
 chunk can answer with five facts twice and with none the third time, and a

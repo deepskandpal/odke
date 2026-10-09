@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import urllib.error
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -19,11 +21,15 @@ from openodke import (
     SourceTier,
 )
 from openodke.extract import LLMExtractor, response_schema
-from openodke.ground import LLMGrounder
+from openodke.ground import LLMGrounder, RetryPolicy
 from openodke.llm import (
+    Completion,
+    LLMClient,
+    Message,
     ModelRoles,
     ModelSpec,
     OpenAICompatClient,
+    ProviderError,
     RecordedClient,
     ReplayClient,
     ScriptedClient,
@@ -378,6 +384,68 @@ def test_structured_output_is_read_and_an_unregistered_chunk_is_still_checked(
     assert evidence.uri is None and evidence.span is not None
     assert GRACE[evidence.span.start : evidence.span.end] == "in 1906"
     assert [r.quote for r in extractor.rejections] == ["Grace B. Hopper"]
+
+
+def _http(code: int) -> ProviderError:
+    """What the stdlib client raises: a ProviderError caused by an HTTPError."""
+    error = ProviderError(f"x returned {code}")
+    error.__cause__ = urllib.error.HTTPError("https://x/v1", code, "err", None, None)  # type: ignore[arg-type]
+    return error
+
+
+class _FailsFirst:
+    """Raises `error()` on the first `fail` calls, then answers from `answer`."""
+
+    def __init__(self, fail: int, error: Callable[[], Exception], answer: LLMClient) -> None:
+        self.fail = fail
+        self.error = error
+        self.answer = answer
+        self.attempts = 0
+
+    def complete(
+        self, messages: Sequence[Message], *, spec: ModelSpec, schema: dict[str, Any] | None = None
+    ) -> Completion:
+        self.attempts += 1
+        if self.attempts <= self.fail:
+            raise self.error()
+        return self.answer.complete(messages, spec=spec, schema=schema)
+
+
+GRACE_REPLY = {
+    "entities": [
+        {
+            "type": "Person",
+            "name": "Grace Hopper",
+            "facts": [{"predicate": "birth_date", "value": "1906", "quote": "in 1906"}],
+        }
+    ]
+}
+NO_WAIT = RetryPolicy(base_delay=0, jitter=False)
+
+
+def test_a_rate_limit_is_waited_out_rather_than_ending_the_run(people: Ontology) -> None:
+    """One 429 used to raise out of `extract`, and a run's sinks write only at its end."""
+    _, chunk = _doc_and_chunk(GRACE)
+    client = _FailsFirst(1, lambda: _http(429), ScriptedClient([GRACE_REPLY]))
+    extractor = LLMExtractor(client=client, spec=SONNET, retry=NO_WAIT)
+    (fact,) = extractor.extract(chunk, people)
+    span = fact.evidence[0].span
+    assert span is not None and span.quote == "in 1906"
+    assert client.attempts == 2
+    # The failed attempt was never a completion, so it costs no `ModelCall`.
+    assert len(extractor.calls) == 1
+    # The same policy as the grounder's, by default.
+    assert LLMExtractor(client=client).retry == RetryPolicy()
+
+
+def test_an_error_waiting_cannot_fix_still_raises_at_once(people: Ontology) -> None:
+    _, chunk = _doc_and_chunk(GRACE)
+    client = _FailsFirst(99, lambda: _http(401), ScriptedClient([GRACE_REPLY]))
+    extractor = LLMExtractor(client=client, spec=SONNET, retry=NO_WAIT)
+    with pytest.raises(ProviderError, match="401"):
+        extractor.extract(chunk, people)
+    assert client.attempts == 1
+    assert extractor.calls == []
 
 
 def test_types_narrow_the_prompt_and_the_client_resolves_lazily(people: Ontology) -> None:

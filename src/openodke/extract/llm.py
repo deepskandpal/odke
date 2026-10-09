@@ -38,6 +38,7 @@ from openodke.extract._common import (
     index_documents,
     subject_entity,
 )
+from openodke.ground.retry import RetryPolicy, call_with_retry
 from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
 from openodke.llm.registry import resolve
 from openodke.llm.roles import ModelRoles
@@ -196,7 +197,9 @@ class LLMExtractor:
 
     A reply that is not the contract gets `repairs` more attempts with a repair
     prompt, then is recorded as a rejection rather than raised — one bad reply
-    should not end a ten-thousand-chunk run. Provider errors still raise.
+    should not end a ten-thousand-chunk run. A transient provider error, such as
+    a 429, is retried under `retry` as the grounder's are; one that outlasts it,
+    or that waiting cannot fix, still raises.
 
     `structured=False` sends no response schema: the model is held to the JSON
     shape by the prompt alone, and the parser and repair loop do the rest. That
@@ -226,9 +229,11 @@ class LLMExtractor:
         confidence: float = 0.5,
         repairs: int = 1,
         structured: bool = True,
+        retry: RetryPolicy | None = None,
     ) -> None:
         self.spec = spec if spec is not None else (roles or ModelRoles()).extract
         self.structured = structured
+        self.retry = retry if retry is not None else RetryPolicy()
         self._client = client
         self.types = list(types) if types is not None else None
         self.documents = index_documents(documents)
@@ -275,7 +280,7 @@ class LLMExtractor:
         data: dict[str, Any] | None = None
         replies: list[str] = []
         for attempt in range(self.repairs + 1):
-            completion = self.client.complete(messages, spec=self.spec, schema=schema)
+            completion = self._complete(chunk, messages, schema)
             self.calls.append(
                 ModelCall(
                     doc_id=chunk.doc_id,
@@ -333,6 +338,28 @@ class LLMExtractor:
                 len(self.rejections) - refused,
             )
         return facts
+
+    def _complete(
+        self, chunk: Chunk, messages: list[Message], schema: dict[str, Any] | None
+    ) -> Completion:
+        """One call, retried on transient errors: a 429 on chunk 6,000 is weather,
+        and the sinks write only once the whole run is done."""
+
+        def on_retry(attempt: int, exc: BaseException, wait: float) -> None:
+            log.info(
+                "retrying extraction call for chunk %s#%d in %.2fs after attempt %d: %s",
+                chunk.doc_id,
+                chunk.index,
+                wait,
+                attempt,
+                exc,
+            )
+
+        return call_with_retry(
+            lambda: self.client.complete(messages, spec=self.spec, schema=schema),
+            self.retry,
+            on_retry=on_retry,
+        )
 
     def _entity(
         self,

@@ -292,7 +292,11 @@ def _pattern(options: dict[str, Any], ctx: Context, where: str) -> PatternExtrac
 def _llm_extractor(options: dict[str, Any], ctx: Context, where: str) -> LLMExtractor:
     injected = {"client": ctx.client("extract"), "spec": ctx.roles.extract}
     extractor: LLMExtractor = construct(
-        LLMExtractor, options, where, injected=injected, reserved=("roles", "documents")
+        LLMExtractor,
+        _with_retry(options, where),
+        where,
+        injected=injected,
+        reserved=("roles", "documents"),
     )
     return extractor
 
@@ -330,17 +334,22 @@ def _hybrid(options: dict[str, Any], ctx: Context, where: str) -> HybridExtracto
 
 
 def _llm_grounder(options: dict[str, Any], ctx: Context, where: str) -> LLMGrounder:
+    injected = {"roles": ctx.roles, "client": ctx.client("ground")}
+    grounder: LLMGrounder = construct(
+        LLMGrounder, _with_retry(options, where), where, injected=injected, reserved=("sleep",)
+    )
+    return grounder
+
+
+def _with_retry(options: dict[str, Any], where: str) -> dict[str, Any]:
+    """The options with `retry` read as a `RetryPolicy`, so a bad one names its key."""
     opts = dict(options)
     if "retry" in opts:
         try:
             opts["retry"] = RetryPolicy.model_validate(opts["retry"])
         except ValidationError as exc:
             raise ConfigError(f"{where}.retry: {exc.errors()[0]['msg']}") from None
-    injected = {"roles": ctx.roles, "client": ctx.client("ground")}
-    grounder: LLMGrounder = construct(
-        LLMGrounder, opts, where, injected=injected, reserved=("sleep",)
-    )
-    return grounder
+    return opts
 
 
 def _scorer(options: dict[str, Any], ctx: Context, where: str) -> EvidenceScorer:

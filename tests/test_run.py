@@ -22,6 +22,7 @@ from typer.testing import CliRunner
 from openodke import Chunk, Ontology, RouteVerdict, Sink
 from openodke.cli.main import app
 from openodke.corroborate import SCORE
+from openodke.ground import RetryPolicy
 from openodke.llm import ModelRoles, ModelSpec
 from openodke.loaders import DocxLoader, HtmlLoader, PdfLoader
 from openodke.run import ConfigError, StageSpec, build, execute, load_config, parse_config
@@ -501,6 +502,22 @@ def test_building_constructs_every_stage_and_calls_nothing(project: Path) -> Non
     assert [plan.name for plan in built.sinks] == ["jsonl"]
     with pytest.raises(ConfigError, match="unknown grounder"):
         build(parse_config(_stages(grounder="lm"), base_dir=project))
+
+
+def test_a_retry_policy_in_the_file_reaches_both_model_stages(project: Path) -> None:
+    retry = {"attempts": 6, "base_delay": 1.0}
+    built = build(
+        parse_config(
+            _stages(
+                extractor={"use": "llm", "retry": retry}, grounder={"use": "llm", "retry": retry}
+            ),
+            base_dir=project,
+        )
+    )
+    assert built.stages["extractor"].retry == built.stages["grounder"].retry == RetryPolicy(**retry)
+    with pytest.raises(ConfigError, match="stages.extractor.retry"):
+        bad = _stages(extractor={"use": "llm", "retry": {"attempts": 0}})
+        build(parse_config(bad, base_dir=project))
 
 
 def test_the_commented_reference_config_is_a_valid_config() -> None:
