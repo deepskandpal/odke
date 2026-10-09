@@ -23,7 +23,9 @@ address, the variable each reads its key from, and who serves it. `odke models`
 prints it. Keys come from the environment and are never stored or printed.
 
 `CachedClient` wraps any client so that a request it has answered before is
-answered again from the store, for nothing (`openodke.llm.cache`).
+answered again from the store, for nothing (`openodke.llm.cache`). A `Ledger`
+holds a run to a `Budget`, and stops it with `BudgetExceeded` before a call
+would go past it (`openodke.llm.budget`).
 """
 
 from openodke.llm.base import (
@@ -35,6 +37,7 @@ from openodke.llm.base import (
     ProviderError,
     ProviderNotInstalled,
 )
+from openodke.llm.budget import Budget, BudgetExceeded, Ledger
 from openodke.llm.cache import CachedClient, DirectoryCache, MemoryCache
 from openodke.llm.openai_compat import DEFAULT_BASE_URLS, OpenAICompatClient
 from openodke.llm.providers import PROVIDERS, Provider, key_env_for, qualify, require_key
@@ -51,11 +54,14 @@ from openodke.llm.testing import (
 __all__ = [
     "DEFAULT_BASE_URLS",
     "PROVIDERS",
+    "Budget",
+    "BudgetExceeded",
     "CachedClient",
     "Cassette",
     "Completion",
     "DirectoryCache",
     "LLMClient",
+    "Ledger",
     "MemoryCache",
     "Message",
     "MissingAPIKey",
