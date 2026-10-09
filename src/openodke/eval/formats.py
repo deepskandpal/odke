@@ -87,10 +87,11 @@ class GoldFact(Frozen):
     follow the convention your extractor emits: this scores extraction before
     resolution has had a chance to reconcile them.
 
-    Predictions are `Fact` rows, scored inside the first labelled document
-    their evidence cites. A prediction that cites no document is matched
-    against every labelled document; one that cites only documents you did
-    not label is left out and counted in the notes. Correct means sharing the
+    Predictions are `Fact` rows, scored once inside each labelled document
+    their evidence cites: a fact merged across documents claims each of them
+    states it. A prediction that cites no document is matched against every
+    labelled document; one that cites only documents you did not label is
+    left out and counted in the notes. Correct means sharing the
     gold fact's `signature`, with one concession: literal values compare
     after whitespace is collapsed and case folded, so `1815` and `"1815"`,
     and `"Ada Lovelace"` and `"ada  lovelace"`, are one value.
