@@ -385,7 +385,7 @@ def row(
     units: Sequence[Mapping[str, Any]],
     metrics: Mapping[str, Metric],
     ranges: Mapping[str, Range],
-    calls: Sequence[CallRecord],
+    calls: Sequence[CallRecord] | None,
 ) -> Row:
     """One configuration's eval report row, from the same `sentences` its metrics came from."""
     hits, over, under = (sum(u[k] for u in units) for k in ("hits", "over", "under"))
@@ -492,16 +492,30 @@ def report_run(
     path: str | Path | None = None,
 ) -> EvalReport:
     """`score_run`, as the eval report. `path` names the prepared set in its dataset."""
-    ontology = meta["ontology"]
     return _common.report_run(
         ablation,
         gold,
-        meta,
+        scoring(gold, meta, hallucination=hallucination, path=path),
+        notes=_notes,
+        save_to=save_to,
+    )
+
+
+def scoring(
+    gold: Sequence[Mapping[str, Any]],
+    meta: Mapping[str, Any],
+    *,
+    hallucination: bool = True,
+    path: str | Path | None = None,
+) -> _common.Scoring:
+    """How a prepared set scores facts from any source: `sentences`, `aggregate`, `row`."""
+    ontology = meta["ontology"]
+    return _common.Scoring(
         stage=f"{NAME}:{meta['ontology_id']}",
+        meta=meta,
         units=lambda predicted: sentences(gold, predicted, ontology, hallucination=hallucination),
         aggregate=aggregate,
         row=row,
-        notes=_notes,
         dataset=Dataset(
             name=NAME,
             path=None if path is None else str(path),
@@ -509,7 +523,6 @@ def report_run(
             labels=sum(len(r["triples"]) for r in gold),
             details={"source": meta.get("source"), "ontology_id": meta["ontology_id"]},
         ),
-        save_to=save_to,
     )
 
 
@@ -548,6 +561,7 @@ __all__ = [
     "run",
     "score",
     "score_run",
+    "scoring",
     "sentences",
     "to_ontology",
 ]
