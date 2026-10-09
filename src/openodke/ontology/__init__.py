@@ -151,9 +151,9 @@ class Predicate(BaseModel):
     def scope_keys(self) -> tuple[str, ...]:
         """The qualifier keys a `single` value is unique within, next to the subject.
 
-        The identity-bearing keys plus any declared ones, sorted. It is what
-        `openodke.sinks.neo4j.cardinality_scope` computes too, so the schema and the
-        store's check cannot disagree about what counts as a conflict.
+        The identity-bearing keys plus any declared ones, sorted. The Neo4j
+        constrainer groups its cardinality check by exactly this, so the schema
+        and the store's check cannot disagree about what counts as a conflict.
         """
         return tuple(sorted({*self.identity_keys, *self.cardinality_scope}))
 
