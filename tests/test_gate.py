@@ -102,6 +102,25 @@ def test_in_a_pipeline_the_contradicted_fact_never_reaches_the_graph() -> None:
     assert gate.stats["refused"] == {"contradicted": 1}
 
 
+def test_with_schema_it_refuses_what_the_ontology_has_no_room_for() -> None:
+    ontology = Ontology.from_dict(
+        {
+            "types": {"Person": {}, "Company": {}},
+            "predicates": {"employer": {"domain": ["Person"], "range": "Company"}},
+        }
+    )
+    gate = VerdictGate(schema=True)
+    off = _fact(GroundingVerdict.SUPPORTED)
+    verdict = gate.validate(off, ontology)
+    assert verdict.action == "refuse" and verdict.reason is not None
+    assert verdict.reason.startswith(f"schema: {off.predicate!r} is not a predicate")
+    assert gate.stats["refused"] == {"predicate": 1}
+    # Without it, the gate reads verdicts alone, as it always has.
+    assert VerdictGate().validate(off, ontology).action == "accept"
+    # An ontology that declares nothing has nothing to refuse on.
+    assert gate.validate(off, Ontology()).action == "accept"
+
+
 # --------------------------------------------------------------------------- #
 # The 0.2 names (DECISIONS #26): each still works, and says it is going
 # --------------------------------------------------------------------------- #

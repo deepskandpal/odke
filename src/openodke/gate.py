@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from openodke.ground.checks import schema_problem
 from openodke.ontology import Ontology
 from openodke.types import Fact, GroundingVerdict, ValidationVerdict
 
@@ -35,13 +36,17 @@ class VerdictGate:
     on your labels before you make it. `UNCHECKED` is accepted: nothing was
     asked, and the pass-through refuses nothing either.
 
-    Checks the verdict only, not domain or range. `stats` counts what it
+    By default it checks the verdict only. `schema=True` also refuses a fact
+    the ontology has no room for: a predicate it does not declare, a subject
+    outside the domain, an object outside the range (`schema_problem`, the free
+    checks `CheckedGrounder` runs before any model). `stats` counts what it
     accepted and why it refused, because the pipeline's own `refused` count
     cannot say why.
     """
 
-    def __init__(self, *, refuse_not_found: bool = False) -> None:
+    def __init__(self, *, refuse_not_found: bool = False, schema: bool = False) -> None:
         self.refuse_not_found = refuse_not_found
+        self.schema = schema
         self._accepted = 0
         self._refused: dict[str, int] = {}
 
@@ -53,6 +58,11 @@ class VerdictGate:
         return frozenset({GroundingVerdict.CONTRADICTED})
 
     def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
+        problem = schema_problem(fact, ontology) if self.schema else None
+        if problem is not None:
+            check, reason = problem
+            self._refused[check] = self._refused.get(check, 0) + 1
+            return ValidationVerdict(action="refuse", reason=f"schema: {reason}")
         if fact.verdict in self.refused:
             key = fact.verdict.value
             self._refused[key] = self._refused.get(key, 0) + 1
