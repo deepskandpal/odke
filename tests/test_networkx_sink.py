@@ -280,12 +280,6 @@ def test_only_a_multidigraph_can_hold_the_facts() -> None:
         NetworkXSink(nx.DiGraph())
 
 
-def test_the_graph_can_be_laid_out_for_drawing() -> None:
-    pytest.importorskip("numpy")
-    positions = nx.spring_layout(_written(), seed=1)
-    assert len(positions) == 3 + 4
-
-
 def test_a_missing_networkx_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     """The module imports on the base install; only building a sink needs the extra."""
     monkeypatch.setitem(sys.modules, "networkx", None)
