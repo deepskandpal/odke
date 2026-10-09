@@ -8,7 +8,7 @@ run config, scored against one labelled extraction set:
 2. **+ grounding** — the same candidates through the config's grounder, then its
    gate: the configured one, or `VerdictGate` when it names none.
 3. **+ corroboration** — the whole configured pipeline: normalise, resolve,
-   corroborate and score, then the same gate.
+   add inverse and symmetric partners, corroborate and score, then the same gate.
 
 Extraction runs once and grounding runs once. The later configurations replay the
 facts the earlier ones produced through the real `Pipeline`, so the rows differ
@@ -154,7 +154,9 @@ def ablate(config: RunConfig) -> AblationRun:
     stages = built.stages
     register_documents(stages["extractor"], docs)
     ontology = built.ontology
-    route = {"chunker": stages["chunker"], "router": stages["router"]}
+    # The first two rows are what the extractor found and what the gate kept of
+    # it; inverse partners belong to the whole pipeline, the third row.
+    route = {"chunker": stages["chunker"], "router": stages["router"], "inverses": False}
     notes: list[str] = []
 
     recording = _Recording(stages["extractor"])

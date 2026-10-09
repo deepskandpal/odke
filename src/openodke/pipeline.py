@@ -17,6 +17,12 @@ in the same order, as one at a time.
 Resolution runs before corroboration on purpose — `Fact.signature` merges on
 `subject.key`, so corroboration cannot repair a resolution failure.
 
+Between the two, when the ontology declares an inverse or a symmetric
+predicate, each edge on one gains its partner: the same claim the other way
+round, on the same evidence, marked `odke.derived` (DECISIONS #28). It is a
+step rather than a fourteenth stage, because the ontology decides everything it
+does; `inverses=False` turns it off.
+
 Two of the thirteen stages are not on the `run()` path. `Constrainer` compiles
 the ontology into the store's own constraints and is exposed as `constraints()`
 for a sink to apply before its first write. `Inferrer` is a bootstrap, not a
@@ -31,6 +37,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from openodke._renamed import Renamed, deprecated, module_getattr
+from openodke.corroborate.inverses import partners
 from openodke.ontology import Ontology
 from openodke.stages import (
     DDL,
@@ -98,6 +105,7 @@ class Pipeline:
         scorer: Scorer | None = None,
         gate: Gate | None = None,
         constrainer: Constrainer | None = None,
+        inverses: bool | None = None,
         sinks: Sequence[Sink] = (),
         validator: Gate | None = None,
     ) -> None:
@@ -123,6 +131,8 @@ class Pipeline:
             PassThroughConstrainer() if constrainer is None else constrainer
         )
         self.sinks = tuple(sinks)
+        # On whenever the ontology declares a pair, unless the caller says not.
+        self.inverses = bool(ontology.inverses) if inverses is None else inverses
 
         # Once, at configuration, so a long-running pipeline says it one time
         # rather than once per run. Nothing here changes what runs.
@@ -179,6 +189,8 @@ class Pipeline:
             # passage and a dropped extraction report identically without this,
             # so a batch job cannot tell a bad run from a quiet corpus (#78).
             "empty_extractions": 0,
+            # Inverse and symmetric partners added, before the gate saw them.
+            "derived": 0,
             "refused": 0,
         }
         routed: list[tuple[Document, list[Chunk]]] = []
@@ -213,6 +225,11 @@ class Pipeline:
             facts.extend(self.normalizer.normalize(fact) for fact in grounded)
 
         resolved, links = self.resolver.resolve(facts, _entities_of(facts))
+        if self.inverses:
+            batch = list(resolved)
+            derived = partners(batch, self.ontology)
+            stats["derived"] = len(derived)
+            resolved = [*batch, *derived]
         scored = [self.scorer.score(f) for f in self.corroborator.corroborate(resolved)]
         kept: list[Fact] = []
         for fact in scored:

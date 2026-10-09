@@ -867,6 +867,7 @@ class Built:
             gate=s["gate"],
             constrainer=s["constrainer"],
             sinks=sinks,
+            inverses=self.config.inverses,
         )
 
     def documents(self) -> list[Document]:
