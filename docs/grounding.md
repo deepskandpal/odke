@@ -14,7 +14,8 @@ in this order, and the order is the point:
 Both **stamp** `Fact.verdict` (`supported`, `contradicted` or `not_found`), and
 neither drops a fact. The gate decides what is written, and because nothing is
 dropped early, the ablation can count what grounding *would* have removed
-([DECISIONS #20](decisions.md)).
+([DECISIONS #20](decisions.md)). Grounding is one step of the verification
+layer; [the Validator](validator.md) runs all of it.
 
 ## A graph from somewhere else: `odke ground`
 

@@ -161,3 +161,22 @@ def test_input_that_cannot_be_read_exits_2(here: Path, args: list[str], message:
     assert result.exit_code == 2, result.output
     assert message in result.output
 
+
+def test_the_documented_example_prints_what_the_page_shows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """docs/validator.md's `odke validate` example, run from a clone, as the page shows it."""
+    page = (REPO / "docs" / "validator.md").read_text(encoding="utf-8")
+    command = page.split("```bash\n", 1)[1].split("```", 1)[0]
+    shown = page.split("```text\n", 1)[1].split("```", 1)[0]
+    args = command.replace("\\\n", " ").split()
+    assert args[:2] == ["odke", "validate"]
+    shutil.copytree(
+        REPO / "examples" / "triples",
+        tmp_path / "examples" / "triples",
+        ignore=shutil.ignore_patterns("out"),
+    )
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, args[1:])
+    assert result.exit_code == 0, result.output
+    assert [line for line in shown.splitlines() if line] == result.output.splitlines()

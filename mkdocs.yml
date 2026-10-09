@@ -65,6 +65,7 @@ nav:
   - Home: index.md
   - Installation: installation.md
   - Concepts: concepts.md
+  - "The Validator": validator.md
   - "Models & providers": models.md
   - Ontology:
       - "Loading, validating, importing": ontology.md
