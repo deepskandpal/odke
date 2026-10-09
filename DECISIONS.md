@@ -797,6 +797,63 @@ leave a count its list disagrees with.
 from the evidence, yet is kept beside it, so a store can be reconciled without
 the `source` function that made it.
 
+### 34. The pair judge asks in both orders, and only where the rules leave a pair open
+
+The resolver's rules settle a pair with an id, a domain or a name score at the
+`SIMILAR` bar, and below the bar nothing links. That is where its misses are:
+a surname and the full name, a short form, a former name. Names alone cannot
+tell whether "Lovelace" is the "Ada Lovelace" two sentences earlier; the
+sentences around them can. So a model reads them, and three things about how
+are decided here.
+
+**Where it runs.** Only on a pair no rule settled, whose name score is in a
+band below the bar: from the judge's `low`, 0.7, up to the resolver's
+`threshold`, 0.9. Above the bar the rules stand; a model is not asked to
+overturn them. A pair whose ids or domains disagree is never asked: evidence
+against beats evidence for (#16), and a model's "same" would be resemblance
+arguing with proof. Below the band the names share too little for a call to
+be worth it. 0.7 was read off Re-DocRED's dev split (nearly a third of the
+533 blocked pairs between 0.7 and 0.9 are one entity), never its test split or
+label set R, and is a default until the calibration card on R (#151) says
+otherwise. The judge is off unless given.
+
+**The swap rule.** Each pair is asked twice, as (A, B) and as (B, A). A model
+judging two items in a row favours a position (Zheng et al. 2023, §3.4), and
+on a pair the two orders are the same question, so they must give one answer.
+"same" counts only when both orders say same, and "different" only when both
+say different. Anything else is unsure: a disagreement, an unsure, or an
+answer that could not be read. Each decision keeps both answers and whether
+the orders disagreed, and the stats count calls, swapped calls and
+disagreements, so position bias is a number a run reports rather than an
+assumption about the model.
+
+**What a decision makes.** "same" is a `SIMILAR` link, never a merge. Only a
+proof re-keys (#16, #31): a model's reading of two sentences is better
+resemblance, not proof, and a wrong merge cannot be undone where a link can be
+ignored. "different" is a `DIFFERENT` link, because a pair the judge looked at
+and rejected is worth a query, as a disagreeing id is. The reason names the
+judge, its prompt key and its model, in the string #16 already has. Unsure is
+no link at all, and goes to a review queue when one is given: a JSONL file in
+the pair sheet's own row format, so `odke label make pair` reads it as it
+stands, and the person's labels come back as `reviewed`, decided in the
+judge's place with no call and a reason that starts `person:`. A person's
+"same" is a `SIMILAR` too: a re-key is a proof's, and a person who means one
+adds the id.
+
+The prompt is LLM entity matching's (Peeters, Steiner & Bizer 2023): two
+mentions, their types and their contexts, the knowledge of names allowed
+(abbreviations, former names) and a decision on names alone forbidden. It is
+`pair@1`, and its user message is `pair.user@1`, so a calibration card names
+both (#27). It asks the `ground` role's model, since it is the same size of
+question, metered as the stage `judge`.
+
+*Cost:* two calls a pair in the band, about one pair a document on Re-DocRED's
+dev split. An unsure pair costs a person's time, and is queued once. A pair
+with a side that has no text is not asked, since the prompt forbids deciding on
+names, and goes to the queue. A stored entity has text only through
+`store_context`, because the store keeps offsets and not passages, so against
+a store without it every pair in the band waits for a person.
+
 ### 35. A write merges with the store, in the corroborator, before the score
 
 A rerun into Neo4j found each relationship by its signature and replaced its
