@@ -19,6 +19,7 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from openodke._text import trim
 from openodke.types import Chunk, Document
 
 # `\r(?!\n)`: without the lookahead one CRLF backtracks into two line breaks and
@@ -119,7 +120,7 @@ def _segment(text: str) -> Iterator[_Sentence]:
     cursor = 0
     for brk in [*_PARAGRAPH_BREAK.finditer(text), None]:
         stop = len(text) if brk is None else brk.start()
-        start, end = _trim(text, cursor, stop)
+        start, end = trim(text, cursor, stop)
         opens = True
         for s, e in _sentences_in(text, start, end):
             yield _Sentence(s, e, len(_WORD.findall(text, s, e)), opens)
@@ -134,7 +135,7 @@ def _sentences_in(text: str, start: int, end: int) -> Iterator[tuple[int, int]]:
         if _is_abbreviation(text, cursor, match, end):
             continue
         yield cursor, match.end()
-        cursor, _ = _trim(text, match.end(), end)
+        cursor, _ = trim(text, match.end(), end)
     if cursor < end:
         yield cursor, end
 
@@ -142,7 +143,7 @@ def _sentences_in(text: str, start: int, end: int) -> Iterator[tuple[int, int]]:
 def _is_abbreviation(text: str, sentence_start: int, match: re.Match[str], end: int) -> bool:
     if match.group().rstrip(_CLOSERS) != ".":
         return False
-    following, _ = _trim(text, match.end(), end)
+    following, _ = trim(text, match.end(), end)
     if following < end and text[following].islower():
         return True
     token_start = match.start()
@@ -151,14 +152,6 @@ def _is_abbreviation(text: str, sentence_start: int, match: re.Match[str], end: 
     token = text[token_start : match.start()].lstrip(_CLOSERS + "(“‘")
     # A single letter is an initial: "J. R. R. Tolkien".
     return token.casefold() in _ABBREVIATIONS or (len(token) == 1 and token.isalpha())
-
-
-def _trim(text: str, start: int, end: int) -> tuple[int, int]:
-    while start < end and text[start].isspace():
-        start += 1
-    while end > start and text[end - 1].isspace():
-        end -= 1
-    return start, end
 
 
 __all__ = ["SentenceChunker"]
