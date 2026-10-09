@@ -190,7 +190,10 @@ not raise a `DoubleStageWarning`.
 
 Bootstrap also creates indexes on `external_id` per type, a full-text index over
 `label` and `aliases` per type, and an index on `key` for `:Entity`. A type or
-predicate the ontology does not name gets no constraint or index.
+predicate the ontology does not name gets no constraint or index. The key
+constraint and these indexes are what `Neo4jSink.lookup()` reads through to
+resolve a new batch against the graph without loading it
+([Resolving against the store](resolution-and-corroboration.md#resolving-against-the-store)).
 
 ### `check()`
 
