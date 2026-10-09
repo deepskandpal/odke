@@ -17,6 +17,7 @@ from openodke.corroborate.merge import (
     SignatureCorroborator,
     independent_sources,
     source_of,
+    support_of,
 )
 from openodke.corroborate.normalize import (
     ValueNormalizer,
@@ -78,4 +79,5 @@ __all__ = [
     "normalize_value",
     "partners",
     "source_of",
+    "support_of",
 ]

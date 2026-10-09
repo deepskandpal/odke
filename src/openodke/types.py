@@ -180,6 +180,26 @@ class Evidence(Frozen):
     retrieved_at: datetime = Field(default_factory=_utcnow)
 
 
+class Support(Frozen):
+    """One independent source behind a fact: what the corroborator counted once.
+
+    `source` is the key the corroborator grouped the evidence on: the host of
+    a URI, `doc:<id>` for a document with none, or the least key of a group of
+    near-duplicate documents, which count as one source between them.
+    `doc_ids` are the documents of that source the fact cites, sorted. `tier`
+    is the best tier among their evidence and `retrieved_at` the newest clock:
+    the last time this source confirmed the claim.
+
+    A reconciler needs exactly this when a source changes or disappears: which
+    facts lose support, and whether anything is left.
+    """
+
+    source: str
+    doc_ids: tuple[str, ...] = ()
+    tier: SourceTier = SourceTier.UNVERIFIED
+    retrieved_at: datetime = Field(default_factory=_utcnow)
+
+
 # --------------------------------------------------------------------------- #
 # Facts
 # --------------------------------------------------------------------------- #
@@ -295,6 +315,10 @@ class Fact(Frozen):
     verdict: GroundingVerdict = GroundingVerdict.UNCHECKED
     # Filled by the corroborator: how many independent sources agreed.
     support: int = 1
+    # Which sources those are, one entry each, so `support` is its length
+    # whenever it is filled. Empty on a fact no corroborator merged, on one
+    # whose sources it could not name, and on a fact serialised by 0.2.x.
+    supported_by: tuple[Support, ...] = ()
 
     @property
     def is_edge(self) -> bool:

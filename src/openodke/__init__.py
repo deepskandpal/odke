@@ -65,6 +65,7 @@ from openodke.types import (
     SourceTier,
     Span,
     SpanOrigin,
+    Support,
     ValidationVerdict,
 )
 from openodke.validator import Validated, ValidationReport, Validator
@@ -133,6 +134,7 @@ __all__ = [
     "Span",
     "SpanOrigin",
     "StoreLookup",
+    "Support",
     "ValidationReport",
     "ValidationVerdict",
     "Validated",
