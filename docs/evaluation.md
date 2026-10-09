@@ -431,6 +431,69 @@ What it says about that fixture, and only that fixture:
   model copied as written became the ISO dates the labels use. Merging alone moves
   neither number, because a merged fact is scored once in each document it cites.
 
+## Labelling by hand
+
+`odke label` writes rows out as markdown sheets that a person ticks wherever a
+markdown file opens, Obsidian on a tablet included. It then reads the ticks
+back as `GroundingLabel` or `PairLabel` rows.
+
+```bash
+odke label make grounding to-check.jsonl -o sheets/ --per-sheet 50
+odke label make pair pairs.jsonl -o pair-sheets/
+odke label read sheets/ -o ground.jsonl        # or one sheet: sheets/sheet-03.md
+odke eval ground --labels ground.jsonl --predictions out/facts.jsonl
+```
+
+- **A grounding row** is a `GroundingLabel` without its `verdict`: `text`,
+  `fact` and an optional `doc_id`. Give every fact an `id`, because predictions
+  join on it; `make` warns about any fact that has none.
+- **A pair row** is `{"a": {...}, "b": {...}}`. Each side has a `key` and a
+  `type`, plus an optional `label` (the name as written) and `context`.
+- **Sheets** are `sheet-01.md`, `sheet-02.md` and so on, and one sheet is one
+  sitting. Item ids run across the sheets (`G-0001`, `P-0001`). Beside each
+  sheet, `sheet-NN.items.jsonl` keeps its rows, so the markdown only has to
+  carry the ticks and the notes. The same rows give byte-identical sheets.
+  `make` refuses a directory that already holds sheets.
+
+A grounding item, as written:
+
+```markdown
+### G-0007
+
+Acme Cloud (Company) — operates in — "Ireland".
+
+> **Acme Cloud runs data centres in Ireland, Virginia and Singapore.** Its uptime target is 99.9\% and it costs \$5 a seat.
+
+- [ ] supported
+- [ ] contradicted
+- [ ] not found
+
+note:
+```
+
+The claim line is `render_claim(fact)`, the sentence the grounder is asked
+about, and the cited span is bold inside the passage. Passage text is escaped,
+so markdown cannot hide or restyle it: `$` would otherwise open a formula and
+`%%` a comment. A pair item shows `A:` and `B:`, each a name and its type with
+its context quoted, then the boxes `same`, `different` and `unsure`. Each sheet
+opens with two lines that explain the answers and asks for exactly one tick.
+
+Reading back:
+
+- **Exactly one tick** (`[x]` or `[X]`) is a label. **No tick** leaves the item
+  unlabelled; it is counted in the summary, not refused.
+- **Two or more ticks**, or a heading the sidecar does not know, exit 2 with
+  the file and the line of the item's heading. A mark other than `x` names the
+  box's own line. Every problem in every sheet is listed at once, and nothing is
+  written.
+- **Labels** go to `-o` in input order: the row as given plus `verdict`, or
+  `PairLabel(a, b, same)` on the two keys. Pairs ticked `unsure` never become a
+  `PairLabel`. They go to `<out>.unsure.jsonl` in the input shape, ready to be
+  made into a sheet again. Text after `note:` goes to `<out>.notes.jsonl` with
+  the item's id, sheet and answer.
+- **The summary** gives the sheets and items, how many are labelled and
+  unlabelled, and the count for each answer.
+
 ## From the shell
 
 ```bash
