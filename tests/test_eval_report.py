@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from openodke import Entity, Evidence, Fact, Ontology
-from openodke.eval import evaluate_extraction, load_jsonl
+from openodke.eval import evaluate_extraction, item_rows, load_jsonl
 from openodke.eval.eval_report import (
     SCHEMA_PATH,
     SCHEMA_VERSION,
@@ -24,11 +24,11 @@ from openodke.eval.eval_report import (
     check_report,
     conformance,
     extraction_rows,
-    extraction_units,
     from_stage,
     read_report,
     schema,
 )
+from openodke.eval.extraction import document_counts
 from openodke.eval.formats import GoldFact
 
 FIXTURES = Path(__file__).parent / "fixtures" / "eval"
@@ -107,12 +107,32 @@ def test_a_wrong_value_is_one_over_and_one_under_in_its_document() -> None:
     elsewhere = Fact(
         subject=ada, predicate="born", object_value=1, evidence=(Evidence(doc_id="x"),)
     )
-    units, unscored = extraction_units(gold, [wrong, stray, elsewhere])
-    # d1: a wrong value; d2: missing; the uncited stray is a unit of its own.
-    assert units == [(0, 1, 1), (0, 0, 1), (0, 1, 0)]
-    assert unscored == 1  # cites only a document nobody labelled
+    found = document_counts(gold, [wrong, stray, elsewhere])
+    # d1: a wrong value; d2: missing. The stray cites no document, so it is in
+    # none; the third cites only a document nobody labelled.
+    assert found.by_doc == {"d1": (0, 1, 1), "d2": (0, 0, 1)}
+    assert (found.uncited, found.unscored) == (1, 1)
     rows, how = extraction_rows([("x", [wrong, stray], None)], gold)
-    assert how.units == 3 and rows[0].counts.over_extraction == 2
+    (row,) = rows
+    assert how.units == 2
+    assert (row.counts.over_extraction, row.counts.uncited) == (2, 1)
+    # The stray is in the numbers, as evaluate_extraction counts it, and in every draw.
+    stage = evaluate_extraction(gold, [wrong, stray])
+    assert row.performance.precision.value == stage.metrics["precision"] == 0.0
+    assert (row.performance.recall.low, row.performance.recall.high) == (0.0, 0.0)
+
+
+def test_the_report_resamples_the_documents_items_writes() -> None:
+    """One count per document: `--items` rows for `compare` are the report's bootstrap units."""
+    gold = load_jsonl(FIXTURES / "extract.labels.jsonl", GoldFact)
+    facts = load_jsonl(FIXTURES / "extract.predictions.jsonl", Fact)
+    rows, warnings = item_rows("extract", gold, facts)
+    found = document_counts(gold, facts)
+    assert [(r.id, (r.tp, r.fp, r.fn)) for r in rows] == list(found.by_doc.items())
+    assert warnings == [] and found.uncited == 0
+    (row,) = extract_report().rows
+    assert row.counts.hits == sum(r.tp or 0 for r in rows)
+    assert row.counts.documents == len(rows)
 
 
 def test_a_range_never_excludes_its_number() -> None:

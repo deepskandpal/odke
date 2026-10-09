@@ -40,7 +40,7 @@ from pydantic import Field
 
 from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED, Range, bootstrap
 from openodke.eval.cost import CallRecord, StageCost
-from openodke.eval.extraction import match_extraction, per_document
+from openodke.eval.extraction import document_counts
 from openodke.eval.formats import GoldFact
 from openodke.eval.report import Metric, StageReport, _fmt, _table, prf
 from openodke.ground.checks import CHECKS, schema_problem
@@ -101,8 +101,9 @@ class Counts(Frozen):
     A wrong value or a wrong entity is one of each: a wrong fact was written and
     the right one was not. `predicted` and `gold` are what was scored, so
     `predicted == hits + over_extraction` and `gold == hits + under_extraction`.
-    `unscored` counts predictions left out of every number, and the stage's
-    notes say why.
+    `uncited` counts the spurious predictions among `over_extraction` that cite
+    no document, and so are in no document's counts; `unscored`, predictions
+    left out of every number, and the stage's notes say why.
     """
 
     hits: int = Field(ge=0)
@@ -110,6 +111,7 @@ class Counts(Frozen):
     under_extraction: int = Field(ge=0)
     predicted: int = Field(ge=0)
     gold: int = Field(ge=0)
+    uncited: int = Field(default=0, ge=0)
     unscored: int = Field(default=0, ge=0)
     documents: int = Field(ge=0)
 
@@ -323,66 +325,46 @@ def extraction_rows(
 
     The numbers are `evaluate_extraction`'s: the same matching, so the same
     precision, recall and F1 to the last digit. Each labelled document is one
-    unit of the bootstrap, and predictions that cite no document and match
-    nothing form one more. `calls`, when the run was metered, give a row its
-    cost and latency; `ontology` gives every row its conformance.
+    unit of the bootstrap, with the counts `odke eval --items` writes for it
+    (`document_counts`). A spurious prediction that cites no document is in no
+    document: it is in the numbers, and in every draw as it is in the run,
+    and `counts.uncited` says how many. `calls`, when the run was metered, give
+    a row its cost and latency; `ontology` gives every row its conformance.
     """
-    rows, most = [], 0
+    rows = []
     for name, facts, calls in configurations:
-        units, unscored = extraction_units(gold, facts)
-        most = max(most, len(units))
-        tp, fp, fn = (sum(u[i] for u in units) for i in range(3))
-        ranges = bootstrap(units, micro, resamples=resamples, seed=seed, level=level)
+        found = document_counts(gold, facts)
+        units = list(found.by_doc.values())
+        fixed = (0, found.uncited, 0)
+
+        def statistic(
+            draw: Sequence[tuple[int, int, int]], fixed: tuple[int, int, int] = fixed
+        ) -> dict[str, Metric]:
+            return micro([*draw, fixed])
+
+        tp, fp, fn = (sum(u[i] for u in units) + fixed[i] for i in range(3))
+        ranges = bootstrap(units, statistic, resamples=resamples, seed=seed, level=level)
         counts = Counts(
             hits=tp,
             over_extraction=fp,
             under_extraction=fn,
             predicted=tp + fp,
             gold=tp + fn,
-            unscored=unscored,
-            documents=len({g.doc_id for g in gold}),
+            uncited=found.uncited,
+            unscored=found.unscored,
+            documents=len(units),
         )
         rows.append(
             Row(
                 name=name,
-                performance=performance(micro(units), ranges),
+                performance=performance(statistic(units), ranges),
                 counts=counts,
                 conformance=conformance(facts, ontology),
                 **spend(name, calls),
             )
         )
-    return rows, Bootstrap(units=most, resamples=resamples, seed=seed, level=level)
-
-
-def extraction_units(
-    gold: Sequence[GoldFact], predictions: Iterable[Fact]
-) -> tuple[list[tuple[int, int, int]], int]:
-    """`(tp, fp, fn)` per labelled document in label order, and the unscored count.
-
-    A wrong value or entity is a false positive and a false negative in the
-    document it was matched in. Predictions that cite no document and match no
-    gold fact are one more unit, after the documents.
-    """
-    split = per_document(predictions)
-    labelled = {g.doc_id for g in gold}
-    unscored = sum(
-        1 for p in split if p.evidence and not any(e.doc_id in labelled for e in p.evidence)
-    )
-    by_doc: dict[str | None, list[int]] = {
-        d: [0, 0, 0] for d in dict.fromkeys(g.doc_id for g in gold)
-    }
-    for outcome in match_extraction(gold, split):
-        unit = by_doc.setdefault(outcome.doc_id, [0, 0, 0])
-        if outcome.kind == "correct":
-            unit[0] += 1
-        elif outcome.kind == "spurious":
-            unit[1] += 1
-        elif outcome.kind == "missing":
-            unit[2] += 1
-        else:  # a wrong value or entity: one fact written wrong, one not written
-            unit[1] += 1
-            unit[2] += 1
-    return [(tp, fp, fn) for tp, fp, fn in by_doc.values()], unscored
+    documents = len(dict.fromkeys(g.doc_id for g in gold))
+    return rows, Bootstrap(units=documents, resamples=resamples, seed=seed, level=level)
 
 
 def conforms(fact: Fact, ontology: Ontology) -> bool:
@@ -668,7 +650,6 @@ __all__ = [
     "conformance",
     "conforms",
     "extraction_rows",
-    "extraction_units",
     "from_stage",
     "micro",
     "models_called",

@@ -24,7 +24,7 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
-from openodke.eval.extraction import match_extraction
+from openodke.eval.extraction import document_counts
 from openodke.eval.formats import load_jsonl
 from openodke.eval.report import _table, join_by_id
 from openodke.eval.stats import (
@@ -297,20 +297,15 @@ def item_rows(stage: str, labels: Sequence[Any], predicted: Any) -> tuple[list[I
     validation and routing are one row per labelled item that has a prediction.
     """
     if stage == "extract":
-        counts = {g.doc_id: [0, 0, 0] for g in labels}
-        homeless = 0
-        for outcome in match_extraction(labels, predicted):
-            if outcome.doc_id not in counts:
-                homeless += 1
-                continue
-            row = counts[outcome.doc_id]
-            row[0] += outcome.kind == "correct"
-            row[1] += outcome.kind not in ("correct", "missing")
-            row[2] += outcome.kind not in ("correct", "spurious")
-        rows = [ItemRow(id=doc, tp=tp, fp=fp, fn=fn) for doc, (tp, fp, fn) in counts.items()]
+        # The same counts an eval report resamples for its ranges.
+        found = document_counts(labels, predicted)
+        rows = [ItemRow(id=doc, tp=tp, fp=fp, fn=fn) for doc, (tp, fp, fn) in found.by_doc.items()]
         warnings = (
-            [f"{homeless} spurious prediction(s) cite no document and are in no document's row"]
-            if homeless
+            [
+                f"{found.uncited} spurious prediction(s) cite no document and are in no "
+                "document's row"
+            ]
+            if found.uncited
             else []
         )
         return rows, warnings
