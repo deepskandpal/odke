@@ -141,3 +141,17 @@ def test_a_competitor_set_with_failed_documents_is_dropped_not_averaged(tmp_path
     lgt = lines[lines.index(next(ln for ln in lines if "LLMGraphTransformer" in ln)) :]
     assert lgt[0].startswith("| **LLMGraphTransformer** | extraction alone | 80.0% |")
     assert "(1 of 2 sets dropped: documents failed to extract)" in lgt[3]
+
+
+def test_rejected_by_grounder_is_what_the_gate_removed(tmp_path: Path) -> None:
+    """Outside paper mode the gate keeps not_found and refuses contradicted.
+
+    Ten candidates, eight after the gate: two rejected, whatever the verdict
+    note says about not_found.
+    """
+    verdicts = "supported 5, not_found 3, contradicted 2, unchecked 0"
+    _write(tmp_path / "ont_1_movie", "report.json", _report(0.5, (10, 8, 6), verdicts))
+    lines = tables.table("t", [tmp_path / "ont_1_movie"], ["precision"], ["triples"])
+    rows = [ln for ln in lines if " | + grounding | " in ln or " | + corroboration | " in ln]
+    assert rows[0].startswith("|  | + grounding |") and rows[0].endswith("| 8 | 2 |")
+    assert rows[1].endswith("| 6 | 2 |")

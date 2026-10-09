@@ -11,7 +11,6 @@ price table for whichever models each set ran (its `odke.json`, and a competitor
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -38,9 +37,14 @@ def load(path: Path) -> dict[str, Any] | None:
 
 
 def rejected(report: dict[str, Any]) -> int:
-    note = next((n for n in report["notes"] if n.startswith("grounder verdicts")), "")
-    found = re.search(r"not_found (\d+)", note)
-    return int(found.group(1)) if found else 0
+    """Facts the grounding gate removed: extracted, less what + grounding kept.
+
+    Not a verdict count: which verdicts the gate refuses depends on the mode.
+    Paper mode refuses not_found too; three-way mode keeps it and refuses only
+    contradicted, so counting not_found there counts facts that were kept.
+    """
+    rows = report["breakdown"]
+    return int(rows[ROWS[0]]["facts"] or 0) - int(rows[ROWS[1]]["facts"] or 0)
 
 
 def failed(folder: Path) -> int:
