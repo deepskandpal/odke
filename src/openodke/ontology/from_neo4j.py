@@ -33,9 +33,10 @@ stays readable when one predicate is used a million times and another ten.
 
 A graph `Neo4jSink` wrote is read back as the shape it wrote: `:Entity` and
 `:Claim` are the sink's labels, not types; the entity fields and provenance
-properties are not predicates or qualifiers; a projected property and the
-claims behind it are one predicate; the `SAME_AS`/`SIMILAR`/`DIFFERENT`
-links are not predicates.
+properties are not predicates or qualifiers, and neither is the stages'
+`odke.`-namespaced bookkeeping (`odke.name_key`, `odke.conflict`, …); a
+projected property and the claims behind it are one predicate; the
+`SAME_AS`/`SIMILAR`/`DIFFERENT` links are not predicates.
 
 What the store cannot say is not invented. Labels have no hierarchy, so there
 are no parents. Edges are `multi`: the schema does not say how many one node
@@ -210,7 +211,7 @@ class _Reflection:
                 continue
             self.types |= types
             key = row.get("propertyName")
-            if key is None or (written and key in self.entity_fields):
+            if key is None or _bookkeeping(key) or (written and key in self.entity_fields):
                 continue
             name = key
             if written and key.startswith("property_") and key[9:] in self.entity_fields:
@@ -266,7 +267,7 @@ class _Reflection:
             qualifiers: dict[str, dict[str, Any]] = {
                 _qualifier_name(p, self.provenance): {}
                 for p in sorted(props)
-                if p not in self.provenance
+                if p not in self.provenance and not _bookkeeping(p)
             }
             where = f"relationship type {rel!r}"
             if self.claim in ends:
@@ -366,6 +367,12 @@ class _Reflection:
             )
             return "string"
         return next(iter(prop.ranges), "string")
+
+
+def _bookkeeping(key: str) -> bool:
+    # What the stages record their own work under (`openodke.corroborate.provenance`):
+    # a name key, a conflict stamp, a score. A record of the pipeline, not the schema.
+    return key.startswith("odke.")
 
 
 def _qualifier_name(key: str, provenance: frozenset[str]) -> str:
