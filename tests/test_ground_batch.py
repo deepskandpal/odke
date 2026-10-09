@@ -463,3 +463,48 @@ def test_through_the_pipeline_a_documents_calls_run_concurrently() -> None:
     assert len(kg) == N
     assert all(f.verdict is GroundingVerdict.SUPPORTED for f in kg.facts)
     assert client.peak == 4
+
+
+class _RowExtractor:
+    """One fact per one-row document, citing the whole row."""
+
+    def extract(self, chunk: Chunk, ontology: Ontology) -> Iterable[Fact]:
+        span = Span(doc_id=chunk.doc_id, start=0, end=len(chunk.text), quote=chunk.text)
+        evidence = (Evidence(doc_id=chunk.doc_id, span=span),)
+        return [
+            Fact(
+                subject=SUBJECT, predicate="numbered", object_value=chunk.doc_id, evidence=evidence
+            )
+        ]
+
+
+def _rows() -> list[Document]:
+    """What a CSV or JSON Lines loader makes: one document, and one fact, per row."""
+    return [Document(id=f"row{i}", text=f"Sentence number {i}.") for i in range(N)]
+
+
+def test_one_row_documents_are_grounded_concurrently_not_one_by_one() -> None:
+    """A document with one fact used to be a batch of one, so a run of rows was serial."""
+    client = _Gauge(hold=0, barrier=threading.Barrier(4, timeout=5))
+    grounder, _ = _grounder(client, max_workers=4, retry=RetryPolicy(attempts=1))
+    rows = _rows()
+    kg = Pipeline(Ontology(), _RowExtractor(), grounder=grounder).run(rows)
+    assert all(f.verdict is GroundingVerdict.SUPPORTED for f in kg.facts)
+    assert [f.object_value for f in kg.facts] == [row.id for row in rows]
+    assert client.peak == 4
+
+
+def test_documents_grounded_together_come_back_as_each_alone_would() -> None:
+    docs = [DOC.model_copy(update={"id": f"d{i}"}) for i in range(3)]
+    batches: list[tuple[Sequence[Fact], Document]] = [(_facts(d), d) for d in docs]
+    lie = Span(doc_id="d1", start=0, end=19, quote="Something else said")
+    batches[1] = (
+        [_facts(docs[1])[0].model_copy(update={"evidence": (Evidence(doc_id="d1", span=lie),)})],
+        docs[1],
+    )
+    batches.append(([], docs[0]))
+    together, _ = _grounder(_Gauge(hold=0.001), max_workers=4)
+    alone, _ = _grounder(_Gauge(hold=0), max_workers=1)
+    assert together.ground_documents(batches) == [alone.ground_many(f, d) for f, d in batches]
+    assert together.stats == alone.stats
+    assert together.stats["calls"] == 2 * N

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,14 @@ from openodke import (
     SourceTier,
 )
 from openodke.extract.hybrid import merge
-from openodke.llm import Completion, Message, ModelSpec, ReplayClient, ScriptedClient
+from openodke.llm import (
+    Completion,
+    LLMClient,
+    Message,
+    ModelSpec,
+    ReplayClient,
+    ScriptedClient,
+)
 from openodke.loaders import DirectoryLoader, MarkdownLoader
 
 FIXTURES = Path(__file__).parent / "fixtures" / "llm"
@@ -54,16 +62,32 @@ def _corpus(tmp_path: Path) -> list[Document]:
 
 
 class _EmptyReplies:
-    """A model that finds nothing, counting what it is asked."""
+    """A model that finds nothing, counting what it is asked — from any thread."""
 
     def __init__(self) -> None:
         self.calls = 0
+        self._lock = threading.Lock()
 
     def complete(
         self, messages: Sequence[Message], *, spec: ModelSpec, schema: dict[str, Any] | None = None
     ) -> Completion:
-        self.calls += 1
+        with self._lock:
+            self.calls += 1
         return Completion(text='{"entities": []}', model=spec.model)
+
+
+class _Together:
+    """Answers from `inner` only once `parties` calls are in flight at the same time."""
+
+    def __init__(self, inner: ReplayClient, parties: int) -> None:
+        self.inner = inner
+        self.barrier = threading.Barrier(parties, timeout=5)
+
+    def complete(
+        self, messages: Sequence[Message], *, spec: ModelSpec, schema: dict[str, Any] | None = None
+    ) -> Completion:
+        self.barrier.wait()
+        return self.inner.complete(messages, spec=spec, schema=schema)
 
 
 def test_a_mixed_corpus_costs_fewer_model_calls_than_model_only(
@@ -114,6 +138,24 @@ def test_each_document_reports_the_paths_that_ran(tmp_path: Path, people: Ontolo
     mixed = hybrid.report[staff.id]
     assert mixed.paths == {"pattern", "llm"}
     assert (mixed.pattern_facts, mixed.llm_facts, mixed.merged) == (2, 3, 2)
+
+
+def test_the_model_path_runs_concurrently_and_reports_as_a_loop_would(
+    tmp_path: Path, people: Ontology
+) -> None:
+    """The two prose chunks are two documents; their calls must be in flight together."""
+    docs = _corpus(tmp_path)
+
+    def run(client: LLMClient, workers: int) -> tuple[list[Fact], HybridExtractor]:
+        llm = LLMExtractor(client=client, spec=SONNET, max_workers=workers)
+        hybrid = HybridExtractor(llm, documents=docs)
+        return list(Pipeline(people, hybrid, chunker=SentenceChunker()).run(docs).facts), hybrid
+
+    facts, hybrid = run(_Together(ReplayClient(FIXTURES / "llm_hybrid_corpus.json"), 2), 2)
+    serial_facts, serial = run(ReplayClient(FIXTURES / "llm_hybrid_corpus.json"), 1)
+    assert [f.signature for f in facts] == [f.signature for f in serial_facts]
+    assert hybrid.report == serial.report
+    assert hybrid.totals().model_calls == 2
 
 
 def test_both_paths_on_a_mixed_page_merge_and_the_pattern_fact_wins(

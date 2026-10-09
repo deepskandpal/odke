@@ -28,7 +28,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from collections.abc import Sequence
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Any
 
@@ -213,6 +215,9 @@ class LLMExtractor:
     run. An extraction that yields nothing also logs a WARNING naming its chunk:
     a factless passage and a dropped one are not the same event, and a batch job
     cannot measure recall if they report identically (#78).
+
+    `extract_many` is the batched path the pipeline uses: many chunks at once,
+    with at most `max_workers` model calls in flight, as `LLMGrounder` does.
     """
 
     name = "llm"
@@ -230,7 +235,10 @@ class LLMExtractor:
         repairs: int = 1,
         structured: bool = True,
         retry: RetryPolicy | None = None,
+        max_workers: int = 8,
     ) -> None:
+        if max_workers < 1:
+            raise ValueError(f"max_workers must be at least 1, got {max_workers}")
         self.spec = spec if spec is not None else (roles or ModelRoles()).extract
         self.structured = structured
         self.retry = retry if retry is not None else RetryPolicy()
@@ -245,6 +253,12 @@ class LLMExtractor:
         # Chunks the model was asked about that yielded no fact at all.
         self.empty_extractions = 0
         self.malformed: list[MalformedReply] = []
+        self.max_workers = max_workers
+        # As in the grounder, the ceiling is on the call, not the pool, so it also
+        # holds for a caller who runs several batches, or plain `extract`s, at once.
+        self._slots = threading.BoundedSemaphore(max_workers)
+        # Guards the four accumulators above, which every worker thread adds to.
+        self._lock = threading.Lock()
 
     @property
     def client(self) -> LLMClient:
@@ -281,17 +295,17 @@ class LLMExtractor:
         replies: list[str] = []
         for attempt in range(self.repairs + 1):
             completion = self._complete(chunk, messages, schema)
-            self.calls.append(
-                ModelCall(
-                    doc_id=chunk.doc_id,
-                    chunk_index=chunk.index,
-                    model=completion.model or self.spec.model,
-                    prompt_tokens=completion.prompt_tokens,
-                    completion_tokens=completion.completion_tokens,
-                    cost_usd=completion.cost_usd,
-                    repair=attempt > 0,
-                )
+            call = ModelCall(
+                doc_id=chunk.doc_id,
+                chunk_index=chunk.index,
+                model=completion.model or self.spec.model,
+                prompt_tokens=completion.prompt_tokens,
+                completion_tokens=completion.completion_tokens,
+                cost_usd=completion.cost_usd,
+                repair=attempt > 0,
             )
+            with self._lock:
+                self.calls.append(call)
             data = _contract(completion)
             if data is not None:
                 break
@@ -303,13 +317,15 @@ class LLMExtractor:
             ]
         if data is None:
             self._reject(chunk, "malformed reply")
-            self.malformed.append(
-                MalformedReply(doc_id=chunk.doc_id, chunk_index=chunk.index, replies=tuple(replies))
+            kept = MalformedReply(
+                doc_id=chunk.doc_id, chunk_index=chunk.index, replies=tuple(replies)
             )
-            self.empty_extractions += 1
+            with self._lock:
+                self.malformed.append(kept)
+                self.empty_extractions += 1
             log.warning(
                 "no reply followed the contract for chunk %s#%d after %d attempts; "
-                "nothing extracted. The raw text is in LLMExtractor.malformed[-1]",
+                "nothing extracted. The raw text is in LLMExtractor.malformed",
                 chunk.doc_id,
                 chunk.index,
                 len(replies),
@@ -318,7 +334,8 @@ class LLMExtractor:
 
         ctx = ChunkContext(chunk, self.documents.get(chunk.doc_id))
         by_type = {s.type_name: s for s in snippets}
-        refused = len(self.rejections)
+        with self._lock:
+            since = len(self.rejections)
         facts: list[Fact] = []
         for entity in data["entities"]:
             facts.extend(self._entity(ctx, ontology, by_type, entity))
@@ -327,17 +344,51 @@ class LLMExtractor:
             # one call and none on the next, and only a count and a line in the
             # log tell that apart from a passage with nothing to say (#78). The
             # two numbers say which happened — an empty reply, or a reply whose
-            # every candidate was refused.
-            self.empty_extractions += 1
+            # every candidate was refused. Other chunks' workers add to the list
+            # too, so this chunk's refusals are the ones that name it.
+            with self._lock:
+                self.empty_extractions += 1
+                refused = sum(_is_for(r, chunk) for r in self.rejections[since:])
             log.warning(
                 "extraction returned no facts for chunk %s#%d: %d entities in the reply, "
                 "%d candidates refused",
                 chunk.doc_id,
                 chunk.index,
                 len(data["entities"]),
-                len(self.rejections) - refused,
+                refused,
             )
         return facts
+
+    def extract_many(self, chunks: Sequence[Chunk], ontology: Ontology) -> list[list[Fact]]:
+        """Many chunks, with at most `max_workers` model calls in flight.
+
+        One list of facts comes back per chunk, in order, and `calls`,
+        `rejections` and `malformed` are left in the order chunk-by-chunk
+        extraction gives, so a batch reads exactly as a loop would. A failure
+        that `extract` would raise is raised here too, and the calls not yet
+        started are dropped rather than paid for. The client must be
+        thread-safe: both built-in clients are; `ScriptedClient` answers by
+        position and is not, which is what `RecordedClient` is for.
+        """
+        if self.max_workers == 1 or len(chunks) < 2:
+            return [self.extract(chunk, ontology) for chunk in chunks]
+        with self._lock:
+            marks = len(self.calls), len(self.rejections), len(self.malformed)
+        workers = min(self.max_workers, len(chunks))
+        with ThreadPoolExecutor(workers, thread_name_prefix="openodke-extract") as pool:
+            futures = [pool.submit(self.extract, chunk, ontology) for chunk in chunks]
+            wait(futures, return_when=FIRST_EXCEPTION)
+            if any(f.done() and f.exception() is not None for f in futures):
+                pool.shutdown(cancel_futures=True)
+            # Raises the first failure in chunk order: the pool starts chunks in
+            # order, so none before a failed one can have been cancelled.
+            found = [future.result() for future in futures]
+        order = {(c.doc_id, c.index): i for i, c in enumerate(chunks)}
+        with self._lock:
+            _in_chunk_order(self.calls, marks[0], order)
+            _in_chunk_order(self.rejections, marks[1], order)
+            _in_chunk_order(self.malformed, marks[2], order)
+        return found
 
     def _complete(
         self, chunk: Chunk, messages: list[Message], schema: dict[str, Any] | None
@@ -355,11 +406,11 @@ class LLMExtractor:
                 exc,
             )
 
-        return call_with_retry(
-            lambda: self.client.complete(messages, spec=self.spec, schema=schema),
-            self.retry,
-            on_retry=on_retry,
-        )
+        def call() -> Completion:
+            with self._slots:
+                return self.client.complete(messages, spec=self.spec, schema=schema)
+
+        return call_with_retry(call, self.retry, on_retry=on_retry)
 
     def _entity(
         self,
@@ -450,15 +501,31 @@ class LLMExtractor:
         predicate: str | None = None,
         quote: str | None = None,
     ) -> None:
-        self.rejections.append(
-            Rejection(
-                doc_id=chunk.doc_id,
-                chunk_index=chunk.index,
-                reason=reason,
-                predicate=predicate,
-                quote=quote,
-            )
+        rejection = Rejection(
+            doc_id=chunk.doc_id,
+            chunk_index=chunk.index,
+            reason=reason,
+            predicate=predicate,
+            quote=quote,
         )
+        with self._lock:
+            self.rejections.append(rejection)
+
+
+def _is_for(record: Rejection, chunk: Chunk) -> bool:
+    return (record.doc_id, record.chunk_index) == (chunk.doc_id, chunk.index)
+
+
+def _in_chunk_order(records: list[Any], mark: int, order: dict[tuple[str, int], int]) -> None:
+    """What a batch appended after `mark`, put in the order of its chunks.
+
+    Workers append as they finish; sorted by chunk, the list reads as a loop
+    would have left it. The sort is stable, so one chunk's own entries — a call
+    and its repair — keep theirs.
+    """
+    records[mark:] = sorted(
+        records[mark:], key=lambda r: order.get((r.doc_id, r.chunk_index), len(order))
+    )
 
 
 def _contract(completion: Completion) -> dict[str, Any] | None:

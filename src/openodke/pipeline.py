@@ -9,9 +9,11 @@ which is the right default for a caller who wants recall and will filter
 themselves.
 
 The order is the ODKE+ order with the seams the paper leaves implicit made
-explicit. Per chunk: route, extract. Per document: ground, normalise — a whole
-document at once, so a grounder that can batch (`ground_many`) runs its calls
-concurrently. Over the batch: resolve, corroborate, score, validate. Then write.
+explicit. Per chunk: route, extract. Per document: ground, normalise. Over the
+batch: resolve, corroborate, score, validate. Then write. A stage that can batch
+is handed the whole run at once — `extract_many` every chunk, `ground_documents`
+every document — and runs its model calls concurrently; the result is the same,
+in the same order, as one at a time.
 Resolution runs before corroboration on purpose — `Fact.signature` merges on
 `subject.key`, so corroboration cannot repair a resolution failure.
 
@@ -55,7 +57,7 @@ from openodke.stages import (
     Sink,
     Validator,
 )
-from openodke.types import Document, Entity, Fact, KnowledgeGraph
+from openodke.types import Chunk, Document, Entity, Fact, KnowledgeGraph
 
 
 class DoubleStageWarning(UserWarning):
@@ -157,9 +159,9 @@ class Pipeline:
             "empty_extractions": 0,
             "refused": 0,
         }
-        facts: list[Fact] = []
+        routed: list[tuple[Document, list[Chunk]]] = []
         for doc in docs:
-            candidates: list[Fact] = []
+            chunks: list[Chunk] = []
             for chunk in self.chunker.chunk(doc):
                 stats["chunks"] += 1
                 verdict = self.router.route(chunk)
@@ -170,12 +172,23 @@ class Pipeline:
                     if verdict.scope == "document":
                         break
                     continue
-                found = list(self.extractor.extract(chunk, self.ontology))
-                if not found:
+                chunks.append(chunk)
+            routed.append((doc, chunks))
+
+        # Every chunk of the run at once, so the model calls are not one at a time.
+        found = iter(_extract(self.extractor, [c for _, cs in routed for c in cs], self.ontology))
+        batches: list[tuple[list[Fact], Document]] = []
+        for doc, chunks in routed:
+            candidates: list[Fact] = []
+            for _ in chunks:
+                extracted = next(found)
+                if not extracted:
                     stats["empty_extractions"] += 1
-                candidates.extend(found)
-            for grounded in _ground(self.grounder, candidates, doc):
-                facts.append(self.normalizer.normalize(grounded))
+                candidates.extend(extracted)
+            batches.append((candidates, doc))
+        facts: list[Fact] = []
+        for grounded in _ground(self.grounder, batches):
+            facts.extend(self.normalizer.normalize(fact) for fact in grounded)
 
         resolved, links = self.resolver.resolve(facts, _entities_of(facts))
         scored = [self.scorer.score(f) for f in self.corroborator.corroborate(resolved)]
@@ -206,26 +219,56 @@ class Pipeline:
         return self.constrainer.constrain(self.ontology)
 
 
-def _ground(grounder: Grounder, facts: list[Fact], doc: Document) -> list[Fact]:
-    """One document's candidates through the grounder, batched when it can batch.
+def _extract(extractor: Extractor, chunks: list[Chunk], ontology: Ontology) -> list[list[Fact]]:
+    """Every chunk through the extractor, batched when it can batch.
 
-    A grounder that also has `ground_many(facts, doc)` gets the document's facts
-    in one call and may run its model calls concurrently; any other grounder is
-    called per fact, as the Protocol says. Either way one fact comes back for
+    An extractor that also has `extract_many(chunks, ontology)` gets the run's
+    chunks in one call and may run its model calls concurrently; any other is
+    called per chunk, as the Protocol says. Either way one list of facts comes
+    back for each chunk, in order.
+    """
+    many = getattr(extractor, "extract_many", None)
+    if not callable(many) or not chunks:
+        return [list(extractor.extract(c, ontology)) for c in chunks]
+    found = [list(facts) for facts in many(chunks, ontology)]
+    if len(found) != len(chunks):
+        raise ValueError(
+            f"{type(extractor).__name__}.extract_many returned {len(found)} results for "
+            f"{len(chunks)} chunks; it must return one list of facts per chunk"
+        )
+    return found
+
+
+def _ground(grounder: Grounder, batches: list[tuple[list[Fact], Document]]) -> list[list[Fact]]:
+    """Each document's candidates through the grounder, batched when it can batch.
+
+    A grounder that has `ground_documents(batches)` gets every document's facts
+    in one call, and one that has `ground_many(facts, doc)` gets each
+    document's; either may run its model calls concurrently. Any other grounder
+    is called per fact, as the Protocol says. Either way one fact comes back for
     each that went in: a grounder stamps, it never drops (DECISIONS #20).
     """
-    if not facts:
-        return []
+    # A document with no candidates costs no call, whichever path runs.
+    work = [(facts, doc) for facts, doc in batches if facts]
+    documents = getattr(grounder, "ground_documents", None)
     many = getattr(grounder, "ground_many", None)
-    if not callable(many):
-        return [grounder.ground(f, doc) for f in facts]
-    grounded = list(many(facts, doc))
-    if len(grounded) != len(facts):
-        raise ValueError(
-            f"{type(grounder).__name__}.ground_many returned {len(grounded)} facts for "
-            f"{len(facts)}; a grounder stamps a verdict, it never drops a fact"
-        )
-    return grounded
+    if callable(documents):
+        method, answered = "ground_documents", [list(g) for g in documents(work)] if work else []
+    elif callable(many):
+        method, answered = "ground_many", [list(many(facts, doc)) for facts, doc in work]
+    else:
+        method, answered = "ground", [[grounder.ground(f, doc) for f in fs] for fs, doc in work]
+    rows = iter(answered)
+    out: list[list[Fact]] = []
+    for facts, _ in batches:
+        grounded = next(rows, []) if facts else []
+        if len(grounded) != len(facts):
+            raise ValueError(
+                f"{type(grounder).__name__}.{method} returned {len(grounded)} facts for "
+                f"{len(facts)}; a grounder stamps a verdict, it never drops a fact"
+            )
+        out.append(grounded)
+    return out
 
 
 def _is_odkes_own(stage: object, default: type) -> bool:

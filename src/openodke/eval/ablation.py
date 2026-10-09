@@ -77,6 +77,16 @@ class _Recording:
         self.found[_key(chunk)] = facts
         return facts
 
+    def extract_many(self, chunks: Sequence[Chunk], ontology: Ontology) -> list[list[Fact]]:
+        # Passed on whole, so a benchmark's extraction runs as concurrently as `odke run`'s.
+        many = getattr(self.inner, "extract_many", None)
+        if not callable(many):
+            return [self.extract(chunk, ontology) for chunk in chunks]
+        found = [list(facts) for facts in many(chunks, ontology)]
+        for chunk, facts in zip(chunks, found, strict=True):
+            self.found[_key(chunk)] = facts
+        return found
+
 
 class _Replaying:
     """An extractor that answers each chunk with what the recorded pass found."""

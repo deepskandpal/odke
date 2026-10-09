@@ -486,6 +486,14 @@ A transient provider error (a 429, a timeout) is retried under `retry`, the
 grounder's `RetryPolicy` and default; one that outlasts it, or that waiting
 cannot fix, still raises.
 
+`Pipeline` hands the extractor every chunk of a run at once (`extract_many`), and
+it keeps at most `max_workers` (default 8) model calls in flight. Facts come back
+in chunk order, and `calls`, `rejections` and `malformed` read exactly as they
+would after one chunk at a time. The client must be thread-safe, as the
+grounder's must: `ScriptedClient` answers by position, so give it one chunk, or
+`max_workers=1`, or use `RecordedClient`. `HybridExtractor` passes its prose
+chunks on together, so a hybrid run gets the same concurrency.
+
 An extraction that yields nothing is counted and logged, never silent. The same
 chunk can answer with five facts twice and with none the third time, and a
 factless passage and a dropped one report identically unless something says so:

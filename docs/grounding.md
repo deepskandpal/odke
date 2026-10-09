@@ -168,11 +168,14 @@ Transient errors are retried under a `RetryPolicy` (`openodke.ground.RetryPolicy
 ### Batching
 
 `ground_many(facts, doc)` grounds one document's facts with at most `max_workers`
-model calls in flight, and `Pipeline` uses it automatically. Span checks run
-first, in order; one fact comes back for each fact that went in, in the same
-order; and a failed call leaves only its own fact `UNCHECKED`. The client must be
-thread-safe. Both built-in clients are. `ScriptedClient` answers by position and
-is not, which is what `RecordedClient` (answers by matching the prompt) is for.
+model calls in flight. `ground_documents([(facts, doc), ...])` does the same for
+many documents with one ceiling across them all, and `Pipeline` uses it
+automatically, so a corpus of one-row documents runs as concurrently as one long
+document. Span checks run first, in order; one fact comes back for each fact that
+went in, in the same order; and a failed call leaves only its own fact
+`UNCHECKED`. The client must be thread-safe. Both built-in clients are.
+`ScriptedClient` answers by position and is not, which is what `RecordedClient`
+(answers by matching the prompt) is for.
 
 ### Paper mode: the ODKE+ grounder as written
 

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import threading
+import time
 import urllib.error
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -16,7 +19,9 @@ from openodke import (
     Extractor,
     Fact,
     GroundingVerdict,
+    KnowledgeGraph,
     Ontology,
+    Pipeline,
     Polarity,
     SourceTier,
 )
@@ -468,3 +473,120 @@ def test_nothing_to_ask_costs_nothing_and_no_schema_is_an_error(people: Ontology
 
 def test_it_is_an_extractor() -> None:
     assert isinstance(LLMExtractor(client=ScriptedClient()), Extractor)
+
+
+# --------------------------------------------------------------------------- #
+# Batches: many chunks at once, the same answer as one at a time
+# --------------------------------------------------------------------------- #
+
+ROWS = 8
+
+
+def _rows() -> list[Document]:
+    """One document per row, as a CSV or JSON Lines loader makes them."""
+    return [Document(id=f"row{i}", text=f"Person{i} was born in {1900 + i}.") for i in range(ROWS)]
+
+
+def _row_reply(i: int) -> str:
+    """Every way a chunk can go: a fact, a malformed reply, a refused quote, nothing."""
+    kind = i % 4
+    if kind == 1:
+        return "nope"
+    if kind == 3:
+        return '{"entities": []}'
+    quote = f"born in {1900 + i}" if kind == 0 else "born in 1066"
+    fact = {"predicate": "birth_date", "value": str(1900 + i), "quote": quote}
+    return json.dumps({"entities": [{"type": "Person", "name": f"Person{i}", "facts": [fact]}]})
+
+
+class _ByRow:
+    """Answers each row from its passage alone, so it is thread-safe.
+
+    Earlier rows are held longer, so a pool finishes them out of order, and the
+    most calls ever in flight at once is kept in `peak`. With a barrier, the
+    first calls must all be in flight together before any of them answers.
+    """
+
+    def __init__(self, hold: float = 0.0, barrier: threading.Barrier | None = None) -> None:
+        self.hold = hold
+        self.barrier = barrier
+        self.active = 0
+        self.peak = 0
+        self.started = 0
+        self._lock = threading.Lock()
+
+    def complete(
+        self, messages: Sequence[Message], *, spec: ModelSpec, schema: dict[str, Any] | None = None
+    ) -> Completion:
+        i = int(messages[1].content.removeprefix("Person").split(" ", 1)[0])
+        with self._lock:
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            self.started += 1
+            meet = self.barrier is not None and self.started <= self.barrier.parties
+        try:
+            if meet and self.barrier is not None:
+                self.barrier.wait()
+            time.sleep(self.hold * (ROWS - i))
+            text = _row_reply(i)
+            return Completion(text=text, model=spec.model, prompt_tokens=10 + i, cost_usd=0.001)
+        finally:
+            with self._lock:
+                self.active -= 1
+
+
+def _run_rows(
+    people: Ontology, client: _ByRow, workers: int
+) -> tuple[KnowledgeGraph, LLMExtractor]:
+    docs = _rows()
+    extractor = LLMExtractor(client=client, spec=SONNET, documents=docs, max_workers=workers)
+    return Pipeline(people, extractor).run(docs), extractor
+
+
+def test_a_runs_chunks_are_extracted_concurrently(people: Ontology) -> None:
+    """Four calls must be in flight at once for the barrier to open. One at a time,
+    as the pipeline used to call the extractor, would break it."""
+    client = _ByRow(barrier=threading.Barrier(4, timeout=5))
+    kg, _ = _run_rows(people, client, workers=4)
+    assert client.peak == 4
+    assert len(kg.facts) == 2
+
+
+def test_a_concurrent_run_is_the_serial_run_exactly(people: Ontology) -> None:
+    serial, one = _run_rows(people, _ByRow(hold=0.002), workers=1)
+    concurrent, many = _run_rows(people, _ByRow(hold=0.002), workers=4)
+
+    def shape(kg: KnowledgeGraph) -> list[tuple[Any, ...]]:
+        return [(f.signature, f.evidence[0].doc_id, f.evidence[0].span) for f in kg.facts]
+
+    assert shape(concurrent) == shape(serial)
+    assert [f.evidence[0].doc_id for f in serial.facts] == ["row0", "row4"]
+    assert concurrent.stats == serial.stats
+    # The accumulators read as a loop leaves them, whatever order the pool finished in.
+    assert many.calls == one.calls
+    assert many.rejections == one.rejections
+    assert many.malformed == one.malformed
+    # And every count is exact: a repair for each malformed row, three empty kinds of four.
+    assert len(many.calls) == ROWS + ROWS // 4
+    assert [r.reason for r in many.rejections] == [
+        "malformed reply",
+        "quote not in the passage",
+        "malformed reply",
+        "quote not in the passage",
+    ]
+    assert (
+        many.empty_extractions
+        == one.empty_extractions
+        == concurrent.stats["empty_extractions"]
+        == 3 * ROWS // 4
+    )
+
+
+def test_a_failed_chunk_fails_the_batch_as_it_would_fail_the_loop(people: Ontology) -> None:
+    client = _FailsFirst(99, lambda: _http(401), ScriptedClient())
+    extractor = LLMExtractor(client=client, spec=SONNET, max_workers=4)
+    chunks = [Chunk(doc_id=d.id, start=0, end=len(d.text), text=d.text, index=0) for d in _rows()]
+    with pytest.raises(ProviderError, match="401"):
+        extractor.extract_many(chunks, people)
+    with pytest.raises(ValueError, match="max_workers"):
+        LLMExtractor(client=client, max_workers=0)
