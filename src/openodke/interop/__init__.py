@@ -11,6 +11,7 @@ from __future__ import annotations
 from openodke.interop.graphrag import from_graphrag, read_graphrag
 from openodke.interop.langchain import from_graph_documents
 from openodke.interop.langextract import attribute_triples, from_langextract
+from openodke.interop.neo4j import read_neo4j, write_verdicts
 from openodke.interop.triples import (
     LITERAL_TYPES,
     THING,
@@ -30,6 +31,8 @@ __all__ = [
     "from_graphrag",
     "from_langextract",
     "read_graphrag",
+    "read_neo4j",
     "read_triples",
     "to_fact",
+    "write_verdicts",
 ]
