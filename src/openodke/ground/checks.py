@@ -31,6 +31,33 @@ from openodke.types import Document, Fact, GroundingVerdict
 
 # What `schema_problem` checks, in the order it checks them.
 CHECKS = ("predicate", "domain", "range")
+# Every verdict a fact can leave with, in the order a report reads them.
+VERDICTS = (
+    GroundingVerdict.SUPPORTED,
+    GroundingVerdict.CONTRADICTED,
+    GroundingVerdict.NOT_FOUND,
+    GroundingVerdict.UNCHECKED,
+)
+# What the free checks refused, by `refusals` key, in words.
+REASONS = {
+    "not_in_text": "not in the text",
+    "predicate": "predicate not in the ontology",
+    "domain": "subject outside the domain",
+    "range": "object outside the range",
+}
+
+
+def refusals(stats: Mapping[str, Any]) -> dict[str, int]:
+    """What the free checks refused, from a `CheckedGrounder`'s `stats`.
+
+    `not_in_text` is a fact no citation of which resolves, so `not_found` for
+    free; each of `CHECKS` is a fact stamped with `odke.check`.
+    """
+    checks = stats.get("checks", {})
+    return {
+        "not_in_text": int(stats.get("span", {}).get("not_found", 0)),
+        **{check: int(checks.get(check, 0)) for check in CHECKS},
+    }
 
 
 def schema_problem(fact: Fact, ontology: Ontology) -> tuple[str, str] | None:
@@ -94,6 +121,7 @@ class CheckedGrounder:
         self.span_grounder = SpanGrounder() if grounder is None else None
         self.locator = SpanLocator() if locate else None
         self._counts = Counts("facts", "refused", *CHECKS)
+        self._verdicts = Counts(*(v.value for v in VERDICTS))
 
     def ground(self, fact: Fact, doc: Document) -> Fact:
         return self.ground_documents([([fact], doc)])[0][0]
@@ -120,6 +148,9 @@ class CheckedGrounder:
         for row, keep, grounded in zip(out, passed, self._ground(work), strict=True):
             for index, fact in zip(keep, grounded, strict=True):
                 row[index] = fact
+        for row in out:
+            for fact in row:
+                self._verdicts.bump(fact.verdict.value)
         return out
 
     def _check(self, fact: Fact) -> Fact:
@@ -153,8 +184,12 @@ class CheckedGrounder:
 
     @property
     def stats(self) -> dict[str, Any]:
-        """The grounder's report, and the schema check's counts under `"checks"`."""
-        own: dict[str, Any] = {"checks": self._counts.snapshot()}
+        """The grounder's report, the schema check's counts under `"checks"`, and
+        every fact it returned by verdict under `"verdicts"`."""
+        own: dict[str, Any] = {
+            "checks": self._counts.snapshot(),
+            "verdicts": self._verdicts.snapshot(),
+        }
         if self.span_grounder is not None:
             own["span"] = self.span_grounder.stats
         if self.locator is not None:
@@ -163,4 +198,4 @@ class CheckedGrounder:
         return {**(dict(inner) if isinstance(inner, Mapping) else {}), **own}
 
 
-__all__ = ["CHECKS", "CheckedGrounder", "schema_problem"]
+__all__ = ["CHECKS", "REASONS", "VERDICTS", "CheckedGrounder", "refusals", "schema_problem"]
