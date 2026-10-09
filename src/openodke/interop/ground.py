@@ -35,7 +35,7 @@ from pydantic import Field
 
 from openodke.eval.report import StageReport
 from openodke.eval.spans import evaluate_spans
-from openodke.ground.checks import CHECKS, CheckedGrounder
+from openodke.ground.checks import REASONS, VERDICTS, CheckedGrounder, refusals
 from openodke.ground.locate import locate_span
 from openodke.interop.triples import TripleRow, TriplesExtractor, read_triples
 from openodke.ontology import Ontology
@@ -93,7 +93,7 @@ class GroundSummary(Frozen):
         lines.append(_row("rows", f"{self.rows} ({self.facts} grounded{unmatched})"))
         lines.append(_row("verdicts", ", ".join(f"{k} {v}" for k, v in self.verdicts.items())))
         refused = sum(self.refused.values())
-        reasons = ", ".join(f"{v} {_REASONS[k]}" for k, v in self.refused.items() if v)
+        reasons = ", ".join(f"{v} {REASONS[k]}" for k, v in self.refused.items() if v)
         lines.append(
             _row("free checks", f"{refused} refused" + (f": {reasons}" if reasons else ""))
         )
@@ -188,14 +188,10 @@ def summarize(
     texts = {doc.id: doc for doc in documents}
     stats = dict(grounding or {})
     spans = evaluate_spans(facts)
-    verdicts = {v.value: 0 for v in _ORDER}
+    verdicts = {v.value: 0 for v in VERDICTS}
     for fact in facts:
         verdicts[fact.verdict.value] += 1
-    checks = stats.get("checks", {})
-    refused = {
-        "not_in_text": int(stats.get("span", {}).get("not_found", 0)),
-        **{check: int(checks.get(check, 0)) for check in CHECKS},
-    }
+    refused = refusals(stats)
     unsupported: list[Fact] = []
     too_narrow: list[Fact] = []
     for fact in facts:
@@ -236,20 +232,6 @@ def summarize(
         too_narrow=_shape(too_narrow),
         spans=spans,
     )
-
-
-_ORDER = (
-    GroundingVerdict.SUPPORTED,
-    GroundingVerdict.CONTRADICTED,
-    GroundingVerdict.NOT_FOUND,
-    GroundingVerdict.UNCHECKED,
-)
-_REASONS = {
-    "not_in_text": "not in the text",
-    "predicate": "predicate not in the ontology",
-    "domain": "subject outside the domain",
-    "range": "object outside the range",
-}
 
 
 def _names_both(fact: Fact, text: str) -> bool:
