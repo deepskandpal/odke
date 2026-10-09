@@ -258,6 +258,9 @@ async def run_neo4j(
     )
     from neo4j_graphrag.components.types import TextChunk, TextChunks
 
+    from openodke import Document
+    from openodke.interop import from_graphrag
+
     graph_schema = GraphSchema(
         node_types=[
             NodeType(label=n, properties=[PropertyType(name="name", type="STRING")]) for n in nodes
@@ -283,23 +286,12 @@ async def run_neo4j(
                 print(f"neo4j {doc_id}: {exc}")
                 USAGE["failed_documents"] += 1
                 return []
-        by_id = {n.id: n for n in graph.nodes}
-        rows = []
-        for rel in graph.relationships:
-            head, tail = by_id.get(rel.start_node_id), by_id.get(rel.end_node_id)
-            if head is None or tail is None:
-                continue
-            rows.append(
-                {
-                    "doc": doc_id,
-                    "subject": str(head.properties.get("name") or head.id),
-                    "subject_type": head.label,
-                    "predicate": rel.type,
-                    "object": str(tail.properties.get("name") or tail.id),
-                    "object_type": tail.label,
-                }
-            )
-        return rows
+        # openodke's own adapter, so the mapping measured here is the one users get.
+        # Each document is one chunk and no lexical graph is built, so every row
+        # is grounded on the document. Only relationships are scored, as before.
+        rows, _ = from_graphrag(graph, document=Document(id=doc_id, text=text))
+        kinds = {rel.type for rel in graph.relationships}
+        return [r.model_dump(exclude_defaults=True) for r in rows if r.predicate in kinds]
 
     results = await asyncio.gather(*(one(d, t) for d, t in docs))
     return [row for rows in results for row in rows]

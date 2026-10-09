@@ -138,8 +138,16 @@ def test_neo4j_graphrag_runs_on_any_litellm_model(monkeypatch: pytest.MonkeyPatc
             2000,
         )
     )
-    assert [(r["subject"], r["predicate"], r["object"]) for r in rows] == [
-        ("Marie Curie", "BORN_IN", "Warsaw")
+    # Read by openodke's own adapter: one row, grounded on the document it came from.
+    assert rows == [
+        {
+            "doc": "d1",
+            "subject": "Marie Curie",
+            "subject_type": "Person",
+            "predicate": "BORN_IN",
+            "object": "Warsaw",
+            "object_type": "City",
+        }
     ]
     assert calls[0]["model"] == "ollama/llama3.1"
     assert competitors.USAGE["output_tokens"] == 20
