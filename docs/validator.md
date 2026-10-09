@@ -138,6 +138,7 @@ name's default options:
 | inverses | on when the ontology declares a pair ([DECISIONS #28](decisions.md#28)); `inverses=False` turns it off |
 | coverage | on: what extraction left behind ([Grounding](grounding.md#what-extraction-left-behind-the-coverage-report)); `coverage=False` turns it off |
 | lookup | none: resolve within the batch. `lookup=` a `StoreLookup` (`sink.lookup()`, `MemoryLookup`) resolves against the store as well ([Resolving against the store](resolution-and-corroboration.md#resolving-against-the-store)); with a resolver of your own, give it the lookup instead |
+| judge | none. `judge=` a `PairJudge` asks a model about the pairs the resolver's rules leave open, in both orders, reading its contexts from the texts given ([The pair judge](resolution-and-corroboration.md#the-pair-judge)); never in a dry run; with a resolver of your own, give it the judge instead |
 | sinks | none |
 
 Passing a stage replaces its default, and a pass-through from `openodke.stages`
@@ -160,13 +161,19 @@ the relation and the types have nothing to check.
 - **Grounding.** `verdicts` counts every fact in by the verdict grounding left
   it with. `checked` is what the free checks refused.
 - **Cost.** `calls`, `tokens` and `cost_usd` (`None` until a provider reports
-  one), plus `prompts`, the [registered prompts](models.md#prompts) sent.
+  one), the grounder's and the judge's together, plus `prompts`, the
+  [registered prompts](models.md#prompts) sent.
 - **Coverage.** `coverage` holds what extraction left behind, as
   `KnowledgeGraph.stats["coverage"]` keeps it.
 - **Store.** With a lookup, `store` counts the entities looked up, the store's
   candidates, the incoming keys re-keyed onto a stored one, and the links to
   the store by kind. A dry run still reads the store through it, and writes
   nothing.
+- **Judge.** With a judge, `judge` counts the pairs in the band and those
+  asked, the calls and the swapped ones, the pairs whose two orders disagreed,
+  each decision, and those decided by a person, queued, without context or
+  failed. Its calls, tokens and cost are in the totals, and its two prompt
+  keys in `prompts`.
 
 The graph's `stats` carry the same report under `"validation"`, beside each
 stage's own counts under `"stages"`, so a JSONL sink's `manifest.json` keeps

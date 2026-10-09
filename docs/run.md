@@ -171,7 +171,7 @@ would have to be a Python object, such as a corroborator's `source` callable.
 | `extractor` | `pattern`, `llm`, `hybrid`, `triples` | `PatternExtractor`, `LLMExtractor`, `HybridExtractor`, `TriplesExtractor` | `pattern`: `mappings`, `subject_type`, `confidence`; `llm`: `types`, `snippet_limit`, `confidence`, `repairs`, `retry` and `max_workers` (as the grounder's); `hybrid`: `llm` (options, or `false`), `pattern` (options); `triples`: `path` (required), `extractor`, `confidence` — another extractor's output, [in the triples format](inputs.md) |
 | `grounder` | `span`, `llm`, `passthrough`, `delegated` | `SpanGrounder`, `LLMGrounder` | `llm`: `max_workers`, `retry` (`attempts`, `base_delay`, `multiplier`, `max_delay`, `jitter`), `context`, `verdicts`, `locate` ([the span locator](grounding.md#locating-spans)), `widen` ([widen and retry](grounding.md#widen-and-retry); `odke run --widen` sets it) |
 | `normalizer` | `value`, `passthrough`, `delegated` | `ValueNormalizer` | `day_first`, `person_types` |
-| `resolver` | `native`, `passthrough`, `delegated` | `NativeResolver` | `threshold`, `nudge_up`, `nudge_down`, `max_block` |
+| `resolver` | `native`, `passthrough`, `delegated` | `NativeResolver` | `threshold`, `nudge_up`, `nudge_down`, `max_block`, `judge` ([the pair judge](#the-pair-judge)) |
 | `corroborator` | `signature`, `passthrough`, `delegated` | `SignatureCorroborator` | `half_life_days`, `freshness_floor`, `intervals`, `near_duplicates` |
 | `scorer` | `evidence` (the default), `passthrough`, `delegated` | `EvidenceScorer` | `prior`, `verdict_weights` |
 | `gate` | `verdict`, `passthrough`, `delegated` | `VerdictGate` | `refuse_not_found` |
@@ -237,6 +237,28 @@ opens no store, so it resolves each batch within itself and prints a warning
 saying so. `odke validate --config` reads the same key. The resolver's counts
 are `stages.resolver.store`: entities `looked_up`, store `candidates`, keys
 `rekeyed`, and links by kind.
+
+### The pair judge
+
+`resolver: {use: native, judge: true}` puts the pairs the resolver's rules leave
+open, scored from 0.7 up to its `threshold`, to a model in both orders
+([The pair judge](resolution-and-corroboration.md#the-pair-judge),
+[DECISIONS #34](decisions.md#34)). It is off unless named. A mapping sets its
+options: `low` (the band's start, default 0.7), `queue` (the JSONL file unsure
+pairs are appended to, for `odke label make pair`), `reviewed` (a person's
+labels, as `odke label read` writes them, which must exist), `max_workers` and
+`retry`, as the grounder's. Paths are relative to the config. It asks the
+`ground` role's model, through `models.replay.ground` when that is set, and
+`meter: true` counts its calls as their own row, `judge`. The texts it reads
+contexts from are the run's inputs. A dry run asks it, as it grounds, but
+writes no queue, and says so.
+
+```yaml
+stages:
+  resolver:
+    use: native
+    judge: {queue: review/pairs.jsonl, reviewed: review/reviewed.jsonl}
+```
 
 ### The inferrer
 
@@ -305,7 +327,7 @@ stage:
 | `stages.extractor` | `paths` (the hybrid's `PathReport` totals), `rejections` by reason, or `model_calls`; `prompts`, the keys of the [registered prompts](models.md#prompts) the model sent; for `triples`, rows by how their evidence was made (`cited`, `quoted`, `quote_not_found`, `context`), `unmatched_rows` and `ambiguous_rows` |
 | `stages.grounder` | calls, retries, failures, a count per verdict, tokens, `cost_usd`, `prompts`, `unasked` (facts a budget stop reached before their call), the span check's own counts, with `locate` the locator's, and with `widen`, under `widen`: `retried`, `recovered` and the retries' own calls, tokens and cost, which `cost` meters as their own row, `ground.widen` |
 | `stages.corroborator` | `conflicts`: how many facts `won`, `lost` or `tied` a contest |
-| `stages.resolver` | with `store_lookup`: under `store`, entities `looked_up`, store `candidates`, incoming keys `rekeyed` onto a stored one, and links to the store by kind; under `lookup`, the lookup's own counts |
+| `stages.resolver` | with `store_lookup`: under `store`, entities `looked_up`, store `candidates`, incoming keys `rekeyed` onto a stored one, and links to the store by kind; under `lookup`, the lookup's own counts. With `judge`: under `judge`, the pairs handed in and `asked`, `calls`, `swapped` calls, pairs whose orders `disagreed`, each decision, `person`, `queued`, `no_context`, `failed`, tokens and cost; and `prompts` |
 | `stages.validator` | the gate's `accepted`, and `refused` by reason. The key keeps its 0.2 name ([DECISIONS #26](decisions.md#26)) |
 | `stages.<name>` | anything else a stage reports by carrying a `stats` mapping, your own stages included |
 | `cost` | with `meter: true`: calls, tokens, USD and latency, in total and per role, and `cached_calls`, the calls the response cache answered |
