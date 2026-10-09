@@ -150,6 +150,15 @@ def test_a_fact_with_no_span_shows_the_passage_unmarked(tmp_path: Path) -> None:
     assert f"> {ADA}\n" in _item(sheet, "G-0001")
 
 
+def test_a_context_span_is_not_a_citation_and_is_not_bold(tmp_path: Path) -> None:
+    """An uncited fact's span is its whole text (DECISIONS #25); bold would mark all of it."""
+    row = _grounding(0, span=(0, len(ADA)))
+    row["fact"]["evidence"][0]["span_origin"] = "context"
+    items = _jsonl(tmp_path / "items.jsonl", [row])
+    sheet = make_sheets("grounding", items, tmp_path / "s").sheets[0]
+    assert f"> {ADA}\n" in _item(sheet, "G-0001")
+
+
 def test_a_bad_row_names_its_line(tmp_path: Path) -> None:
     items = tmp_path / "items.jsonl"
     items.write_text(json.dumps(_grounding(0)) + "\n\n" + '{"text": "no fact"}\n', "utf-8")

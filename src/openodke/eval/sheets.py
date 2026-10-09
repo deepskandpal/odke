@@ -36,7 +36,7 @@ from pydantic import BaseModel
 from openodke.eval.formats import GroundingLabel, PairLabel
 from openodke.ground.llm import render_claim
 from openodke.ground.span import located
-from openodke.types import Document, Fact, Frozen
+from openodke.types import Document, Fact, Frozen, SpanOrigin
 
 GLOB = "sheet-*.md"
 NOTE = "note:"
@@ -122,7 +122,11 @@ def quote(text: str, start: int | None = None, end: int | None = None) -> list[s
 def _grounding(item: GroundingItem) -> list[str]:
     claim = render_claim(item.fact)
     evidence = located(item.fact, item.document())
-    span = evidence.span if evidence is not None else None
+    # A `context` span is the whole text an uncited fact came from, not a
+    # citation (DECISIONS #25): bolding it would bold every word.
+    span = None
+    if evidence is not None and evidence.span_origin is not SpanOrigin.CONTEXT:
+        span = evidence.span
     passage = quote(item.text, span.start, span.end) if span else quote(item.text)
     return [plain(claim), "", *passage]
 
