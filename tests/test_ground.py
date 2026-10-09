@@ -389,6 +389,15 @@ def test_parse_verdict_reads_exactly_one_of_the_three(
     assert parse_verdict(completion) is expected
 
 
+@pytest.mark.parametrize("word", ["NotFound", "notfound", "not-found", "Not found", "not_found"])
+def test_every_spelling_the_bare_word_accepts_is_read_as_not_found(word: str) -> None:
+    """The pattern matched `NotFound` and the normaliser then refused it as unreadable."""
+    assert parse_verdict(Completion(text=word)) is GroundingVerdict.NOT_FOUND
+    assert parse_verdict(Completion(text=f'"{word}".')) is GroundingVerdict.NOT_FOUND
+    parsed = Completion(text="", parsed={"verdict": word})
+    assert parse_verdict(parsed) is GroundingVerdict.NOT_FOUND
+
+
 def test_a_verdict_already_on_the_fact_costs_no_call() -> None:
     client = _recorded()
     grounder = _grounder(client)

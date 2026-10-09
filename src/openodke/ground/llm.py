@@ -187,8 +187,10 @@ def parse_verdict(completion: Completion, *, binary: bool = False) -> GroundingV
         value = match.group(1) if match else None
     if not isinstance(value, str):
         return None
-    normalised = re.sub(r"[\s-]+", "_", value.strip().lower())
-    return next((v for v in VERDICTS if v.value == normalised), None)
+    # Separators dropped, not swapped: `NotFound`, `not-found` and `not found` are
+    # all spellings `_BARE_WORD` accepts, and must all read as the same verdict.
+    normalised = re.sub(r"[\s_-]+", "", value.strip().lower())
+    return next((v for v in VERDICTS if v.value.replace("_", "") == normalised), None)
 
 
 _BARE_WORD = re.compile(r"^\W*(supported|contradicted|not[\s_-]?found)\W*$", re.IGNORECASE)
