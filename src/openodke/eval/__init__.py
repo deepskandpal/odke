@@ -26,6 +26,10 @@ without them: `evaluate_spans` splits cited span width by the grounder's
 verdict. Where the narrow spans are the `not_found` ones, the citations are too
 narrow to carry their claims, and the `not_found` rate measures that with no
 gold set at all.
+
+Whether a change between two runs was real is `openodke.eval.stats`: a paired
+bootstrap over the items both runs scored, three verdicts (better, worse,
+inconclusive) and the detection limit printed beside every one.
 """
 
 from openodke.eval.ablation import per_document, run_ablation
@@ -61,6 +65,14 @@ from openodke.eval.resolution import as_triples, evaluate_resolution, links_from
 from openodke.eval.routing import evaluate_routing, run_route
 from openodke.eval.sinks import assert_idempotent, check_idempotency, jsonl_counts
 from openodke.eval.spans import evaluate_spans, load_facts, span_width
+from openodke.eval.stats import (
+    McNemar,
+    Paired,
+    bootstrap_interval,
+    detection_limit,
+    mcnemar,
+    paired_bootstrap,
+)
 from openodke.eval.validation import evaluate_validation, run_validate
 
 __all__ = [
@@ -73,8 +85,10 @@ __all__ = [
     "GoldFact",
     "GroundingLabel",
     "LinkRow",
+    "McNemar",
     "MeteredClient",
     "PairLabel",
+    "Paired",
     "RouteLabel",
     "RoutePrediction",
     "StageCost",
@@ -83,9 +97,11 @@ __all__ = [
     "ValidationPrediction",
     "as_triples",
     "assert_idempotent",
+    "bootstrap_interval",
     "check_idempotency",
     "compare_costs",
     "describe",
+    "detection_limit",
     "dump_jsonl",
     "evaluate_calibration",
     "evaluate_extraction",
@@ -101,6 +117,8 @@ __all__ = [
     "load_facts",
     "load_jsonl",
     "match_extraction",
+    "mcnemar",
+    "paired_bootstrap",
     "per_document",
     "run_ablation",
     "run_extract",
