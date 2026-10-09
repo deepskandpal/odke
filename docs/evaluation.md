@@ -445,7 +445,7 @@ the 95% interval of the difference. For corpus precision, recall and F1 the item
 is the document: its counts are resampled, and the corpus metric is recomputed
 from their sums.
 
-**Three verdicts, never two** ([DECISIONS #29](decisions.md)).
+**Three verdicts, never two** ([DECISIONS #29](decisions.md#29)).
 
 | Verdict | When | Exit |
 |---|---|---|
