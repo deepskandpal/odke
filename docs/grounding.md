@@ -166,6 +166,9 @@ Transient errors are retried under a `RetryPolicy` (`openodke.ground.RetryPolicy
 - `prompts`, the key of the [registered prompt](models.md#prompts) the calls
   sent, such as `ground.span@1`; empty when no call was made
 - the span check's own counts, under `span`
+- with `widen=True`, under `widen`: `retried`, `recovered`, and the retries' own
+  `calls`, `failed`, `unparseable`, tokens and `cost_usd`. Those calls are in the
+  totals above too, and each fact is counted once, under its final verdict
 
 ### Batching
 
@@ -200,6 +203,53 @@ contradicts the triple with one that is silent about it, so a binary run cannot
 tell them apart. The free span check still runs first, so a fact whose quote is
 not in the document is settled before any call — the one step of openodke's
 that paper mode keeps.
+
+### Widen and retry
+
+The fallback [DECISIONS #23](decisions.md) named, off by default:
+`LLMGrounder(widen=True)`, or `odke run --widen` (`grounder: {use: llm, widen:
+true}`). A fact whose answer is `not_found`, and whose span is narrower than its
+sentence, is asked once more against the whole sentence. The sentence is the
+chunker's (`openodke.chunking.sentences`), never one a model names.
+
+- **`supported`** keeps the fact with the sentence as its span. The narrow
+  citation becomes `Evidence.mention`, unless the evidence already had one.
+- **Anything else** keeps `not_found` and the original span. A contradiction
+  read off a wider passage than the one cited is recorded, not acted on.
+- **Either way** `qualifiers["odke.widen"]` records the attempt:
+  `{"from": [start, end], "to": [start, end], "verdict": ...}`. A failed call's
+  verdict is `unchecked`. `span_origin` keeps its value, so split on the
+  qualifier to tell a widened span from a cited one in `odke eval spans`.
+- **Bounded.** One retry per fact, and none for a span that is already its
+  sentence, or one that adds only punctuation. With `context="document"` there is
+  nothing to widen, so the combination is refused.
+
+The extra calls are counted under `stats["widen"]`. They go through
+`widen_client` when one is given, and `odke run` meters them as their own cost
+row, `ground.widen`.
+
+```python
+from openodke.ground import LLMGrounder
+from openodke.llm import ScriptedClient
+
+text = "Acme Cloud runs data centres in Ireland, Singapore and Virginia."
+cloud = Document(id="c", text=text)
+word = Span(doc_id="c", start=32, end=39, quote="Ireland")
+operates = Fact(
+    subject=Entity(key="p:acme", type="Provider", label="Acme Cloud"),
+    predicate="operates_in",
+    object_value="Ireland",
+    evidence=(Evidence(doc_id="c", span=word),),
+)
+answers = ScriptedClient([{"verdict": "not_found"}, {"verdict": "supported"}])
+grounder = LLMGrounder(ModelRoles.single("ollama/qwen2.5:3b"), client=answers, widen=True)
+recovered = grounder.ground(operates, cloud)
+
+assert recovered.verdict == GroundingVerdict.SUPPORTED
+assert recovered.evidence[0].span.quote == text and recovered.evidence[0].mention == word
+assert recovered.qualifiers["odke.widen"]["verdict"] == "supported"
+assert (grounder.stats["widen"]["retried"], grounder.stats["widen"]["recovered"]) == (1, 1)
+```
 
 ## Locating spans
 
