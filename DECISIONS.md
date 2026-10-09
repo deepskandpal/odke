@@ -77,7 +77,10 @@ than `0.0` in both.
 `ModelRoles` names three jobs — extract, ground, infer — and defaults grounding
 to a smaller model than extraction. The paper's precision comes from a second
 verification pass; if that pass costs the same per call as extraction, people
-turn it off, and then the architecture does not work.
+turn it off, and then the architecture does not work. The two-model default holds
+only when no model is named: naming only `extract` grounds on that model too, at
+grounding's small `max_tokens`, so a config pointed at a local server never sends
+its passages to the default's vendor.
 
 Defaults name Claude models because something must be the default. Nothing in the
 library depends on them, and `ModelRoles.single("ollama/…")` is a first-class

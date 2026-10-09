@@ -62,7 +62,8 @@ def models(folder: Path) -> tuple[str | None, str | None]:
     ground = spec.get("ground")
     if isinstance(ground, dict):
         ground = ground.get("model")
-    return extract, ground
+    # A config that names only `extract` grounds on it too (`ModelRoles`).
+    return extract, ground or extract
 
 
 def price(model: str | None, prompt: float, completion: float) -> float | None:

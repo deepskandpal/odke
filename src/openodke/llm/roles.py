@@ -5,8 +5,9 @@ extracts, and a small cheap one verifies. Making that a first-class shape rather
 than a convention means the asymmetry survives configuration — and that nobody
 accidentally pays frontier prices to answer ten thousand yes/no questions.
 
-Every role defaults to the previous one, so `ModelRoles(extract="…")` alone is a
-valid, working configuration.
+Every role defaults to the previous one, so `ModelRoles(extract=…)` alone is a
+valid, working configuration on that one model, with grounding at its own small
+`max_tokens`. Only `ModelRoles()`, naming nothing, gets the two-model default.
 """
 
 from __future__ import annotations
@@ -21,6 +22,8 @@ from openodke.llm.registry import resolve
 # ollama/… or openai/… or a gateway string.
 DEFAULT_EXTRACT = "anthropic/claude-sonnet-5"
 DEFAULT_GROUND = "anthropic/claude-haiku-4-5-20251001"
+# One word comes back, whichever model is asked.
+_GROUND_MAX_TOKENS = 256
 
 
 class ModelRoles(BaseModel):
@@ -35,12 +38,18 @@ class ModelRoles(BaseModel):
 
     extract: ModelSpec = ModelSpec(model=DEFAULT_EXTRACT)
     # Cheap and small on purpose: one fact, one span, one yes/no.
-    ground: ModelSpec = ModelSpec(model=DEFAULT_GROUND, max_tokens=256)
+    ground: ModelSpec = ModelSpec(model=DEFAULT_GROUND, max_tokens=_GROUND_MAX_TOKENS)
     # Schema proposal (M5). Defaults to the extraction model.
     infer: ModelSpec | None = None
 
     @model_validator(mode="after")
-    def _default_infer_to_extract(self) -> ModelRoles:
+    def _default_to_extract(self) -> ModelRoles:
+        # A caller who names only the extraction model — a local server, say —
+        # has chosen where passages go. The default grounder would quietly send
+        # them to another vendor, so grounding follows extraction instead.
+        if "extract" in self.model_fields_set and "ground" not in self.model_fields_set:
+            ground = self.extract.model_copy(update={"max_tokens": _GROUND_MAX_TOKENS})
+            object.__setattr__(self, "ground", ground)
         if self.infer is None:
             object.__setattr__(self, "infer", self.extract)
         return self
