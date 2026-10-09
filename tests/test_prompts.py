@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 
 import pytest
 
@@ -10,7 +11,7 @@ from openodke import prompts
 from openodke.extract import llm as extract_llm
 from openodke.ground import llm as ground_llm
 from openodke.infer import llm as infer_llm
-from openodke.prompts import get, registered
+from openodke.prompts import Prompt, check, get, read_lock, registered
 
 # The SHA-256 of each prompt as it stood as a module constant, before the
 # registry existed (release/1.0.0 at 9cea049). The move had to change no byte.
@@ -86,3 +87,36 @@ def test_a_text_is_never_registered_twice_under_one_key(
         prompts._register("demo", 1, "Say no.", source="test")
     with pytest.raises(ValueError, match="starts at 1"):
         prompts._register("demo", 0, "Say no.", source="test")
+
+
+# --------------------------------------------------------------------------- #
+# The lock: a text edited in place fails the build, by name
+# --------------------------------------------------------------------------- #
+
+
+def test_every_registered_prompt_matches_its_hash_in_the_lock() -> None:
+    problems = check()
+    assert not problems, "\n".join(problems)
+
+
+def test_a_text_edited_in_place_is_caught_and_named() -> None:
+    span = get("ground.span", 1)
+    edited = dataclasses.replace(span, text=span.text + " Be brief.")
+    others = [p for p in registered() if p.key != span.key]
+    (problem,) = check([edited, *others])
+    assert problem.startswith("bump the version: ground.span ")
+
+
+def test_a_new_version_needs_its_own_entry_and_an_old_one_may_not_go() -> None:
+    span = get("ground.span", 1)
+    second = Prompt("ground.span", 2, span.text + " Be brief.", "openodke")
+    (missing,) = check([*registered(), second])
+    assert missing.startswith("ground.span@2 is not in the lock")
+    assert f'"ground.span@2": "{second.sha256}"' in missing
+    (removed,) = check([p for p in registered() if p.key != span.key])
+    assert removed.startswith("ground.span@1 is in the lock but no longer registered")
+
+
+def test_the_lock_sits_beside_the_registry_and_names_every_key() -> None:
+    assert prompts.LOCK.parent == Path(prompts.__file__).parent
+    assert set(read_lock()) == {p.key for p in registered()}
