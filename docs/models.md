@@ -156,3 +156,49 @@ and grounder lines of [`odke run`](run.md#what-a-run-reports).
 `bump the version: <id>`, and on a prompt that shares twelve words in a row with
 a benchmark gate split (`bench/labels/**/*gate*.jsonl`). The stages send the
 latest version.
+
+## The response cache
+
+`CachedClient` wraps any client and answers a request it has seen before from a
+store, so a rerun of an unchanged batch makes no call, costs nothing and needs
+no key ([DECISIONS #30](decisions.md#30)).
+
+- **The key** is the SHA-256 of one canonical JSON object: the
+  provider-qualified model and its `base_url`; every message, role and content,
+  in order; the response schema; `temperature`, `max_tokens` and `extra`; and
+  the `id@version` of each [registered prompt](#prompts) the messages carry.
+  `timeout` and `api_key_env` are not in it. Change anything else and the
+  request misses.
+- **An error is never stored**, so a failed call is made again next time. A reply
+  the caller rejects is stored: the repair turn after a malformed extraction has
+  its own messages, so its own key, and a rerun replays both.
+- **A hit** comes back with `cached=True`, no tokens and a cost of `0.0`. The
+  cost meter records it as a call with `cached: true`, and counts them as
+  `cached_calls`; the grounder's stats count them under `cached`, the extractor's
+  under `cached_calls`.
+- **`DirectoryCache(path)`** keeps one JSON file per key, at
+  `<path>/<first two characters>/<key>.json`. Each is written to a temporary
+  file beside it and renamed into place, so the thread pools, and several
+  processes, can share one directory without a torn entry. A file that does
+  not parse is a miss. **`MemoryCache`**, the default, lasts one process.
+- **Nothing expires.** A sample drawn at a temperature above zero replays as it
+  was drawn. Delete the directory, or point at a new one, to ask again.
+
+```python
+from openodke.llm import CachedClient, Message
+
+model = ScriptedClient(['{"verdict": "supported"}'])  # answers once, then fails
+cached = CachedClient(model)  # CachedClient(model, ".odke-cache") keeps it on disk
+ask = [Message(content="Claim: … Passage: …")]
+first = cached.complete(ask, spec=ModelSpec(model="ollama/llama3.1"))
+again = cached.complete(ask, spec=ModelSpec(model="ollama/llama3.1"))
+assert (again.text, again.cached, again.cost_usd) == (first.text, True, 0.0)
+assert cached.stats == {"hits": 1, "misses": 1, "failed": 0}
+```
+
+In `odke run`, `models: {cache: .odke-cache}` names the directory, relative to
+the config. `odke validate` and `odke ground` read the same key from `--config`,
+and all three take `--cache DIR`, which overrides it. The cache answers in front
+of `models.replay` and the provider alike, and a rerun answered entirely from it
+resolves no provider. The run report gains a `cache` line, hits and misses, and
+`stats["cache"]`.

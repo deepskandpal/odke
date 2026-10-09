@@ -39,6 +39,7 @@ models:
   ground: {model: anthropic/claude-haiku-4-5-20251001, max_tokens: 256}
   replay: {extract: recorded/extract.json, ground: recorded/ground.json}
   meter: true
+  cache: .odke-cache               # answer a call asked before from here
 stages:
   chunker: {use: sentence, max_words: 120}
   extractor: hybrid                # the one required stage
@@ -60,7 +61,7 @@ store_lookup: {use: neo4j, tenant: acme}   # off unless named
 | `ontology` | yes | A JSON or YAML ontology (`.yaml`/`.yml` is read as YAML). Loaded strictly, so a schema with validation errors stops the run before anything is spent. |
 | `inputs` | yes, at least one | Files or directories. A string is a path read by the default loader; a mapping is `{path, loader}`. |
 | `pythonpath` | no | Directories put on `sys.path` before a `package.module:Name` stage is imported. |
-| `models` | no | Which model does which job, recorded responses, and the cost meter. |
+| `models` | no | Which model does which job, recorded responses, the cost meter and the response cache. |
 | `stages` | yes | Which implementation fills each of the thirteen stages. Only `extractor` is required. |
 | `bootstrap` | no, default `false` | Apply the ontology's constraints through the sink before the first write. |
 | `coverage` | no, default `true` | Count what extraction left behind in each document, with no model ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)). |
@@ -115,6 +116,9 @@ and it is sent exactly as written, `0` included.
 - **`meter: true`** wraps every model client in a `CostMeter` and puts calls,
   tokens, USD and latency per stage into the graph's stats. A cost no provider
   reported stays unknown rather than being counted as zero.
+- **`cache`** names a directory of model answers, so a call asked before is
+  answered from it for nothing ([the response cache](models.md#the-response-cache)).
+  `--cache DIR` overrides it for one run.
 
 ### `stages`
 
@@ -295,7 +299,8 @@ stage:
 | `stages.resolver` | with `store_lookup`: under `store`, entities `looked_up`, store `candidates`, incoming keys `rekeyed` onto a stored one, and links to the store by kind; under `lookup`, the lookup's own counts |
 | `stages.validator` | the gate's `accepted`, and `refused` by reason. The key keeps its 0.2 name ([DECISIONS #26](decisions.md#26)) |
 | `stages.<name>` | anything else a stage reports by carrying a `stats` mapping, your own stages included |
-| `cost` | with `meter: true`: calls, tokens, USD and latency, in total and per role |
+| `cost` | with `meter: true`: calls, tokens, USD and latency, in total and per role, and `cached_calls`, the calls the response cache answered |
+| `cache` | with `models.cache`: the `directory`, and its `hits`, `misses` and `failed` calls |
 | `coverage` | with `coverage: true`, the default: totals, the relations never offered and never used, and each document's uncovered sentences and missed entities ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)) |
 | `reextract` | with `reextract`: `windows` asked, facts `returned`, `duplicates`, `kept`, `refused` by grounding, and their `verdicts` |
 
