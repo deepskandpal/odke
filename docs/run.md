@@ -51,6 +51,7 @@ stages:
   sink: {use: jsonl, directory: out}
 bootstrap: false
 coverage: true
+reextract: {windows: 3}            # off unless named
 ```
 
 | Key | Required | What it is |
@@ -62,6 +63,7 @@ coverage: true
 | `stages` | yes | Which implementation fills each of the thirteen stages. Only `extractor` is required. |
 | `bootstrap` | no, default `false` | Apply the ontology's constraints through the sink before the first write. |
 | `coverage` | no, default `true` | Count what extraction left behind in each document, with no model ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)). |
+| `reextract` | no, off by default | Hand those gaps back to the extractor and ground what returns: `true`, or `{windows: N}`, the most windows per document (default 3). The extractor must have a `reextract` method (`llm` and `hybrid` do). Not part of `odke eval ablation` ([the re-extract hook](grounding.md#handing-a-gap-back-the-re-extract-hook)). |
 
 Every relative path (the ontology, each input, `pythonpath`, replay files, a sink's
 output) resolves against the directory the config file is in, so a config runs the
@@ -276,6 +278,7 @@ stage:
 | `stages.<name>` | anything else a stage reports by carrying a `stats` mapping, your own stages included |
 | `cost` | with `meter: true`: calls, tokens, USD and latency, in total and per role |
 | `coverage` | with `coverage: true`, the default: totals, the relations never offered and never used, and each document's uncovered sentences and missed entities ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)) |
+| `reextract` | with `reextract`: `windows` asked, facts `returned`, `duplicates`, `kept`, `refused` by grounding, and their `verdicts` |
 
 A `DoubleStageWarning` raised while the pipeline is built is printed as a
 `warning:` line on standard error.

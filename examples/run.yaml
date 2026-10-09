@@ -89,3 +89,8 @@ bootstrap: false
 # names, sentences naming two of them that no fact cites, relations the extractor
 # was never shown — with no model. On by default; the report is stats.coverage.
 coverage: true
+
+# Hand those gaps back to the extractor — each uncovered sentence, then each
+# holding a missed entity, at most `windows` per document — and ground what
+# returns. Off unless named; the extractor needs a reextract method (llm, hybrid).
+# reextract: {windows: 3}

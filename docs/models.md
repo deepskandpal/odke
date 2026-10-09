@@ -300,6 +300,7 @@ prompt it measured ([DECISIONS #27](decisions.md)).
 | `extract.repair@1` | `LLMExtractor`, after a reply that broke the contract | openodke |
 | `infer@1` | `LLMProposer` (`odke ontology infer`); `{literals}` and `{max_types}` are filled per run | openodke |
 | `infer.repair@1` | `LLMProposer`, after a reply that broke the contract | openodke |
+| `reextract@1` | `LLMExtractor.reextract`, [the re-extract hook](grounding.md#handing-a-gap-back-the-re-extract-hook): one gap window, followed by the flagged properties' snippets; its rules are extract@1's | openodke, after GraphRAG's gleaning pass (Edge et al. 2024, arXiv 2404.16130), scoped to one window and grounded after |
 
 ```python
 from openodke import prompts
