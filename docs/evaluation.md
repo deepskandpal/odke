@@ -433,6 +433,118 @@ What it says about that fixture, and only that fixture:
   model copied as written became the ISO dates the labels use. Merging alone moves
   neither number, because a merged fact is scored once in each document it cites.
 
+## Was the change real?
+
+An eval can mislead three ways: in what it sampled, in how its judges are
+calibrated, and in its statistics. `odke eval compare` handles the third. Two
+runs scored on the same items are not two independent samples. Most items pass
+or fail in both, and only the ones that flip carry information, so the
+comparison is paired. A **paired bootstrap** (Koehn 2004) resamples items with
+replacement, recomputes the metric for both runs on the same resample, and reads
+the 95% interval of the difference. For corpus precision, recall and F1 the item
+is the document: its counts are resampled, and the corpus metric is recomputed
+from their sums.
+
+**Three verdicts, never two** ([DECISIONS #29](decisions.md)).
+
+| Verdict | When | Exit |
+|---|---|---|
+| better | the whole 95% interval is above zero | 0 |
+| worse | the whole 95% interval is below zero | 1 |
+| inconclusive | the interval contains zero | 0, or 1 with `--fail-on-inconclusive` |
+
+Inconclusive never means "no regression". It is printed with the **detection
+limit**, the smallest change the set detects at 95% confidence and 80% power:
+about Z·√(d/n), with Z = 1.959964 + 0.841621 and d the share of items that flip.
+
+| Items | Detection limit at 10% flips |
+|---|---|
+| 300 | 5.1 points |
+| 1,500 | 2.3 points |
+| 5,000 | 1.3 points |
+
+For pass/fail items the limit is that formula. For a corpus metric, where one
+document moves F1 by its own amount rather than by 1/n, it is Z times the
+bootstrap's own standard error. When no item changed at all, the limit is
+reported as unknown rather than as zero.
+
+**One primary metric.** F1 decides for documents and accuracy for pass/fail
+items; `--metric` picks another. The rest are guardrails: printed with their
+intervals, never deciding, so three metrics are not three chances of a false
+alarm. For pass/fail items, McNemar's exact test on the flips is printed as a
+cross-check, and a note says when it disagrees with the bootstrap.
+
+```bash
+odke eval ground --labels gate.jsonl --predictions p1/facts.jsonl --items p1.items.jsonl
+odke eval ground --labels gate.jsonl --predictions p2/facts.jsonl --items p2.items.jsonl
+odke eval compare p1.items.jsonl p2.items.jsonl          # A, then B
+odke eval compare p1.items.jsonl p2.items.jsonl --json   # one comparison block
+odke eval compare --describe
+```
+
+```text
+compare  accuracy over 300 items  (A: p1.items.jsonl, B: p2.items.jsonl)
+  verdict   inconclusive: with this set the smallest change it can detect is 5.1 points
+  accuracy  A 0.853  B 0.847  difference -0.7 points, 95% interval -4.3 to +3.0
+  limit     5.1 points: the smallest change these 300 items detect (95% confidence, 80% power)
+  flips     30 of 300 items changed (10.0%): 14 gained, 16 lost, McNemar exact p = 0.856
+  B range   0.807 to 0.887 (95%)
+```
+
+- `--items` writes one row per item, for extract, ground, validate and route:
+  `{"id": "d1", "tp": 3, "fp": 1, "fn": 0}` per labelled document, and
+  `{"id": "g7", "correct": true}` per labelled fact or chunk. The rows sum to the
+  report's own counts.
+- Both files must hold the same ids, and items are paired by id. Different items
+  are refused, naming the ones only one side has: a comparison over different
+  items measures the difference between the sets.
+- `--resamples` (2,000) and `--seed` (0): the same items and seed give the same
+  interval on every interpreter. `--json` prints one `Comparison` block, which a
+  versioned eval report can carry as its comparison section.
+
+**In CI**, keep the base run's items and compare the head's against them:
+
+```bash
+odke eval extract --labels gold.jsonl --predictions out/facts.jsonl --items head.items.jsonl
+odke eval compare base.items.jsonl head.items.jsonl --fail-under 0.80
+```
+
+- The step exits 1 when the verdict is worse, with a `gate: fail:` line on
+  stderr for each reason.
+- `--fail-under 0.80` also exits 1 when the low end of B's own 95% range for the
+  primary metric is under 0.80. B has to clear the floor with its uncertainty, not
+  with its point estimate.
+- `--fail-on-inconclusive` also exits 1 on inconclusive. It is off by default: a
+  change too small for the set to see is not a regression it saw, and the limit
+  says how small. Turn it on once the set is big enough that "inconclusive" means
+  "too small to matter".
+- Exit 2 means files that cannot be compared.
+
+The comparison is tested on itself. `tests/test_eval_aa.py` runs 300 seeded A/A
+comparisons, the same simulated system twice, and 96.7% come back inconclusive,
+within three binomial standard deviations of 95%. Offline, at 1,500 comparisons
+each, the rate was 95.2% to 95.3% on pass/fail items and 94.7% to 94.9% for corpus
+F1. A planted drop well above the limit comes back worse; one well below it comes
+back inconclusive, with the limit printed.
+
+```python
+from openodke.eval import detection_limit, mcnemar, paired_bootstrap
+
+print([round(detection_limit(n, 0.10) * 100, 1) for n in (300, 1_500, 5_000)])
+# [5.1, 2.3, 1.3]
+
+# 300 items: 240 pass in both, 3 fixed, 27 broken, 30 fail in both.
+before = [True] * 240 + [False] * 3 + [True] * 27 + [False] * 30
+after = [True] * 240 + [True] * 3 + [False] * 27 + [False] * 30
+result = paired_bootstrap(before, after)
+print(result.verdict, round(result.difference * 100, 1), round(result.detection_limit * 100, 1))
+# worse -8.0 5.1
+assert mcnemar(before, after).p_value < 0.001
+```
+
+`compare_items` does the same over two runs' `ItemRow`s, and
+`bootstrap_interval` gives one run's 95% range from the same resampler.
+
 ## Labelling by hand
 
 `odke label` writes rows out as markdown sheets that a person ticks wherever a
@@ -510,6 +622,8 @@ odke eval extract --labels gold.jsonl --run mypackage.extract:MyExtractor \
 odke eval validate --labels verdicts.jsonl --run mypackage.gate:MyGate --ontology schema.json
 odke eval ablation --config examples/e2e/odke.yaml --labels examples/e2e/gold.jsonl
 odke eval spans --facts out/                        # no labels: width by verdict
+odke eval extract --labels gold.jsonl --predictions facts.jsonl --items b.items.jsonl
+odke eval compare a.items.jsonl b.items.jsonl       # better, worse or inconclusive
 ```
 
 - The CLI covers route, extract, ground, resolve, score and validate, and the
@@ -521,4 +635,6 @@ odke eval spans --facts out/                        # no labels: width by verdic
   instance.
 - Resolution cannot run from labels, because a resolver takes facts, not pairs.
   Its links always come from a file, which is also how a platform's merges arrive.
+- `compare` takes two runs' `--items` files and exits 1 when B is worse
+  ([Was the change real?](#was-the-change-real)).
 - Errors exit with status 2.
