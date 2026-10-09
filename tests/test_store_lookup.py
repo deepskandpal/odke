@@ -1,21 +1,34 @@
-"""Resolving against the store without loading it (#114, DECISIONS #31).
+"""Resolving against the store without loading it (#114, #149, DECISIONS #31).
 
 The resolver asks a `StoreLookup` for candidates and judges them by its own
 rules: a proof re-keys the incoming facts onto the store's key and leaves the
-stored entity as it was; anything weaker is a `SIMILAR` link. `MemoryLookup` is
-the store in memory.
+stored node as it was; anything weaker is a `SIMILAR` link. `MemoryLookup` is
+the store in memory. `Neo4jLookup` is checked here against the recording
+driver from `test_neo4j_sink` (one read transaction a batch, every statement
+through an index, scoped by type and tenant, nothing written), and against a
+real server in `test_a_batch_resolves_against_a_live_neo4j` when `NEO4J_URI`
+is set.
 """
 
 from __future__ import annotations
 
+import os
+import re
+import uuid
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+import pytest
+
 from openodke import (
+    Document,
     Entity,
     EntityLink,
     Fact,
     LinkKind,
+    Ontology,
+    Pipeline,
     Resolution,
     StoreLookup,
 )
@@ -25,6 +38,17 @@ from openodke.corroborate import (
     block_keys,
     candidate_pairs,
 )
+from openodke.sinks.neo4j import (
+    SHOW_INDEXES,
+    Neo4jConstrainer,
+    Neo4jLookup,
+    Neo4jSink,
+    _entity_row,
+    id_forms,
+    store_indexes,
+    stored_entity,
+)
+from test_neo4j_sink import FakeDriver
 
 ACME = Entity(
     key="c:acme",
@@ -255,3 +279,317 @@ def test_a_vector_lookup_adds_the_nearest_of_the_type_and_judges_them_like_any_o
     # Found by the vector, judged by the names, as any candidate is.
     _, links, _ = _resolve(lookup, probe)
     assert _pairs(links) == [("c:new", "c:widgets", LinkKind.SIMILAR)]
+
+
+# --------------------------------------------------------------------------- #
+# Neo4j, on the recording driver
+# --------------------------------------------------------------------------- #
+
+
+def _index(name: str, kind: str, label: str | None, *props: str) -> dict[str, Any]:
+    """One `SHOW INDEXES` row."""
+    return {
+        "name": name,
+        "type": kind,
+        "labelsOrTypes": [label] if label else None,
+        "properties": list(props) or None,
+    }
+
+
+INDEXES = [
+    _index("odke_entity_key", "RANGE", "Entity", "key"),
+    _index("odke_key_Company", "RANGE", "Company", "key"),
+    _index("odke_external_id_Company", "RANGE", "Company", "external_id"),
+    _index("odke_names_Company", "FULLTEXT", "Company", "label", "aliases"),
+    _index("odke_key_Person", "RANGE", "Person", "key"),
+    _index("odke_names_Person", "FULLTEXT", "Person", "label", "aliases"),
+    _index("index_343aff4e", "LOOKUP", None),
+]
+# How a statement reads the store: always through one of these, never by scanning.
+THROUGH_AN_INDEX = (
+    "MATCH (n:`Company` {key: row.value})",
+    "MATCH (n:`Person` {key: row.value})",
+    "MATCH (n:`Entity` {key: row.value})",
+    "MATCH (n:`Company` {external_id: row.value})",
+    "CALL db.index.fulltext.queryNodes($index, row.query, {limit: $limit})",
+    "CALL db.index.vector.queryNodes($index, $k, row.vector)",
+)
+WRITES = ("CREATE", "MERGE", "SET ", "DELETE", "REMOVE", "DETACH")
+
+
+class ReadCountingDriver(FakeDriver):
+    """The recording driver, also counting read transactions."""
+
+    def __init__(self, answers: dict[str, list[dict[str, Any]]] | None = None) -> None:
+        super().__init__({"SHOW INDEXES": INDEXES, **(answers or {})})
+        self.reads = 0
+
+    def session(self, **config: Any) -> Any:
+        session = super().session(**config)
+        execute_read = session.execute_read
+
+        def counted(fn: Callable[..., Any], *args: Any) -> Any:
+            self.reads += 1
+            return execute_read(fn, *args)
+
+        session.execute_read = counted  # type: ignore[method-assign]
+        return session
+
+    @property
+    def statements(self) -> list[tuple[str, dict[str, Any]]]:
+        return [(cypher, params) for mode, cypher, params in self.calls if mode == "read"]
+
+
+def _node(entity: Entity) -> dict[str, Any]:
+    """A node's properties as the sink wrote them."""
+    row = _entity_row(entity)
+    return {**{k: v for k, v in row.items() if k != "attributes"}, **row["attributes"]}
+
+
+def test_a_batch_is_one_read_transaction_of_index_queries_scoped_by_type_and_tenant() -> None:
+    hits = [{"block": 0, "node": _node(ACME)}]
+    driver = ReadCountingDriver({"external_id": hits})
+    lookup = Neo4jLookup(driver=driver, tenant="t1", database="graph")
+    batch = [
+        Entity(key="c:1", type="Company", label="Acme Widgets", external_id="wikidata:Q1"),
+        Entity(key="c:2", type="Company", label="Acme Corp", aliases=("https://acme.com/",)),
+        Entity(key="p:1", type="Person", label="Ada Acme"),
+    ]
+    found = lookup.candidates(batch)
+
+    assert driver.reads == 1 and lookup.stats["transactions"] == 1
+    assert [mode for mode, _, _ in driver.calls] == ["auto"] + ["read"] * 5
+    assert driver.calls[0][1] == SHOW_INDEXES
+    assert {session["database"] for session in driver.sessions} == {"graph"}
+    for cypher, params in driver.statements:
+        assert cypher.startswith("UNWIND $rows AS row\n")
+        assert sum(way in cypher for way in THROUGH_AN_INDEX) == 1, cypher
+        assert not any(word in cypher.upper() for word in WRITES), cypher
+        assert "n.`tenant` = $tenant" in cypher and params["tenant"] == "t1"
+        assert "MATCH (n)" not in cypher and "IN n.aliases" not in cypher
+
+    by_kind = {(q.type, q.kind): q for q in lookup.statements(batch)}
+    assert sorted(by_kind) == [
+        ("Company", "id"),
+        ("Company", "key"),
+        ("Company", "names"),
+        ("Person", "key"),
+        ("Person", "names"),
+    ]
+    # Batched by block key: "acme" is a token of both companies, and is asked once.
+    names = by_kind[("Company", "names")].params
+    assert [r["query"] for r in names["rows"]] == [
+        '"acme"',
+        '"widgets"',
+        '"acme.com" OR "www.acme.com"',
+    ]
+    assert (names["index"], names["limit"]) == ("odke_names_Company", 100)
+    assert [r["value"] for r in by_kind[("Company", "id")].params["rows"]] == id_forms(
+        "wikidata:Q1"
+    )
+    assert "WHERE n:`Person`" in by_kind[("Person", "names")].cypher
+    # A hit for a block goes to every entity that asked for it, rebuilt as it was written.
+    assert found["c:1"] == [ACME] and found["c:2"] == [] and found["p:1"] == []
+
+    # The indexes are read once per lookup, not once per batch.
+    lookup.candidates(batch[:1])
+    assert [mode for mode, _, _ in driver.calls].count("auto") == 1
+    assert driver.reads == 2 and driver.writes == []
+    assert lookup.candidates([]) == {} and driver.reads == 2
+
+
+def test_a_type_without_an_index_is_not_read_and_says_so() -> None:
+    driver = ReadCountingDriver({"SHOW INDEXES": INDEXES[:1]})
+    lookup = Neo4jLookup(driver=driver)
+    batch = [Entity(key="c:1", type="Company", label="Acme", external_id="Q1")]
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        lookup.candidates(batch)
+    assert [str(w.message).split(",")[0] for w in caught] == [
+        "the store has no index for Company.external_id",
+        "the store has no index for Company.names",
+    ]
+    ((cypher, _),) = driver.statements
+    # The key still has the sink's :Entity(key) index; names and the id have none.
+    assert "MATCH (n:`Entity` {key: row.value})\nWHERE n:`Company`" in cypher
+    assert lookup.stats["unindexed"] == ["Company.external_id", "Company.names"]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        lookup.candidates(batch)  # said once
+
+
+def test_the_lookup_shares_the_sinks_connection_and_reads_its_indexes_by_shape() -> None:
+    driver = ReadCountingDriver()
+    ontology = Ontology.from_dict({"types": {"Company": {}}, "predicates": {"founded": {}}})
+    sink = Neo4jSink(driver=driver, database="graph", ontology=ontology)
+    lookup = sink.lookup(tenant="t1", limit=5)
+    assert (lookup.database, lookup.tenant, lookup.limit) == ("graph", "t1", 5)
+    assert lookup.ontology is ontology
+    lookup.close()
+    assert not driver.closed  # the sink's to close
+
+    found = store_indexes([*INDEXES, {**INDEXES[3], "name": "custom_names"}])
+    assert found.names == {"Company": "odke_names_Company", "Person": "odke_names_Person"}
+    assert (found.keys, found.ids, found.entity_key) == (
+        frozenset({"Entity", "Company", "Person"}),
+        frozenset({"Company"}),
+        True,
+    )
+
+
+def test_an_accented_name_is_asked_for_as_written_too() -> None:
+    """The full-text analyzer keeps accents and a name key drops them: ask both ways."""
+    lookup = Neo4jLookup(driver=ReadCountingDriver())
+    batch = [Entity(key="p:1", type="Person", label="José Smith", aliases=("Acme Inc",))]
+    (names,) = [q for q in lookup.statements(batch) if q.kind == "names"]
+    assert [r["query"] for r in names.params["rows"]] == ['"acme"', '"jose"', '"josé"', '"smith"']
+
+
+def test_a_vector_lookup_needs_its_function_and_its_index() -> None:
+    calls: list[list[str]] = []
+    with pytest.raises(ValueError, match="both embed and vector_index"):
+        Neo4jLookup(driver=FakeDriver(), embed=_stand_in_embed(calls))
+    lookup = Neo4jLookup(
+        driver=ReadCountingDriver(), embed=_stand_in_embed(calls), vector_index="names_vec"
+    )
+    batch = [
+        Entity(key="c:1", type="Company", label="Acme"),
+        Entity(key="c:2", type="Company", label="Acme"),
+    ]
+    vector = next(q for q in lookup.statements(batch) if q.kind == "vector")
+    assert (vector.params["index"], vector.params["k"]) == ("names_vec", 5)
+    assert len(vector.params["rows"]) == 1  # one text, asked once
+    assert "WHERE n:`Company`" in vector.cypher
+    assert calls == [["Acme"]]
+
+
+def test_a_node_read_back_is_the_entity_the_sink_wrote() -> None:
+    written = Entity(
+        key="c:1",
+        type="Company",
+        label="Acme",
+        aliases=("acme.com", "Acme Ltd"),
+        external_id="Q1",
+        resolution=Resolution(method="linker", score=0.95, linker="odke.native"),
+        attributes={"country": "GB", "label": "a caller's own 'label'", "odke.name_key": "acme"},
+    )
+    assert stored_entity(_node(written), "Company") == written
+    # A value projected from a fact is not an attribute, when the ontology says so.
+    projected = {**_node(written), "founded": 2014}
+    ontology = Ontology.from_dict({"types": {"Company": {}}, "predicates": {"founded": {}}})
+    assert stored_entity(projected, "Company", ontology=ontology) == written
+
+
+# --------------------------------------------------------------------------- #
+# A real server, when there is one
+# --------------------------------------------------------------------------- #
+
+
+def _operators(plan: Mapping[str, Any] | None) -> list[str]:
+    if not plan:
+        return []
+    found = [str(plan.get("operatorType", "")).split("@")[0]]
+    for child in plan.get("children", ()):
+        found += _operators(child)
+    return found
+
+
+class _Replay:
+    def __init__(self, facts: list[Fact]) -> None:
+        self.facts = facts
+
+    def extract(self, chunk: Any, ontology: Ontology) -> list[Fact]:
+        return self.facts
+
+
+@pytest.mark.skipif(not os.environ.get("NEO4J_URI"), reason="NEO4J_URI is not set")
+def test_a_batch_resolves_against_a_live_neo4j() -> None:
+    """Write, then resolve a new batch against the store: it links, and the node is unchanged.
+
+    Types, keys and the predicate are suffixed, so a shared server is left as found.
+    """
+    pytest.importorskip("neo4j")
+    suffix = uuid.uuid4().hex[:8]
+    company, person, employer = f"Company_{suffix}", f"Person_{suffix}", f"employer_{suffix}"
+    ontology = Ontology.from_dict(
+        {
+            "types": {company: {}, person: {}},
+            "predicates": {employer: {"domain": [person], "range": company}},
+        }
+    )
+
+    def mine(entity: Entity, name: str) -> Entity:
+        return entity.model_copy(update={"type": company, "key": f"{name}:{suffix}"})
+
+    acme, widgets = mine(ACME, "c:acme"), mine(WIDGETS, "c:widgets")
+    ada = Entity(key=f"p:ada:{suffix}", type=person, label="Ada")
+    grace = Entity(key=f"p:grace:{suffix}", type=person, label="Grace")
+    incoming = mine(
+        Entity(key="", type="", label="ACME Inc.", aliases=("https://www.acme.com/",)),
+        "c:acme-inc",
+    )
+    widget = mine(Entity(key="", type="", label="Acme Widget"), "c:widget")
+    created = [
+        re.search(r"CREATE (?:FULLTEXT )?(CONSTRAINT|INDEX) (\S+) IF NOT EXISTS", s)
+        for s in Neo4jConstrainer().schema(ontology)
+    ]
+    auth = (os.environ.get("NEO4J_USER", "neo4j"), os.environ.get("NEO4J_PASSWORD", ""))
+    with Neo4jSink(os.environ["NEO4J_URI"], auth) as sink:
+        driver = sink._driver
+        try:
+            sink.bootstrap(ontology)
+            driver.execute_query("CALL db.awaitIndexes(300)")
+            first = [
+                Fact(subject=ada, predicate=employer, object_entity=acme),
+                Fact(subject=ada, predicate=employer, object_entity=widgets),
+            ]
+            Pipeline(ontology, _Replay(first), sinks=[sink]).run([Document(text="run 1")])
+            stored = f"MATCH (n:`{company}`) RETURN n.key AS key, properties(n) AS props"
+            before = {r["key"]: r["props"] for r in driver.execute_query(stored).records}
+            assert set(before) == {acme.key, widgets.key}
+
+            lookup = sink.lookup(tenant="t1")
+            second = [
+                Fact(subject=grace, predicate=employer, object_entity=incoming),
+                Fact(subject=grace, predicate=employer, object_entity=widget),
+            ]
+            kg = Pipeline(
+                ontology, _Replay(second), resolver=NativeResolver(lookup=lookup), sinks=[sink]
+            ).run([Document(text="run 2")])
+            assert sorted(_pairs(kg.links)) == [
+                (incoming.key, acme.key, LinkKind.SAME_AS),
+                (widget.key, widgets.key, LinkKind.SIMILAR),
+            ]
+            assert lookup.stats["transactions"] == 1 and lookup.stats["unindexed"] == []
+
+            # Grace's employer is the node run 1 wrote; no node was made for the alias.
+            employers = driver.execute_query(
+                f"MATCH (:`{person}` {{key: $key}})-[:`{employer}`]->(c) RETURN c.key AS key",
+                key=grace.key,
+            ).records
+            assert sorted(r["key"] for r in employers) == sorted([acme.key, widget.key])
+            similar = driver.execute_query(
+                f"MATCH (:`{company}` {{key: $a}})-[l:SIMILAR]->(:`{company}` {{key: $b}}) "
+                "RETURN l.score AS score",
+                a=widget.key,
+                b=widgets.key,
+            ).records
+            assert len(similar) == 1
+            # And the stored nodes hold exactly what they held.
+            after = {r["key"]: r["props"] for r in driver.execute_query(stored).records}
+            assert set(after) == {acme.key, widgets.key, widget.key}
+            assert {key: after[key] for key in before} == before
+
+            # Every statement reads through an index: no scan in any plan.
+            for query in lookup.statements([incoming, widget]):
+                with driver.session() as session:
+                    plan = session.run("EXPLAIN " + query.cypher, query.params).consume().plan
+                operators = _operators(plan)
+                assert not {"AllNodesScan", "NodeByLabelScan"} & set(operators), operators
+            # Another tenant's lookup sees none of it.
+            assert sink.lookup(tenant="t2").candidates([incoming]) == {incoming.key: []}
+        finally:
+            driver.execute_query(f"MATCH (n) WHERE n:`{company}` OR n:`{person}` DETACH DELETE n")
+            for match in created:
+                if match and suffix in match.group(2):
+                    driver.execute_query(f"DROP {match.group(1)} {match.group(2)} IF EXISTS")
