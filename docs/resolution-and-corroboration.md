@@ -228,6 +228,100 @@ example's `e2e_stages:RegistryResolver` is twenty lines that stamp each company'
 registration number on as its `external_id` and then hand over to
 `NativeResolver`, which is how that example's `DIFFERENT` link comes about.
 
+### Resolving against the store
+
+`NativeResolver(lookup=...)` also resolves the batch against what the store
+already holds, without loading it ([DECISIONS #31](decisions.md#31)). A
+`StoreLookup` returns, for each entity, the store's entities sharing one of its
+block keys (`block_keys(entity)`: its key, an external id, a domain, the first
+or last name token), within its type and, when scoped, its tenant. Each pair is
+judged by the rules above:
+
+- **A proof re-keys the incoming facts**, never the store. A shared id or
+  domain moves them onto the stored key, carrying the stored entity exactly as
+  the store holds it, so writing them changes nothing on the node. The
+  `SAME_AS` link keeps the incoming key and the reason. A batch that states the
+  stored key itself, or a key the caller chose (`method="caller"`), keeps its
+  own entity, as it would with no store.
+- **Anything weaker is a `SIMILAR` link**, at the same `threshold`; no key
+  moves. A disagreeing id is a `DIFFERENT` link.
+- **Never across types, and never store against store.**
+
+```python
+from openodke.corroborate import MemoryLookup
+
+acme = Entity(key="c:acme", type="Company", label="Acme Corporation", aliases=("acme.com",))
+widgets = Entity(key="c:widgets", type="Company", label="Acme Widgets")
+store = MemoryLookup({e.key: e for e in (acme, widgets)})
+batch = [
+    Entity(key="c:acme-inc", type="Company", label="ACME Inc.", aliases=("https://acme.com/",)),
+    Entity(key="c:acme-widget", type="Company", label="Acme Widget"),
+]
+resolver = NativeResolver(lookup=store)
+resolved, links = resolver.resolve(
+    [Fact(subject=e, predicate="headquarters", object_value="Leeds") for e in batch], {}
+)
+for link in links:
+    print(link.kind.value, link.source_key, link.target_key, link.score)
+# similar c:acme-widget c:widgets 0.9565
+# same_as c:acme-inc c:acme 1.0
+
+assert resolved[0].subject == acme  # the stored entity, as stored
+assert resolved[1].subject.key == "c:acme-widget"  # a link, not a merge
+assert resolver.stats["store"]["rekeyed"] == 1
+```
+
+`MemoryLookup(index, *, tenant=None, tenant_property="tenant", limit=100,
+embed=None, vector_k=5)` is the store in memory: today's `EntityIndex` mapping,
+blocked once. `Neo4jLookup`, or `Neo4jSink.lookup(**options)` on the sink's own
+connection, reads a graph the sink wrote. It reads the store's indexes once
+(`SHOW INDEXES`), then each batch in one read transaction: per type, an
+`UNWIND` of the batch's distinct block keys through the key constraint, the
+`external_id` index (the id as written and in each case), and the
+`odke_names_<Type>` full-text index (`limit` hits a token). `bootstrap()`
+creates all three. A type without one is not read, with a warning: nothing is
+scanned and nothing is written.
+
+<!-- docs: no-run -->
+```python
+with Neo4jSink(uri, auth, ontology=ontology) as sink:
+    sink.bootstrap(ontology)
+    validator = Validator(ontology, lookup=sink.lookup(tenant="acme"), sinks=[sink])
+    kg, report = validator.validate(rows, documents)  # report.store: what it found
+```
+
+- **Tenant** keeps the nodes whose `tenant_property` equals `tenant`. Tenant
+  keys arrive in 0.7.0 (#159); until then it is a filter on a property, and in
+  Neo4j it applies after the full-text `limit`.
+- **Vectors** are a slot, not a dependency. With `embed`, a function from
+  texts to vectors, the `vector_k` nearest stored labels of the same type are
+  candidates too (in Neo4j, from a `vector_index` you keep; openodke writes no
+  embeddings). They are judged like any candidate: an embedding widens what is
+  compared, never what counts as a match.
+- **The defaults are defaults, not findings:** the `SIMILAR` bar is the
+  resolver's 0.9, a token returns 100 hits (`max_block`'s 100), and
+  `vector_k` is 5, all set before anything was measured.
+
+The one measurement so far is `bench/store_lookup.py` on Re-DocRED's 500 test
+documents. Its identity is within a document, so each document's first half
+of sentences is the store (4,619 entities, one tenant per document) and its
+second half the batch (3,777 mentions, 968 of them of a stored entity). There
+are no ids, so every link is a `SIMILAR`:
+
+| threshold | links | link precision | link recall |
+|---|---|---|---|
+| 0.8 | 867 | 89.9% | 80.5% |
+| 0.9 (default) | 807 | 95.3% | 79.4% |
+| 1.0 | 776 | 97.9% | 78.5% |
+
+Of the 38 wrong links at 0.9, 16 join two entities Re-DocRED gives one name
+key ("the United States" and "United States"); the rest are near names that
+differ by a number or a suffix ("1900" and "1903 County Championship", "South
+Africa" and "South African"). The misses are surnames, abbreviations and
+demonyms ("Lovelace", "UK", "German"). Identity across documents, and the
+proof path, are measured on T-REx with Wikidata ids in 0.6.0 (#117). In a run
+config the option is [`store_lookup`](run.md#store_lookup).
+
 ## Corroborate
 
 `SignatureCorroborator(ontology=None, *, source=source_of, half_life_days=365.0,

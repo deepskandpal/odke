@@ -52,6 +52,7 @@ stages:
 bootstrap: false
 coverage: true
 reextract: {windows: 3}            # off unless named
+store_lookup: {use: neo4j, tenant: acme}   # off unless named
 ```
 
 | Key | Required | What it is |
@@ -64,6 +65,7 @@ reextract: {windows: 3}            # off unless named
 | `bootstrap` | no, default `false` | Apply the ontology's constraints through the sink before the first write. |
 | `coverage` | no, default `true` | Count what extraction left behind in each document, with no model ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)). |
 | `reextract` | no, off by default | Hand those gaps back to the extractor and ground what returns: `true`, or `{windows: N}`, the most windows per document (default 3). The extractor must have a `reextract` method (`llm` and `hybrid` do). Not part of `odke eval ablation` ([the re-extract hook](grounding.md#handing-a-gap-back-the-re-extract-hook)). |
+| `store_lookup` | no, off by default | Resolve each batch against what the store already holds, without loading it: `neo4j`, or `package.module:Name` for a `StoreLookup` of your own ([below](#store_lookup)). |
 
 Every relative path (the ontology, each input, `pythonpath`, replay files, a sink's
 output) resolves against the directory the config file is in, so a config runs the
@@ -207,6 +209,22 @@ bootstrapping on every run is safe.
 on exactly when the ontology declares an `inverse_of` or a `symmetric`
 predicate, and the run report prints how many were added.
 
+### `store_lookup`
+
+`store_lookup` hands the resolver a [store lookup](resolution-and-corroboration.md#resolving-against-the-store)
+([DECISIONS #31](decisions.md#31)). With no `stages.resolver`, it brings `native`;
+a resolver that cannot take a lookup is refused. `neo4j` reads the store the
+run's one neo4j sink writes to, on that sink's connection, after `bootstrap`
+has created the indexes it reads through. Its options are `tenant`,
+`tenant_property` (default `tenant`) and `limit` (hits per name token, default
+100), and the sink's connection keys (`uri`, `uri_env`, `user`, `user_env`,
+`password_env`, `database`) to read a store the run does not write to.
+`package.module:Name` is constructed with its options, like a stage. A dry run
+opens no store, so it resolves each batch within itself and prints a warning
+saying so. `odke validate --config` reads the same key. The resolver's counts
+are `stages.resolver.store`: entities `looked_up`, store `candidates`, keys
+`rekeyed`, and links by kind.
+
 ### The inferrer
 
 `inferrer` accepts only `passthrough`. Anything else is refused:
@@ -274,6 +292,7 @@ stage:
 | `stages.extractor` | `paths` (the hybrid's `PathReport` totals), `rejections` by reason, or `model_calls`; `prompts`, the keys of the [registered prompts](models.md#prompts) the model sent; for `triples`, rows by how their evidence was made (`cited`, `quoted`, `quote_not_found`, `context`), `unmatched_rows` and `ambiguous_rows` |
 | `stages.grounder` | calls, retries, failures, a count per verdict, tokens, `cost_usd`, `prompts`, the span check's own counts, with `locate` the locator's, and with `widen`, under `widen`: `retried`, `recovered` and the retries' own calls, tokens and cost, which `cost` meters as their own row, `ground.widen` |
 | `stages.corroborator` | `conflicts`: how many facts `won`, `lost` or `tied` a contest |
+| `stages.resolver` | with `store_lookup`: under `store`, entities `looked_up`, store `candidates`, incoming keys `rekeyed` onto a stored one, and links to the store by kind; under `lookup`, the lookup's own counts |
 | `stages.validator` | the gate's `accepted`, and `refused` by reason. The key keeps its 0.2 name ([DECISIONS #26](decisions.md#26)) |
 | `stages.<name>` | anything else a stage reports by carrying a `stats` mapping, your own stages included |
 | `cost` | with `meter: true`: calls, tokens, USD and latency, in total and per role |
