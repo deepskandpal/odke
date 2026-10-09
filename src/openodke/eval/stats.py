@@ -23,7 +23,9 @@ totals. Standard library only (DECISIONS #1), and the same seed gives the same
 interval on every interpreter.
 
 `bootstrap_interval` is the same resampler over one run, for a metric's own 95%
-range, so a report's ranges and its comparisons come from one bootstrap.
+range. The draws and the percentiles are `openodke.eval.bootstrap`'s, the ones
+an eval report's ranges come from, so a report's ranges and its comparisons
+come from one bootstrap.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ from operator import mul
 from statistics import NormalDist, stdev
 from typing import Literal, TypeAlias
 
+from openodke.eval.bootstrap import RESAMPLES, draws, percentile_range
 from openodke.eval.report import prf
 from openodke.types import Frozen
 
@@ -46,7 +49,6 @@ Totals: TypeAlias = tuple[int | float, ...]
 MetricFn: TypeAlias = Callable[[Totals, int], float | None]
 Verdict: TypeAlias = Literal["better", "worse", "inconclusive"]
 
-RESAMPLES = 2000
 ALPHA = 0.05
 POWER = 0.8
 
@@ -205,19 +207,19 @@ def paired_bootstraps(
             raise ValueError(f"{name} is undefined on a run as a whole; nothing to compare")
         whole[name] = (a_value, b_value)
 
-    draws: dict[str, tuple[list[float], list[float]]] = {name: ([], []) for name in metrics}
+    drawn: dict[str, tuple[list[float], list[float]]] = {name: ([], []) for name in metrics}
     for ta, tb in _resample([a, b], n, seed):
         for name, metric in metrics.items():
             ma, mb = metric(ta, len(a)), metric(tb, len(a))
             if ma is not None and mb is not None:
-                draws[name][0].append(ma)
-                draws[name][1].append(mb)
+                drawn[name][0].append(ma)
+                drawn[name][1].append(mb)
 
     flips = sum(1 for x, y in zip(a, b, strict=True) if x != y)
     pass_fail = all(v in ((0,), (1,)) for v in (*a, *b))
     results = {}
     for name, metric in metrics.items():
-        a_draws, b_draws = draws[name]
+        a_draws, b_draws = drawn[name]
         if len(a_draws) < 2:
             raise ValueError(f"{name} is undefined on almost every resample; too few items")
         diffs = sorted(mb - ma for ma, mb in zip(a_draws, b_draws, strict=True))
@@ -267,12 +269,12 @@ def bootstrap_interval(
     vectors = _vectors(items)
     if not vectors:
         raise ValueError("no items to resample")
-    draws = sorted(
+    values = sorted(
         value
         for (totals,) in _resample([vectors], n, seed)
         if (value := metric(totals, len(vectors))) is not None
     )
-    return _percentile(draws, alpha) if len(draws) > 1 else None
+    return _percentile(values, alpha) if len(values) > 1 else None
 
 
 def mcnemar(a_items: Sequence[bool], b_items: Sequence[bool]) -> McNemar:
@@ -316,7 +318,9 @@ def _totals(vectors: Sequence[Totals]) -> Totals:
     return tuple(sum(column) for column in zip(*vectors, strict=True))
 
 
-def _resample(runs: Sequence[Sequence[Totals]], draws: int, seed: int) -> Iterator[list[Totals]]:
+def _resample(
+    runs: Sequence[Sequence[Totals]], resamples: int, seed: int
+) -> Iterator[list[Totals]]:
     """Each resample's column totals for every run, items drawn together across runs.
 
     Drawing the same items for every run is what makes the bootstrap paired.
@@ -338,15 +342,13 @@ def _resample(runs: Sequence[Sequence[Totals]], draws: int, seed: int) -> Iterat
         sizes = [groups[o] for o in outcomes]
         # Per run, per column: each outcome's value, so a total is one dot product.
         weights = [list(zip(*(o[run] for o in outcomes), strict=True)) for run in range(len(runs))]
-        for _ in range(draws):
+        for _ in range(resamples):
             counts = _multinomial(rng, n, sizes)
             yield [tuple(sum(map(mul, counts, col)) for col in cols) for cols in weights]
         return
-    # Item by item, from `random()` alone: Python promises its sequence for a
-    # seed across versions, and promises nothing for `choices` or `randrange`.
+    # Item by item: the eval report's own draws (`openodke.eval.bootstrap.draws`).
     columns = [list(zip(*run, strict=True)) for run in runs]
-    for _ in range(draws):
-        picked = [min(int(rng.random() * n), n - 1) for _ in range(n)]
+    for picked in draws(n, resamples=resamples, seed=seed):
         yield [tuple(sum(map(col.__getitem__, picked)) for col in cols) for cols in columns]
 
 
@@ -417,15 +419,7 @@ def _peak(trials: int, p: float) -> tuple[int, float, float]:
 
 
 def _percentile(ordered: Sequence[float], alpha: float) -> tuple[float, float]:
-    return _quantile(ordered, alpha / 2), _quantile(ordered, 1 - alpha / 2)
-
-
-def _quantile(ordered: Sequence[float], q: float) -> float:
-    # Linear interpolation between order statistics, as numpy's default does.
-    h = (len(ordered) - 1) * q
-    low = math.floor(h)
-    high = min(low + 1, len(ordered) - 1)
-    return ordered[low] + (h - low) * (ordered[high] - ordered[low])
+    return percentile_range(ordered, 1 - alpha)
 
 
 __all__ = [

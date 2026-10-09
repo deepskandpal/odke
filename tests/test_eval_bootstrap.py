@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import random
+
 import pytest
 
-from openodke.eval.bootstrap import bootstrap, draws, percentile_range
+from openodke.eval import stats
+from openodke.eval.bootstrap import RESAMPLES, bootstrap, draws, percentile_range
 from openodke.eval.report import Metric, prf
 
 
@@ -61,3 +64,48 @@ def test_a_statistic_can_compare_two_runs_on_the_same_draws() -> None:
 
     low, high = bootstrap(paired, gain)["f1"]
     assert low is not None and high is not None and 0.0 <= low <= high <= 1.0
+
+
+# --------------------------------------------------------------------------- #
+# One bootstrap: the report's ranges and a comparison's draw the same documents
+# --------------------------------------------------------------------------- #
+
+
+def _documents(n: int, seed: int) -> list[tuple[int, int, int]]:
+    """`n` documents' counts, all different, so the resampler draws them one by one."""
+    rng = random.Random(seed)
+    return [(rng.randint(0, 9) + 10 * i, rng.randint(0, 4), rng.randint(0, 4)) for i in range(n)]
+
+
+def test_one_run_s_interval_in_stats_is_the_report_s_range() -> None:
+    documents = _documents(40, seed=1)
+    ranges = bootstrap(documents, micro, resamples=500, seed=3)
+    for name, metric in (
+        ("precision", stats.precision),
+        ("recall", stats.recall),
+        ("f1", stats.f1),
+    ):
+        assert stats.bootstrap_interval(documents, metric, n=500, seed=3) == ranges[name]
+
+
+def test_a_comparison_draws_each_run_on_the_report_s_draws() -> None:
+    a, b = _documents(30, seed=2), _documents(30, seed=4)
+    paired = stats.paired_bootstrap(a, b, stats.f1, n=400, seed=9)
+    assert paired.a_interval == bootstrap(a, micro, resamples=400, seed=9)["f1"]
+    assert paired.b_interval == bootstrap(b, micro, resamples=400, seed=9)["f1"]
+
+
+def test_the_resampler_s_totals_are_the_draws_summed() -> None:
+    documents = _documents(12, seed=5)
+    resampled = [totals for (totals,) in stats._resample([documents], 50, 6)]
+    expected = [
+        tuple(sum(documents[i][k] for i in picked) for k in range(3))
+        for picked in draws(12, resamples=50, seed=6)
+    ]
+    assert resampled == expected
+
+
+def test_both_read_the_same_percentiles() -> None:
+    values = sorted(random.Random(8).random() for _ in range(997))
+    assert stats._percentile(values, 0.05) == percentile_range(values, 0.95)
+    assert stats.RESAMPLES == RESAMPLES == 2000
