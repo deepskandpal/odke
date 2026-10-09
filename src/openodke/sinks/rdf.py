@@ -14,7 +14,14 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from openodke.ontology import Ontology
-from openodke.sinks.neo4j import entities_of, is_scoped, provenance_of, signature_of, storable
+from openodke.sinks.neo4j import (
+    entities_of,
+    is_outvoted,
+    is_scoped,
+    provenance_of,
+    signature_of,
+    storable,
+)
 from openodke.types import Evidence, Fact, KnowledgeGraph, LinkKind, Polarity
 
 if TYPE_CHECKING:
@@ -95,11 +102,12 @@ class RdfSink:
       Neo4j and carries the same property names. The IRI is the fact's
       signature, so a rerun with new ids and clocks addresses the same node.
     - The plain triple `<s> <schema><predicate> <o>` is written **only** for
-      an asserted, unscoped fact — the same rule that decides the Neo4j
-      projection. It is what a SPARQL query reaches for first, and it is a
-      claim of truth: a denial written that way would say the opposite of its
-      source, and "uptime 99.9%" without its percentile says something no
-      source said.
+      an asserted, unscoped fact the corroborator did not vote down — the same
+      rule that decides the Neo4j projection. It is what a SPARQL query reaches
+      for first, and it is a claim of truth: a denial written that way would
+      say the opposite of its source, "uptime 99.9%" without its percentile
+      says something no source said, and a value that lost its contest is the
+      answer the corroborator rejected.
     - A link is `owl:sameAs`, `odke:similar_to` or `odke:different_from`
       between the two entity IRIs, reified the same way so `odke:score`,
       `odke:reason` and `odke:created_at` are readable. Nodes are never
@@ -269,7 +277,12 @@ class _Builder:
             obj = self._iri(sink.entity_iri(fact.object_entity.key))
         elif fact.object_value is not None:
             obj = self._literal(fact.object_value)
-        if obj is not None and fact.polarity is Polarity.ASSERTED and not is_scoped(fact):
+        if (
+            obj is not None
+            and fact.polarity is Polarity.ASSERTED
+            and not is_scoped(fact)
+            and not is_outvoted(fact)
+        ):
             self.g.add((subject, predicate, obj))
 
         node = self._iri(sink.fact_iri(fact))

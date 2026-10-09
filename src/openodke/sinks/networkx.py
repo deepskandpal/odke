@@ -73,8 +73,9 @@ class NetworkXSink:
       `value`. An attribute cannot carry provenance, two contested values or a
       denial; an edge can, so both kinds of fact are read the same way. The
       value is also projected onto the subject node under the predicate's
-      name, by the same rule as Neo4j: only asserted, unscoped claims, the
-      best-supported one for a single-valued predicate.
+      name, by the same rule as Neo4j: only asserted, unscoped claims the
+      corroborator did not vote down, the best-supported one for a
+      single-valued predicate.
     - An `EntityLink` is an edge keyed `SAME_AS`, `SIMILAR` or `DIFFERENT`
       with `kind="link"`, `score` and `reason`, drawn only between nodes the
       graph holds, as Neo4j's `MATCH` on both ends would. Nodes are never

@@ -54,6 +54,9 @@ purpose:
 
 - Only asserted, unscoped claims project. A denial is not a value, and a value
   with an identity-bearing qualifier means nothing without its scope.
+- A claim the corroborator voted down (`odke.conflict` status `lost`) never
+  projects, however many sources back it. Its `:Claim` and relationship are
+  still written, with the reason it lost.
 - A single-valued predicate carries its best-supported claim (highest `support`,
   then `confidence`).
 - A multi-valued predicate carries the list, when the sink knows the ontology.
