@@ -132,15 +132,21 @@ def _jsonl(rows: list[dict[str, Any]]) -> bytes:
     return "".join(json.dumps(r) + "\n" for r in rows).encode()
 
 
-def test_fetch_then_prepare_writes_a_config_that_builds(tmp_path: Path) -> None:
+def _t2k_raw(tmp_path: Path) -> Path:
     opener = _fake_opener(
         {
             "1_movie_ontology.json": json.dumps(ONTOLOGY).encode(),
-            "ont_1_movie_test.jsonl": _jsonl([{"id": r["id"], "sent": r["sent"]} for r in GOLD]),
             "ont_1_movie_ground_truth.jsonl": _jsonl(GOLD),
         }
     )
-    root = text2kgbench.fetch(tmp_path / "raw", ontologies=["ont_1_movie"], opener=opener)
+    return text2kgbench.fetch(tmp_path / "raw", ontologies=["ont_1_movie"], opener=opener)
+
+
+def test_fetch_then_prepare_writes_a_config_that_builds(tmp_path: Path) -> None:
+    # The ontology and the ground truth, which carries each sentence: the
+    # benchmark's `test/` files are the same sentences without the triples.
+    assert set(text2kgbench.files("wikidata_tekgen", "ont_1_movie")) == {"ontology", "gold"}
+    root = _t2k_raw(tmp_path)
     out = text2kgbench.prepare(
         root, "ont_1_movie", tmp_path / "set", limit=1, ground_model="test/small", paper=True
     )
@@ -152,17 +158,6 @@ def test_fetch_then_prepare_writes_a_config_that_builds(tmp_path: Path) -> None:
     assert GroundingVerdict.NOT_FOUND in built.stages["validator"].refused
     with pytest.raises(ValueError, match="not a wikidata_tekgen ontology"):
         text2kgbench.files("wikidata_tekgen", "ont_99_nothing")
-
-
-def _t2k_raw(tmp_path: Path) -> Path:
-    opener = _fake_opener(
-        {
-            "1_movie_ontology.json": json.dumps(ONTOLOGY).encode(),
-            "ont_1_movie_test.jsonl": _jsonl([{"id": r["id"], "sent": r["sent"]} for r in GOLD]),
-            "ont_1_movie_ground_truth.jsonl": _jsonl(GOLD),
-        }
-    )
-    return text2kgbench.fetch(tmp_path / "raw", ontologies=["ont_1_movie"], opener=opener)
 
 
 def test_prepare_refuses_a_directory_it_did_not_write(tmp_path: Path) -> None:
@@ -244,15 +239,7 @@ def test_a_run_without_nltk_stops_before_any_model_call(
     monkeypatch.setattr(text2kgbench, "ablate", ablate)
     for name in ("nltk", "nltk.stem", "nltk.tokenize"):
         monkeypatch.setitem(sys.modules, name, None)
-    opener = _fake_opener(
-        {
-            "1_movie_ontology.json": json.dumps(ONTOLOGY).encode(),
-            "ont_1_movie_test.jsonl": _jsonl([{"id": r["id"], "sent": r["sent"]} for r in GOLD]),
-            "ont_1_movie_ground_truth.jsonl": _jsonl(GOLD),
-        }
-    )
-    root = text2kgbench.fetch(tmp_path / "raw", ontologies=["ont_1_movie"], opener=opener)
-    out = text2kgbench.prepare(root, "ont_1_movie", tmp_path / "set")
+    out = text2kgbench.prepare(_t2k_raw(tmp_path), "ont_1_movie", tmp_path / "set")
     with pytest.raises(ImportError, match=r"openodke\[bench\]"):
         text2kgbench.run(out)
     result = CliRunner().invoke(app, ["bench", "run", "text2kgbench", str(out)])

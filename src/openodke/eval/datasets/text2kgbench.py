@@ -100,7 +100,11 @@ SOURCES: dict[str, tuple[str, ...]] = {
 
 
 def files(source: str, ontology_id: str) -> dict[str, str]:
-    """The three files one ontology needs, as paths under the dataset's `data/`."""
+    """The two files one ontology needs, as paths under the dataset's `data/`.
+
+    The ground truth carries each test sentence with its triples, so the
+    benchmark's `test/` file, the same sentences without them, is not needed.
+    """
     if source not in SOURCES:
         raise ValueError(f"unknown source {source!r}; one of {', '.join(SOURCES)}")
     if ontology_id not in SOURCES[source]:
@@ -110,7 +114,6 @@ def files(source: str, ontology_id: str) -> dict[str, str]:
     stem = ontology_id.removeprefix("ont_")
     return {
         "ontology": f"{source}/ontologies/{stem}_ontology.json",
-        "test": f"{source}/test/{ontology_id}_test.jsonl",
         "gold": f"{source}/ground_truth/{ontology_id}_ground_truth.jsonl",
     }
 
