@@ -30,10 +30,12 @@ gold set at all.
 Whether a change between two runs was real is `openodke.eval.stats`: a paired
 bootstrap over the items both runs scored, three verdicts (better, worse,
 inconclusive) and the detection limit printed beside every one.
+`compare_items` runs it over two runs' per-item outcomes (`item_rows`).
 """
 
 from openodke.eval.ablation import per_document, run_ablation
 from openodke.eval.calibration import evaluate_calibration, run_score
+from openodke.eval.compare import Comparison, ItemRow, compare_files, compare_items, item_rows
 from openodke.eval.cost import (
     CallRecord,
     CostMeter,
@@ -80,10 +82,12 @@ __all__ = [
     "PREDICTION_FORMATS",
     "CalibrationLabel",
     "CallRecord",
+    "Comparison",
     "CostMeter",
     "CostReport",
     "GoldFact",
     "GroundingLabel",
+    "ItemRow",
     "LinkRow",
     "McNemar",
     "MeteredClient",
@@ -99,6 +103,8 @@ __all__ = [
     "assert_idempotent",
     "bootstrap_interval",
     "check_idempotency",
+    "compare_files",
+    "compare_items",
     "compare_costs",
     "describe",
     "detection_limit",
@@ -111,6 +117,7 @@ __all__ = [
     "evaluate_spans",
     "evaluate_validation",
     "grounding_ablation",
+    "item_rows",
     "jsonl_counts",
     "kept",
     "links_from_clusters",
