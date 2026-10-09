@@ -39,10 +39,14 @@ odke bench run text2kgbench runs/movie
   (`openai/gpt-5`, `gemini/…`, `ollama/llama3.1`, `anthropic/…`); give the
   grounder the smaller one. `--max-tokens` sets the extractor's output room.
   `--paper` configures [the paper's own grounder and gate](grounding.md#paper-mode-the-odke-grounder-as-written).
-- `run` runs the config three ways and prints the table; `--json` for the report.
-  Each row carries calls and tokens; the notes give the grounder's verdicts on
-  the candidates, because the gate lets an unchecked fact through and a row that
+- `run` runs the config three ways and prints the table; `--json` for the
+  dataset's own report. Each row's precision, recall and F1 carry a 95% range
+  over the documents, beside hits, over- and under-extraction, conformance,
+  hallucination, calls and cost; the notes give the grounder's verdicts on the
+  candidates, because the gate lets an unchecked fact through and a row that
   drops nothing must say whether the grounder confirmed everything or failed.
+  It writes the [eval report](evaluation.md#the-eval-report) as `report.json`
+  beside the predictions; `--report` puts it elsewhere.
 
 The prepared config extracts with `structured: false` — no response schema, as
 the paper prompts — gives the extractor 16,000 tokens of room for a

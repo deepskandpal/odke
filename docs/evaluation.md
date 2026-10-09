@@ -40,12 +40,79 @@ Every evaluator returns the same type:
   classes.
 - `notes`: what a number cannot say.
 
-`report.render()` is the plain-text form `odke eval` prints; `--json` prints
-`model_dump_json`.
+`report.render()` is the plain-text form `odke eval` prints, below the eval
+report's rows; `--json` prints `model_dump_json`.
 
 A class nothing was predicted for has an **undefined** precision, and the report
 keeps that as `None` (shown as `—`). Zero would read as "every prediction was
 wrong", which is a different and worse finding.
+
+## The eval report
+
+A `StageReport` is shaped by its stage. A CI job, a dashboard or a second run to
+compare against needs precision in the same place every time, so `odke eval`
+and `odke bench run` also write an `EvalReport`: one JSON document, versioned by
+`schema_version`. A minor version adds fields and a major one changes them, so
+check the major version first.
+
+- `odke eval <stage> --report report.json` writes it. `--json` still prints the
+  stage's `StageReport`, as before.
+- `odke bench run` writes it as `report.json` beside the predictions; `--report`
+  puts it elsewhere.
+- The schema ships in the package, as `openodke/eval/eval_report.schema.json`.
+  `check_report(data)` holds a document to it in plain Python and lists every
+  mismatch. The package checks each report before writing it, and
+  `read_report(path)` checks before loading.
+
+| Key | What it holds |
+|---|---|
+| `schema_version` | `"1.0"` |
+| `title`, `n` | what was scored (`extract`, `ablation`, `text2kgbench:ont_1_movie`) and how many rows |
+| `run` | `openodke` (the version), `models` (role → model), `prompts` (the registered keys sent), `dataset` (name, path, documents, labels, details) |
+| `bootstrap` | how the ranges were drawn: `unit`, `units`, `resamples`, `seed`, `level`, `method`; `null` with no rows |
+| `rows[]` | one per configuration scored against gold facts: one for `extract`, three for the ablation and a benchmark, none for the other stages |
+| `rows[].performance` | `precision`, `recall`, `f1`, each `{value, low, high}`; `average` is `micro` (facts pooled) or `macro` (the mean of documents, as Text2KGBench averages) |
+| `rows[].counts` | `hits`; `over_extraction` (predicted, not in gold); `under_extraction` (gold, not predicted); `predicted`, `gold`, `unscored`, `documents` |
+| `rows[].conformance` | `rate`, `conformant`, `facts`, `checks`: the share of predicted facts whose relation and types fit the ontology; `null` with no ontology |
+| `rows[].hallucination` | `definition`, `hallucinated`, `facts`, `rate`, and per-part rates where the dataset gives them; `null` where it defines none |
+| `rows[].cost`, `rows[].latency` | calls, tokens, USD (`null` when any call was unpriced) and seconds in calls; `null` when the run was not metered |
+| `stages[]` | the `StageReport`s, unchanged |
+| `notes[]` | what a number cannot say about the whole run |
+| `diagnosis`, `fixes`, `comparison`, `calibration` | reserved, empty and typed until #140, #141, #142 and #135 fill them |
+
+- **The ranges are 95% bootstrap ranges over documents.** Facts from one
+  document share one reading of it, so they are not independent; resampling
+  facts would print a range too narrow. 1,000 draws, seed 0, so the same labels
+  give the same range on any machine. A draw on which a number is undefined is
+  left out. `openodke.eval.bootstrap` is the one implementation.
+- **A wrong value or a wrong entity** counts once in `over_extraction` and once
+  in `under_extraction`, as it does in `fp` and `fn`.
+- **The numbers are the evaluator's own.** The rows hold the same precision,
+  recall and F1 as the `StageReport` beside them, to the last digit, and
+  `render()` prints them from the same fields.
+
+```python
+from openodke import Entity, Evidence, Fact
+from openodke.eval import GoldFact, evaluate_extraction
+from openodke.eval.eval_report import check_report, extraction_rows, from_stage
+
+ada, babbage = Entity(key="ada", type="Person"), Entity(key="babbage", type="Person")
+gold = [
+    GoldFact(doc_id="d1", fact=Fact(subject=ada, predicate="born", object_value=1815)),
+    GoldFact(doc_id="d2", fact=Fact(subject=babbage, predicate="born", object_value=1791)),
+]
+said = [
+    Fact(subject=ada, predicate="born", object_value="1815", evidence=(Evidence(doc_id="d1"),)),
+    Fact(subject=babbage, predicate="born", object_value=1792, evidence=(Evidence(doc_id="d2"),)),
+]
+rows, how = extraction_rows([("extract", said, None)], gold)
+report = from_stage(evaluate_extraction(gold, said), rows=rows, bootstrap=how)
+
+# One right document and one wrong one: the range is everything from 0 to 1.
+precision = report.rows[0].performance.precision
+assert (precision.value, precision.low, precision.high) == (0.5, 0.0, 1.0)
+assert check_report(report.model_dump(mode="json")) == []
+```
 
 ## Formats and evaluators, per stage
 
@@ -624,6 +691,7 @@ odke eval ablation --config examples/e2e/odke.yaml --labels examples/e2e/gold.js
 odke eval spans --facts out/                        # no labels: width by verdict
 odke eval extract --labels gold.jsonl --predictions facts.jsonl --items b.items.jsonl
 odke eval compare a.items.jsonl b.items.jsonl       # better, worse or inconclusive
+odke eval extract --labels gold.jsonl --predictions facts.jsonl --report report.json
 ```
 
 - The CLI covers route, extract, ground, resolve, score and validate, and the
@@ -637,4 +705,5 @@ odke eval compare a.items.jsonl b.items.jsonl       # better, worse or inconclus
   Its links always come from a file, which is also how a platform's merges arrive.
 - `compare` takes two runs' `--items` files and exits 1 when B is worse
   ([Was the change real?](#was-the-change-real)).
+- `--report PATH` writes the [eval report](#the-eval-report) for any stage.
 - Errors exit with status 2.
