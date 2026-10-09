@@ -68,7 +68,7 @@ from openodke.reextract import Reextract
 from openodke.run.config import STAGES, ConfigError, InputSpec, RunConfig, StageSpec
 from openodke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink
 from openodke.sinks.jsonl import JsonlSink
-from openodke.sinks.neo4j import Neo4jConstrainer, Neo4jSink, is_check, plan
+from openodke.sinks.neo4j import Neo4jConstrainer, Neo4jLookup, Neo4jSink, is_check, plan
 from openodke.sinks.networkx import NetworkXSink
 from openodke.sinks.rdf import RdfSink
 from openodke.stages import (
@@ -97,6 +97,7 @@ from openodke.stages import (
     Router,
     Scorer,
     Sink,
+    StoreLookup,
 )
 from openodke.types import Document, GroundingVerdict, KnowledgeGraph, SourceTier
 
@@ -839,6 +840,127 @@ def sink_plan(spec: StageSpec, ctx: Context, where: str) -> SinkPlan:
 
 
 # --------------------------------------------------------------------------- #
+# The store lookup
+# --------------------------------------------------------------------------- #
+
+
+class _LookupOptions(BaseModel):
+    """`store_lookup: {use: neo4j, ...}`: where to read, and how widely.
+
+    The connection keys are the neo4j sink's. Left out, the lookup reads the
+    store the run's one neo4j sink writes to, on that sink's connection.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    uri: str | None = None
+    uri_env: str | None = None
+    user: str | None = None
+    user_env: str | None = None
+    password_env: str = "NEO4J_PASSWORD"
+    database: str | None = None
+    tenant: str | None = None
+    tenant_property: str = "tenant"
+    limit: int = 100
+
+
+class LookupPlan:
+    """The store lookup as configured: checked while the config is built, opened only to run.
+
+    A dry run opens no sink and so no store: it resolves each batch within
+    itself, and says so. `neo4j` reads through the run's Neo4j sink unless it
+    names a `uri` of its own; `package.module:Name` is a `StoreLookup` of yours,
+    constructed with its options.
+    """
+
+    def __init__(
+        self, spec: StageSpec, ctx: Context, sinks: Sequence[SinkPlan], where: str
+    ) -> None:
+        self.where = where
+        self.name = spec.use
+        self.ontology = ctx.ontology
+        self.custom: StoreLookup | None = None
+        self.sink: int | None = None
+        self._opened: Any = None
+        if spec.is_custom:
+            built = _custom(spec, where)
+            if not isinstance(built, StoreLookup):
+                raise ConfigError(
+                    f"{where}: {spec.use} is not a StoreLookup; it needs a method candidates()"
+                )
+            self.custom = built
+            return
+        if spec.use != "neo4j":
+            close = difflib.get_close_matches(spec.use, ["neo4j"], n=1)
+            hint = f" — did you mean {close[0]!r}?" if close else ""
+            raise ConfigError(
+                f"{where}: unknown store lookup {spec.use!r}{hint} (built-in: neo4j; or name "
+                "your own as package.module:Name)"
+            )
+        if "password" in spec.options:
+            raise ConfigError(
+                f"{where}.password: a password never goes in a config file. Put it in an "
+                "environment variable and name that with password_env"
+            )
+        try:
+            self.options = _LookupOptions.model_validate(spec.options)
+        except ValidationError as exc:
+            first = exc.errors()[0]
+            key = ".".join(str(part) for part in first["loc"])
+            raise ConfigError(f"{where}.{key}: {first['msg']}") from None
+        if not self.options.uri and not self.options.uri_env:
+            stores = [i for i, plan in enumerate(sinks) if plan.name == "neo4j"]
+            if len(stores) != 1:
+                raise ConfigError(
+                    f"{where}: neo4j reads the store the run's neo4j sink writes to, and "
+                    f"{'there is none' if not stores else 'there are several'}; name one "
+                    "with uri or uri_env"
+                )
+            self.sink = stores[0]
+
+    def open(self, sinks: Sequence[Sink]) -> StoreLookup:
+        """The lookup to resolve with: on the opened sink's connection, or its own."""
+        if self.custom is not None:
+            return self.custom
+        opts = self.options
+        scope: dict[str, Any] = {
+            "tenant": opts.tenant,
+            "tenant_property": opts.tenant_property,
+            "limit": opts.limit,
+        }
+        if self.sink is not None:
+            sink = sinks[self.sink]
+            if not isinstance(sink, Neo4jSink):  # pragma: no cover - the plan said neo4j
+                raise ConfigError(f"{self.where}: the neo4j sink did not open as one")
+            lookup: StoreLookup = sink.lookup(**scope)
+            return lookup
+        uri = opts.uri or os.environ.get(opts.uri_env or "")
+        if not uri:
+            raise ConfigError(f"{self.where}.uri_env: {opts.uri_env} is not set")
+        user = opts.user or (os.environ.get(opts.user_env) if opts.user_env else None) or "neo4j"
+        password = os.environ.get(opts.password_env)
+        if password is None:
+            raise ConfigError(f"{self.where}.password_env: {opts.password_env} is not set")
+        self._opened = Neo4jLookup(
+            uri, (user, password), database=opts.database, ontology=self.ontology, **scope
+        )
+        return self._opened
+
+    def close(self) -> None:
+        """Close a connection this plan opened; one shared with a sink closes with the sink."""
+        if self._opened is not None:
+            self._opened.close()
+            self._opened = None
+
+    @property
+    def dry_run_note(self) -> str:
+        return (
+            f"{self.where}: a dry run opens no store, so each batch was resolved within "
+            "itself; the run looks the store up"
+        )
+
+
+# --------------------------------------------------------------------------- #
 # The whole configuration
 # --------------------------------------------------------------------------- #
 
@@ -857,6 +979,16 @@ class Built:
     context: Context
     stages: dict[str, Any]
     sinks: list[SinkPlan]
+    # `store_lookup`, opened with the sinks and handed to the resolver.
+    lookup: LookupPlan | None = None
+
+    def open_lookup(self, sinks: Sequence[Sink]) -> StoreLookup | None:
+        """Hand the resolver its store lookup, on the opened sinks; None when none is set."""
+        if self.lookup is None:
+            return None
+        opened = self.lookup.open(sinks)
+        self.stages["resolver"].lookup = opened
+        return opened
 
     def pipeline(self, *, sinks: Sequence[Sink] = (), **overrides: Any) -> Pipeline:
         if "validator" in overrides:
@@ -992,7 +1124,27 @@ def build(config: RunConfig) -> Built:
             "bootstrap: true needs a sink that applies constraints (neo4j); "
             f"configured: {', '.join(p.name for p in sinks) or 'no sink'}"
         )
-    return Built(config=config, ontology=ontology, context=context, stages=stages, sinks=sinks)
+    lookup = None
+    if config.store_lookup is not None:
+        # The store is looked up by the resolver: the native one, unless one is named.
+        if stages["resolver"] is None:
+            native = StageSpec(use="native")
+            stages["resolver"] = build_stage("resolver", native, context, "stages.resolver")
+        if not hasattr(stages["resolver"], "lookup"):
+            raise ConfigError(
+                f"store_lookup: the resolver looks the store up, and "
+                f"{type(stages['resolver']).__name__} takes no lookup; use stages.resolver: "
+                "native, or a resolver of your own with a `lookup` attribute"
+            )
+        lookup = LookupPlan(config.store_lookup, context, sinks, "store_lookup")
+    return Built(
+        config=config,
+        ontology=ontology,
+        context=context,
+        stages=stages,
+        sinks=sinks,
+        lookup=lookup,
+    )
 
 
 def _ontology(config: RunConfig) -> Ontology:
@@ -1013,6 +1165,7 @@ __all__ = [
     "Built",
     "Context",
     "Extra",
+    "LookupPlan",
     "NodeLinkFile",
     "SinkPlan",
     "build",

@@ -79,6 +79,8 @@ def run_built(built: Built, *, dry_run: bool = False) -> RunResult:
 
     opened: list[Sink] = []
     applied: list[str] = []
+    if built.lookup is not None and dry_run:
+        result_warnings.append(built.lookup.dry_run_note)
     try:
         if built.config.bootstrap:
             constrainer = built.stages["constrainer"]
@@ -95,6 +97,8 @@ def run_built(built: Built, *, dry_run: bool = False) -> RunResult:
             # the run while it is still free.
             if built.config.bootstrap:
                 applied = _bootstrap(built, opened)
+            # After the bootstrap, so the indexes it creates are there to read through.
+            built.open_lookup(opened)
 
         docs = built.documents()
         register_documents(built.stages["extractor"], docs)
@@ -110,6 +114,8 @@ def run_built(built: Built, *, dry_run: bool = False) -> RunResult:
                 sink.write(kg)
                 written.extend(plan.describe(kg))
     finally:
+        if built.lookup is not None:
+            built.lookup.close()
         for sink in opened:
             close = getattr(sink, "close", None)
             if callable(close):

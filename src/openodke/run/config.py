@@ -24,12 +24,18 @@ rather than a stage silently left as the pass-through.
     bootstrap: false
     coverage: true                   # what extraction left behind; no model
     reextract: {windows: 3}          # hand those gaps back; off unless named
+    store_lookup: neo4j              # resolve against the store; off unless named
 
 A stage is a built-in's short name, or `package.module:Name` for your own, and
 either may take options: `{use: name, option: value, ...}`. A stage left out is
 the pass-through from `openodke.stages` (DECISIONS #20) — except the scorer,
 which `odke run` fills with `evidence` so that a written fact's confidence
 reflects what the grounder found; `scorer: passthrough` opts out.
+
+`store_lookup` resolves each batch against what the store already holds, with
+the native resolver (DECISIONS #31): `neo4j` reads the run's Neo4j sink's
+store, or one named by its own `uri`, and `package.module:Name` is a
+`StoreLookup` of your own.
 
 `gate` was `validator` in 0.2 (DECISIONS #26). The old key still works, with a
 warning, until 1.0.0.
@@ -247,6 +253,8 @@ class RunConfig(_Strict):
     coverage: bool = True
     # Hand those gaps back to the extractor and ground what returns. Off unless named.
     reextract: ReextractConfig | None = None
+    # Resolve against what the store already holds (DECISIONS #31). Off unless named.
+    store_lookup: StageSpec | None = None
 
     @model_validator(mode="before")
     @classmethod

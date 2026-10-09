@@ -94,3 +94,11 @@ coverage: true
 # holding a missed entity, at most `windows` per document — and ground what
 # returns. Off unless named; the extractor needs a reextract method (llm, hybrid).
 # reextract: {windows: 3}
+
+# Resolve each batch against what the store already holds, without loading it
+# (DECISIONS #31): neo4j reads the neo4j sink's store through the indexes
+# bootstrap creates. A proof re-keys the incoming facts onto the stored key;
+# anything weaker is a SIMILAR link. Off unless named; brings the native
+# resolver when none is named. Options: tenant, tenant_property, limit, and the
+# sink's connection keys to read another store. Or package.module:Name.
+# store_lookup: {use: neo4j, tenant: acme}

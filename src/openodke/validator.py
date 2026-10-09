@@ -26,6 +26,10 @@ A stage passed in replaces its default, and a pass-through from
 free checks. The ontology is optional: without one, the checks on the relation
 and the types have nothing to check.
 
+`lookup` resolves the batch against what the store already holds as well
+(DECISIONS #31): a `StoreLookup`, such as `Neo4jSink.lookup()` or a
+`MemoryLookup`, handed to the default resolver. Off unless given.
+
 `validate()` returns the graph and a `ValidationReport` of the job: facts in,
 refused, merged, linked and derived; the model calls, tokens and cost; the
 registered prompts sent; and the coverage report. A dry run asks no model and
@@ -65,8 +69,9 @@ from openodke.stages import (
     Resolver,
     Scorer,
     Sink,
+    StoreLookup,
 )
-from openodke.types import Chunk, Document, Fact, Frozen, KnowledgeGraph
+from openodke.types import Chunk, Document, Fact, Frozen, KnowledgeGraph, LinkKind
 
 Facts = str | Path | Iterable[TripleRow | Mapping[str, Any] | Fact]
 
@@ -91,6 +96,9 @@ class ValidationReport(Frozen):
     # Links the resolver proposed between entities, by kind.
     linked: int = 0
     links: dict[str, int] = Field(default_factory=dict)
+    # Against the store, with a lookup (DECISIONS #31): entities looked up,
+    # store candidates, incoming keys re-keyed onto a stored one, links by kind.
+    store: dict[str, int] | None = None
     # Inverse and symmetric partners the ontology implied (DECISIONS #28).
     derived: int = 0
     facts_out: int = 0
@@ -123,6 +131,8 @@ class ValidationReport(Frozen):
         lines.append(
             _row("linked", _n(self.linked, "entity link") + (f": {kinds}" if kinds else ""))
         )
+        if self.store is not None:
+            lines.append(_row("store", _store_line(self.store)))
         lines.append(_row("derived", f"{self.derived} inverse and symmetric partners"))
         lines.append(
             _row(
@@ -180,9 +190,14 @@ class Validator:
         inverses: bool | None = None,
         coverage: bool = True,
         sinks: Sequence[Sink] = (),
+        lookup: StoreLookup | None = None,
     ) -> None:
         if grounder is not None and locate:
             raise ValueError("with a grounder of your own, it locates: LLMGrounder(locate=True)")
+        if resolver is not None and lookup is not None:
+            raise ValueError(
+                "with a resolver of your own, it looks the store up: NativeResolver(lookup=...)"
+            )
         self.ontology = ontology if ontology is not None else Ontology()
         self.grounder = grounder
         self.locate = locate
@@ -196,6 +211,7 @@ class Validator:
         self.inverses = inverses
         self.coverage = coverage
         self.sinks = tuple(sinks)
+        self.lookup = lookup
 
     def validate(
         self,
@@ -271,7 +287,9 @@ class Validator:
         return {
             "grounder": grounder,
             "normalizer": _given(self.normalizer, ValueNormalizer, ontology),
-            "resolver": _given(self.resolver, NativeResolver),
+            "resolver": (
+                self.resolver if self.resolver is not None else NativeResolver(lookup=self.lookup)
+            ),
             "corroborator": _given(self.corroborator, SignatureCorroborator, ontology),
             "scorer": _given(self.scorer, EvidenceScorer),
             "gate": self.gate if self.gate is not None else VerdictGate(schema=True),
@@ -293,6 +311,8 @@ class Validator:
         derived, refused = int(kg.stats.get("derived", 0)), int(kg.stats.get("refused", 0))
         links = Counter(link.kind.value for link in kg.links)
         coverage = kg.stats.get("coverage")
+        resolved = getattr(stages["resolver"], "stats", None)
+        store = resolved.get("store") if isinstance(resolved, Mapping) else None
         return ValidationReport(
             dry_run=dry_run,
             documents=int(kg.stats.get("documents", 0)),
@@ -305,6 +325,9 @@ class Validator:
             merged=facts_in + derived - refused - len(kg.facts),
             linked=len(kg.links),
             links=dict(sorted(links.items())),
+            store=(
+                {str(k): int(v) for k, v in store.items()} if isinstance(store, Mapping) else None
+            ),
             derived=derived,
             facts_out=len(kg.facts),
             edges=len(kg.edges),
@@ -423,6 +446,15 @@ def _stats(
 
 def _row(label: str, text: str) -> str:
     return f"{label:<13} {text}"
+
+
+def _store_line(store: Mapping[str, int]) -> str:
+    kinds = ", ".join(f"{store.get(k.value, 0)} {k.value}" for k in LinkKind)
+    return (
+        f"{_n(store.get('looked_up', 0), 'entity')} looked up, "
+        f"{_n(store.get('candidates', 0), 'candidate')} in the store: "
+        f"{store.get('rekeyed', 0)} re-keyed onto a stored key; links {kinds}"
+    )
 
 
 def _n(count: int, noun: str) -> str:

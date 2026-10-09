@@ -137,6 +137,64 @@ def test_a_configs_neo4j_sink_writes_through_its_driver(
     assert "wrote         neo4j → bolt://example.invalid:7687:" in result.output
 
 
+class _Store(FakeDriver):
+    """A store holding one company, which every name asked about finds."""
+
+    INDEXES = [
+        {
+            "name": f"odke_{what}_{label}",
+            "type": kind,
+            "labelsOrTypes": [label],
+            "properties": props,
+        }
+        for label in ("City", "Company", "Person")
+        for what, kind, props in (
+            ("key", "RANGE", ["key"]),
+            ("names", "FULLTEXT", ["label", "aliases"]),
+        )
+    ]
+    STORED = {"key": "c:halden", "label": "Halden Robotics Ltd", "aliases": ["halden.example"]}
+
+    def answer(self, cypher: str) -> list[dict[str, Any]]:
+        if cypher.startswith("SHOW INDEXES"):
+            return self.INDEXES
+        if "fulltext" in cypher:
+            # The statement being answered is the last one recorded.
+            return [
+                {"block": row["block"], "node": self.STORED} for row in self.calls[-1][2]["rows"]
+            ]
+        return []
+
+
+def test_a_configs_store_lookup_resolves_against_its_sinks_store(
+    here: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _Store()
+    monkeypatch.setattr(neo4j_module, "_connect", lambda uri, auth: driver)
+    monkeypatch.setenv("ODKE_SECRET", "not-a-real-password")
+    config = yaml.safe_load((here / "triples" / "odke.yaml").read_text(encoding="utf-8"))
+    config["stages"]["sink"] = _neo4j_sink()
+    config["store_lookup"] = "neo4j"
+    (here / "triples" / "neo4j.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    result = _validate("--config", "triples/neo4j.yaml", "--dry-run")
+    assert result.exit_code == 0, result.output
+    assert "store_lookup: a dry run opens no store" in result.output
+    assert driver.calls == []
+
+    result = _validate("--config", "triples/neo4j.yaml")
+    assert result.exit_code == 0, result.output
+    modes = [mode for mode, _, _ in driver.calls]
+    assert modes[0] == "auto" and modes.index("write") > modes.index("read")
+    # "Halden Robotics" is the stored "Halden Robotics Ltd" by name: a link, not a merge.
+    assert "warning" not in result.output
+    (store,) = [line for line in result.output.splitlines() if line.startswith("store ")]
+    assert "0 re-keyed onto a stored key; links 0 same_as, 1 similar, 0 different" in store
+    links = [p for c, p in driver.writes if "SIMILAR" in c]
+    assert [row["target_key"] for row in links[0]["rows"]] == ["c:halden"]
+    assert driver.closed
+
+
 @pytest.mark.parametrize(
     ("args", "message"),
     [
