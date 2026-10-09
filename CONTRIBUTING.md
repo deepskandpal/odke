@@ -22,9 +22,9 @@ approving review is required. Force-pushes and deleting `main` are blocked.
 
 ## Releasing
 
-1. Bump `version` in `pyproject.toml` and `__version__` in
-   `src/openodke/__init__.py`, and move the CHANGELOG's Unreleased section under
-   a dated heading — in a pull request.
+1. Bump `version` in `pyproject.toml` (`__version__` is read from the installed
+   package, so there is no second copy), and move the CHANGELOG's Unreleased
+   section under a dated heading — in a pull request.
 2. Optionally rehearse: `gh workflow run release.yml -f target=testpypi`.
 3. After it merges, tag and push: `git tag -a vX.Y.Z -m "openodke X.Y.Z" && git push origin vX.Y.Z`.
 
