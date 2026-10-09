@@ -11,6 +11,7 @@ which sums to the report's tp 2, fp 3, fn 3: precision = recall = F1 = 0.4.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -32,7 +33,8 @@ runner = CliRunner()
 
 
 def _flat(text: str) -> str:
-    return " ".join(text.split())
+    # Without the colour codes typer adds to a usage error where a CI runner asks for colour.
+    return " ".join(re.sub(r"\x1b\[[0-9;]*m", "", text).split())
 
 
 def _pass_fail(both: int, gained: int, lost: int, neither: int) -> tuple[list[ItemRow], ...]:
