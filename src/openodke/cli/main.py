@@ -1072,11 +1072,15 @@ def eval_stage(
         ...,
         help="route, extract, ground, resolve, score, validate, ablation (with --config), "
         "spans (with --facts, and no labels at all), compare (two runs' --items files), "
-        "pipeline (your own, run with --cmd, --run or --predictions), or precision (--facts "
-        "a judge graded, corrected by --labels on a random sample; no gold).",
+        "pipeline (your own, run with --cmd, --run or --predictions), precision (--facts "
+        "a judge graded, corrected by --labels on a random sample; no gold), or pool (two "
+        "or more grounded runs: recall relative to what they found together; no gold).",
     ),
     runs: list[Path] | None = typer.Argument(
-        None, help="compare only: run A's --items file, then run B's.", show_default=False
+        None,
+        help="compare: run A's --items file, then run B's. pool: two or more runs' facts "
+        "after grounding, each a facts.jsonl or the directory a sink wrote.",
+        show_default=False,
     ),
     labels: Path | None = typer.Option(None, "--labels", help="Your labelled rows, as JSONL."),
     predictions: Path | None = typer.Option(
@@ -1131,13 +1135,13 @@ def eval_stage(
         "or accuracy. Default f1 for documents, accuracy for items; the rest are guardrails.",
     ),
     resamples: int = typer.Option(
-        2000, "--resamples", min=100, help="compare: bootstrap resamples."
+        2000, "--resamples", min=100, help="compare and pool: bootstrap resamples."
     ),
     seed: int = typer.Option(
         0,
         "--seed",
         help="compare: the resampling seed; the same seed gives the same interval. "
-        "precision: the seed --make-sheet draws the sample with.",
+        "precision: the seed --make-sheet draws the sample with. pool: the resampling seed.",
     ),
     fail_under: float | None = typer.Option(
         None,
@@ -1234,6 +1238,11 @@ def eval_stage(
     prediction-powered inference. It prints the judge's number, the corrected
     one with its 95% interval and the labels' own. Recall is never claimed.
 
+    `pool A B ...` needs no gold either: two or more runs on the same
+    documents, after grounding. Their supported facts are pooled, and each
+    run's recall relative to the pool is printed with its range, beside the
+    caveat that it overstates true recall.
+
     Extraction, the ablation and pipeline print precision, recall and F1 with
     95% ranges over your documents. `--report` writes the versioned eval
     report; `--json` prints the stage's own report, as 0.x did, and for
@@ -1273,7 +1282,7 @@ def eval_stage(
         "--by-predicate": by_predicate,
     }
     # The flags compare shares with another stage, which takes them as its own.
-    shared = {"precision": ("--seed",)}
+    shared = {"precision": ("--seed",), "pool": ("--seed", "--resamples")}
     compare_flags = [flag for flag in compare_flags if flag not in shared.get(stage, ())]
     try:
         if stage != "pipeline" and any(piped.values()):
@@ -1305,10 +1314,12 @@ def eval_stage(
             if reasons:
                 raise typer.Exit(1)
             return
-        if runs:
-            raise ValueError(f"unexpected argument {str(runs[0])!r}: only compare takes runs")
+        if runs and stage != "pool":
+            raise ValueError(
+                f"unexpected argument {str(runs[0])!r}: only compare and pool take runs"
+            )
         if compare_flags:
-            owners = {"--seed": "compare and precision"}
+            owners = {"--seed": "compare, precision and pool", "--resamples": "compare and pool"}
             raise ValueError(
                 "; ".join(
                     f"{flag}: for {owners.get(flag, 'compare')} only" for flag in compare_flags
@@ -1342,6 +1353,18 @@ def eval_stage(
                 timeout=timeout,
                 adjudicate=adjudicate,
             )
+        elif stage == "pool":
+            report = _eval_pool(
+                runs or [],
+                documents,
+                ontology,
+                describe=describe,
+                others=(labels, predictions, run, config, facts, items),
+                resamples=resamples,
+                seed=seed,
+            )
+            if report is None:
+                return
         elif stage == "precision":
             report = _eval_precision(
                 facts,
@@ -1420,7 +1443,7 @@ def eval_stage(
         raise typer.Exit(1) from exc
     if as_json:
         # The 0.x stages print their own report, as they did; the newer ones have no 0.x form.
-        shown = report if stage in ("pipeline", "precision") else report.stages[0]
+        shown = report if stage in ("pipeline", "precision", "pool") else report.stages[0]
         typer.echo(shown.model_dump_json(indent=2))
         return
     typer.echo(report.render())
@@ -1497,6 +1520,53 @@ def _eval_precision(
             documents=len(docs) if docs is not None else None,
             labels=len(rows) if labels is not None else None,
         ),
+    )
+
+
+def _eval_pool(
+    runs: list[Path],
+    documents: Path | None,
+    ontology: Path | None,
+    *,
+    describe: bool,
+    others: tuple[Any, ...],
+    resamples: int,
+    seed: int,
+) -> Any:
+    """`odke eval pool`: each run's recall relative to the pool; None for --describe."""
+    from openodke.eval.eval_report import Dataset
+    from openodke.eval.harness import load_documents
+    from openodke.eval.pooling import DESCRIPTION, report_pool, run_name
+    from openodke.eval.spans import load_facts
+
+    if describe:
+        typer.echo(DESCRIPTION)
+        return None
+    if any(v is not None for v in others):
+        raise ValueError(
+            "pool reads two or more runs, with --documents and --ontology; nothing else"
+        )
+    if len(runs) < 2:
+        raise ValueError(f"pool takes two or more runs' facts, after grounding; got {len(runs)}")
+    # Two runs in directories of one name, `a/out` and `b/out`, are out and out~2.
+    seen: dict[str, int] = {}
+    named: list[tuple[str, Any]] = []
+    for path in runs:
+        name = run_name(path)
+        seen[name] = seen.get(name, 0) + 1
+        named.append((name if seen[name] == 1 else f"{name}~{seen[name]}", load_facts(path)))
+    docs = load_documents(documents) if documents is not None else None
+    return report_pool(
+        named,
+        ontology=_load(ontology) if ontology is not None else None,
+        documents=docs,
+        dataset=Dataset(
+            name=Path(documents).name if documents is not None else "pool",
+            path=str(documents) if documents is not None else None,
+            documents=len(docs) if docs is not None else None,
+        ),
+        resamples=resamples,
+        seed=seed,
     )
 
 

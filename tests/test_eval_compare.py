@@ -195,14 +195,14 @@ def test_a_metric_the_rows_cannot_give_is_refused(
             ["eval", "compare", "a.jsonl", "b.jsonl", "--labels", "x.jsonl"],
             "takes no other inputs",
         ),
-        (["eval", "extract", "a.jsonl", "--labels", "x.jsonl"], "only compare takes runs"),
+        (["eval", "extract", "a.jsonl", "--labels", "x.jsonl"], "only compare and pool take runs"),
         (
             ["eval", "extract", "--labels", "x.jsonl", "--metric", "f1"],
             "--metric: for compare only",
         ),
         (
             ["eval", "extract", "--labels", "x.jsonl", "--seed", "3"],
-            "--seed: for compare and precision only",
+            "--seed: for compare, precision and pool only",
         ),
     ],
 )
