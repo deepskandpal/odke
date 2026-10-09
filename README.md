@@ -41,7 +41,7 @@ That runs a small invented corpus through all thirteen stages on recorded model
 responses and writes the graph to `examples/e2e/out/`. The same run from Python:
 
 ```python
-from openodke import HybridExtractor, LLMExtractor, Ontology, Pipeline, VerdictValidator
+from openodke import HybridExtractor, LLMExtractor, Ontology, Pipeline, VerdictGate
 from openodke.ground import LLMGrounder
 from openodke.llm import RecordedClient, ReplayClient
 from openodke.loaders import DirectoryLoader
@@ -56,7 +56,7 @@ kg = Pipeline(
     ontology,
     HybridExtractor(LLMExtractor(client=extract), documents=docs),
     grounder=LLMGrounder(client=ground),  # a second model checks every cited span
-    validator=VerdictValidator(),  # refuses a fact its own span contradicts
+    gate=VerdictGate(),  # refuses a fact its own span contradicts
     sinks=[JsonlSink("out")],
 ).run(docs)
 print(len(kg.facts), "facts,", kg.stats["refused"], "refused")
@@ -102,7 +102,7 @@ The three ideas worth taking from that paper:
 | Idea | What it does | Why the alternatives lose |
 |---|---|---|
 | **Ontology snippets** | Prompts the model with a small, ranked, per-type schema fragment rather than the whole ontology | A 200-predicate schema does not fit in a useful prompt. Snippets keep prompt size flat as the schema grows |
-| **Grounding verification** | A second, cheap model checks each candidate fact against its own evidence span and records `supported`, `contradicted` or `not_found` on the fact; a validator decides what is written | Extraction alone hallucinates. A yes/no check against a quoted span is cheap, and a verdict kept on the fact can be measured and re-gated later |
+| **Grounding verification** | A second, cheap model checks each candidate fact against its own evidence span and records `supported`, `contradicted` or `not_found` on the fact; a gate decides what is written | Extraction alone hallucinates. A yes/no check against a quoted span is cheap, and a verdict kept on the fact can be measured and re-gated later |
 | **Corroboration** | Merges the same claim across sources, and resolves conflicts on freshness × trust × agreement | Real corpora disagree with themselves. Without it you write both answers and cannot say which to believe |
 
 Other libraries turn text into a graph — [iText2KG](https://github.com/AuvaLab/itext2kg),
@@ -130,7 +130,7 @@ config, or a stage of yours.
 | resolve | `NativeResolver` — blocking, identifiers, links | `native` | keys as given |
 | corroborate | `SignatureCorroborator` | `signature` | every fact its own claim |
 | score | `EvidenceScorer` — verdict × support × extractor confidence | `evidence` | **`evidence`** under `odke run`; pass-through in a hand-built `Pipeline` |
-| validate | `VerdictValidator` — refuses `contradicted` | `verdict` | accept everything |
+| gate | `VerdictGate` — refuses `contradicted` | `verdict` | accept everything |
 | sink | `JsonlSink`, `Neo4jSink`, `CypherFileSink`, `Neo4jAdminCsvSink`, `RdfSink`, `NetworkXSink` | `jsonl`, `neo4j`, `cypher_file`, `neo4j_admin_csv`, `rdf`, `networkx` | nothing written |
 | constrain | `Neo4jConstrainer` — the ontology as DDL | `neo4j` | no constraints |
 | infer | `OntologyInferrer`; `odke ontology infer`, then review and `freeze` | — | never run: inference is a bootstrap (DECISIONS #8) |
@@ -188,7 +188,7 @@ stages:
   grounder: llm
   normalizer: value
   corroborator: signature
-  validator: verdict
+  gate: verdict
   sink: {use: neo4j, uri_env: NEO4J_URI, password_env: NEO4J_PASSWORD}
   constrainer: neo4j
 bootstrap: true

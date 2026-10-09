@@ -61,7 +61,7 @@ With an ontology, the ontology decides:
   give literals node labels of their own (`Date`, `Number`), and the schema
   overrides them;
 - a subject with no type takes the predicate's domain, when it has exactly one;
-- a predicate the ontology does not have is kept as written, for a validator
+- a predicate the ontology does not have is kept as written, for the gate
   or a person to judge. It is not dropped here.
 
 Without an ontology, a string object is an entity unless `object_type` names a

@@ -286,7 +286,7 @@ halve trust, so a stale curated record still beats a fresh scrape.
 
 The highest rank wins, and **a loser is kept, never dropped**. Its confidence is
 multiplied by `rank / winning rank`, and `odke.conflict` records a sentence saying
-why, so a validator or a person can see the losing claim. Equal ranks are `tied`,
+why, so the gate or a person can see the losing claim. Equal ranks are `tied`,
 and both claims stay at full confidence for someone to settle.
 
 ```python

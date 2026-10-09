@@ -250,8 +250,8 @@ not told about.
   percentile.
 - **Existence, property-type and node-key constraints.** Neo4j has these only in
   Enterprise Edition, so none is emitted, and `EntityType.keys` is not compiled.
-- **Domain and range**, such as "an employer is a Company". A `Validator` is the
-  gate for those.
+- **Domain and range**, such as "an employer is a Company". A `Gate` checks
+  those.
 
 ```python
 (check,) = [c for c in Neo4jConstrainer().checks(ontology) if "odke:check hq" in c]

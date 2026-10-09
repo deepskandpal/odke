@@ -307,7 +307,7 @@ which is the right shape for a caller who wants recall and will filter later.
 | 7 | resolve | `Resolver.resolve(facts, index) -> (facts, links)` | `PassThroughResolver`: keys as given, no links. |
 | 8 | corroborate | `Corroborator.corroborate(facts) -> Iterable[Fact]` | `PassThroughCorroborator`: every fact its own claim; `support` stays 1. |
 | 9 | score | `Scorer.score(fact) -> Fact` | `PassThroughScorer`: unchanged. |
-| 10 | validate | `Validator.validate(fact, ontology) -> ValidationVerdict` | `PassThroughValidator`: `accept`. |
+| 10 | gate | `Gate.validate(fact, ontology) -> ValidationVerdict` | `PassThroughGate`: `accept`. |
 | 11 | sink | `Sink.write(kg) -> None` | None needed: `sinks=()` writes nowhere. |
 | 12 | constrain | `Constrainer.constrain(ontology) -> DDL` | `PassThroughConstrainer`: no statements. |
 | 13 | infer | `Inferrer.infer(corpus) -> Ontology` | `PassThroughInferrer`: an empty `Ontology()`. |
@@ -319,7 +319,7 @@ thirteen. An SDK is usually handed its documents ([DECISIONS #9](decisions.md)).
 ### How `Pipeline` runs them
 
 `Pipeline(ontology, extractor, *, chunker=, router=, grounder=, normalizer=,
-resolver=, corroborator=, scorer=, validator=, constrainer=, sinks=)` takes the
+resolver=, corroborator=, scorer=, gate=, constrainer=, sinks=)` takes the
 extractor and the stages you have opinions about. Every stage you leave as
 `None` is its pass-through. `run(docs)` takes `Document`s (a `Loader` is how you
 get them) and does this, in order:
@@ -336,10 +336,10 @@ get them) and does this, in order:
    grounder stamps a verdict, it never drops a fact.
 
 The batched paths give the same facts, in the same order, as one call at a time.
-3. **Over the batch:** resolve, then corroborate, score and validate. Resolution
+3. **Over the batch:** resolve, then corroborate, score and gate. Resolution
    runs before corroboration on purpose: `Fact.signature` merges on
    `subject.key`, so corroboration cannot repair a resolution failure. A fact the
-   validator `refuse`s is dropped and counted; `accept` and `conflict` are
+   gate `refuse`s is dropped and counted; `accept` and `conflict` are
    written.
 4. Build the `KnowledgeGraph` and hand it to every sink.
 
@@ -361,7 +361,7 @@ So the mechanism is small:
 - A sink may declare `profile = PlatformProfile(name, resolves=, constrains=, prunes=)`
   saying what its store covers.
 - If a real stage is configured on both sides (a resolver while the store
-  `resolves`, a validator while it `prunes`, or a constrainer while it
+  `resolves`, a gate while it `prunes`, or a constrainer while it
   `constrains`), `Pipeline` emits **one** `DoubleStageWarning` at construction and
   runs what it was given. The pipeline warns and never refuses. A constrainer whose
   `platform` matches the profile's `name` is that store's other half, not a
@@ -369,7 +369,7 @@ So the mechanism is small:
 - `Delegated(to="...")` satisfies every stage Protocol as a pass-through and
   stamps `to` wherever the data model has a provenance slot. A delegated resolver
   sets `Entity.resolution = Resolution(method="linker", linker=to)` on every
-  entity that arrives unresolved. A delegated router or validator names `to` in
+  entity that arrives unresolved. A delegated router or gate names `to` in
   its verdict's `reason`. The platform's work can then be read back and scored the
   same way as work done here.
 
