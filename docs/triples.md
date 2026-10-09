@@ -133,6 +133,11 @@ evidence was made (`cited`, `quoted`, `quote_not_found`, `context`), and
 `unmatched_rows` counts rows whose `doc` matched no document. Check it first
 when a graph comes back smaller than the file.
 
+A file name is not unique: `2023/report.txt` and `2024/report.txt` are both
+`report`. Rows that name it go to the first of the two to arrive, the other
+gets none and a warning names both, and `ambiguous_rows` counts them. Give such
+texts ids and name them by id.
+
 ## From `odke run`
 
 ```yaml

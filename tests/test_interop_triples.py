@@ -245,6 +245,24 @@ def test_rows_find_their_text_by_id_or_by_file_name(companies: Ontology) -> None
     assert stage.stats["unmatched_docs"] == ["missing"]
 
 
+def test_a_file_name_two_texts_share_is_served_to_one_of_them(companies: Ontology) -> None:
+    first = Document(text=TEXT, uri="file:///corpus/2023/report.txt")
+    second = Document(text="Halden Robotics moved to Lyon.", uri="file:///corpus/2024/report.txt")
+    alone = Document(text=TEXT, uri="file:///corpus/halden.txt")
+    docs = [first, second, alone]
+    stage = TriplesExtractor([_row(doc="report"), _row(object="Leeds")], documents=docs)
+    with pytest.warns(UserWarning, match=rf"{first.id}.*{second.id}"):
+        kg = Pipeline(companies, stage).run(docs)
+    # One fact for the one row, grounded against the text that claimed it first
+    # and not against the other's too; the file name only one text has still works.
+    cited = [e.doc_id for f in kg.facts for e in f.evidence if f.object_entity.label == "Lyon"]
+    assert cited == [first.id]
+    assert sorted(f.object_entity.label for f in kg.facts if f.object_entity) == ["Leeds", "Lyon"]
+    stats = stage.stats
+    assert (stats["rows"], stats["context"], stats["unmatched_rows"]) == (2, 2, 0)
+    assert (stats["ambiguous_rows"], stats["ambiguous_docs"]) == (1, ["report"])
+
+
 def test_triples_arrive_once_with_the_first_chunk(companies: Ontology, halden: Document) -> None:
     from openodke import SentenceChunker
 
