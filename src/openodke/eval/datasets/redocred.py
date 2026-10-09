@@ -29,6 +29,8 @@ from pathlib import Path
 from typing import Any
 
 from openodke.eval.ablation import AblationRun, ablate
+from openodke.eval.bootstrap import Range
+from openodke.eval.cost import CallRecord
 from openodke.eval.datasets import _common
 from openodke.eval.datasets._common import (
     Opener,
@@ -42,6 +44,16 @@ from openodke.eval.datasets._common import (
     write_documents,
     write_json,
     write_jsonl,
+)
+from openodke.eval.eval_report import (
+    Conformance,
+    Counts,
+    Dataset,
+    EvalReport,
+    Hallucination,
+    Row,
+    performance,
+    spend,
 )
 from openodke.eval.report import Metric, StageReport
 
@@ -293,16 +305,27 @@ def score(
     gold: Sequence[Mapping[str, Any]], predicted: Mapping[str, Sequence[Triple]]
 ) -> dict[str, Metric]:
     """Micro precision, recall and F1, relation conformance, and entity hallucination."""
+    return aggregate(documents(gold, predicted))
+
+
+def documents(
+    gold: Sequence[Mapping[str, Any]], predicted: Mapping[str, Sequence[Triple]]
+) -> list[dict[str, Any]]:
+    """Each document's counts, before they are pooled: what `aggregate` sums.
+
+    `tp` is the gold facts found, each once; `predicted` the distinct triples
+    predicted; `gold` the gold facts; then how many triples use one of the 96
+    relations, and how many are hallucinated.
+    """
     relations = {_norm(label) for label in RELATIONS.values()}
-    tp = n_pred = n_gold = conformant = hallucinated = 0
+    out = []
     for row in gold:
         names = [{_norm(n) for n in cluster} for cluster in row["entities"]]
         facts = {(h, _norm(r), t) for h, r, t in row["facts"]}
         text = _norm(row["text"])
         found: set[tuple[int, str, int]] = set()
         triples = list(dict.fromkeys(predicted.get(row["id"], ())))
-        n_pred += len(triples)
-        n_gold += len(facts)
+        conformant = hallucinated = 0
         for subject, relation, obj in triples:
             rel, s, o = _norm(relation), _norm(subject), _norm(obj)
             conformant += rel in relations
@@ -314,7 +337,24 @@ def score(
             )
             if match is not None:
                 found.add(match)
-                tp += 1
+        out.append(
+            {
+                "id": row["id"],
+                "tp": len(found),
+                "predicted": len(triples),
+                "gold": len(facts),
+                "conformant": conformant,
+                "hallucinated": hallucinated,
+            }
+        )
+    return out
+
+
+def aggregate(units: Sequence[Mapping[str, Any]]) -> dict[str, Metric]:
+    """The pooled metrics from `documents`. Undefined precision and recall are 0.0, as DocRED's."""
+    tp, n_pred, n_gold, conformant, hallucinated = (
+        sum(u[k] for u in units) for k in ("tp", "predicted", "gold", "conformant", "hallucinated")
+    )
     precision = tp / n_pred if n_pred else 0.0
     recall = tp / n_gold if n_gold else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
@@ -329,14 +369,64 @@ def score(
     }
 
 
+HALLUCINATION = (
+    "Re-DocRED, openodke's scoring: the subject or object, case and punctuation ignored, is "
+    "nowhere in the passage, or the relation is not one of the 96"
+)
+
+
+def row(
+    name: str,
+    units: Sequence[Mapping[str, Any]],
+    metrics: Mapping[str, Metric],
+    ranges: Mapping[str, Range],
+    calls: Sequence[CallRecord],
+) -> Row:
+    """One configuration's eval report row, from the same `documents` its metrics came from."""
+    tp, n_pred, n_gold, conformant, hallucinated = (
+        sum(u[k] for u in units) for k in ("tp", "predicted", "gold", "conformant", "hallucinated")
+    )
+    return Row(
+        name=name,
+        performance=performance(metrics, ranges),
+        counts=Counts(
+            hits=tp,
+            over_extraction=n_pred - tp,
+            under_extraction=n_gold - tp,
+            predicted=n_pred,
+            gold=n_gold,
+            documents=len(units),
+        ),
+        conformance=Conformance(
+            rate=float(metrics["onto_conf"] or 0.0),
+            conformant=conformant,
+            facts=n_pred,
+            checks=("predicate",),
+        ),
+        hallucination=Hallucination(
+            definition=HALLUCINATION,
+            hallucinated=hallucinated,
+            facts=n_pred,
+            rate=hallucinated / n_pred if n_pred else None,
+        ),
+        **spend(name, calls),
+    )
+
+
 def run(prepared: str | Path) -> StageReport:
     """Run `prepared/odke.json` three ways and score each (see `score`)."""
+    return evaluate(prepared).stages[0]
+
+
+def evaluate(prepared: str | Path) -> EvalReport:
+    """`run`, as the eval report: each row with its ranges over the documents."""
     from openodke.run.config import load_config
 
     folder = Path(prepared)
     meta = json.loads((folder / "dataset.json").read_text(encoding="utf-8"))
     gold = read_jsonl(folder / "gold.jsonl")
-    return score_run(ablate(load_config(folder / "odke.json")), gold, meta, save_to=folder)
+    ablation = ablate(load_config(folder / "odke.json"))
+    return report_run(ablation, gold, meta, save_to=folder, path=folder)
 
 
 def score_run(
@@ -347,13 +437,34 @@ def score_run(
     save_to: Path | None = None,
 ) -> StageReport:
     """Score an `AblationRun` already made — `run` without the model calls."""
-    return _common.score_run(
+    return report_run(ablation, gold, meta, save_to=save_to).stages[0]
+
+
+def report_run(
+    ablation: AblationRun,
+    gold: Sequence[Mapping[str, Any]],
+    meta: Mapping[str, Any],
+    *,
+    save_to: Path | None = None,
+    path: str | Path | None = None,
+) -> EvalReport:
+    """`score_run`, as the eval report. `path` names the prepared set in its dataset."""
+    return _common.report_run(
         ablation,
         gold,
         meta,
         stage=f"{NAME}:{meta['split']}",
-        score=lambda predicted: score(gold, predicted),
+        units=lambda predicted: documents(gold, predicted),
+        aggregate=aggregate,
+        row=row,
         notes=_notes,
+        dataset=Dataset(
+            name=NAME,
+            path=None if path is None else str(path),
+            documents=len(gold),
+            labels=sum(len(r["facts"]) for r in gold),
+            details={"split": meta["split"]},
+        ),
         save_to=save_to,
     )
 
@@ -381,8 +492,13 @@ __all__ = [
     "RELATIONS",
     "SPLITS",
     "TYPES",
+    "aggregate",
+    "documents",
+    "evaluate",
     "fetch",
     "prepare",
+    "report_run",
+    "row",
     "run",
     "score",
     "score_run",

@@ -14,7 +14,17 @@ from typing import Any
 
 from openodke.coverage import summary as coverage_summary
 from openodke.eval.ablation import AblationRun
-from openodke.eval.cost import StageCost
+from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED, Range, bootstrap
+from openodke.eval.cost import CallRecord, StageCost
+from openodke.eval.eval_report import (
+    Bootstrap,
+    Dataset,
+    EvalReport,
+    Row,
+    Run,
+    from_stage,
+    models_called,
+)
 from openodke.eval.report import Metric, StageReport
 from openodke.interop.triples import _file_name
 from openodke.types import Document, Fact
@@ -233,34 +243,61 @@ def report(
     return StageReport(stage=stage, n=n, metrics=summary, breakdown=breakdown, notes=tuple(notes))
 
 
-def score_run(
+# A dataset's scoring, split so the eval report can resample it: one configuration's
+# triples by document -> one unit per document; units -> the dataset's metrics;
+# and a configuration's name, units, metrics, ranges and calls -> its report row.
+Units = Callable[[Mapping[str, Sequence[Triple]]], list[Any]]
+Aggregate = Callable[[Sequence[Any]], dict[str, Metric]]
+ToRow = Callable[
+    [str, Sequence[Any], Mapping[str, Metric], Mapping[str, Range], Sequence[CallRecord]], Row
+]
+
+
+def report_run(
     ablation: AblationRun,
     gold: Sequence[Mapping[str, Any]],
     meta: Mapping[str, Any],
     *,
     stage: str,
-    score: Callable[[Mapping[str, Sequence[Triple]]], dict[str, Metric]],
+    units: Units,
+    aggregate: Aggregate,
+    row: ToRow,
     notes: Callable[[Mapping[str, Metric], Mapping[str, Metric], Mapping[str, Metric]], list[str]],
+    dataset: Dataset,
     save_to: Path | None = None,
-) -> StageReport:
+    resamples: int = RESAMPLES,
+    seed: int = SEED,
+    level: float = LEVEL,
+) -> EvalReport:
     """Each configuration of an `AblationRun` scored with a dataset's own metrics.
 
-    `score` takes one configuration's triples by document. `notes` takes the
-    three rows' metrics — extracted, after the gate, after corroboration — and
-    writes the dataset's lines beside the paper's numbers; the grounder's
-    verdicts and the run's own notes follow them.
+    `units` takes one configuration's triples by document and scores each
+    document; `aggregate` turns those into the dataset's numbers, which are
+    the stage report's row, and is what the bootstrap recomputes on each draw
+    of documents; `row` makes the eval report's row. `notes` takes the three
+    rows' metrics — extracted, after the gate, after corroboration — and writes
+    the dataset's lines beside the paper's numbers; the grounder's verdicts and
+    the run's own notes follow them.
     """
     labels: Mapping[str, str] = meta["relation_labels"]
     names = doc_names(ablation.documents)
-    rows = []
-    predictions = {}
+    table, rows, predictions = [], [], {}
+
+    def statistic(draw: Sequence[Any]) -> dict[str, Metric]:
+        scored = aggregate(draw)
+        return {k: scored[k] for k in ("precision", "recall", "f1")}
+
     for name, facts, calls in ablation.configurations():
         predicted = triples_by_doc(facts, names, lambda p: labels.get(p, p))
         predictions[name] = predicted
-        rows.append((name, score(predicted), calls, len(facts)))
+        scored_units = units(predicted)
+        metrics = aggregate(scored_units)
+        ranges = bootstrap(scored_units, statistic, resamples=resamples, seed=seed, level=level)
+        table.append((name, metrics, calls, len(facts)))
+        rows.append(row(name, scored_units, metrics, ranges, calls))
     if save_to is not None:
         save_predictions(save_to, predictions)
-    raw, gated, full = (metrics for _, metrics, _, _ in rows)
+    raw, gated, full = (metrics for _, metrics, _, _ in table)
     lines = [
         *notes(raw, gated, full),
         f"grounder verdicts on the candidates: {verdicts(ablation.grounded)}",
@@ -268,7 +305,16 @@ def score_run(
     ]
     if ablation.coverage is not None:
         lines.append(f"coverage of the candidates: {coverage_summary(ablation.coverage)}")
-    return report(stage, len(gold), rows, lines)
+    return from_stage(
+        report(stage, len(gold), table, lines),
+        rows=rows,
+        bootstrap=Bootstrap(units=len(gold), resamples=resamples, seed=seed, level=level),
+        run=Run(
+            models=models_called(ablation.all_calls, ablation.models),
+            prompts=ablation.prompts,
+            dataset=dataset,
+        ),
+    )
 
 
 def verdicts(facts: Iterable[Fact]) -> str:
