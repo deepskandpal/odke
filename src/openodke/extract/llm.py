@@ -34,6 +34,7 @@ from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Any
 
+from openodke._batch import incomplete, is_config_error
 from openodke.extract._common import (
     ChunkContext,
     Documents,
@@ -446,50 +447,84 @@ class LLMExtractor:
 
         One list of facts comes back per chunk, in order, and `calls`,
         `rejections` and `malformed` are left in the order chunk-by-chunk
-        extraction gives, so a batch reads exactly as a loop would. A failure
-        that `extract` would raise is raised here too, and the calls not yet
-        started are dropped rather than paid for. A budget stop
+        extraction gives, so a batch reads exactly as a loop would.
+
+        A chunk whose call fails, after its retries, costs only itself: the
+        rest of the batch is extracted, and then the first failure is raised
+        with the batch's `partial` (a list of facts per chunk, None where one
+        failed) and its `failures` by chunk index (`openodke._batch`). A
+        configuration error raises at once and drops the calls not yet
+        started, as every call would fail alike. A budget stop
         (`BudgetExceeded`) is raised once the chunks in flight are done, with
-        what they found as its `partial`: a list of facts per chunk, None for a
-        chunk the stop reached first. The client must be thread-safe: both
-        built-in clients are; `ScriptedClient` answers by position and is not,
-        which is what `RecordedClient` is for.
+        the same two attributes; None in its `partial` is also a chunk the
+        stop reached first. The client must be thread-safe: both built-in
+        clients are; `ScriptedClient` answers by position and is not, which is
+        what `RecordedClient` is for.
         """
         if self.max_workers == 1 or len(chunks) < 2:
-            done: list[list[Fact]] = []
-            for chunk in chunks:
+            done: list[list[Fact] | None] = []
+            failed: dict[int, Exception] = {}
+            for at, chunk in enumerate(chunks):
                 try:
                     done.append(self.extract(chunk, ontology))
                 except BudgetExceeded as stop:
                     stop.partial = [*done, *([None] * (len(chunks) - len(done)))]
+                    stop.failures = failed
                     raise
-            return done
+                except Exception as exc:
+                    if is_config_error(exc):
+                        raise
+                    _log_failure(chunk, exc)
+                    done.append(None)
+                    failed[at] = exc
+            if failed:
+                raise incomplete(failed, done)
+            return [facts for facts in done if facts is not None]
         with self._lock:
             marks = len(self.calls), len(self.rejections), len(self.malformed)
         workers = min(self.max_workers, len(chunks))
         with ThreadPoolExecutor(workers, thread_name_prefix="openodke-extract") as pool:
-            futures = [pool.submit(self.extract, chunk, ontology) for chunk in chunks]
+            futures = [pool.submit(self._guarded, chunk, ontology) for chunk in chunks]
             wait(futures, return_when=FIRST_EXCEPTION)
             if any(f.done() and f.exception() is not None for f in futures):
                 pool.shutdown(cancel_futures=True)
-        failures = [f.exception() for f in futures if not f.cancelled() and f.exception()]
-        # The first failure in chunk order that is not a budget stop: the pool
-        # starts chunks in order, so none before a failed one was cancelled.
-        if other := next((e for e in failures if not isinstance(e, BudgetExceeded)), None):
+        # Only a configuration error or a budget stop is raised by a worker.
+        raised = [f.exception() for f in futures if not f.cancelled() and f.exception()]
+        # The first in chunk order that is not a budget stop: the pool starts
+        # chunks in order, so none before a failed one was cancelled.
+        if other := next((e for e in raised if not isinstance(e, BudgetExceeded)), None):
             raise other
         order = {(c.doc_id, c.index): i for i, c in enumerate(chunks)}
         with self._lock:
             _in_chunk_order(self.calls, marks[0], order)
             _in_chunk_order(self.rejections, marks[1], order)
             _in_chunk_order(self.malformed, marks[2], order)
-        if failures:
-            budget = failures[0]
-            assert isinstance(budget, BudgetExceeded)  # every failure left is one
-            budget.partial = [
-                f.result() if not f.cancelled() and f.exception() is None else None for f in futures
-            ]
+        results = [
+            f.result() if not f.cancelled() and f.exception() is None else None for f in futures
+        ]
+        failures = {at: r.error for at, r in enumerate(results) if isinstance(r, _Failed)}
+        partial = [None if isinstance(r, _Failed) else r for r in results]
+        if raised:
+            budget = raised[0]
+            assert isinstance(budget, BudgetExceeded)  # every one left is a budget stop
+            budget.partial = partial
+            budget.failures = failures
             raise budget
-        return [future.result() for future in futures]
+        if failures:
+            raise incomplete(failures, partial)
+        return [facts for facts in partial if facts is not None]
+
+    def _guarded(self, chunk: Chunk, ontology: Ontology) -> list[Fact] | _Failed:
+        """`extract`, with a failure that is this chunk's alone handed back, not raised."""
+        try:
+            return self.extract(chunk, ontology)
+        except BudgetExceeded:
+            raise
+        except Exception as exc:
+            if is_config_error(exc):
+                raise
+            _log_failure(chunk, exc)
+            return _Failed(exc)
 
     def _complete(
         self, chunk: Chunk, messages: list[Message], schema: dict[str, Any] | None
@@ -611,6 +646,22 @@ class LLMExtractor:
         )
         with self._lock:
             self.rejections.append(rejection)
+
+
+@dataclass(frozen=True, slots=True)
+class _Failed:
+    """A chunk whose extraction raised: its own failure, kept apart from the batch."""
+
+    error: Exception
+
+
+def _log_failure(chunk: Chunk, exc: BaseException) -> None:
+    log.warning(
+        "extraction failed for chunk %s#%d, the rest of the batch carries on: %s",
+        chunk.doc_id,
+        chunk.index,
+        exc,
+    )
 
 
 def _is_for(record: Rejection, chunk: Chunk) -> bool:
