@@ -657,6 +657,12 @@ rerun replays the draw it made the first time, and nothing expires. Asking
 again means deleting the directory or naming a new one. Two threads asking the
 same new question at once both pay for it.
 
+*2026-10-10, for #145:* the key also holds `ModelSpec.repeat` when it is not
+0. Gold adjudication asks one question three times on purpose, and a key
+without it replays the first answer as all three (#36). Draw 0 adds nothing to
+the key, so every entry written before is still found, and the first draw
+shares its entry with an ordinary call of the same question.
+
 ### 31. The store is looked up, never loaded, and a lookup never changes it
 
 #24 put resolution against the store in scope "through a lookup rather than a
@@ -831,6 +837,54 @@ store.
 back from the relationship's properties, which hold no quotes or mentions, so
 its evidence returns without them. A store never bootstrapped has no
 signature index, so nothing merges with it, and the warning is the only sign.
+
+### 36. Without gold, the judge is corrected, the strict number stands, and pooled recall overstates
+
+Three evaluators score a pipeline where gold is missing or incomplete (#144,
+#145, #146). Each has a number that is easy to print and wrong to trust alone.
+
+**A judge's precision is corrected by labels.** The grounder can grade every
+fact, and the share it supports is a precision. It is the judge's, though,
+biased whichever way the judge leans, and agreement on a sample does not say
+which way. So a person labels a random sample, and prediction-powered
+inference adds the mean gap between the labels and the judge on it to the
+judge's share (Angelopoulos et al. 2023; ARES uses it for LLM judges, arXiv
+2311.09476). That removes the bias on average, and the interval is narrower
+than the labels' own whenever the judge mostly agrees with them. The report
+prints all three numbers: judge only, corrected and labels only.
+
+- **The interval is PPI's closed form, not a bootstrap.** It is one formula
+  with no resampling. Its variance, Var(y)/N + Var(y − f)·(1/n − 1/N), takes
+  out the overlap between the two terms, because the labelled facts are among
+  the judged ones, and it is exact when every fact is labelled.
+- **It treats facts as independent,** where every other range in the report
+  resamples documents. The sample is drawn fact by fact, so few labelled facts
+  share a document.
+- **Under 100 labels it is an "uncalibrated estimate".** In simulation a judge
+  that misses one true fact in ten covers the truth 94.8% of the time at 300
+  labels and 90.8% at 50.
+- **Recall is never claimed.** The coverage report stands in for it.
+
+**The strict precision never changes.** Adjudication lists a prediction the
+gold lacks as possibly missing from gold when the grounder supports it in 2 of
+3 runs. The adjudicated precision is printed beside the strict one and never
+replaces it, because it trusts the grounder on exactly the facts in question.
+Label set G measures how far that trust goes. The three runs are three calls:
+each carries its run index as `ModelSpec.repeat`, which no provider sees.
+
+**Pooled recall carries its caveat.** Pooling two or more runs' supported
+facts gives each run a recall relative to the pool. That overstates true
+recall, because the pool misses whatever every run missed. The caveat is a
+field of the report section, not a footnote, and each run's coverage report
+sits beside the number.
+
+*Cost:* three numbers where a reader wanted one, and a judge-only number
+printed though never trusted, since hiding it would hide the bias it shows. A
+calibrated number still needs a person to label 100 facts or more.
+Adjudication triples the grounding bill for the predictions the gold lacks.
+And with the response cache on, the first of the three draws is not always
+fresh: the cache keys `repeat` only when it is not 0, so run 0 is answered by
+any earlier grounding of the same question.
 
 ### 37. A source that changes is retracted, and a fact left with none is retired, not deleted
 
