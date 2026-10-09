@@ -154,6 +154,46 @@ def test_fetch_then_prepare_writes_a_config_that_builds(tmp_path: Path) -> None:
         text2kgbench.files("wikidata_tekgen", "ont_99_nothing")
 
 
+def _t2k_raw(tmp_path: Path) -> Path:
+    opener = _fake_opener(
+        {
+            "1_movie_ontology.json": json.dumps(ONTOLOGY).encode(),
+            "ont_1_movie_test.jsonl": _jsonl([{"id": r["id"], "sent": r["sent"]} for r in GOLD]),
+            "ont_1_movie_ground_truth.jsonl": _jsonl(GOLD),
+        }
+    )
+    return text2kgbench.fetch(tmp_path / "raw", ontologies=["ont_1_movie"], opener=opener)
+
+
+def test_prepare_refuses_a_directory_it_did_not_write(tmp_path: Path) -> None:
+    """`--out .` at a repository's root must not take the site's `docs/` with it."""
+    repo = tmp_path / "repo"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "index.md").write_text("# the site\n")
+    root = _t2k_raw(tmp_path)
+    with pytest.raises(ValueError, match="dataset.json"):
+        text2kgbench.prepare(root, "ont_1_movie", repo)
+    args = ["bench", "prepare", "text2kgbench", str(root), "--ontology", "ont_1_movie"]
+    result = CliRunner().invoke(app, [*args, "--out", str(repo)])
+    assert result.exit_code == 2 and "dataset.json" in result.output
+    assert [p.relative_to(repo).as_posix() for p in sorted(repo.rglob("*"))] == [
+        "docs",
+        "docs/index.md",
+    ]
+    assert (repo / "docs" / "index.md").read_text() == "# the site\n"
+
+
+def test_prepare_again_replaces_its_own_documents(tmp_path: Path) -> None:
+    root = _t2k_raw(tmp_path)
+    out = text2kgbench.prepare(root, "ont_1_movie", tmp_path / "set")
+    (out / "docs" / "notes.md").write_text("kept\n")
+    text2kgbench.prepare(root, "ont_1_movie", out, limit=1)
+    assert sorted(p.name for p in (out / "docs").iterdir()) == [
+        "notes.md",
+        "ont_1_movie_test_1.txt",
+    ]
+
+
 def _run(names: dict[str, str], candidates: list[Fact], gated: list[Fact]) -> AblationRun:
     docs = [Document(id=i, text="", uri=f"file:///set/docs/{n}.txt") for i, n in names.items()]
     return AblationRun(

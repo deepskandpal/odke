@@ -33,6 +33,7 @@ from openodke.eval.datasets._common import (
     Opener,
     Triple,
     change,
+    check_out,
     doc_names,
     download,
     read_jsonl,
@@ -250,6 +251,7 @@ def prepare(
         documents = documents[:limit]
     dev = json.loads(dev_path.read_text(encoding="utf-8"))
     target = Path(out)
+    check_out(target)
     write_json(target / "ontology.json", to_ontology(dev))
     gold = [_gold_row(f"{split}_{i:04d}", doc) for i, doc in enumerate(documents)]
     write_documents(target, ((row["id"], row["text"]) for row in gold))

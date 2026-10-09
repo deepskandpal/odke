@@ -84,12 +84,33 @@ def write_jsonl(path: Path, rows: Iterable[Mapping[str, Any]]) -> Path:
     return path
 
 
+def check_out(out: Path) -> None:
+    """Refuse to prepare into a directory that something other than `prepare` owns.
+
+    `prepare` overwrites `ontology.json` and `odke.json` and replaces the text
+    files under `docs/`, so `--out .` at a repository's root would rewrite its
+    files. A new or empty directory is fine, and so is one an earlier prepare
+    wrote, which its `dataset.json` marks.
+    """
+    if not out.exists() or (out / "dataset.json").is_file():
+        return
+    if not out.is_dir() or any(out.iterdir()):
+        raise ValueError(
+            f"{out} is not empty and has no dataset.json from an earlier prepare; "
+            "prepare into a new or empty directory"
+        )
+
+
 def write_documents(out: Path, docs: Iterable[tuple[str, str]]) -> int:
-    """One `<id>.txt` per document under `out/docs`: the id survives as the file's stem."""
+    """One `<id>.txt` per document under `out/docs`: the id survives as the file's stem.
+
+    Only the text files an earlier prepare wrote are removed; anything else in
+    `docs/` stays.
+    """
     folder = out / "docs"
-    if folder.exists():
-        shutil.rmtree(folder)
-    folder.mkdir(parents=True)
+    folder.mkdir(parents=True, exist_ok=True)
+    for old in folder.glob("*.txt"):
+        old.unlink()
     count = 0
     for doc_id, text in docs:
         (folder / f"{doc_id}.txt").write_text(text, encoding="utf-8")

@@ -32,7 +32,9 @@ odke bench run text2kgbench runs/movie
 - `prepare` writes a directory you can read before spending anything:
   `docs/` (one text file per document), `ontology.json` (the dataset's schema in
   openodke's form), `gold.jsonl`, `dataset.json` and `odke.json`, the run config.
-  It calls no model. `--limit` keeps the first N documents for a cheap pilot.
+  It calls no model. `--out` must be new, empty, or a directory an earlier
+  prepare wrote; anything else is refused rather than overwritten.
+  `--limit` keeps the first N documents for a cheap pilot.
   `--extract-model` and `--ground-model` take any LiteLLM model string
   (`openai/gpt-5`, `gemini/…`, `ollama/llama3.1`, `anthropic/…`); give the
   grounder the smaller one. `--max-tokens` sets the extractor's output room.
