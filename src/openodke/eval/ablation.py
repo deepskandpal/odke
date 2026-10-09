@@ -166,6 +166,8 @@ def ablate(config: RunConfig) -> AblationRun:
     # it; inverse partners belong to the whole pipeline, the third row.
     route = {"chunker": stages["chunker"], "router": stages["router"], "inverses": False}
     notes: list[str] = []
+    if config.reextract is not None:
+        notes.append("reextract is not ablated: every row is the first extraction pass")
 
     recording = _Recording(stages["extractor"])
     extracted = Pipeline(ontology, recording, coverage=True, **route).run(docs)

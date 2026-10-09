@@ -64,6 +64,7 @@ from openodke.loaders import (
 )
 from openodke.ontology import Ontology, OntologyLoadError
 from openodke.pipeline import Pipeline
+from openodke.reextract import Reextract
 from openodke.run.config import STAGES, ConfigError, InputSpec, RunConfig, StageSpec
 from openodke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink
 from openodke.sinks.jsonl import JsonlSink
@@ -877,6 +878,11 @@ class Built:
             sinks=sinks,
             inverses=self.config.inverses,
             coverage=self.config.coverage,
+            # An extractor passed in replays one that already ran (the ablation's),
+            # and asking it again would be a second extraction pass.
+            reextract=None
+            if "extractor" in overrides
+            else reextract_policy(self.config, s["extractor"]),
         )
 
     def documents(self) -> list[Document]:
@@ -897,6 +903,18 @@ class Built:
                 raise ConfigError(f"inputs[{i}].path: {path} does not exist")
             docs.extend(loader.load(path))
         return with_path_ids(docs, self.config.base_dir)
+
+
+def reextract_policy(config: RunConfig, extractor: Any) -> Reextract | None:
+    """The config's `reextract:` as a policy, or None. An extractor that cannot is refused."""
+    if config.reextract is None:
+        return None
+    if not callable(getattr(extractor, "reextract", None)):
+        raise ConfigError(
+            f"reextract: the extractor ({type(extractor).__name__}) has no "
+            "reextract(window, relations, already, ontology); llm and hybrid have one"
+        )
+    return Reextract(windows=config.reextract.windows)
 
 
 def input_loader(config: RunConfig, index: int, item: InputSpec) -> tuple[StageSpec, str]:
@@ -968,6 +986,7 @@ def build(config: RunConfig) -> Built:
         )
         for i, spec in enumerate(config.stages.sink)
     ]
+    reextract_policy(config, stages["extractor"])
     if config.bootstrap and not any(p.can_bootstrap for p in sinks):
         raise ConfigError(
             "bootstrap: true needs a sink that applies constraints (neo4j); "

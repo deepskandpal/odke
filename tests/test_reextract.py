@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,6 +25,8 @@ from openodke.ground.llm import render_claim
 from openodke.llm import ModelSpec, RecordedClient, ScriptedClient
 from openodke.prompts import get as get_prompt
 from openodke.reextract import REEXTRACT, Reextract, Reextractor, relations_for
+from openodke.run import ConfigError, execute, parse_config
+from openodke.run.build import build
 
 ONTOLOGY = Ontology.from_dict(
     {
@@ -270,3 +274,75 @@ def test_the_whole_loop_through_llm_extractor_and_llm_grounder() -> None:
     assert kg.stats["reextract"]["kept"] == 1
     assert {f.predicate for f in kg.facts} == {"employer", "headquarters", "born_in"}
     assert extractor.prompts == ["extract@1", "reextract@1"]
+
+
+# --------------------------------------------------------------------------- #
+# odke run
+# --------------------------------------------------------------------------- #
+
+
+def _project(tmp_path: Path, **extra: Any) -> dict[str, Any]:
+    (tmp_path / "corpus").mkdir(parents=True)
+    (tmp_path / "ontology.json").write_text(ONTOLOGY.model_dump_json(), encoding="utf-8")
+    (tmp_path / "corpus" / "d1.txt").write_text(TEXT, encoding="utf-8")
+    return {
+        "ontology": "ontology.json",
+        "inputs": ["corpus"],
+        "stages": {"extractor": "test_reextract:AnyDoc"},
+        **extra,
+    }
+
+
+class AnyDoc(_Planted):
+    """`test_reextract:AnyDoc`: the planted facts, under whatever id the run gives the document."""
+
+    def extract(self, chunk: Chunk, ontology: Ontology) -> list[Fact]:
+        return [
+            f.model_copy(
+                update={
+                    "evidence": tuple(
+                        e.model_copy(
+                            update={
+                                "doc_id": chunk.doc_id,
+                                "span": e.span.model_copy(update={"doc_id": chunk.doc_id})
+                                if e.span
+                                else None,
+                            }
+                        )
+                        for e in f.evidence
+                    )
+                }
+            )
+            for f in (EMPLOYED, BASED)
+        ]
+
+    def reextract(
+        self, window: Chunk, relations: list[str], already: list[Fact], ontology: Ontology
+    ) -> list[Fact]:
+        self.asked.append((window, relations, already))
+        span = Span(doc_id=window.doc_id, start=window.start, end=window.end, quote=window.text)
+        return [BORN.model_copy(update={"evidence": (Evidence(doc_id=window.doc_id, span=span),)})]
+
+
+def test_odke_run_turns_it_on_from_the_config(tmp_path: Path) -> None:
+    config = _project(tmp_path, reextract={"windows": 2})
+    result = execute(parse_config(config, base_dir=tmp_path))
+    assert result.stats["reextract"]["windows"] == 1
+    assert result.stats["reextract"]["kept"] == 1
+    line = next(row for row in result.render().splitlines() if row.startswith("reextract"))
+    assert "1 windows asked, 1 facts returned (0 already held), 1 kept" in line
+    json.dumps(result.stats["reextract"])  # what a manifest writes
+
+    off = execute(parse_config(_project(tmp_path / "off"), base_dir=tmp_path / "off"))
+    assert "reextract" not in off.stats
+    on = parse_config(_project(tmp_path / "on", reextract=True), base_dir=tmp_path / "on")
+    assert on.reextract is not None and on.reextract.windows == 3
+
+
+def test_odke_run_refuses_an_extractor_that_cannot_reextract(tmp_path: Path) -> None:
+    config = _project(tmp_path, reextract=True)
+    config["stages"]["extractor"] = {"use": "pattern"}
+    with pytest.raises(ConfigError, match="reextract: the extractor"):
+        build(parse_config(config, base_dir=tmp_path))
+    with pytest.raises(ConfigError, match="windows"):
+        parse_config(_project(tmp_path / "zero", reextract={"windows": 0}), base_dir=tmp_path)
