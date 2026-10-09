@@ -16,6 +16,8 @@ from openodke.cli.main import app
 from openodke.eval.ablation import CONFIGURATIONS, AblationRun
 from openodke.eval.datasets import DATASETS, redocred, text2kgbench
 from openodke.eval.datasets._common import change, pascal, snake, triples_by_doc
+from openodke.eval.eval_report import read_report
+from openodke.eval.report import StageReport
 from openodke.ontology import Ontology
 from openodke.run.build import build
 from openodke.run.config import load_config
@@ -395,3 +397,28 @@ def test_redocred_score_is_its_documents_pooled() -> None:
     assert redocred.score(gold, triples)["precision"] == row.performance.precision.value == 1.0
     assert (row.counts.hits, row.counts.under_extraction) == (1, 1)
     assert row.performance.average == "micro"
+
+
+def test_odke_bench_run_writes_the_report_beside_the_predictions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    right = _fact("d1", "Bleach : Hell Verse", "director", "Noriyuki Abe")
+    names = {"d1": "ont_1_movie_test_1", "d2": "ont_1_movie_test_2"}
+    monkeypatch.setattr(text2kgbench, "ablate", lambda config: _run(names, [right], [right]))
+    prepared = text2kgbench.prepare(_t2k_raw(tmp_path), "ont_1_movie", tmp_path / "set")
+
+    result = CliRunner().invoke(app, ["bench", "run", "text2kgbench", str(prepared)])
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("text2kgbench:ont_1_movie  (n=2)\n")
+    assert result.output.rstrip().endswith(f"wrote {prepared / 'report.json'}")
+    report = read_report(prepared / "report.json")
+    assert report.run.dataset is not None and report.run.dataset.name == "text2kgbench"
+    assert report.rows[0].counts.hits == 1
+    assert (prepared / "predictions" / "extraction-alone.jsonl").is_file()
+
+    elsewhere = tmp_path / "elsewhere.json"
+    args = ["bench", "run", "text2kgbench", str(prepared), "--json", "--report", str(elsewhere)]
+    as_json = CliRunner().invoke(app, args)
+    assert as_json.exit_code == 0, as_json.output
+    assert StageReport.model_validate_json(as_json.output).stage == "text2kgbench:ont_1_movie"
+    assert read_report(elsewhere).title == "text2kgbench:ont_1_movie"

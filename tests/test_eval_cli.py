@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 
 from openodke import Chunk, Document, Entity, Fact, Ontology
 from openodke.cli.main import app
-from openodke.eval import StageReport, dump_jsonl
+from openodke.eval import StageReport, dump_jsonl, read_report
 from openodke.eval.runner import evaluate_files, load_stage, report_files
 from openodke.stages import PassThroughRouter
 
@@ -281,3 +281,44 @@ def test_extract_takes_an_ontology_for_conformance(tmp_path: Path) -> None:
     found = report.rows[0].conformance
     # Only the two `born` facts have a predicate this ontology declares.
     assert found is not None and (found.conformant, found.facts) == (2, 5)
+
+
+def test_odke_eval_writes_the_report_and_json_stays_a_stage_report(tmp_path: Path) -> None:
+    out = tmp_path / "report.json"
+    args = _files("extract")
+    result = runner.invoke(app, [*args, "--report", str(out)])
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("extract  (n=5)\n")
+    assert "0.400 [" in result.output and "95% ranges: 2 documents" in result.output
+    assert result.output.rstrip().endswith(f"wrote {out}")
+    assert read_report(out).rows[0].performance.f1.value == pytest.approx(0.4)
+
+    again = tmp_path / "again.json"
+    as_json = runner.invoke(app, [*args, "--json", "--report", str(again)])
+    assert as_json.exit_code == 0, as_json.output
+    assert StageReport.model_validate_json(as_json.output).metrics["f1"] == pytest.approx(0.4)
+    assert read_report(again) == read_report(out)
+
+
+@pytest.mark.parametrize("stage", ["route", "ground", "resolve", "score", "validate"])
+def test_every_stage_writes_a_report(tmp_path: Path, stage: str) -> None:
+    out = tmp_path / f"{stage}.json"
+    result = runner.invoke(app, [*_files(stage), "--report", str(out)])
+    assert result.exit_code == 0, result.output
+    report = read_report(out)
+    assert report.stages[0].stage == stage and report.rows == ()
+
+
+def test_odke_eval_spans_and_ablation_write_a_report(tmp_path: Path, example: Path) -> None:
+    out = tmp_path / "spans.json"
+    facts = FIXTURES / "spans.facts.jsonl"
+    result = runner.invoke(app, ["eval", "spans", "--facts", str(facts), "--report", str(out)])
+    assert result.exit_code == 0, result.output
+    assert read_report(out).stages[0].stage == "spans"
+
+    out = tmp_path / "ablation.json"
+    config, gold = str(example / "odke.yaml"), str(example / "gold.jsonl")
+    args = ["eval", "ablation", "--config", config, "--labels", gold, "--report", str(out)]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert len(read_report(out).rows) == 3
