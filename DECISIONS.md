@@ -1259,3 +1259,43 @@ instead, and are run again by hand.
 every text is hashed once more. A secret under a name the pattern
 does not know is written as it is. A run with no JSONL sink leaves a file
 beside its config.
+
+### 41. An event holds ids and numbers, never text, and a span goes where the application sends it
+
+A batch job in production has to say, while it runs and to a machine, which
+stage it is in, which document failed, and what each call cost and took
+(#161). So every job emits events on one logger, and `--log-format json` writes
+each as one JSON object a line.
+
+Four calls come with it.
+
+**One shape for every event.** Every event has the same ten keys, null where
+they do not apply, and a few of its own. A reader parses one schema, not one
+per event, and a field never moves between events.
+
+**No text by default.** An event holds ids, names, counts, times and costs.
+It never holds a passage, a quote, an entity's name, a prompt, a reply or the
+config. Logs travel further than graphs: to aggregators, to vendors, into
+tickets. The stages' own warnings can quote a model's reply, so as JSON they
+keep their template and lose their arguments. `--log-text` puts them back,
+for whoever asks.
+
+**A job's counts are its report's.** `job.end` reads facts in and out,
+refused, merged, linked and sent to review from the numbers the report
+prints, not from a tally of its own. Two tallies of one job drift, and then
+the logs and the report disagree about the same run.
+
+**OpenTelemetry is the API alone, and the application's provider.** The
+`otel` extra is `opentelemetry-api`, imported on first use. The spans go to
+whatever tracer provider the application configured. A library that picked
+the SDK and an exporter would pick a vendor. Each span names its parent
+explicitly: a stage's calls run in its thread pool, where the context the
+stage set does not follow. Without a provider, or without the extra, a span
+is nothing.
+
+*Cost:* an event per document and per model call, so a large run logs a lot.
+A warning's arguments are lost unless asked for, the document ids in them
+too; the `document` and `document.failed` events carry those. A model call
+names its stage and not its document. A stage with a client of its own, the
+Validator's pair judge say, sends no call events, though its spend is in
+`job.end`.
