@@ -1066,8 +1066,11 @@ compared by `name_key` against every name the gold end goes by; a value by
 common is not a question of wording, and two identical triples are the
 scorer's question, not the judge's. So the judge sets one bucket, and its bill
 grows with the near misses, not with misses times predictions. The diagnosis's
-surface-form bucket (#140) reads the same pre-filter, so the bucket and the
-lenient score count the same pairs.
+surface-form bucket (#38) takes its candidates from the same pre-filter, and
+with `--lenient` it reads the same decisions instead of asking again, so the
+bucket and the lenient score agree. With no judge, only a candidate whose
+other end is a near name is counted there, as unconfirmed, so a plain wrong
+value is never taken for wording.
 
 **The swap rule, as the pair judge's (#34).** Each pair is asked with the gold
 fact first and with the prediction first. "same" counts only when both orders

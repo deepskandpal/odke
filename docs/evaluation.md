@@ -208,7 +208,7 @@ print the table with an example of each.
 | 2 | refused by the Validator | a prediction matching it was made and the gate refused it | `--validator` |
 | 3 | wrong relation | a prediction links the same pair with another relation | predictions |
 | 4 | inverse direction | a prediction links the pair the other way round, with the same relation or the ontology's inverse ([#28](decisions.md#28)) | predictions, ontology |
-| 5 | surface form | a prediction has the relation and one end, and the other end is a near name | predictions |
+| 5 | surface form | a prediction that is no hit has the relation and one end, and the judge calls it the gold fact; with no judge, the other end is a near name | predictions, `--lenient` |
 | 6 | same triple, scored apart | a prediction states the triple, but a type, polarity or qualifier differs, or the scorer paired it with another gold fact | predictions |
 | 7 | cross-sentence | nothing came near, and the fact's evidence spans sentences | the dataset's evidence, else the text |
 | 8 | output saturation | nothing came near, the run's output is flat against length, and the document is long | the texts |
@@ -223,11 +223,16 @@ print the table with an example of each.
 - **`--trace`** is the run's `manifest.json`, whose coverage report names the
   relations no type was shown, or the run config that produced the predictions,
   whose extractor is built, with no model call, to read its snippets per type.
-- **Surface form** is the deterministic pre-filter for the fact-equivalence
-  judge (#143): name keys equal, one inside the other as whole words (four
-  characters or more), or 85% alike. Until a judge confirms them it is printed
-  *surface form (unconfirmed)*. An `EquivalenceJudge` is the hook; a candidate
-  it rejects falls through to the buckets after.
+- **Surface form** takes the fact-equivalence judge's pre-filter
+  ([#39](decisions.md#39)): a prediction that is no hit, with the relation and
+  exactly one end equal as the scorer compares them. With `--lenient` the
+  judge has already decided those pairs, and the diagnosis reads its decisions
+  without asking again: a candidate it calls the same fact lands here, and
+  one it does not falls through to the buckets after. With no judge the bucket
+  is printed *surface form (unconfirmed)*, and only a candidate whose other end
+  is a near name lands in it: name keys equal, one inside the other as whole
+  words (four characters or more), or 85% alike. An `EquivalenceJudge` is the
+  hook, and `FactJudge.equivalent` is one, given the gold fact's document.
 - **Cross-sentence** reads the evidence sentence ids where the dataset gives
   them (a Re-DocRED set prepared since #140 keeps them, and each entity's
   type). Otherwise it is cross-sentence when no sentence names both ends, by the
@@ -1124,9 +1129,11 @@ assert pairs[0].passage == "Ada Lovelace was born in London on 10 December 1815.
 How far the judge can be trusted is measured on label set F: 300 pairs the
 pre-filter made from the published comparison, labelled blind by a person
 (`bench/labels/README.md`). Until its calibration card exists, the lenient
-score is printed, not trusted. The same pre-filter feeds the miss diagnosis's
-surface-form bucket, through `FactJudge.equivalent`, which takes the passage
-rather than the whole document.
+score is printed, not trusted. The same pre-filter makes the miss diagnosis's
+surface-form candidates, and with `--lenient` the diagnosis reads these
+decisions rather than asking again (`Decided`), so the bucket and the lenient
+score agree. `FactJudge.equivalent` is the diagnosis's hook for a judge of its
+own, and narrows the document it is given to the gold claim's sentences.
 
 ## Labelling by hand
 
