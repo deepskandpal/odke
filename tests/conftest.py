@@ -45,6 +45,33 @@ def every_eval_report_is_sound(monkeypatch: pytest.MonkeyPatch) -> Iterator[None
 
 
 @pytest.fixture(autouse=True)
+def every_run_report_fits_its_schema(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Every `ValidationReport` any test builds fits `validation_report.schema.json` (#166).
+
+    As the eval report's fixture does: collected as they are made and checked
+    when the test ends, so a field the schema does not know fails at once.
+    """
+    import json
+
+    from openodke.eval.eval_report import _problems
+    from openodke.validator import REPORT_SCHEMA_PATH, ValidationReport
+
+    root = json.loads(REPORT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    made: list[ValidationReport] = []
+    build = ValidationReport.__init__
+
+    def init(self: ValidationReport, /, **data: object) -> None:
+        build(self, **data)
+        made.append(self)
+
+    monkeypatch.setattr(ValidationReport, "__init__", init)
+    yield
+    for report in made:
+        problems = list(_problems(report.model_dump(mode="json"), root, root, "$"))
+        assert not problems, problems
+
+
+@pytest.fixture(autouse=True)
 def every_support_list_is_counted(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """`support == len(supported_by)` on every fact any test makes with a support list (#115).
 
