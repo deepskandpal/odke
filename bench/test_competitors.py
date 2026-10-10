@@ -169,3 +169,15 @@ def test_a_limited_run_scores_only_its_documents(
         "path": str((out / "facts.jsonl").resolve()),
         "extractor": "lgt",
     }
+
+
+def test_a_budget_refuses_the_calls_once_it_is_spent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = fake_litellm(monkeypatch, LGT_REPLY)
+    monkeypatch.setitem(competitors.BUDGET, "usd", 0.0)
+    with pytest.raises(SystemExit, match="2 of 2 documents failed"):
+        competitors.extract("lgt", prepared(tmp_path, "openai/gpt-5"))
+    assert calls == []
+    usage = json.loads((tmp_path / "competitors" / "lgt" / "usage.json").read_text())
+    assert usage["budget_usd"] == 0.0 and usage["calls"] == 0

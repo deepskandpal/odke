@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import importlib.metadata
 import json
 import os
@@ -44,7 +45,15 @@ CONCURRENCY = 3
 RETRIES = 6
 DEFAULT_MAX_TOKENS = 16000
 # What the calls cost in tokens, and documents that failed after LiteLLM's retries.
-USAGE = {"input_tokens": 0, "output_tokens": 0, "calls": 0, "failed_documents": 0}
+USAGE: dict[str, Any] = {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "calls": 0,
+    "failed_documents": 0,
+    "usd": 0.0,
+}
+# The most the extraction may spend, in USD: `--budget-usd`. None is no limit.
+BUDGET: dict[str, float | None] = {"usd": None}
 LITERAL_NODES = {"date": "Date", "number": "Number", "integer": "Number", "string": "Text"}
 ROLES = {"system": "system", "human": "user", "user": "user", "ai": "assistant"}
 # Whose versions `usage.json` records: a published number names what made it.
@@ -89,11 +98,33 @@ def extract_model(prepared: Path, override: str | None) -> tuple[str, int]:
     return model, int(max_tokens)
 
 
+class BudgetSpent(RuntimeError):
+    """The extraction reached `--budget-usd`; the call was not made."""
+
+
+def _check() -> None:
+    """Refuse a call once the spend has reached the budget.
+
+    The spend is known only after a call returns, so the run can pass the limit
+    by the calls already in flight (at most `CONCURRENCY`), as openodke's own
+    USD limit can before its first priced call (DECISIONS #32). A document
+    refused is a failed document, so the set is not scored.
+    """
+    limit = BUDGET["usd"]
+    if limit is not None and USAGE["usd"] >= limit:
+        raise BudgetSpent(f"budget of ${limit:.2f} spent (${USAGE['usd']:.4f})")
+
+
 def _record(response: Any) -> str:
+    import litellm
+
     usage = getattr(response, "usage", None)
     USAGE["input_tokens"] += getattr(usage, "prompt_tokens", 0) or 0
     USAGE["output_tokens"] += getattr(usage, "completion_tokens", 0) or 0
     USAGE["calls"] += 1
+    # A model LiteLLM cannot price has no USD limit, as in openodke.
+    with contextlib.suppress(Exception):
+        USAGE["usd"] += float(litellm.completion_cost(completion_response=response) or 0.0)
     return response.choices[0].message.content or ""
 
 
@@ -101,6 +132,7 @@ async def complete(messages: Sequence[dict[str, str]], model: str, max_tokens: i
     """The reply's text. LiteLLM keeps a reasoning model's thinking out of `content`."""
     import litellm
 
+    _check()
     response = await litellm.acompletion(
         model=model, messages=list(messages), max_tokens=max_tokens, num_retries=RETRIES
     )
@@ -110,6 +142,7 @@ async def complete(messages: Sequence[dict[str, str]], model: str, max_tokens: i
 def complete_sync(messages: Sequence[dict[str, str]], model: str, max_tokens: int) -> str:
     import litellm
 
+    _check()
     response = litellm.completion(
         model=model, messages=list(messages), max_tokens=max_tokens, num_retries=RETRIES
     )
@@ -333,6 +366,7 @@ def extract(
     )
     usage = {
         **USAGE,
+        "budget_usd": BUDGET["usd"],
         "model": model,
         "documents": len(docs),
         "triples_raw": len(raw),
@@ -380,10 +414,14 @@ def main() -> None:
     parser.add_argument("--model", help="A LiteLLM model string; default: the set's extractor.")
     parser.add_argument("--limit", type=int, help="Only the first N documents (a smoke test).")
     parser.add_argument(
+        "--budget-usd", type=float, help="Stop calling the model once this much is spent."
+    )
+    parser.add_argument(
         "--env-file", default=os.environ.get("ODKE_ENV_FILE"), help="KEY=value lines to load."
     )
     args = parser.parse_args()
     load_env(args.env_file)
+    BUDGET["usd"] = args.budget_usd
     extract(args.system, args.prepared, model=args.model, limit=args.limit)
 
 
