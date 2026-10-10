@@ -35,6 +35,7 @@ from openodke.corroborate.provenance import (
     CONFLICT,
     DERIVED,
     NEAR_DUPLICATES,
+    ONTOLOGY,
     SCORE,
     SOURCE_FORM,
     WIDEN,
@@ -652,6 +653,24 @@ _RETRACTED = (
 )
 
 
+def checked_cypher(predicate: str) -> str:
+    """The facts on `predicate` one ontology last checked: `$fingerprint`, through its index.
+
+    `odke.ontology` is the fact's qualifier (#163), a property of the
+    relationship under its own name, so it is quoted. `bootstrap()` gives each
+    predicate a range index on it, and the query names that index, so it is
+    read through it or not at all: never a scan.
+    """
+    rel, prop = _ident(predicate), _ident(ONTOLOGY)
+    return (
+        f"MATCH (s)-[r:{rel}]->(o) USING INDEX r:{rel}({prop})\n"
+        f"WHERE r.{prop} = $fingerprint\n"
+        "RETURN type(r) AS predicate, properties(r) AS props,\n"
+        "       s.key AS subject_key, labels(s) AS subject_labels,\n"
+        "       o.key AS object_key, labels(o) AS object_labels, o.value AS value"
+    )
+
+
 def _retract_cypher(predicate: str) -> str:
     # Found again by its MERGE key, through the uniqueness constraint's index.
     return (
@@ -874,6 +893,25 @@ class Neo4jSink:
             counts: dict[str, int] = session.execute_write(self._retract, docs, names, at, hard)
         return counts
 
+    def checked_under(self, ontology: Ontology | str) -> list[Fact]:
+        """The facts the store holds that `ontology`, or the fingerprint given, last checked.
+
+        What a reader filters by (#163): after a breaking change, the facts
+        the old ontology checked are the ones to validate again. One read
+        transaction, per relationship type through the `odke.ontology` index
+        `bootstrap()` creates, never by a scan: a type with no such index is
+        not read, and warns.
+        """
+        wanted = ontology if isinstance(ontology, str) else ontology.fingerprint
+        reader = self._lookup()
+        indexed = reader.indexes().ontologies
+        with self._driver.session(**self._session_config()) as session:
+            types = [row["name"] for row in session.run(_TYPES).data()]
+            for name in sorted(set(types) - indexed - set(_LINK_TYPES)):
+                reader._unindexed(name, ONTOLOGY)
+            rows = session.execute_read(_checked, sorted(indexed & set(types)), wanted)
+        return [relationship_fact(row) for row in rows]
+
     def _retract(
         self, tx: Any, docs: list[str], names: list[str], at: datetime, hard: bool
     ) -> dict[str, int]:
@@ -983,6 +1021,9 @@ class StoreIndexes(NamedTuple):
     # Relationship type -> a full-text index over `evidence_doc_ids`, through
     # which the reconciler finds the facts a document backs.
     evidence: Mapping[str, str] = {}
+    # Relationship types with a range index on `odke.ontology`, through which a
+    # reader finds the facts one ontology checked (#163).
+    ontologies: frozenset[str] = frozenset()
 
 
 def store_indexes(rows: Iterable[Mapping[str, Any]]) -> StoreIndexes:
@@ -992,6 +1033,7 @@ def store_indexes(rows: Iterable[Mapping[str, Any]]) -> StoreIndexes:
     names: dict[str, str] = {}
     signatures: set[str] = set()
     evidence: dict[str, str] = {}
+    ontologies: set[str] = set()
     entity_key = False
     for row in sorted(rows, key=lambda r: str(r.get("name"))):
         labels = list(row.get("labelsOrTypes") or ())
@@ -1000,6 +1042,8 @@ def store_indexes(rows: Iterable[Mapping[str, Any]]) -> StoreIndexes:
         if row.get("entityType") == "RELATIONSHIP":
             if kind == "RANGE" and len(labels) == 1 and props == ["signature"]:
                 signatures.add(labels[0])
+            elif kind == "RANGE" and len(labels) == 1 and props == [ONTOLOGY]:
+                ontologies.add(labels[0])
             elif kind == "FULLTEXT" and props == ["evidence_doc_ids"]:
                 for label in labels:
                     own = _schema_name("evidence", label)
@@ -1017,7 +1061,13 @@ def store_indexes(rows: Iterable[Mapping[str, Any]]) -> StoreIndexes:
                 if label not in names or row.get("name") == own:
                     names[label] = str(row["name"])
     return StoreIndexes(
-        frozenset(keys), entity_key, frozenset(ids), names, frozenset(signatures), evidence
+        frozenset(keys),
+        entity_key,
+        frozenset(ids),
+        names,
+        frozenset(signatures),
+        evidence,
+        frozenset(ontologies),
     )
 
 
@@ -1495,6 +1545,13 @@ def _schema_name(kind: str, name: str) -> str:
     return f"odke_{kind}_{slug}"
 
 
+def _checked(tx: Any, predicates: list[str], fingerprint: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for predicate in predicates:
+        rows.extend(tx.run(checked_cypher(predicate), {"fingerprint": fingerprint}).data())
+    return rows
+
+
 def _rows(tx: Any, cypher: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = tx.run(cypher).data()
     return rows
@@ -1523,7 +1580,9 @@ class Neo4jConstrainer:
     which is how a link finds a node without knowing its type; and a
     full-text index over `evidence_doc_ids` per predicate, with the keyword
     analyzer so a document id is one exact term, which is how the reconciler
-    finds every fact a document backs without a scan (#116).
+    finds every fact a document backs without a scan (#116); and `odke.ontology`
+    per predicate, which is how a reader finds the facts one ontology checked
+    (#163).
 
     Neo4j cannot enforce:
 
@@ -1580,6 +1639,8 @@ class Neo4jConstrainer:
                 f"CREATE FULLTEXT INDEX {_schema_name('evidence', name)} IF NOT EXISTS "
                 f"FOR ()-[r:{_ident(name)}]-() ON EACH [r.evidence_doc_ids] "
                 "OPTIONS {indexConfig: {`fulltext.analyzer`: 'keyword'}}",
+                f"CREATE INDEX {_schema_name('ontology', name)} IF NOT EXISTS "
+                f"FOR ()-[r:{_ident(name)}]-() ON (r.{_ident(ONTOLOGY)})",
             ]
         return out
 
@@ -1629,6 +1690,7 @@ __all__ = [
     "StoreIndexes",
     "cardinality_scope",
     "check_target",
+    "checked_cypher",
     "entities_of",
     "id_forms",
     "is_check",

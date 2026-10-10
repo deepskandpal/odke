@@ -104,9 +104,9 @@ def test_facts_are_unique_per_signature_so_the_sinks_merges_are_safe() -> None:
 def test_the_ddl_is_idempotent_stable_and_enterprise_free() -> None:
     schema = _schema()
     assert schema == _schema()
-    # Per type a key constraint and two indexes; per predicate a signature constraint
-    # and an evidence index.
-    assert len(schema) == 2 + 3 * 2 + 4 * 2
+    # Per type a key constraint and two indexes; per predicate a signature constraint,
+    # an evidence index and an index on the ontology that checked the fact.
+    assert len(schema) == 2 + 3 * 2 + 4 * 3
     for statement in schema:
         assert statement.startswith("CREATE ") and " IF NOT EXISTS " in statement
         # Existence, type and node-key constraints are Enterprise-only.
