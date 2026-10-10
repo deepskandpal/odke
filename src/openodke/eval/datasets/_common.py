@@ -34,6 +34,8 @@ from openodke.types import Document, Fact
 
 Triple = tuple[str, str, str]
 Opener = Callable[[str], Any]
+# What a bench run writes beside `predictions/`: what the extractor refused (#109).
+REJECTIONS_FILE = "rejections.jsonl"
 
 # Literal ranges a dataset may name, in openodke's vocabulary (ontology value types).
 LITERALS = {
@@ -351,18 +353,28 @@ def report_run(
         seed=seed,
         level=level,
     )
+    names = doc_names(ablation.documents)
     if save_to is not None:
         save_predictions(save_to, scored.predictions)
+        save_rejections(save_to, ablation.rejections or [], names)
     raw, gated, full = (metrics for _, metrics, _, _ in scored.table)
     lines = [
         *notes(raw, gated, full),
         f"grounder verdicts on the candidates: {verdicts(ablation.grounded)}",
+        rejected(ablation.rejections, saved=save_to is not None),
         *ablation.notes,
     ]
     if ablation.coverage is not None:
         lines.append(f"coverage of the candidates: {coverage_summary(ablation.coverage)}")
+    stage = report(scoring.stage, len(gold), scored.table, lines)
+    if ablation.rejections is not None:
+        counts = Counter(str(r.reason) for r in ablation.rejections)
+        by_reason = {f"rejected: {why}": n for why, n in sorted(counts.items())}
+        stage = stage.model_copy(
+            update={"metrics": {**stage.metrics, "rejected": len(ablation.rejections), **by_reason}}
+        )
     return from_stage(
-        report(scoring.stage, len(gold), scored.table, lines),
+        stage,
         rows=scored.rows,
         bootstrap=Bootstrap(units=len(gold), resamples=resamples, seed=seed, level=level),
         run=Run(
@@ -383,6 +395,50 @@ def verdicts(facts: Iterable[Fact]) -> str:
     counts = Counter(f.verdict.value for f in facts)
     order = ("supported", "not_found", "contradicted", "unchecked")
     return ", ".join(f"{v} {counts.get(v, 0)}" for v in order)
+
+
+def rejected(rejections: Sequence[Any] | None, *, saved: bool = False) -> str:
+    """What the extractor refused before grounding, by reason: the report's line for it."""
+    if rejections is None:
+        return "extractor rejections: none recorded; this extractor keeps no record of them"
+    counts = Counter(str(r.reason) for r in rejections)
+    by_reason = ", ".join(
+        f"{why} {n}" for why, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    )
+    where = f"; each in {REJECTIONS_FILE}" if saved and rejections else ""
+    return (
+        f"extractor rejections: {len(rejections)}"
+        + (f" ({by_reason})" if by_reason else "")
+        + where
+    )
+
+
+def save_rejections(
+    folder: Path, rejections: Iterable[Any], names: Mapping[str, str] | None = None
+) -> Path:
+    """`folder/rejections.jsonl`, beside `predictions/`: each candidate the extractor refused.
+
+    One row a rejection: the document, by the dataset's own id where `names`
+    has it, the chunk, the reason, and the candidate as the model wrote it
+    (`subject`, `predicate`, `value`, `quote`), as far as it got. Written on
+    every run, empty when nothing was refused, so a missing fact can be told
+    from one the extractor threw away.
+    """
+    rows = [
+        {
+            "doc": (names or {}).get(r.doc_id, r.doc_id),
+            "chunk": r.chunk_index,
+            "reason": r.reason,
+            "candidate": {
+                "subject": getattr(r, "subject", None),
+                "predicate": r.predicate,
+                "value": getattr(r, "value", None),
+                "quote": r.quote,
+            },
+        }
+        for r in rejections
+    ]
+    return write_jsonl(folder / REJECTIONS_FILE, rows)
 
 
 def save_predictions(folder: Path, predicted: Mapping[str, Mapping[str, Sequence[Triple]]]) -> None:

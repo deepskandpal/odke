@@ -13,11 +13,12 @@ from typer.testing import CliRunner
 
 from openodke import Document, Entity, Evidence, Fact
 from openodke.cli.main import app
-from openodke.eval.ablation import CONFIGURATIONS, AblationRun
+from openodke.eval.ablation import CONFIGURATIONS, AblationRun, rejections_of
 from openodke.eval.datasets import DATASETS, redocred, text2kgbench
 from openodke.eval.datasets._common import change, pascal, snake, triples_by_doc
 from openodke.eval.eval_report import EvalReport, read_report
 from openodke.eval.report import StageReport
+from openodke.extract.llm import Rejection
 from openodke.ontology import Ontology
 from openodke.run.build import build
 from openodke.run.config import load_config
@@ -197,9 +198,15 @@ def test_prepare_again_replaces_its_own_documents(tmp_path: Path) -> None:
     ]
 
 
-def _run(names: dict[str, str], candidates: list[Fact], gated: list[Fact]) -> AblationRun:
+def _run(
+    names: dict[str, str],
+    candidates: list[Fact],
+    gated: list[Fact],
+    rejections: list[Rejection] | None = None,
+) -> AblationRun:
     docs = [Document(id=i, text="", uri=f"file:///set/docs/{n}.txt") for i, n in names.items()]
     return AblationRun(
+        rejections=rejections,
         documents=docs,
         ontology=Ontology(),
         candidates=candidates,
@@ -464,3 +471,108 @@ def test_odke_bench_run_writes_the_report_beside_the_predictions(
     assert as_json.exit_code == 0, as_json.output
     assert StageReport.model_validate_json(as_json.output).stage == "text2kgbench:ont_1_movie"
     assert read_report(elsewhere).title == "text2kgbench:ont_1_movie"
+
+
+# --------------------------------------------------------------------------- #
+# What the extractor refused (#109)
+# --------------------------------------------------------------------------- #
+
+REFUSED = [
+    Rejection("d1", 0, "predicate not in the snippet", "spouse", "married", "Ada", "William"),
+    Rejection("d1", 0, "quote not in the passage", "director", "made by", "Bleach", "Abe"),
+    Rejection("d2", 1, "quote not in the passage", "director", "shot by", "Elder", "Ivy"),
+]
+
+
+def test_the_report_says_how_many_the_extractor_rejected_and_why(tmp_path: Path) -> None:
+    right = _fact("d1", "Bleach : Hell Verse", "director", "Noriyuki Abe")
+    names = {"d1": "ont_1_movie_test_1", "d2": "ont_1_movie_test_2"}
+    run = _run(names, [right], [right], REFUSED)
+    meta = json.loads(
+        (
+            text2kgbench.prepare(_t2k_raw(tmp_path), "ont_1_movie", tmp_path / "set")
+            / "dataset.json"
+        ).read_text()
+    )
+    gold = [json.loads(line) for line in (tmp_path / "set" / "gold.jsonl").read_text().splitlines()]
+    report = text2kgbench.report_run(run, gold, meta, hallucination=False, save_to=tmp_path / "set")
+    (stage,) = report.stages
+    assert (
+        "extractor rejections: 3 (quote not in the passage 2, predicate not in the snippet 1); "
+        "each in rejections.jsonl"
+    ) in stage.notes
+    assert stage.metrics["rejected"] == 3
+    assert stage.metrics["rejected: quote not in the passage"] == 2
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "set" / "rejections.jsonl").read_text().splitlines()
+    ]
+    assert rows[0] == {
+        "doc": "ont_1_movie_test_1",
+        "chunk": 0,
+        "reason": "predicate not in the snippet",
+        "candidate": {
+            "subject": "Ada",
+            "predicate": "spouse",
+            "value": "William",
+            "quote": "married",
+        },
+    }
+    assert [r["doc"] for r in rows] == [
+        "ont_1_movie_test_1",
+        "ont_1_movie_test_1",
+        "ont_1_movie_test_2",
+    ]
+
+
+def test_an_extractor_with_no_record_is_said_so_and_none_rejected_is_an_empty_file(
+    tmp_path: Path,
+) -> None:
+    right = _fact("d1", "Bleach : Hell Verse", "director", "Noriyuki Abe")
+    names = {"d1": "ont_1_movie_test_1"}
+    prepared = text2kgbench.prepare(_t2k_raw(tmp_path), "ont_1_movie", tmp_path / "set")
+    meta = json.loads((prepared / "dataset.json").read_text())
+    gold = [json.loads(line) for line in (prepared / "gold.jsonl").read_text().splitlines()]
+    unknown = text2kgbench.report_run(
+        _run(names, [right], [right]), gold, meta, hallucination=False
+    )
+    assert (
+        "extractor rejections: none recorded; this extractor keeps no record of them"
+        in unknown.stages[0].notes
+    )
+    assert "rejected" not in unknown.stages[0].metrics
+    clean = text2kgbench.report_run(
+        _run(names, [right], [right], []), gold, meta, hallucination=False, save_to=prepared
+    )
+    assert "extractor rejections: 0" in clean.stages[0].notes
+    assert (prepared / "rejections.jsonl").read_text() == ""
+
+
+def test_rejections_come_from_the_extractor_and_its_model_path() -> None:
+    class Path_:
+        rejections = [REFUSED[0]]
+
+    class Router:
+        rejections = [REFUSED[1]]
+        llm = Path_()
+
+    # The extractor's own first, then its model path's.
+    assert rejections_of(Router()) == [REFUSED[1], REFUSED[0]]
+    assert rejections_of(Path_()) == REFUSED[:1]
+    assert rejections_of(object()) is None
+
+
+def test_odke_bench_run_writes_the_rejections_beside_the_predictions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    right = _fact("d1", "Bleach : Hell Verse", "director", "Noriyuki Abe")
+    names = {"d1": "ont_1_movie_test_1", "d2": "ont_1_movie_test_2"}
+    run = _run(names, [right], [right], REFUSED)
+    monkeypatch.setattr(text2kgbench, "ablate", lambda config: run)
+    prepared = text2kgbench.prepare(_t2k_raw(tmp_path), "ont_1_movie", tmp_path / "set")
+    result = CliRunner().invoke(app, ["bench", "run", "text2kgbench", str(prepared)])
+    assert result.exit_code == 0, result.output
+    assert "extractor rejections: 3 (quote not in the passage 2" in result.output
+    assert (prepared / "predictions").is_dir() and (prepared / "rejections.jsonl").is_file()
+    report = read_report(prepared / "report.json")
+    assert report.stages[0].metrics["rejected: predicate not in the snippet"] == 1
