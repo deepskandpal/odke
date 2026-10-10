@@ -347,7 +347,7 @@ def read_output(path: str | Path, *, adapter: str = "triples") -> Output:
     first = next((ln for ln in source.read_text(encoding="utf-8").splitlines() if ln.strip()), "")
     if _is_fact(first):
         return Output(items=load_jsonl(source, Fact), how=f"facts file {source.name}")
-    return Output(items=read_triples(source), how=f"triples file {source.name}")
+    return Output(items=list(read_triples(source)), how=f"triples file {source.name}")
 
 
 def load_callable(spec: str) -> Callable[..., Any]:
