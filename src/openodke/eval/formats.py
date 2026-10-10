@@ -159,6 +159,35 @@ class PairLabel(Frozen):
     same: bool
 
 
+class FactPair(Frozen):
+    """Two facts from one passage: do they state the same fact? (#143)
+
+    What the fact-equivalence judge reads, and a fact sheet shows: the
+    relation and its description, `first` and `second` as the grounder
+    renders a claim, and the passage. Neither side says which fact is gold;
+    whoever made the row keeps that apart. Give it an `id`, because labels
+    join on it.
+    """
+
+    id: str
+    relation: str
+    description: str | None = None
+    first: Fact
+    second: Fact
+    passage: str
+
+
+class FactPairLabel(FactPair):
+    """A `FactPair` and whether its two facts state the same fact, as a person read them.
+
+    `same` is true when the two share subject, relation and object in meaning,
+    in one direction, with any quantity, date or number at one value. A pair
+    the person could not settle is never one: it is kept apart.
+    """
+
+    same: bool
+
+
 class LinkRow(Frozen):
     """A link from any resolver, as a plain `(a, b, kind)` triple.
 
@@ -315,6 +344,8 @@ __all__ = [
     "Action",
     "CalibrationLabel",
     "Decision",
+    "FactPair",
+    "FactPairLabel",
     "GoldFact",
     "GroundingLabel",
     "LinkRow",

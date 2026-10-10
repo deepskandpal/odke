@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 
 from openodke.cli.main import app
 from openodke.eval import GroundingLabel, PairLabel, load_jsonl
+from openodke.eval.formats import FactPair, FactPairLabel
 from openodke.eval.sheets import SheetError, make_sheets, quote, read_sheets
 
 ADA = "Ada Lovelace was born in London in 1815."
@@ -451,3 +452,90 @@ def test_make_refuses_a_directory_with_sheets_in_it(tmp_path: Path) -> None:
     again = runner.invoke(app, args)
     assert again.exit_code == 2
     assert "already has sheets" in again.output
+
+
+# --------------------------------------------------------------------------- #
+# make and read: fact pairs (#143)
+# --------------------------------------------------------------------------- #
+
+
+def _facts(n: int) -> dict:
+    ada = {"key": "ada", "type": "Person", "label": "Ada Lovelace"}
+    return {
+        "id": f"fp{n}",
+        "relation": "date_of_birth",
+        "description": "date of birth (P569)",
+        "first": {"subject": ada, "predicate": "date_of_birth", "object_value": "1815"},
+        "second": {
+            "subject": {**ada, "label": "Ada King"},
+            "predicate": "date_of_birth",
+            "object_value": f"10 December 1815 ${n}",
+        },
+        "passage": "Ada King, born Byron on 10 December 1815, was a mathematician.",
+    }
+
+
+def test_a_fact_item_shows_both_facts_as_the_judge_reads_them_and_nothing_else(
+    tmp_path: Path,
+) -> None:
+    (sheet,) = make_sheets("fact", _jsonl(tmp_path / "f.jsonl", [_facts(0)]), tmp_path / "s").sheets
+    text = sheet.read_text(encoding="utf-8")
+    assert text.startswith(
+        "# Fact sheet 01\n\nF-0001 to F-0001: do Fact 1 and Fact 2 state the same fact?\n"
+    )
+    assert _item(sheet, "F-0001") == (
+        "\n"
+        "Relation: date of birth: date of birth (P569)\n"
+        "\n"
+        'Fact 1: Ada Lovelace (Person) — date of birth — "1815".\n'
+        "\n"
+        'Fact 2: Ada King (Person) — date of birth — "10 December 1815 \\$0".\n'
+        "\n"
+        "> Ada King, born Byron on 10 December 1815, was a mathematician.\n"
+        "\n"
+        "- [ ] same\n"
+        "- [ ] different\n"
+        "- [ ] unsure\n"
+        "\n"
+        "note:\n"
+    )
+    # Blind: nothing says which fact is gold, who wrote it, or how it was drawn.
+    for word in ("gold", "extractor", "stratum", "fp0"):
+        assert word not in text.lower()
+
+
+def test_fact_pairs_round_trip_as_labels_and_unsure_goes_apart(tmp_path: Path) -> None:
+    rows = [_facts(n) for n in range(3)]
+    (sheet,) = make_sheets("fact", _jsonl(tmp_path / "f.jsonl", rows), tmp_path / "s").sheets
+    _tick(sheet, "F-0001", "same")
+    _tick(sheet, "F-0002", "unsure")
+    _tick(sheet, "F-0003", "different")
+    reading = read_sheets(tmp_path / "s")
+    written = dict(reading.write(tmp_path / "labels.jsonl"))
+    assert written[tmp_path / "labels.jsonl"] == 2
+    labels = load_jsonl(tmp_path / "labels.jsonl", FactPairLabel)
+    assert [(label.id, label.same) for label in labels] == [("fp0", True), ("fp2", False)]
+    # The row as given comes back whole, so a label alone can be judged again.
+    assert labels[0].first.signature == FactPair.model_validate(rows[0]).first.signature
+    unsure = (tmp_path / "labels.unsure.jsonl").read_text(encoding="utf-8")
+    assert unsure == json.dumps(rows[1]) + "\n"
+    assert make_sheets("fact", tmp_path / "labels.unsure.jsonl", tmp_path / "again").items == 1
+
+
+def test_a_fact_row_without_an_id_is_refused(tmp_path: Path) -> None:
+    row = {k: v for k, v in _facts(0).items() if k != "id"}
+    with pytest.raises(ValueError, match="f.jsonl:1: not a fact item"):
+        make_sheets("fact", _jsonl(tmp_path / "f.jsonl", [row]), tmp_path / "s")
+
+
+def test_make_fact_from_the_shell(tmp_path: Path) -> None:
+    items = _jsonl(tmp_path / "f.jsonl", [_facts(n) for n in range(3)])
+    made = runner.invoke(app, ["label", "make", "fact", str(items), "-o", str(tmp_path / "s")])
+    assert made.exit_code == 0, made.output
+    assert "wrote 1 sheet to" in made.output and "F-0001 to F-0003" in made.output
+    _tick(tmp_path / "s" / "sheet-01.md", "F-0002", "same")
+    read = runner.invoke(
+        app, ["label", "read", str(tmp_path / "s"), "-o", str(tmp_path / "l.jsonl")]
+    )
+    assert read.exit_code == 0, read.output
+    assert "1 labelled, 2 unlabelled" in read.output
