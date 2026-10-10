@@ -10,10 +10,13 @@ like that?" queries a key rather than reading code.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING, Any
 
 from openodke.types import Fact
+
+if TYPE_CHECKING:
+    from openodke.ontology import Ontology
 
 # On Fact.qualifiers: {field: (original spelling, ...)} for every value the
 # normaliser rewrote. Union-merged by the corroborator, so all spellings survive.
@@ -50,6 +53,17 @@ CHECK = "odke.check"
 # Every document's evidence stays on the fact; each group counts as one source.
 NEAR_DUPLICATES = "odke.near_duplicates"
 
+# On Fact.qualifiers: the `Ontology.fingerprint` of the ontology the pipeline
+# checked the fact under, stamped on every fact the gate lets through (#163).
+# A fact checked again is stamped again, so it names the last ontology that
+# checked it. None is stamped when the ontology has no types and no predicates.
+ONTOLOGY = "odke.ontology"
+
+# On Fact.qualifiers: the `OntologySnippet.fingerprint` of the schema slice the
+# model extractor was shown for the fact's subject type (#163). Absent where
+# no slice was shown: a pattern, a triples row, a fact from elsewhere.
+SCHEMA_SLICE = "odke.schema_slice"
+
 
 def source_forms(value: Any) -> dict[str, tuple[str, ...]]:
     """`qualifiers["odke.source_form"]` read back — tuples in memory, lists after JSON."""
@@ -63,6 +77,29 @@ def near_duplicates(value: Any) -> tuple[tuple[str, ...], ...]:
     if not isinstance(value, list | tuple):
         return ()
     return tuple(tuple(str(d) for d in group) for group in value if isinstance(group, list | tuple))
+
+
+def checked_by(fact: Fact) -> str | None:
+    """The fingerprint of the ontology that last checked `fact`; None for one never stamped."""
+    found = fact.qualifiers.get(ONTOLOGY)
+    return found if isinstance(found, str) else None
+
+
+def checked_under(facts: Iterable[Fact], ontology: Ontology | str) -> list[Fact]:
+    """The facts `ontology`, or the fingerprint given, last checked: what a reader filters by.
+
+    `odke ontology diff --store` lists these for the old ontology: the facts a
+    breaking change may no longer fit, to validate again.
+    """
+    wanted = ontology if isinstance(ontology, str) else ontology.fingerprint
+    return [fact for fact in facts if checked_by(fact) == wanted]
+
+
+def stamp_checked(fact: Fact, fingerprint: str | None) -> Fact:
+    """`fact` stamped with the ontology that checked it; as it was when nothing did."""
+    if fingerprint is None or fact.qualifiers.get(ONTOLOGY) == fingerprint:
+        return fact
+    return fact.model_copy(update={"qualifiers": {**fact.qualifiers, ONTOLOGY: fingerprint}})
 
 
 def unstamped(fact: Fact) -> Fact:
@@ -92,9 +129,14 @@ __all__ = [
     "DERIVED",
     "NAME_KEY",
     "NEAR_DUPLICATES",
+    "ONTOLOGY",
+    "SCHEMA_SLICE",
     "SCORE",
     "SOURCE_FORM",
+    "checked_by",
+    "checked_under",
     "near_duplicates",
     "source_forms",
+    "stamp_checked",
     "unstamped",
 ]

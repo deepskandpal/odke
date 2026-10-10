@@ -588,6 +588,19 @@ class OntologySnippet(BaseModel):
     ontology_version: str = "0"
     truncated: bool = False
 
+    @property
+    def fingerprint(self) -> str:
+        """The SHA-256 of what the model is shown: the type, its description and its predicates.
+
+        The schema slice a fact's extractor saw (#163). The ontology's name and
+        version are labels the prompt does not show, so they are left out.
+        """
+        content = self.model_dump(
+            mode="json", exclude={"ontology_name", "ontology_version", "truncated"}
+        )
+        canonical = json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
     def render(self) -> str:
         """A compact, stable textual schema. Stable order matters: an unstable
         prompt defeats provider-side prompt caching and makes runs unrepeatable.
