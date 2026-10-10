@@ -316,5 +316,49 @@ _register(
     source=_PAIR_SOURCE,
 )
 
+# The fact-equivalence judge's question (`openodke.eval.equivalence.FactJudge`,
+# #143): a gold fact the scorer counted missed, a prediction the pre-filter
+# paired with it, and the gold fact's evidence. The gold fact is the reference
+# the prediction is judged against, as in reference-guided judging, and a
+# quantity must match, as EnterpriseRAG-Bench's correctness rule has it. Asked
+# once in each order: gold first, then the prediction first.
+_FACT_EQUIV_SOURCE = (
+    "openodke, after reference-guided judging (Zheng et al. 2023, arXiv 2306.05685) and "
+    'EnterpriseRAG-Bench\'s rule that "quantities must match" (Onyx, arXiv 2605.05253, MIT), '
+    "asked in both orders"
+)
+_register(
+    "fact_equiv",
+    1,
+    (
+        "You compare two knowledge-graph facts taken from the same passage and decide whether "
+        "they state the same fact. Wording may differ: a short form of a name, another date "
+        "format, a synonym for the value. They are the same only if all three parts match in "
+        "meaning: the same subject, the same relation and the same object, in the same "
+        "direction. If both state a quantity, date or number, it must be the same value.\n"
+        'Answer "same", "different", or "unsure" if the passage does not settle it.\n'
+        'Reply with JSON only: {"decision": "same" | "different" | "unsure"}'
+    ),
+    source=_FACT_EQUIV_SOURCE,
+)
+
+# Its user message, a template: each `{field}` is filled in once, so a passage
+# that contains braces is never read as a field. Both facts are rendered as the
+# grounder renders a claim (`render_claim`), and the swap puts either first.
+_register(
+    "fact_equiv.user",
+    1,
+    (
+        "Relation: {predicate}: {description}\n"
+        "\n"
+        "Fact 1: {fact_1}\n"
+        "Fact 2: {fact_2}\n"
+        "\n"
+        "Passage:\n"
+        "{passage}"
+    ),
+    source=_FACT_EQUIV_SOURCE,
+)
+
 
 __all__ = ["LOCK", "Prompt", "check", "get", "read_lock", "registered"]

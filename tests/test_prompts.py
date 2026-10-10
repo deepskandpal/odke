@@ -50,12 +50,20 @@ PAIR = (
     "openodke, after LLM entity matching (Peeters, Steiner & Bizer 2023, arXiv 2310.11244), "
     "asked in both orders for position bias (Zheng et al. 2023, arXiv 2306.05685 §3.4)"
 )
+# The fact-equivalence judge's lineage, which both its keys carry.
+FACT_EQUIV = (
+    "openodke, after reference-guided judging (Zheng et al. 2023, arXiv 2306.05685) and "
+    'EnterpriseRAG-Bench\'s rule that "quantities must match" (Onyx, arXiv 2605.05253, MIT), '
+    "asked in both orders"
+)
 
 
 def test_every_prompt_says_where_it_came_from() -> None:
     assert {p.key: p.source for p in registered()} == {
         "extract.repair@1": "openodke",
         "extract@1": "openodke",
+        "fact_equiv.user@1": FACT_EQUIV,
+        "fact_equiv@1": FACT_EQUIV,
         "ground.paper@1": "ODKE+ App. B, verbatim",
         "ground.span@1": "openodke",
         "infer.repair@1": "openodke",
@@ -67,6 +75,23 @@ def test_every_prompt_says_where_it_came_from() -> None:
             "scoped to one window and grounded after"
         ),
     }
+
+
+def test_the_fact_equivalence_question_and_its_frame() -> None:
+    """Three parts in meaning, one direction, a quantity's value; and four fields, each once."""
+    text = get("fact_equiv", 1).text
+    assert text.startswith("You compare two knowledge-graph facts taken from the same passage")
+    assert "the same subject, the same relation and the same object, in the same direction" in text
+    assert "If both state a quantity, date or number, it must be the same value." in text
+    assert text.endswith('Reply with JSON only: {"decision": "same" | "different" | "unsure"}')
+    frame = get("fact_equiv.user", 1).text
+    assert re.findall(r"\{(\w+)\}", frame) == [
+        "predicate",
+        "description",
+        "fact_1",
+        "fact_2",
+        "passage",
+    ]
 
 
 def test_the_reextract_rules_are_extract_s_unchanged() -> None:
