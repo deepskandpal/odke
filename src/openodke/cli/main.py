@@ -219,7 +219,15 @@ def models_command() -> None:
 
 @app.command("run")
 def run_command(
-    config: Path = typer.Argument(..., help="Run config, YAML or JSON. See examples/run.yaml."),
+    config: Path | None = typer.Argument(
+        None, help="Run config, YAML or JSON. See examples/run.yaml."
+    ),
+    from_manifest: Path | None = typer.Option(
+        None,
+        "--from-manifest",
+        help="Run again what a run manifest recorded: its config, as resolved, refused if the "
+        "ontology or the inputs changed. A manifest.json, or the directory holding one.",
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -248,15 +256,38 @@ def run_command(
     `--model` puts every role on one model and prints which, so a run states
     what it called instead of leaving it to be read out of a config; per-role
     models stay a config decision. `odke models` lists what can be named.
+
+    Every run writes a manifest: the config resolved and its hash, the models,
+    prompts, ontology, package and inputs, the times and the counts. It goes
+    into each JSONL sink's manifest.json, or beside the config.
+    `--from-manifest` runs one again, as it was: no override is taken with it.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
     from openodke.llm.base import ProviderError
     from openodke.llm.budget import BudgetExceeded
     from openodke.run import ConfigError, execute
+    from openodke.run import from_manifest as read_run
 
     chosen = _qualified(model, model_provider)
+    overrides = chosen is not None or widen or cache is not None
+    if (config is None) == (from_manifest is None):
+        typer.echo("error: give a config, or --from-manifest, and not both", err=True)
+        raise typer.Exit(2)
+    if from_manifest is not None and (overrides or (budget_usd, budget_calls) != (None, None)):
+        typer.echo(
+            "error: --from-manifest runs the config it recorded; --model, --widen, --cache and "
+            "the budget flags would make it another run",
+            err=True,
+        )
+        raise typer.Exit(2)
     try:
-        loaded = _load_run_config(config)
+        replaying = None
+        if from_manifest is not None:
+            loaded, replaying = read_run(from_manifest)
+            typer.echo(f"replaying {from_manifest}: config {replaying.config_hash[:12]}")
+        else:
+            assert config is not None
+            loaded = _load_run_config(config)
         if chosen is not None:
             loaded = loaded.with_model(chosen)
             typer.echo(f"models: every role on {chosen}")
@@ -265,7 +296,7 @@ def run_command(
         if cache is not None:
             loaded = loaded.with_cache(cache)
         loaded = loaded.with_budget(usd=budget_usd, calls=budget_calls)
-        result = execute(loaded, dry_run=dry_run)
+        result = execute(loaded, dry_run=dry_run, replaying=replaying)
     except (ConfigError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from exc

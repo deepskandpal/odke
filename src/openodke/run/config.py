@@ -28,6 +28,7 @@ rather than a stage silently left as the pass-through.
     coverage: true                   # what extraction left behind; no model
     reextract: {windows: 3}          # hand those gaps back; off unless named
     store_lookup: neo4j              # resolve against the store; off unless named
+    manifest: run.manifest.json      # the run manifest here too; see below
 
 A stage is a built-in's short name, or `package.module:Name` for your own, and
 either may take options: `{use: name, option: value, ...}`. A stage left out is
@@ -39,6 +40,10 @@ reflects what the grounder found; `scorer: passthrough` opts out.
 the native resolver (DECISIONS #31): `neo4j` reads the run's Neo4j sink's
 store, or one named by its own `uri`, and `package.module:Name` is a
 `StoreLookup` of your own.
+
+Every run writes a manifest (`openodke.manifest`): into each JSONL sink's
+`manifest.json`, and to `manifest`, relative to this file, when it is named.
+A run with neither writes it beside this file as `<name>.manifest.json`.
 
 `gate` was `validator` in 0.2 (DECISIONS #26). The old key still works, with a
 warning, until 1.0.0.
@@ -58,6 +63,7 @@ from openodke._renamed import deprecated
 from openodke.llm.base import ModelSpec
 from openodke.llm.budget import Budget
 from openodke.llm.roles import ModelRoles
+from openodke.manifest import RunManifest, read_manifest
 
 # The thirteen, in pipeline order (DECISIONS #20).
 STAGES = (
@@ -172,6 +178,15 @@ class ModelsConfig(_Strict):
         }
         return ModelRoles(**given)
 
+    def canonical(self) -> dict[str, Any]:
+        """The block resolved: each role the spec `ModelRoles` gives it, the budget's limits."""
+        data = self.model_dump(mode="json")
+        roles = self.roles()
+        for role in ("extract", "ground", "infer"):
+            data[role] = getattr(roles, role).model_dump(mode="json")
+        data["budget"] = self.budget.limits if self.budget is not None else None
+        return data
+
     def with_budget(self, *, usd: float | None = None, calls: int | None = None) -> ModelsConfig:
         """These limits over the block's own budget; a limit given as None is kept as it was."""
         given = {k: v for k, v in (("usd", usd), ("calls", calls)) if v is not None}
@@ -276,6 +291,8 @@ class RunConfig(_Strict):
     reextract: ReextractConfig | None = None
     # Resolve against what the store already holds (DECISIONS #31). Off unless named.
     store_lookup: StageSpec | None = None
+    # Where the run manifest is written, besides each JSONL sink's manifest.json.
+    manifest: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -285,10 +302,44 @@ class RunConfig(_Strict):
         return value
 
     _base_dir: Path = PrivateAttr(default_factory=Path.cwd)
+    # The file this config was read from, when it was read from one.
+    _source: Path | None = PrivateAttr(default=None)
 
     @property
     def base_dir(self) -> Path:
         return self._base_dir
+
+    @property
+    def source(self) -> Path | None:
+        """The file this config was read from; None for one built from a mapping."""
+        return self._source
+
+    def canonical(self) -> dict[str, Any]:
+        """The config resolved: a mapping `parse_config` reads back as this run.
+
+        Every key is filled in with its default, and every model role is the
+        spec `ModelRoles` resolves it to, so a config that leaves a key or a
+        role to its default and one that names that default are one config.
+        Stages and inputs are in the shape a file gives them,
+        `{use: name, option: ...}`, and a stage left out stays out. What a run
+        manifest records and hashes (`openodke.manifest`).
+        """
+        data = self.model_dump(mode="json", exclude={"stages", "inputs", "store_lookup"})
+        data["models"] = self.models.canonical()
+        data["inputs"] = [
+            {"path": item.path, **({"loader": _given(item.loader)} if item.loader else {})}
+            for item in self.inputs
+        ]
+        stages: dict[str, Any] = {}
+        for name in STAGES:
+            spec = getattr(self.stages, name)
+            if name == "sink":
+                stages[name] = [_given(sink) for sink in spec]
+            elif spec is not None:
+                stages[name] = _given(spec)
+        data["stages"] = stages
+        data["store_lookup"] = _given(self.store_lookup) if self.store_lookup else None
+        return data
 
     def resolve(self, path: str) -> Path:
         candidate = Path(path).expanduser()
@@ -327,6 +378,12 @@ class RunConfig(_Strict):
         return self.model_copy(update={"stages": self.stages.model_copy(update={"grounder": spec})})
 
 
+def _given(spec: StageSpec) -> dict[str, Any]:
+    """A stage as a config file gives it: `{use: name, option: value, ...}`."""
+    plain: dict[str, Any] = json.loads(json.dumps(spec.options, default=str))
+    return {"use": spec.use, **plain}
+
+
 def load_config(path: str | Path) -> RunConfig:
     """A config from a YAML (`.yaml`, `.yml`) or JSON file, paths relative to it."""
     source = Path(path)
@@ -342,7 +399,32 @@ def load_config(path: str | Path) -> RunConfig:
             raise ConfigError(
                 f"{source}: line {exc.lineno} column {exc.colno}: {exc.msg}"
             ) from None
-    return parse_config(data, base_dir=source.parent, where=str(source))
+    config = parse_config(data, base_dir=source.parent, where=str(source))
+    config._source = source.resolve()
+    return config
+
+
+def from_manifest(path: str | Path) -> tuple[RunConfig, RunManifest]:
+    """The config an `odke run` manifest recorded, to run it again, and the manifest.
+
+    `path` is the `manifest.json`, or a directory holding one. The config is
+    the one the run resolved, its paths relative to the directory the run read
+    it from. A manifest of `odke validate` or `odke ground` records that
+    command's options instead, and is refused here.
+    """
+    try:
+        manifest = read_manifest(path)
+    except (OSError, ValueError) as exc:
+        raise ConfigError(f"--from-manifest: {exc}") from None
+    if manifest.command != "run" or manifest.base_dir is None:
+        raise ConfigError(
+            f"--from-manifest: {path} records odke {manifest.command}, not odke run; "
+            "run that command again with the options under its `config`"
+        )
+    config = parse_config(manifest.config, base_dir=manifest.base_dir, where=str(path))
+    if manifest.config_file is not None:
+        config._source = Path(manifest.base_dir) / manifest.config_file
+    return config, manifest
 
 
 def load_models(path: str | Path) -> tuple[ModelsConfig, Path]:
@@ -447,6 +529,7 @@ __all__ = [
     "RunConfig",
     "StageSpec",
     "StagesConfig",
+    "from_manifest",
     "load_config",
     "load_models",
     "parse_config",

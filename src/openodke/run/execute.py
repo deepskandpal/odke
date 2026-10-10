@@ -1,5 +1,9 @@
 """Running a built config: bootstrap, load, run, collect every stage's counts, write.
 
+Then the run manifest (`openodke.manifest`): what was asked, what answered and
+what was made, into each JSONL sink's `manifest.json` beside the counts the
+sink wrote there, and to the config's `manifest` path.
+
 The pipeline writes the moment it has a graph, and a stage's own counts — the
 grounder's verdicts, the extractor's rejections, the corroborator's conflicts —
 are not in that graph. So the pipeline here is handed stand-ins that carry each
@@ -17,6 +21,7 @@ from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
@@ -26,9 +31,11 @@ from openodke.corroborate.judge import judge_stop
 from openodke.corroborate.provenance import CONFLICT
 from openodke.coverage import summary as coverage_summary
 from openodke.llm.budget import budget_summary, stopped_summary
+from openodke.manifest import FILE, Inputs, Recorder, RunManifest, inputs_of, package, spent_of
+from openodke.ontology import Ontology
 from openodke.reextract import summary as reextract_summary
 from openodke.run.build import Built, build
-from openodke.run.config import STAGES, RunConfig
+from openodke.run.config import STAGES, ConfigError, RunConfig
 from openodke.stages import PlatformProfile, Sink
 from openodke.types import Document, Fact, KnowledgeGraph
 
@@ -60,6 +67,9 @@ class RunResult:
     written: list[str] = field(default_factory=list)
     bootstrap: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # What the run was, and every file it was written to; a dry run writes none.
+    manifest: RunManifest | None = None
+    manifests: list[str] = field(default_factory=list)
 
     @property
     def stats(self) -> dict[str, Any]:
@@ -69,16 +79,42 @@ class RunResult:
         return render(self)
 
 
-def execute(config: RunConfig, *, dry_run: bool = False) -> RunResult:
-    """Run the config. A dry run loads, extracts and grounds, and writes nothing."""
-    return run_built(build(config), dry_run=dry_run)
+def execute(
+    config: RunConfig, *, dry_run: bool = False, replaying: RunManifest | None = None
+) -> RunResult:
+    """Run the config. A dry run loads, extracts and grounds, and writes nothing.
+
+    `replaying` is the manifest the config came from (`from_manifest`): the run
+    is refused, as a `ConfigError`, when the ontology or the inputs are not
+    what it recorded, because then it would not be that run again.
+    """
+    return run_built(build(config), dry_run=dry_run, replaying=replaying)
 
 
-def run_built(built: Built, *, dry_run: bool = False) -> RunResult:
+def run_built(
+    built: Built, *, dry_run: bool = False, replaying: RunManifest | None = None
+) -> RunResult:
+    config = built.config
+    recorder = Recorder(
+        "run",
+        config.canonical(),
+        config_file=config.source.name if config.source is not None else None,
+        base_dir=config.base_dir,
+        served=built.context.served,
+        cache=built.context.cache.directory if built.context.cache is not None else None,
+        budget=built.context.ledger.budget.limits,
+    )
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         pipeline = built.pipeline(sinks=[_StandIn(p.profile) for p in built.sinks])
     result_warnings = [str(w.message) for w in caught]
+    if replaying is not None:
+        _refuse_unless_same(replaying, ontology=built.ontology)
+        if replaying.package.get("openodke") != package()["openodke"]:
+            result_warnings.append(
+                f"the manifest was written by openodke {replaying.package.get('openodke')}; "
+                f"this is {package()['openodke']}"
+            )
 
     opened: list[Sink] = []
     applied: list[str] = []
@@ -109,6 +145,9 @@ def run_built(built: Built, *, dry_run: bool = False) -> RunResult:
             built.open_lookup(opened)
 
         docs = built.documents()
+        inputs = inputs_of(docs, handed_in(built.stages["extractor"]))
+        if replaying is not None:
+            _refuse_unless_same(replaying, inputs=inputs)
         register_documents(built.stages["extractor"], docs)
         register_documents(built.stages.get("corroborator"), docs)
         register_documents(built.stages.get("resolver"), docs)
@@ -129,9 +168,93 @@ def run_built(built: Built, *, dry_run: bool = False) -> RunResult:
             close = getattr(sink, "close", None)
             if callable(close):
                 close()
-    return RunResult(
-        graph=kg, dry_run=dry_run, written=written, bootstrap=applied, warnings=result_warnings
+    stats = kg.stats
+    manifest = recorder.finish(
+        inputs=inputs,
+        ontology=built.ontology,
+        prompts=prompts_sent(built.stages),
+        counts=run_counts(stats),
+        spent=spent_of(stats.get("spent") or {}),
+        stopped=stats.get("stopped"),
+        failed=stats.get("failed"),
+        dry_run=dry_run,
     )
+    return RunResult(
+        graph=kg,
+        dry_run=dry_run,
+        written=written,
+        bootstrap=applied,
+        warnings=result_warnings,
+        manifest=manifest,
+        manifests=[] if dry_run else write_manifest(built, manifest, kg),
+    )
+
+
+def write_manifest(built: Built, manifest: RunManifest, kg: KnowledgeGraph) -> list[str]:
+    """The run manifest into each JSONL sink's `manifest.json`, and to `manifest:` when named.
+
+    A run with neither writes it beside its config, as `<name>.manifest.json`.
+    """
+    config = built.config
+    into = [
+        Path(plan.directory) / FILE  # type: ignore[attr-defined]
+        for plan in built.sinks
+        if plan.name == "jsonl"
+    ]
+    written = [str(manifest.write_into(path)) for path in into]
+    own = manifest_path(config, jsonl=bool(into))
+    if own is not None:
+        written.append(str(manifest.write(own, kg)))
+    return written
+
+
+def manifest_path(config: RunConfig, *, jsonl: bool) -> Path | None:
+    """Where a run writes its manifest besides its JSONL sinks: `manifest:`, when named.
+
+    Otherwise, with no JSONL sink (`jsonl` is False), beside the config as
+    `<name>.manifest.json`, so that every run writes one; else nowhere more.
+    """
+    if config.manifest is not None:
+        return config.resolve(config.manifest)
+    if jsonl:
+        return None
+    stem = config.source.stem if config.source is not None else "odke"
+    return config.base_dir / f"{stem}.manifest.json"
+
+
+def handed_in(extractor: Any) -> list[Any] | None:
+    """The rows an extractor replays rather than extracts, a triples file's say; None otherwise."""
+    rows = getattr(extractor, "rows", None)
+    if not isinstance(rows, Mapping):
+        return None
+    return [row for group in rows.values() for row in group]
+
+
+def run_counts(stats: Mapping[str, Any]) -> dict[str, int]:
+    """The run's counts, as its manifest keeps them: the pipeline's, and the graph's."""
+    graph = stats.get("graph") or {}
+    counts = {key: int(stats.get(key, 0)) for key in _COUNTED}
+    counts.update({key: int(graph.get(key, 0)) for key in _GRAPH})
+    counts["links"] = sum(int(v) for v in (graph.get("links") or {}).values())
+    counts["failed"] = len(stats.get("failed") or {})
+    return counts
+
+
+_COUNTED = ("documents", "chunks", "skipped", "deferred", "empty_extractions", "derived", "refused")
+_GRAPH = ("facts", "edges", "properties", "entities")
+
+
+def _refuse_unless_same(
+    manifest: RunManifest, *, ontology: Ontology | None = None, inputs: Inputs | None = None
+) -> None:
+    problems = manifest.differences(ontology=ontology, inputs=inputs)
+    if problems:
+        lines = "; ".join(problems)
+        raise ConfigError(
+            f"--from-manifest: not the run it recorded, so it is not run: {lines}. "
+            "Run the config itself for a new run",
+            problems=tuple(problems),
+        )
 
 
 def _bootstrap(built: Built, opened: list[Sink]) -> list[str]:
@@ -354,6 +477,9 @@ def render(result: RunResult) -> str:
         lines.extend(f"  {line}" for line in result.written[1:])
     else:
         lines.append(_row(verb, "nothing — no sink configured"))
+    if result.manifests:
+        lines.append(_row("manifest", result.manifests[0]))
+        lines.extend(f"  {path}" for path in result.manifests[1:])
     if result.dry_run and result.graph.facts:
         lines.append("")
         lines.append("facts that would be written:")
@@ -425,9 +551,13 @@ __all__ = [
     "RunResult",
     "collect_stats",
     "execute",
+    "handed_in",
     "jsonable",
+    "manifest_path",
     "prompts_sent",
     "register_documents",
     "render",
     "run_built",
+    "run_counts",
+    "write_manifest",
 ]
