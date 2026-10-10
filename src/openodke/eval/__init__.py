@@ -47,6 +47,11 @@ precision beside the strict one (`openodke.eval.adjudication`). And two or
 more pipelines on the same documents give each one's recall relative to the
 pool of what they found together, which overstates true recall and says so
 (`pool`, `openodke.eval.pooling`).
+
+Where a run lost its facts is `openodke.eval.diagnosis`: every miss in one cause
+bucket. What to change first is `openodke.eval.fixes`, each fix with the recall
+gain the arithmetic expects; and `openodke.eval.track` keeps each prediction
+beside what the next run measured.
 """
 
 from openodke.eval.ablation import per_document, report_ablation, run_ablation

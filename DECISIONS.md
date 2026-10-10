@@ -994,3 +994,58 @@ validates, so a run that fails in between leaves the old version retracted
 and the new one unwritten; running it again finishes it. The reconciler does
 not rescore, so a fact that lost a source keeps its confidence until it is
 next validated.
+### 38. A miss goes where its evidence first points, and a fix is priced by arithmetic
+
+A recall number says how much a pipeline lost. The Evaluator also says where
+(#140) and what to change first (#141), and both are counts on the run's own
+evidence: the trace of what the extractor was offered, the gate's refusals, the
+predictions that came near a gold fact, the documents. Nothing is judged by a
+model.
+
+**One bucket per miss, the first its evidence fits, in three tiers:**
+- what the pipeline did: relation never offered, refused by the Validator, wrong
+  relation, inverse direction, surface form, and the same triple scored apart;
+- the condition the fact or its document was in: cross-sentence, output
+  saturation;
+- what is merely missing: entity never extracted, both seen but not linked.
+
+Within each tier the order is the one #140 proposed; the tiers are not. There,
+the two symptoms came before cross-sentence, saturation and surface form. But a
+miss with no prediction near it always has an end missing or two ends unlinked,
+so in that order the last three buckets could never fill, and the planted output
+cap of #147 would read as "entity never extracted". A bucket that says what the
+pipeline did beats one that describes the fact, and that beats one that names a
+symptom. "Same triple, scored apart" is a tenth bucket: the matcher pairs one
+prediction with one gold fact, and compares type, polarity and qualifiers, so a
+stated triple can still be a miss. A bucket the run cannot measure is `null`,
+not zero: with no trace, nothing is known about what was offered.
+
+**Expected gain is arithmetic on the counts, never an opinion.** A fix that can
+be replayed on the run's own output is exact: accepting the refusals writes the
+refused gold facts back, and the inverse step adds exactly the partners
+`Pipeline` would (#28), so recall gained and precision lost are both counts.
+Any other fix assumes its bucket is found as often as the run finds the facts
+its cause does not touch: never-offered relations at the recall on offered
+ones, cross-sentence facts at the same-sentence recall, a saturated run's long
+documents at its short ones' recall, and the rest at the run's recall. That is
+the expected gain, and fixes are ranked by it; every miss in the bucket found is
+the ceiling. A reference run, another system on the same gold, gives a third
+figure at its rate. Surface form is worth zero until #143's judge confirms a
+candidate.
+
+On the published Re-DocRED runs this reproduces the 4 October estimate for
+offering every relation: +2.6 recall points at openodke's own rate, +7.3 at
+LangChain's (+7.4 by hand), +20.8 at most. The rerun measured +4.5.
+
+**Each prediction is kept beside its measurement.** A report appends its
+predicted fixes to a track record, a JSON Lines file beside it, naming the run
+by a hash of its per-document outcomes. `odke eval compare A B` appends the
+recall B measured for a fix A predicted, when `--applied` names it or the two
+configs differ at that fix's knobs alone. The file only grows.
+
+*Cost:* the rate is an assumption, and the ranking inherits it. On Re-DocRED,
+cross-sentence ranks first at +6.4, priced at the same-sentence rate, which no
+fix has yet been measured against. The order is a choice too: a cross-sentence
+fact whose entity was never extracted counts as cross-sentence. Gains overlap,
+so they never add. And the inverse replay matches a partner on the triple,
+which is what Re-DocRED scores but not every detail a labelled `Fact` carries.
