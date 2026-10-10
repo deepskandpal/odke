@@ -17,8 +17,12 @@ knowing which stage made the report. So an Evaluator run also writes an
   stages sent (DECISIONS #27), and the dataset;
 - **stages**: the `StageReport`s the rows were computed beside, unchanged, so
   nothing a 0.x reader used is lost (DECISIONS #24);
-- **diagnosis**, **fixes**, **comparison** and **calibration**: empty, and
-  typed, until the issues that fill them land (#140, #141, #142, #135).
+- **diagnosis**: where the final row lost facts, every miss in one cause
+  bucket, and its false positives split by what the gate did
+  (`openodke.eval.diagnosis`, #140);
+- **fixes**: empty, and typed, until #141 fills it;
+- **comparison**: this run against a baseline (#142); **calibration**: empty,
+  and typed, until #135 fills it.
 
 1.1 adds the sections that score without gold, or with gold that is
 incomplete, each `null` when not asked for: **judged_precision**, a judge's
@@ -49,6 +53,8 @@ from pydantic import Field
 from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED, Range, bootstrap
 from openodke.eval.compare import Comparison
 from openodke.eval.cost import CallRecord, StageCost
+from openodke.eval.diagnosis import Bucket
+from openodke.eval.diagnosis import render as render_buckets
 from openodke.eval.extraction import document_counts
 from openodke.eval.formats import GoldFact
 from openodke.eval.report import Metric, StageReport, _fmt, _table, prf
@@ -362,13 +368,13 @@ class EvalReport(Frozen):
     rows: tuple[Row, ...] = ()
     stages: tuple[StageReport, ...] = ()
     notes: tuple[str, ...] = ()
-    # Typed, and empty until filled: every miss in one cause bucket (#140),
-    diagnosis: tuple[dict[str, Any], ...] = ()
-    # ranked fixes with their expected gain (#141),
+    # Every miss of the final row in one cause bucket, then its false positives (#140),
+    diagnosis: tuple[Bucket, ...] = ()
+    # typed, and empty until filled: ranked fixes with their expected gain (#141),
     fixes: tuple[dict[str, Any], ...] = ()
     # this run against a baseline: `odke eval compare`'s block, as `--json` prints it (#142),
     comparison: Comparison | None = None
-    # and the grounder's calibration cards (#135).
+    # and, typed and empty until filled, the grounder's calibration cards (#135).
     calibration: tuple[dict[str, Any], ...] = ()
     # Added in 1.1, so a 1.0 report has none of them: precision with no gold,
     # the judge corrected by a labelled sample (#144).
@@ -419,6 +425,8 @@ class EvalReport(Frozen):
                 lines += ["", *body]
         if self.notes:
             lines += ["", *(f"  - {note}" for note in self.notes)]
+        if self.diagnosis:
+            lines += ["", *render_buckets(self.diagnosis)]
         if self.comparison is not None:
             lines += ["", *self.comparison.render().splitlines()]
         lines += ["", *_provenance(self)]
@@ -575,6 +583,7 @@ def from_stage(
     run: Run | None = None,
     bootstrap: Bootstrap | None = None,
     notes: Sequence[str] = (),
+    diagnosis: Sequence[Bucket] = (),
 ) -> EvalReport:
     """A stage's report as an eval report: titled and counted as the stage is."""
     return EvalReport(
@@ -585,6 +594,7 @@ def from_stage(
         rows=tuple(rows),
         stages=(report,),
         notes=tuple(notes),
+        diagnosis=tuple(diagnosis),
     )
 
 

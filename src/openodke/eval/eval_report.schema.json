@@ -40,8 +40,8 @@
     "notes": {"type": "array", "items": {"type": "string"}},
     "diagnosis": {
       "type": "array",
-      "description": "Reserved for #140: every miss in one cause bucket.",
-      "items": {"type": "object"}
+      "description": "Where the final row lost facts (#140): every miss in one cause bucket, in the order they are tried, then the false positives before the gate.",
+      "items": {"$ref": "#/$defs/bucket"}
     },
     "fixes": {
       "type": "array",
@@ -311,6 +311,48 @@
         "guardrails": {"type": "object", "additionalProperties": {"$ref": "#/$defs/paired"}},
         "mcnemar": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/mcnemar"}]},
         "notes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "example": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["doc_id", "gold", "nearest", "why"],
+      "properties": {
+        "doc_id": {"type": ["string", "null"]},
+        "gold": {"type": ["string", "null"], "description": "The gold fact missed; null for a false positive."},
+        "nearest": {"type": ["string", "null"], "description": "The prediction nearest to it; null when none came near."},
+        "why": {"type": ["string", "null"]}
+      }
+    },
+    "bucket": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["row", "side", "bucket", "label", "count", "share", "examples", "note"],
+      "properties": {
+        "row": {"type": "string"},
+        "side": {"enum": ["recall", "precision"]},
+        "bucket": {
+          "enum": [
+            "never_offered",
+            "refused",
+            "wrong_relation",
+            "inverse",
+            "surface_form",
+            "scored_apart",
+            "cross_sentence",
+            "saturation",
+            "entity_missing",
+            "not_linked",
+            "refused_not_in_gold",
+            "written_supported",
+            "written_other"
+          ]
+        },
+        "label": {"type": "string"},
+        "count": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/count"}], "description": "null when the run cannot say; note says why."},
+        "share": {"$ref": "#/$defs/share", "description": "Of the row's misses, or of its false positives before the gate."},
+        "examples": {"type": "array", "items": {"$ref": "#/$defs/example"}},
+        "note": {"type": ["string", "null"]}
       }
     },
     "stage_report": {

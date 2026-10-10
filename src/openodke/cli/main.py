@@ -1204,6 +1204,15 @@ def eval_stage(
         "supported in two is possibly missing from gold. Prints an adjudicated precision "
         "beside the strict one and writes the list here, as JSONL.",
     ),
+    trace: Path | None = typer.Option(
+        None,
+        "--trace",
+        help="extract and pipeline: what the extractor was offered, for the diagnosis: a run's "
+        "manifest.json, or the run config that produced the predictions.",
+    ),
+    examples: int = typer.Option(
+        3, "--examples", min=0, help="extract and pipeline: examples kept per cause bucket."
+    ),
 ) -> None:
     """Score one stage against your own labelled data.
 
@@ -1242,6 +1251,9 @@ def eval_stage(
     documents, after grounding. Their supported facts are pooled, and each
     run's recall relative to the pool is printed with its range, beside the
     caveat that it overstates true recall.
+
+    `extract` and `pipeline` also say where the facts went, every miss in one
+    cause bucket; `--trace` says what the extractor was offered.
 
     Extraction, the ablation and pipeline print precision, recall and F1 with
     95% ranges over your documents. `--report` writes the versioned eval
@@ -1284,6 +1296,7 @@ def eval_stage(
     # The flags compare shares with another stage, which takes them as its own.
     shared = {"precision": ("--seed",), "pool": ("--seed", "--resamples")}
     compare_flags = [flag for flag in compare_flags if flag not in shared.get(stage, ())]
+    diagnosed = {"--trace": trace is not None, "--examples": examples != 3}
     try:
         if stage != "pipeline" and any(piped.values()):
             named = ", ".join(flag for flag, given in piped.items() if given)
@@ -1291,6 +1304,9 @@ def eval_stage(
         if stage != "precision" and any(sampled.values()):
             named = ", ".join(flag for flag, given in sampled.items() if given)
             raise ValueError(f"{named}: these are for precision")
+        if stage not in ("extract", "pipeline") and any(diagnosed.values()):
+            named = ", ".join(flag for flag, given in diagnosed.items() if given)
+            raise ValueError(f"{named}: for extract and pipeline")
         if stage == "compare":
             if any(v is not None for v in inputs):
                 raise ValueError("compare reads two --items files and takes no other inputs")
@@ -1352,6 +1368,8 @@ def eval_stage(
                 config=config,
                 timeout=timeout,
                 adjudicate=adjudicate,
+                trace=trace,
+                examples=examples,
             )
         elif stage == "pool":
             report = _eval_pool(
@@ -1430,7 +1448,22 @@ def eval_stage(
             rows, predicted = load_inputs(
                 stage, labels, predictions, run=run, ontology=ontology, documents=documents
             )
-            report = report_inputs(stage, rows, predicted, labels=labels, ontology=ontology)
+            if stage == "extract":
+                from openodke.eval.diagnosis import read_trace
+
+                offered, _ = read_trace(trace) if trace is not None else (None, None)
+                report = report_inputs(
+                    stage,
+                    rows,
+                    predicted,
+                    labels=labels,
+                    ontology=ontology,
+                    offered=offered,
+                    texts=_texts(documents),
+                    examples=examples,
+                )
+            else:
+                report = report_inputs(stage, rows, predicted, labels=labels, ontology=ontology)
             if items is not None:
                 _write_items(items, stage, rows, predicted)
         if report_to is not None:
@@ -1568,6 +1601,15 @@ def _eval_pool(
         resamples=resamples,
         seed=seed,
     )
+
+
+def _texts(documents: Path | None) -> dict[str, str] | None:
+    """The documents' texts by id, for the diagnosis: a folder of texts, or Document JSONL."""
+    if documents is None:
+        return None
+    from openodke.eval.harness import load_documents
+
+    return {doc.id: doc.text for doc in load_documents(documents)}
 
 
 def _write_items(path: Path, stage: str, rows: Any, predicted: Any) -> None:

@@ -25,6 +25,7 @@ import math
 import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,7 @@ from openodke.eval.datasets._common import (
     write_json,
     write_jsonl,
 )
+from openodke.eval.diagnosis import Endpoint, GoldItem, Said, View
 from openodke.eval.eval_report import (
     Conformance,
     Counts,
@@ -283,16 +285,21 @@ def prepare(
 
 
 def _gold_row(doc_id: str, doc: Mapping[str, Any]) -> dict[str, Any]:
+    """One document's gold: each entity's names and type, and each fact with its evidence.
+
+    `types` and `evidence` (the sentence ids that state each fact) are for the
+    diagnosis (#140); a set prepared before them has neither, and scores the same.
+    """
+    labels = [label for label in doc["labels"] if label["r"] in RELATIONS]
+    kinds = [cluster[0]["type"] for cluster in doc["vertexSet"]]
     return {
         "id": doc_id,
         "title": doc["title"],
         "text": detokenize(doc["sents"]),
         "entities": [sorted({m["name"] for m in cluster}) for cluster in doc["vertexSet"]],
-        "facts": [
-            [label["h"], RELATIONS[label["r"]], label["t"]]
-            for label in doc["labels"]
-            if label["r"] in RELATIONS
-        ],
+        "types": [TYPES.get(kind, kind) for kind in kinds],
+        "facts": [[label["h"], RELATIONS[label["r"]], label["t"]] for label in labels],
+        "evidence": [sorted(label.get("evidence", ())) for label in labels],
     }
 
 
@@ -320,23 +327,15 @@ def documents(
     relations = {_norm(label) for label in RELATIONS.values()}
     out = []
     for row in gold:
-        names = [{_norm(n) for n in cluster} for cluster in row["entities"]]
         facts = {(h, _norm(r), t) for h, r, t in row["facts"]}
         text = _norm(row["text"])
-        found: set[tuple[int, str, int]] = set()
         triples = list(dict.fromkeys(predicted.get(row["id"], ())))
+        found, _ = _matched(row, triples)
         conformant = hallucinated = 0
         for subject, relation, obj in triples:
             rel, s, o = _norm(relation), _norm(subject), _norm(obj)
             conformant += rel in relations
             hallucinated += (s not in text) or (o not in text) or rel not in relations
-            heads = [i for i, cluster in enumerate(names) if s in cluster]
-            tails = [i for i, cluster in enumerate(names) if o in cluster]
-            match = next(
-                ((h, rel, t) for h in heads for t in tails if (h, rel, t) in facts - found), None
-            )
-            if match is not None:
-                found.add(match)
         out.append(
             {
                 "id": row["id"],
@@ -348,6 +347,88 @@ def documents(
             }
         )
     return out
+
+
+def _matched(
+    row: Mapping[str, Any], triples: Sequence[Triple]
+) -> tuple[set[tuple[int, str, int]], list[bool]]:
+    """The gold facts `triples` find, each once, and which triple found one, in order."""
+    names = [{_norm(n) for n in cluster} for cluster in row["entities"]]
+    facts = {(h, _norm(r), t) for h, r, t in row["facts"]}
+    found: set[tuple[int, str, int]] = set()
+    hits = []
+    for subject, relation, obj in triples:
+        rel, s, o = _norm(relation), _norm(subject), _norm(obj)
+        heads = [i for i, cluster in enumerate(names) if s in cluster]
+        tails = [i for i, cluster in enumerate(names) if o in cluster]
+        match = next(
+            ((h, rel, t) for h in heads for t in tails if (h, rel, t) in facts - found), None
+        )
+        if match is not None:
+            found.add(match)
+        hits.append(match is not None)
+    return found, hits
+
+
+def diagnosis_view(
+    gold: Sequence[Mapping[str, Any]],
+    predicted: Mapping[str, Sequence[Triple]],
+    refused: Mapping[str, Sequence[Triple]] | None = None,
+    *,
+    row: str = "",
+) -> View:
+    """The gold and `predicted` as the diagnosis reads them, matched as `score` matches them (#140).
+
+    An end of a gold fact is every mention of its entity, as `score` accepts
+    them; a fact's evidence sentences and its head's type come from the set
+    when it was prepared with them. `refused` is what a gate refused, by
+    document.
+    """
+    items: list[GoldItem] = []
+    said: list[Said] = []
+    kept: list[Said] | None = None if refused is None else []
+    for doc in gold:
+        clusters = doc["entities"]
+        ends = [Endpoint(frozenset(_norm(n) for n in c), tuple(c)) for c in clusters]
+        types, evidence = doc.get("types"), doc.get("evidence")
+        triples = list(dict.fromkeys(predicted.get(doc["id"], ())))
+        found, hits = _matched(doc, triples)
+        facts = {(h, _norm(r), t): (h, r, t, i) for i, (h, r, t) in enumerate(doc["facts"])}
+        for n, (key, (h, r, t, i)) in enumerate(facts.items()):
+            items.append(
+                GoldItem(
+                    id=f"{doc['id']}#{n + 1}",
+                    doc_id=doc["id"],
+                    subject=ends[h],
+                    relation=key[1],
+                    object=ends[t],
+                    found=key in found,
+                    subject_type=types[h] if types else None,
+                    evidence=tuple(evidence[i]) if evidence else (),
+                    text=f"{clusters[h][0]} · {r} · {clusters[t][0]}",
+                )
+            )
+        said += [_said(doc["id"], t, hit) for t, hit in zip(triples, hits, strict=True)]
+        if kept is not None and refused is not None:
+            kept += [_said(doc["id"], t, False) for t in dict.fromkeys(refused.get(doc["id"], ()))]
+    texts = {doc["id"]: doc["text"] for doc in gold}
+    names = {_norm(label): label for label in RELATIONS.values()}
+    return View(
+        gold=items, said=said, refused=kept, texts=texts, relation=_norm, row=row, names=names
+    )
+
+
+def _said(doc_id: str, triple: Triple, hit: bool) -> Said:
+    s, r, o = triple
+    return Said(
+        doc_id=doc_id,
+        subject=_norm(s),
+        relation=_norm(r),
+        object=_norm(o),
+        forms=(s, o),
+        hit=hit,
+        text=f"{s} · {r} · {o}",
+    )
 
 
 def aggregate(units: Sequence[Mapping[str, Any]]) -> dict[str, Metric]:
@@ -471,6 +552,7 @@ def scoring(
         units=lambda predicted: documents(gold, predicted),
         aggregate=aggregate,
         row=row,
+        view=partial(diagnosis_view, gold),
         dataset=Dataset(
             name=NAME,
             path=None if path is None else str(path),
@@ -505,6 +587,7 @@ __all__ = [
     "SPLITS",
     "TYPES",
     "aggregate",
+    "diagnosis_view",
     "documents",
     "evaluate",
     "fetch",

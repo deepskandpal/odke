@@ -13,12 +13,13 @@ file, which is also how a platform's merges arrive.
 from __future__ import annotations
 
 import importlib
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED
 from openodke.eval.calibration import evaluate_calibration, run_score
+from openodke.eval.diagnosis import EXAMPLES, Offered, diagnose, gold_view
 from openodke.eval.eval_report import Dataset, EvalReport, Run, extraction_rows, from_stage
 from openodke.eval.extraction import evaluate_extraction, run_extract
 from openodke.eval.formats import (
@@ -198,23 +199,29 @@ def report_inputs(
     resamples: int = RESAMPLES,
     seed: int = SEED,
     level: float = LEVEL,
+    offered: Offered | None = None,
+    texts: Mapping[str, str] | None = None,
+    examples: int = EXAMPLES,
 ) -> EvalReport:
     """Loaded labels and predictions scored as an eval report (`load_inputs`, then this).
 
     For `extract` the report has a row: precision, recall and F1 with their
     ranges, the counts, and conformance when an ontology is given, whether or
-    not anything ran. Every other stage's report carries its `StageReport`
-    and no row. `labels` names the dataset.
+    not anything ran; and the diagnosis of its misses (#140), with `offered`
+    the trace of what the extractor was shown and `texts` the documents.
+    Every other stage's report carries its `StageReport` and no row.
+    `labels` names the dataset.
     """
     name = Path(labels).name if labels is not None else f"{stage} labels"
     dataset = Dataset(name=name, path=None if labels is None else str(labels))
     found = score(stage, rows, predicted)
     if stage != "extract":
         return from_stage(found, run=Run(dataset=dataset))
+    schema = _ontology(ontology) if ontology is not None else None
     found_rows, how = extraction_rows(
         [("extract", list(predicted), None)],
         rows,
-        ontology=_ontology(ontology) if ontology is not None else None,
+        ontology=schema,
         resamples=resamples,
         seed=seed,
         level=level,
@@ -222,7 +229,16 @@ def report_inputs(
     dataset = dataset.model_copy(
         update={"documents": len({g.doc_id for g in rows}), "labels": len(rows)}
     )
-    return from_stage(found, rows=found_rows, bootstrap=how, run=Run(dataset=dataset))
+    view = gold_view(rows, list(predicted), texts=texts, row="extract")
+    inverses = schema.inverses if schema is not None else {}
+    diagnosed = diagnose(view, offered=offered, inverses=inverses, examples=examples)
+    return from_stage(
+        found,
+        rows=found_rows,
+        bootstrap=how,
+        run=Run(dataset=dataset),
+        diagnosis=diagnosed.buckets,
+    )
 
 
 def _required(stage: str, predictions: str | Path | None) -> str | Path:
