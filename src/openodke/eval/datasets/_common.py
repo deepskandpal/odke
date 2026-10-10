@@ -17,6 +17,7 @@ from openodke.coverage import summary as coverage_summary
 from openodke.eval.ablation import AblationRun
 from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED, Range, bootstrap
 from openodke.eval.cost import CallRecord, StageCost
+from openodke.eval.diagnosis import View
 from openodke.eval.eval_report import (
     Bootstrap,
     Configuration,
@@ -258,6 +259,8 @@ ToRow = Callable[
     [str, Sequence[Any], Mapping[str, Metric], Mapping[str, Range], Sequence[CallRecord] | None],
     Row,
 ]
+# Triples written, and those a gate refused (None: no record) -> the diagnosis's view.
+ToView = Callable[[Mapping[str, Sequence[Triple]], Mapping[str, Sequence[Triple]] | None], View]
 
 
 @dataclass(frozen=True)
@@ -267,7 +270,9 @@ class Scoring:
     `units` takes one configuration's triples by document and scores each
     document; `aggregate` turns those into the dataset's numbers, and is what
     the bootstrap recomputes on each draw of documents; `row` makes the eval
-    report's row. `stage` names the set, and `dataset` describes it.
+    report's row. `stage` names the set, and `dataset` describes it. `view`,
+    where the dataset has one, puts its gold and a configuration's triples in
+    the form the diagnosis reads (#140), matched as `units` matches them.
     """
 
     stage: str
@@ -276,6 +281,7 @@ class Scoring:
     aggregate: Aggregate
     row: ToRow
     dataset: Dataset
+    view: ToView | None = None
 
 
 @dataclass(frozen=True)

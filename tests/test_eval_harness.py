@@ -383,6 +383,11 @@ def test_odke_eval_pipeline_runs_the_bench_set_s_own_checks(tmp_path: Path, benc
     result = runner.invoke(app, args)
     assert result.exit_code == 0, result.output
     assert "pipeline  0.500 [" in result.output
+    # Text2KGBench's scorer has no view for the diagnosis yet, and says so.
+    assert "no diagnosis: text2kgbench:ont_1_movie's scorer has no view for one yet" in (
+        result.output
+    )
+    assert "where it loses facts" not in result.output
 
 
 @pytest.mark.parametrize(

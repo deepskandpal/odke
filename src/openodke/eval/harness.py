@@ -30,6 +30,10 @@ With `adjudicate`, each prediction your gold lacks is grounded three times,
 and one supported in two of them is listed as possibly missing from gold
 (`openodke.eval.adjudication`, #145): an adjudicated precision is printed beside
 each row's strict one, and the list is written for audit.
+
+The last row is diagnosed: every miss in one cause bucket, with the gate's
+refusals when the Validator ran and what the extractor was offered when a
+`trace` says (`openodke.eval.diagnosis`, #140).
 """
 
 from __future__ import annotations
@@ -53,6 +57,15 @@ from pydantic import ValidationError
 
 from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED
 from openodke.eval.cost import CallRecord
+from openodke.eval.diagnosis import (
+    EXAMPLES,
+    Bucket,
+    Offered,
+    View,
+    diagnose,
+    gold_view,
+    read_trace,
+)
 from openodke.eval.eval_report import (
     Bootstrap,
     Configuration,
@@ -71,7 +84,7 @@ from openodke.interop.langchain import from_graph_documents
 from openodke.interop.langextract import from_langextract
 from openodke.interop.triples import TripleRow, _file_name, read_triples, to_fact
 from openodke.ontology import Ontology
-from openodke.types import Document, Fact
+from openodke.types import Document, Fact, ValidationVerdict
 
 TITLE = "pipeline"
 PIPELINE, VALIDATOR = "pipeline", "+ validator"
@@ -400,13 +413,33 @@ def as_facts(output: Output, corpus: Corpus) -> tuple[list[Fact], list[str]]:
 
 @dataclass
 class Checked:
-    """The pipeline's facts after the Validator, and what it cost."""
+    """The pipeline's facts after the Validator, what it cost, and what its gate refused."""
 
     facts: list[Fact]
     calls: list[CallRecord]
     prompts: tuple[str, ...]
     models: dict[str, str]
     notes: list[str]
+    # Each fact the gate refused, and its reason: the diagnosis's refused bucket.
+    refused: list[tuple[Fact, str]] = field(default_factory=list)
+
+
+class _Kept:
+    """A gate that keeps a record: each fact it refuses, and why. It decides nothing itself."""
+
+    def __init__(self, gate: Any) -> None:
+        self.gate = gate
+        self.refused: list[tuple[Fact, str]] = []
+
+    def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
+        verdict: ValidationVerdict = self.gate.validate(fact, ontology)
+        if verdict.action == "refuse":
+            self.refused.append((fact, verdict.reason or ""))
+        return verdict
+
+    @property
+    def stats(self) -> Any:
+        return getattr(self.gate, "stats", None)
 
 
 def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = None) -> Checked:
@@ -419,6 +452,7 @@ def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = Non
     way, so the row has its calls, tokens, cost and latency.
     """
     from openodke.eval.cost import CostMeter
+    from openodke.gate import VerdictGate
     from openodke.llm.roles import ModelRoles
     from openodke.validator import Validator
 
@@ -433,6 +467,7 @@ def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = Non
         meter = built.context.meter
         assert meter is not None
         stage = built.stages
+        kept = _Kept(stage["gate"] if stage.get("gate") is not None else VerdictGate(schema=True))
         validator = Validator(
             corpus.ontology or built.ontology,
             grounder=stage["grounder"],
@@ -442,7 +477,7 @@ def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = Non
             resolver=stage["resolver"],
             corroborator=stage["corroborator"],
             scorer=stage["scorer"],
-            gate=stage["gate"],
+            gate=kept,
             inverses=loaded.inverses,
             coverage=loaded.coverage,
         )
@@ -452,7 +487,8 @@ def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = Non
         roles = ModelRoles()
         meter = CostMeter()
         client = meter.client(roles.client_for("ground"), "ground")
-        validator = Validator(corpus.ontology, roles=roles, client=client)
+        kept = _Kept(VerdictGate(schema=True))
+        validator = Validator(corpus.ontology, roles=roles, client=client, gate=kept)
         configured = {"ground": roles.ground.model}
         source = "its defaults"
     graph, done = validator.validate(list(facts), corpus.documents)
@@ -471,6 +507,7 @@ def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = Non
         prompts=done.prompts,
         models=models_called(meter.records, configured),
         notes=notes,
+        refused=kept.refused,
     )
 
 
@@ -488,8 +525,39 @@ def score(
     resamples: int = RESAMPLES,
     seed: int = SEED,
     level: float = LEVEL,
+    offered: Offered | None = None,
+    examples: int = EXAMPLES,
 ) -> EvalReport:
-    """The pipeline's facts, and the checked ones when there are, as the eval report."""
+    """The pipeline's facts, and the checked ones when there are, as the eval report.
+
+    The last row is diagnosed, with `offered` the trace of what the extractor
+    was shown.
+    """
+    return _score(
+        corpus,
+        facts,
+        checked=checked,
+        notes=notes,
+        resamples=resamples,
+        seed=seed,
+        level=level,
+        offered=offered,
+        examples=examples,
+    )
+
+
+def _score(
+    corpus: Corpus,
+    facts: Sequence[Fact],
+    *,
+    checked: Checked | None,
+    notes: Sequence[str],
+    resamples: int,
+    seed: int,
+    level: float,
+    offered: Offered | None,
+    examples: int,
+) -> EvalReport:
     configurations: list[Configuration] = [(PIPELINE, facts, None)]
     if checked is not None:
         configurations.append((VALIDATOR, checked.facts, checked.calls))
@@ -499,6 +567,9 @@ def score(
         dataset=corpus.dataset,
     )
     lines = [*notes, *(checked.notes if checked is not None else ())]
+    last, final, _ = configurations[-1]
+    refused = None if checked is None else checked.refused
+    view: View | None = None
     if corpus.gold is not None:
         rows, how = extraction_rows(
             configurations,
@@ -513,8 +584,15 @@ def score(
             for name, found, _ in configurations
         )
         n = len(corpus.gold)
+        texts = {doc.id: doc.text for doc in corpus.documents}
+        view = gold_view(corpus.gold, final, refused=refused, texts=texts, row=last)
     else:
-        from openodke.eval.datasets._common import report, score_configurations
+        from openodke.eval.datasets._common import (
+            doc_names,
+            report,
+            score_configurations,
+            triples_by_doc,
+        )
 
         scoring = corpus.scoring
         scored = score_configurations(
@@ -525,6 +603,23 @@ def score(
         stages = (report(scoring.stage, n, scored.table, (), labels=labels),)
         rows = scored.rows
         how = Bootstrap(units=n, resamples=resamples, seed=seed, level=level)
+        predicted = scored.predictions[last]
+        if scoring.view is None:
+            lines.append(f"no diagnosis: {scoring.stage}'s scorer has no view for one yet")
+        else:
+            relation = scoring.meta["relation_labels"]
+            names = doc_names(corpus.documents)
+
+            def triples(found: Sequence[Fact]) -> dict[str, list[tuple[str, str, str]]]:
+                return triples_by_doc(found, names, lambda p: relation.get(p, p))
+
+            gated = None if refused is None else triples([fact for fact, _ in refused])
+            view = scoring.view(predicted, gated)
+            view.row = last
+    diagnosed: tuple[Bucket, ...] = ()
+    if view is not None:
+        inverses = corpus.ontology.inverses if corpus.ontology is not None else {}
+        diagnosed = diagnose(view, offered=offered, inverses=inverses, examples=examples).buckets
     return EvalReport(
         title=TITLE,
         n=n,
@@ -533,6 +628,7 @@ def score(
         rows=tuple(rows),
         stages=stages,
         notes=tuple(lines),
+        diagnosis=diagnosed,
     )
 
 
@@ -550,6 +646,8 @@ def evaluate_pipeline(
     config: str | Path | None = None,
     timeout: float = TIMEOUT,
     adjudicate: str | Path | None = None,
+    trace: str | Path | None = None,
+    examples: int = EXAMPLES,
 ) -> EvalReport:
     """Run a pipeline one way, read its output, validate it if asked, and score it.
 
@@ -559,7 +657,9 @@ def evaluate_pipeline(
     stages and models from, a bench set's own `odke.json` by default.
     `adjudicate` names the file the adjudication list goes to: each prediction
     the gold lacks, grounded three times by `config`'s grounder or the default
-    one (`openodke.eval.adjudication`). It needs `labels`.
+    one (`openodke.eval.adjudication`). It needs `labels`. `trace` says what
+    the extractor was offered, for the diagnosis: a run's `manifest.json`, or
+    the run config that produced the predictions.
     """
     modes = [m for m in (command, function, predictions) if m is not None]
     if len(modes) != 1:
@@ -582,6 +682,7 @@ def evaluate_pipeline(
             "--adjudicate needs --labels: it lists the predictions your gold facts lack, by "
             "openodke's matching, and a --bench set is scored by its benchmark's own"
         )
+    offered, _ = read_trace(trace) if trace is not None else (None, None)
     if labels is not None:
         if documents is None:
             raise ValueError("--labels needs --documents: the texts the pipeline reads")
@@ -604,7 +705,17 @@ def evaluate_pipeline(
     ran = f" in {output.seconds:.1f} s" if output.seconds is not None else ""
     notes.insert(0, f"{output.how}: {len(output.items)} row(s){ran}, {len(facts)} fact(s)")
     checked = check(facts, corpus, config) if validator else None
-    report = score(corpus, facts, checked=checked, notes=notes)
+    report = _score(
+        corpus,
+        facts,
+        checked=checked,
+        notes=notes,
+        resamples=RESAMPLES,
+        seed=SEED,
+        level=LEVEL,
+        offered=offered,
+        examples=examples,
+    )
     if adjudicate is not None:
         rows = [(PIPELINE, facts)] + ([(VALIDATOR, checked.facts)] if checked else [])
         report = adjudicated(report, corpus, rows, Path(adjudicate), config)

@@ -17,6 +17,7 @@ import pytest
 from openodke import Entity, Evidence, Fact, Ontology
 from openodke.eval import evaluate_extraction, item_rows, load_jsonl
 from openodke.eval.compare import Comparison, ItemRow, compare_items
+from openodke.eval.diagnosis import BUCKETS, Bucket, Example
 from openodke.eval.eval_report import (
     SCHEMA_PATH,
     SCHEMA_VERSION,
@@ -31,6 +32,7 @@ from openodke.eval.eval_report import (
 )
 from openodke.eval.extraction import document_counts
 from openodke.eval.formats import GoldFact
+from openodke.eval.runner import report_inputs
 from openodke.eval.stats import McNemar, Paired
 
 FIXTURES = Path(__file__).parent / "fixtures" / "eval"
@@ -210,7 +212,7 @@ def test_the_check_names_what_is_wrong() -> None:
     assert any(p.startswith("$.stages[0].metrics.f1: expected") for p in problems)
 
 
-def test_the_reserved_sections_are_empty_and_typed() -> None:
+def test_the_sections_left_empty_are_empty_and_typed() -> None:
     data = extract_report().model_dump(mode="json")
     assert (data["diagnosis"], data["fixes"], data["comparison"], data["calibration"]) == (
         [],
@@ -220,6 +222,8 @@ def test_the_reserved_sections_are_empty_and_typed() -> None:
     )
     data["diagnosis"] = ["not an object"]
     assert check_report(data) == ["$.diagnosis[0]: expected object, got str"]
+    data["diagnosis"], data["calibration"] = [], ["not an object"]
+    assert check_report(data) == ["$.calibration[0]: expected object, got str"]
 
 
 def test_the_schema_agrees_with_a_full_json_schema_validator() -> None:
@@ -297,6 +301,32 @@ def test_compare_s_block_is_the_comparison_section_unchanged(tmp_path: Path) -> 
     assert check_report(data) == []
     assert read_report(report.write(tmp_path / "r.json")).comparison == comparison
     assert comparison.render() in report.render()
+
+
+def test_the_schema_names_every_field_of_the_diagnosis() -> None:
+    """The schema and the models it describes cannot drift: same fields, all required."""
+    defs = schema()["$defs"]
+    for name, model in (("bucket", Bucket), ("example", Example)):
+        assert set(defs[name]["properties"]) == set(model.model_fields), name
+        assert set(defs[name]["required"]) == set(model.model_fields), name
+    assert defs["bucket"]["properties"]["bucket"]["enum"] == list(BUCKETS)
+
+
+def test_a_diagnosed_report_fits_the_schema_and_prints_its_tables(tmp_path: Path) -> None:
+    gold = load_jsonl(FIXTURES / "extract.labels.jsonl", GoldFact)
+    facts = load_jsonl(FIXTURES / "extract.predictions.jsonl", Fact)
+    report = report_inputs("extract", gold, facts)
+    data = report.model_dump(mode="json")
+    assert check_report(data) == []
+    assert sum(b["count"] or 0 for b in data["diagnosis"] if b["side"] == "recall") == (
+        report.rows[0].counts.under_extraction
+    )
+    assert read_report(report.write(tmp_path / "r.json")) == report
+    text = report.render()
+    assert "where it loses facts  (extract:" in text
+    data["diagnosis"][0]["bucket"] = "bad luck"
+    problems = check_report(data)
+    assert any(p.startswith("$.diagnosis[0].bucket: must be one of") for p in problems)
 
 
 def test_the_schema_names_every_field_of_the_comparison() -> None:
