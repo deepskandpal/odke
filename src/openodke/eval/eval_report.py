@@ -5,7 +5,7 @@ shape is whatever that stage partitions on. That suits a person reading one
 table. It does not suit a CI job, a dashboard, or a second run to compare
 against, because each of those needs to know where precision is without
 knowing which stage made the report. So an Evaluator run also writes an
-`EvalReport`, whose shape is fixed and versioned (`schema_version`, "1.1"):
+`EvalReport`, whose shape is fixed and versioned (`schema_version`, "1.2"):
 
 - **rows**: one per configuration scored against gold facts (a single
   extraction, or the ablation's three), each with precision, recall and F1
@@ -33,6 +33,11 @@ precision corrected by a labelled sample (#144, `openodke.eval.ppi`), and
 (#145, `openodke.eval.adjudication`), and **pooled_recall**, two or more
 pipelines' recall relative to the pool of what they found (#146,
 `openodke.eval.pooling`).
+
+1.2 adds **lenient**, `null` when not asked for: each row's precision, recall
+and F1 with every surface form the fact-equivalence judge called the gold fact
+counted as a hit, beside the strict numbers, which it never replaces (#143,
+`openodke.eval.equivalence`).
 
 `eval_report.schema.json`, beside this file, is the contract. `check_report`
 holds a report to it in plain Python, with no dependency; every report the
@@ -66,7 +71,7 @@ from openodke.ground.checks import CHECKS, schema_problem
 from openodke.ontology import Ontology
 from openodke.types import Fact, Frozen
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 SCHEMA_PATH = Path(__file__).with_name("eval_report.schema.json")
 
 
@@ -360,6 +365,52 @@ class PooledRecall(Frozen):
     caveat: str
 
 
+# --------------------------------------------------------------------------- #
+# Surface forms judged the same (#143)
+# --------------------------------------------------------------------------- #
+
+
+class LenientRow(Frozen):
+    """One row strict and lenient: a surface form judged the gold fact counts as a hit.
+
+    `candidates` are the pairs the pre-filter let through: a gold fact the
+    matcher counted missed and a prediction it did not match, in one document,
+    with the relation and one end in common. Each was asked in both orders:
+    `same` were judged the same fact in both, `different` different in both,
+    and `unsure` the rest (the orders disagreed, an answer could not be read,
+    a call failed or a budget stopped it). `counted` is the misses counted
+    found, at most once per gold fact and once per prediction. `strict` is the
+    row's own performance, unchanged; `lenient` counts the `counted` pairs as
+    hits, each moving one miss and one false positive, resampled on the same
+    draws.
+    """
+
+    name: str
+    candidates: int = Field(ge=0)
+    same: int = Field(ge=0)
+    different: int = Field(ge=0)
+    unsure: int = Field(ge=0)
+    counted: int = Field(ge=0)
+    strict: Performance
+    lenient: Performance
+
+
+class Lenient(Frozen):
+    """The lenient score (#143): the fact-equivalence judge on the pre-filter's pairs.
+
+    `judge` is the registered prompt the calls sent, `model` the model asked.
+    `questions` is how many distinct pairs were asked, each once for every row
+    it is in; `disagreed`, those whose two orders answered differently, which
+    is position bias counted rather than assumed.
+    """
+
+    judge: str
+    model: str | None
+    questions: int = Field(ge=0)
+    disagreed: int = Field(ge=0)
+    rows: tuple[LenientRow, ...]
+
+
 class EvalReport(Frozen):
     """One run, scored: the versioned document `odke eval` and `odke bench run` write."""
 
@@ -387,6 +438,9 @@ class EvalReport(Frozen):
     adjudication: Adjudication | None = None
     # and recall relative to a pool of pipelines, with no gold (#146).
     pooled_recall: PooledRecall | None = None
+    # Added in 1.2: the surface forms the fact-equivalence judge called the
+    # gold fact counted as hits, beside the strict numbers (#143).
+    lenient: Lenient | None = None
 
     def as_json(self) -> str:
         return self.model_dump_json(indent=2)
@@ -416,6 +470,8 @@ class EvalReport(Frozen):
             lines += ["", *_rows_table(self.rows)]
             if self.bootstrap is not None:
                 lines.append(f"  {_ranges(self.bootstrap)}")
+        if self.lenient is not None:
+            lines += ["", *_lenient(self.lenient)]
         lines += _without_gold(self)
         for stage in self.stages:
             if stage.breakdown and set(stage.breakdown) == names:
@@ -783,6 +839,31 @@ def _count(n: int, noun: str) -> str:
     return f"{n} {noun}{'' if n == 1 else 's'}"
 
 
+def _lenient(section: Lenient) -> list[str]:
+    model = f", {section.model}" if section.model else ""
+    lines = [
+        f"lenient score  (a surface form the judge called the gold fact in both orders counts "
+        f"as a hit; {section.judge}{model})"
+    ]
+    body = []
+    for row in section.rows:
+        for label, shown in (("strict", row.strict), ("lenient", row.lenient)):
+            cells = [row.name if label == "strict" else "", label]
+            cells += [_estimate(shown.precision), _estimate(shown.recall), _estimate(shown.f1)]
+            cells += (
+                ["", "", ""]
+                if label == "strict"
+                else [str(row.candidates), str(row.same), str(row.counted)]
+            )
+            body.append(cells)
+    lines += _table(["", "", "precision", "recall", "f1", "pairs", "same", "counted"], body)
+    disagreed = f"; the two orders disagreed on {section.disagreed}" if section.disagreed else ""
+    lines.append(
+        f"  the strict score never changes; {_count(section.questions, 'pair')} asked{disagreed}"
+    )
+    return [line.rstrip() for line in lines]
+
+
 def _without_gold(report: EvalReport) -> list[str]:
     """The sections that score without gold, or with gold that is incomplete, as text."""
     lines: list[str] = []
@@ -921,6 +1002,8 @@ __all__ = [
     "EvalReport",
     "Hallucination",
     "JudgedPrecision",
+    "Lenient",
+    "LenientRow",
     "PoolMember",
     "PooledRecall",
     "Latency",

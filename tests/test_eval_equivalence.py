@@ -6,20 +6,41 @@ so each order's answer is set apart and the swap rule can be checked.
 
 from __future__ import annotations
 
+import json
+import shutil
+from pathlib import Path
+
 import pytest
+import yaml
+from typer.testing import CliRunner
 
 from openodke import Document, Entity, Evidence, Fact, Ontology
+from openodke.cli.main import app
+from openodke.eval import evaluate_extraction
 from openodke.eval.equivalence import (
     FRAME,
     MAX_PASSAGE,
     PROMPT,
     FactJudge,
     candidate,
+    lenient,
     passage_for,
     render_plain,
     render_question,
     surface_pair,
+    write_pairs,
 )
+from openodke.eval.eval_report import (
+    Lenient,
+    LenientRow,
+    check_report,
+    extraction_rows,
+    from_stage,
+    read_report,
+    schema,
+)
+from openodke.eval.formats import GoldFact
+from openodke.eval.harness import evaluate_pipeline
 from openodke.ground.llm import render_claim
 from openodke.ground.retry import RetryPolicy
 from openodke.llm import MissingAPIKey, ModelSpec, RecordedClient
@@ -310,3 +331,181 @@ def test_the_judge_asks_the_ground_role_with_the_answer_schema() -> None:
         "different",
         "unsure",
     ]
+
+
+# --------------------------------------------------------------------------- #
+# The lenient score, beside the strict one
+# --------------------------------------------------------------------------- #
+
+LOVELACE = Entity(key="person:ada", type="Person", label="Ada Lovelace")
+ADA_TEXT = "Ada Lovelace was born in London in 1815. She died in 1852 in Marylebone."
+ADA_DOC = Document(id="a1", text=ADA_TEXT)
+CITED = (Evidence(doc_id="a1"),)
+
+
+def ada(predicate: str, value: object, label: str = "Ada Lovelace") -> Fact:
+    subject = LOVELACE if label == "Ada Lovelace" else Entity(key=label, type="Person", label=label)
+    return Fact(subject=subject, predicate=predicate, object_value=value, evidence=CITED)
+
+
+ADA_GOLD = [
+    GoldFact(doc_id="a1", fact=ada("born_in", "London")),
+    GoldFact(doc_id="a1", fact=ada("born", "1815")),
+    GoldFact(doc_id="a1", fact=ada("died_in", "Marylebone, London")),
+]
+ADA_SAID = [
+    ada("born_in", "London"),  # a hit
+    ada("born", "10 December 1815"),  # a wrong value the judge calls the same fact
+    ada("died_in", "Marylebone"),  # a wrong value the judge calls the same fact
+    ada("died_in", "Westminster"),  # unmatched, and different
+    ada("likes", "mathematics"),  # spurious, and in no pair
+]
+
+
+def by_claim(answers: dict[str, str]) -> RecordedClient:
+    """Answers by the prediction's object, whichever order the call shows it in."""
+    return RecordedClient(
+        [{"match": f'"{value}"', "response": answer(said)} for value, said in answers.items()]
+    )
+
+
+def test_a_pair_judged_the_same_is_a_hit_and_the_strict_score_never_changes() -> None:
+    client = by_claim(
+        {"10 December 1815": "same", "Marylebone": "same", "Westminster": "different"}
+    )
+    section, pairs = lenient([("extract", ADA_SAID)], ADA_GOLD, [ADA_DOC], judge(client))
+    (row,) = section.rows
+    strict_rows, _ = extraction_rows([("extract", ADA_SAID, None)], ADA_GOLD)
+    assert row.strict == strict_rows[0].performance
+    # Strict: 1 hit, 4 false positives, 2 misses. Lenient: 3 hits, 2, 0.
+    assert row.strict.precision.value == pytest.approx(1 / 5)
+    assert (row.lenient.precision.value, row.lenient.recall.value) == (pytest.approx(3 / 5), 1.0)
+    assert (row.candidates, row.same, row.different, row.unsure, row.counted) == (3, 2, 1, 0, 2)
+    assert (section.judge, section.questions, section.disagreed) == ("fact_equiv@1", 3, 0)
+    assert {(p.side, p.decision.decision if p.decision else None) for p in pairs} == {
+        ("object", "same"),
+        ("object", "different"),
+    }
+    # The passage is the gold fact's evidence, located in its document.
+    assert pairs[0].passage == "Ada Lovelace was born in London in 1815."
+
+
+def test_a_gold_fact_and_a_prediction_count_once_each() -> None:
+    gold = [GoldFact(doc_id="a1", fact=ada("died_in", "Marylebone, London"))]
+    said = [ada("died_in", "Marylebone"), ada("died_in", "Marylebone, Westminster")]
+    section, pairs = lenient(
+        [("x", said)],
+        gold,
+        [ADA_DOC],
+        judge(by_claim({"Marylebone": "same", "Marylebone, Westminster": "same"})),
+    )
+    (row,) = section.rows
+    assert (row.candidates, row.same, row.counted) == (2, 2, 1)
+    assert row.lenient.recall.value == 1.0 and row.lenient.precision.value == 0.5
+
+
+def test_a_pair_two_rows_share_is_asked_once_and_one_citing_no_text_never() -> None:
+    client = by_claim({"10 December 1815": "same", "Marylebone": "unsure", "Westminster": "same"})
+    elsewhere = ada("born", "December 1815").model_copy(
+        update={"evidence": (Evidence(doc_id="zz"),)}
+    )
+    section, pairs = lenient(
+        [("a", ADA_SAID), ("b", [*ADA_SAID[:3], elsewhere])], ADA_GOLD, [ADA_DOC], judge(client)
+    )
+    assert section.questions == 3 and len(client.calls) == 6
+    assert [p.rows for p in pairs] == [["a", "b"], ["a", "b"], ["a"]]
+    # Westminster is "same" too, but Marylebone's gold fact is the one it would
+    # take, and an unsure pair counts nothing: one moved for died_in.
+    a, b = section.rows
+    assert (a.same, a.unsure, a.counted) == (2, 1, 2)
+    assert (b.candidates, b.counted) == (2, 1)
+
+
+def test_the_section_is_in_the_report_beside_the_rows_and_reads_back(tmp_path: Path) -> None:
+    client = by_claim(
+        {"10 December 1815": "same", "Marylebone": "same", "Westminster": "different"}
+    )
+    section, pairs = lenient([("extract", ADA_SAID)], ADA_GOLD, [ADA_DOC], judge(client))
+    rows, how = extraction_rows([("extract", ADA_SAID, None)], ADA_GOLD)
+    report = from_stage(evaluate_extraction(ADA_GOLD, ADA_SAID), rows=rows, bootstrap=how)
+    report = report.model_copy(update={"lenient": section})
+    assert report.schema_version == "1.2"
+    assert check_report(report.model_dump(mode="json")) == []
+    assert read_report(report.write(tmp_path / "r.json")) == report
+    text = report.render()
+    assert "lenient score  (a surface form the judge called the gold fact in both orders" in text
+    strict_line = next(line for line in text.splitlines() if line.startswith("  extract  strict"))
+    lenient_line = next(line for line in text.splitlines() if "lenient  0.600" in line)
+    assert "0.200" in strict_line and lenient_line.rstrip().endswith("3      2     2")
+    assert "the strict score never changes; 3 pairs asked" in text
+    # The rows table above it is the strict one, unchanged.
+    assert report.rows[0].performance == section.rows[0].strict
+    listed = [
+        json.loads(line)
+        for line in write_pairs(tmp_path / "p.jsonl", pairs).read_text().splitlines()
+    ]
+    assert [r["decision"] for r in listed] == ["same", "same", "different"]
+    assert listed[0]["gold"] == 'Ada Lovelace (Person) — born — "1815".'
+    assert (listed[0]["gold_first"], listed[0]["prediction_first"]) == ("same", "same")
+
+
+def test_the_schema_names_every_field_of_the_section() -> None:
+    defs = schema()["$defs"]
+    for name, model in (("lenient", Lenient), ("lenient_row", LenientRow)):
+        assert set(defs[name]["properties"]) == set(model.model_fields), name
+        assert set(defs[name]["required"]) == set(model.model_fields), name
+    # Added in 1.2, so a report written before it still reads.
+    assert "lenient" not in schema()["required"]
+
+
+TRIPLES = Path(__file__).parent.parent / "examples" / "triples"
+
+
+@pytest.fixture
+def recorded(tmp_path: Path) -> Path:
+    """The triples example's config, its ground model answering the judge from a cassette."""
+    copy = tmp_path / "triples"
+    shutil.copytree(TRIPLES, copy, ignore=shutil.ignore_patterns("out"))
+    # founded 2012 against the gold's 2014: different, in both orders.
+    asked = [
+        {
+            "match": {"contains": ["Fact 1", "founded"]},
+            "response": {"text": json.dumps({"decision": "different"})},
+        }
+    ] * 2
+    (copy / "recorded" / "equivalence.json").write_text(json.dumps({"interactions": asked}))
+    config = yaml.safe_load((copy / "odke.yaml").read_text())
+    config["models"]["replay"] = {"ground": "recorded/equivalence.json"}
+    path = copy / "lenient.yaml"
+    path.write_text(yaml.safe_dump(config))
+    return path
+
+
+def test_odke_eval_pipeline_lenient_from_the_shell(recorded: Path, tmp_path: Path) -> None:
+    pairs, written = tmp_path / "pairs.jsonl", tmp_path / "report.json"
+    args = ["eval", "pipeline", "--predictions", str(TRIPLES / "triples.jsonl")]
+    args += ["--labels", str(TRIPLES / "gold.jsonl"), "--documents", str(TRIPLES / "texts")]
+    args += ["--config", str(recorded), "--lenient", str(pairs), "--report", str(written)]
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert "lenient score" in result.output
+    report = read_report(written)
+    assert report.lenient is not None
+    (row,) = report.lenient.rows
+    # Berlin is spurious but no gold fact for office_in was missed: one pair, founded.
+    assert (row.candidates, row.different, row.counted) == (1, 1, 0)
+    assert row.lenient == row.strict == report.rows[0].performance
+    assert report.run.models["judge"] == "anthropic/claude-haiku-4-5-20251001"
+    assert report.run.prompts == ("fact_equiv@1", "fact_equiv.user@1")
+    (pair,) = [json.loads(line) for line in pairs.read_text().splitlines()]
+    assert pair["gold"] == "Company:halden robotics (Company) — founded — 2014."
+    assert pair["predicted"] == "Halden Robotics (Company) — founded — 2012."
+    wrong = CliRunner().invoke(app, ["eval", "extract", "--labels", "x", "--lenient", "y"])
+    assert wrong.exit_code == 2 and "--lenient: these are for pipeline" in wrong.output
+
+
+def test_lenient_needs_labels(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="--lenient needs --labels"):
+        evaluate_pipeline(
+            predictions=TRIPLES / "triples.jsonl", bench=tmp_path, lenient=tmp_path / "p"
+        )

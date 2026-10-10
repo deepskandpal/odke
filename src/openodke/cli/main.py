@@ -1233,6 +1233,13 @@ def eval_stage(
         help="compare: a fix A predicted that B applied, by its id (offer-relations, inverses, "
         "...); without it, the runs' configs are diffed.",
     ),
+    lenient: Path | None = typer.Option(
+        None,
+        "--lenient",
+        help="pipeline, with --labels: ask the fact-equivalence judge, in both orders, about "
+        "each missed gold fact and unmatched prediction with the relation and one end in "
+        "common. Prints a lenient score beside the strict one and writes the pairs here.",
+    ),
 ) -> None:
     """Score one stage against your own labelled data.
 
@@ -1259,7 +1266,9 @@ def eval_stage(
     its triples against your labels (--labels, --documents) or a prepared
     benchmark (--bench). --validator adds the row with the Validator's check.
     --adjudicate LIST grounds each prediction your gold lacks three times and
-    prints an adjudicated precision beside the strict one.
+    prints an adjudicated precision beside the strict one. --lenient PAIRS asks
+    the fact-equivalence judge whether a near miss is the gold fact in other
+    words, and prints a lenient score beside the strict one.
 
     `precision` needs no gold. A judge, the grounder, graded every fact in
     --facts; `--make-sheet DIR` draws a random sample of them to label by hand,
@@ -1311,6 +1320,7 @@ def eval_stage(
         "--timeout": timeout != 600.0,
         "--adjudicate": adjudicate is not None,
         "--reference": reference is not None,
+        "--lenient": lenient is not None,
     }
     sampled = {
         "--make-sheet": make_sheet is not None,
@@ -1379,9 +1389,10 @@ def eval_stage(
                 return
             if facts is not None:
                 raise ValueError("--facts is for spans")
-            if config is not None and not (validator or adjudicate is not None):
+            if config is not None and not (validator or adjudicate or lenient):
                 raise ValueError(
-                    "--config is for ablation, and for pipeline with --validator or --adjudicate"
+                    "--config is for ablation, and for pipeline with --validator, --adjudicate "
+                    "or --lenient"
                 )
             evaluated = evaluate(
                 command=cmd,
@@ -1396,6 +1407,7 @@ def eval_stage(
                 config=config,
                 timeout=timeout,
                 adjudicate=adjudicate,
+                lenient=lenient,
                 trace=trace,
                 examples=examples,
                 reference=reference,
