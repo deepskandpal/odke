@@ -20,7 +20,8 @@ knowing which stage made the report. So an Evaluator run also writes an
 - **diagnosis**: where the final row lost facts, every miss in one cause
   bucket, and its false positives split by what the gate did
   (`openodke.eval.diagnosis`, #140);
-- **fixes**: empty, and typed, until #141 fills it;
+- **fixes**: what should change, ranked by the recall gain the arithmetic
+  expects (`openodke.eval.fixes`, #141);
 - **comparison**: this run against a baseline (#142); **calibration**: empty,
   and typed, until #135 fills it.
 
@@ -56,6 +57,8 @@ from openodke.eval.cost import CallRecord, StageCost
 from openodke.eval.diagnosis import Bucket
 from openodke.eval.diagnosis import render as render_buckets
 from openodke.eval.extraction import document_counts
+from openodke.eval.fixes import Fix
+from openodke.eval.fixes import render as render_fixes
 from openodke.eval.formats import GoldFact
 from openodke.eval.report import Metric, StageReport, _fmt, _table, prf
 from openodke.ground.checks import CHECKS, schema_problem
@@ -370,8 +373,8 @@ class EvalReport(Frozen):
     notes: tuple[str, ...] = ()
     # Every miss of the final row in one cause bucket, then its false positives (#140),
     diagnosis: tuple[Bucket, ...] = ()
-    # typed, and empty until filled: ranked fixes with their expected gain (#141),
-    fixes: tuple[dict[str, Any], ...] = ()
+    # ranked fixes with their expected gain (#141),
+    fixes: tuple[Fix, ...] = ()
     # this run against a baseline: `odke eval compare`'s block, as `--json` prints it (#142),
     comparison: Comparison | None = None
     # and, typed and empty until filled, the grounder's calibration cards (#135).
@@ -427,6 +430,8 @@ class EvalReport(Frozen):
             lines += ["", *(f"  - {note}" for note in self.notes)]
         if self.diagnosis:
             lines += ["", *render_buckets(self.diagnosis)]
+        if self.fixes:
+            lines += ["", *render_fixes(self.fixes)]
         if self.comparison is not None:
             lines += ["", *self.comparison.render().splitlines()]
         lines += ["", *_provenance(self)]
@@ -584,6 +589,7 @@ def from_stage(
     bootstrap: Bootstrap | None = None,
     notes: Sequence[str] = (),
     diagnosis: Sequence[Bucket] = (),
+    fixes: Sequence[Fix] = (),
 ) -> EvalReport:
     """A stage's report as an eval report: titled and counted as the stage is."""
     return EvalReport(
@@ -595,6 +601,7 @@ def from_stage(
         stages=(report,),
         notes=tuple(notes),
         diagnosis=tuple(diagnosis),
+        fixes=tuple(fixes),
     )
 
 

@@ -45,8 +45,8 @@
     },
     "fixes": {
       "type": "array",
-      "description": "Reserved for #141: ranked fixes with their expected gain.",
-      "items": {"type": "object"}
+      "description": "What should change (#141): the buckets' fixes, ranked by expected recall gain.",
+      "items": {"$ref": "#/$defs/fix"}
     },
     "comparison": {
       "description": "This run against a baseline: odke eval compare's block, as --json prints it (#142).",
@@ -353,6 +353,56 @@
         "share": {"$ref": "#/$defs/share", "description": "Of the row's misses, or of its false positives before the gate."},
         "examples": {"type": "array", "items": {"$ref": "#/$defs/example"}},
         "note": {"type": ["string", "null"]}
+      }
+    },
+    "gain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected", "ceiling", "exact", "basis", "reference", "precision"],
+      "properties": {
+        "expected": {"type": "number", "description": "Recall points as a share of the gold: exact, or at the run's own rate."},
+        "ceiling": {"type": "number", "description": "Every miss in the buckets found."},
+        "exact": {"type": "boolean", "description": "A replay of the fix on the run's own output."},
+        "basis": {"type": "string", "description": "The arithmetic, with its numbers."},
+        "reference": {"type": ["number", "null"], "description": "At a reference run's rate on the same facts."},
+        "precision": {"type": ["number", "null"], "description": "The change in precision, where the replay knows it."}
+      }
+    },
+    "measured": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run", "against", "applied", "expected", "ceiling", "measured", "low", "high", "verdict"],
+      "properties": {
+        "run": {"type": "string"},
+        "against": {"type": "string"},
+        "applied": {"type": "string"},
+        "expected": {"type": "number"},
+        "ceiling": {"type": "number"},
+        "measured": {"type": "number"},
+        "low": {"type": "number"},
+        "high": {"type": "number"},
+        "verdict": {"enum": ["better", "worse", "inconclusive"]}
+      }
+    },
+    "fix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "rank", "row", "buckets", "misses", "action", "knob", "recall", "detail", "record"],
+      "properties": {
+        "id": {"type": "string"},
+        "rank": {"type": "integer", "minimum": 1},
+        "row": {"type": "string"},
+        "buckets": {"type": "array", "items": {"type": "string"}},
+        "misses": {"$ref": "#/$defs/count"},
+        "action": {"type": "string"},
+        "knob": {"type": "string", "description": "The config key or command that applies it."},
+        "recall": {"$ref": "#/$defs/gain"},
+        "detail": {"type": "array", "items": {"type": "string"}},
+        "record": {
+          "type": "array",
+          "description": "This fix's past predictions beside their measurements, from the track record.",
+          "items": {"$ref": "#/$defs/measured"}
+        }
       }
     },
     "stage_report": {

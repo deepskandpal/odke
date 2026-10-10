@@ -33,7 +33,8 @@ each row's strict one, and the list is written for audit.
 
 The last row is diagnosed: every miss in one cause bucket, with the gate's
 refusals when the Validator ran and what the extractor was offered when a
-`trace` says (`openodke.eval.diagnosis`, #140).
+`trace` says (`openodke.eval.diagnosis`, #140), and the fixes ranked by the
+recall the arithmetic expects of them (`openodke.eval.fixes`, #141).
 """
 
 from __future__ import annotations
@@ -76,6 +77,8 @@ from openodke.eval.eval_report import (
     models_called,
 )
 from openodke.eval.extraction import evaluate_extraction
+from openodke.eval.fixes import Fix
+from openodke.eval.fixes import fixes as rank_fixes
 from openodke.eval.formats import GoldFact, load_jsonl
 
 # From the modules, not the package: `openodke.interop` imports `openodke.eval`.
@@ -527,11 +530,13 @@ def score(
     level: float = LEVEL,
     offered: Offered | None = None,
     examples: int = EXAMPLES,
+    reference: Sequence[Fact] | None = None,
 ) -> EvalReport:
     """The pipeline's facts, and the checked ones when there are, as the eval report.
 
     The last row is diagnosed, with `offered` the trace of what the extractor
-    was shown.
+    was shown, and its fixes ranked; `reference` is another system's facts on
+    the same documents, for each fix's gain at that system's rate.
     """
     return _score(
         corpus,
@@ -543,6 +548,7 @@ def score(
         level=level,
         offered=offered,
         examples=examples,
+        reference=reference,
     )
 
 
@@ -557,6 +563,7 @@ def _score(
     level: float,
     offered: Offered | None,
     examples: int,
+    reference: Sequence[Fact] | None = None,
 ) -> EvalReport:
     configurations: list[Configuration] = [(PIPELINE, facts, None)]
     if checked is not None:
@@ -570,6 +577,7 @@ def _score(
     last, final, _ = configurations[-1]
     refused = None if checked is None else checked.refused
     view: View | None = None
+    other: View | None = None
     if corpus.gold is not None:
         rows, how = extraction_rows(
             configurations,
@@ -586,6 +594,8 @@ def _score(
         n = len(corpus.gold)
         texts = {doc.id: doc.text for doc in corpus.documents}
         view = gold_view(corpus.gold, final, refused=refused, texts=texts, row=last)
+        if reference is not None:
+            other = gold_view(corpus.gold, reference)
     else:
         from openodke.eval.datasets._common import (
             doc_names,
@@ -616,10 +626,15 @@ def _score(
             gated = None if refused is None else triples([fact for fact, _ in refused])
             view = scoring.view(predicted, gated)
             view.row = last
+            if reference is not None:
+                other = scoring.view(triples(reference), None)
     diagnosed: tuple[Bucket, ...] = ()
+    ranked: tuple[Fix, ...] = ()
     if view is not None:
         inverses = corpus.ontology.inverses if corpus.ontology is not None else {}
-        diagnosed = diagnose(view, offered=offered, inverses=inverses, examples=examples).buckets
+        found = diagnose(view, offered=offered, inverses=inverses, examples=examples)
+        caught = None if other is None else {g.id for g in other.gold if g.found}
+        diagnosed, ranked = found.buckets, tuple(rank_fixes(found, reference=caught))
     return EvalReport(
         title=TITLE,
         n=n,
@@ -629,6 +644,7 @@ def _score(
         stages=stages,
         notes=tuple(lines),
         diagnosis=diagnosed,
+        fixes=ranked,
     )
 
 
@@ -648,6 +664,7 @@ def evaluate_pipeline(
     adjudicate: str | Path | None = None,
     trace: str | Path | None = None,
     examples: int = EXAMPLES,
+    reference: str | Path | None = None,
 ) -> EvalReport:
     """Run a pipeline one way, read its output, validate it if asked, and score it.
 
@@ -659,7 +676,9 @@ def evaluate_pipeline(
     the gold lacks, grounded three times by `config`'s grounder or the default
     one (`openodke.eval.adjudication`). It needs `labels`. `trace` says what
     the extractor was offered, for the diagnosis: a run's `manifest.json`, or
-    the run config that produced the predictions.
+    the run config that produced the predictions. `reference` is another
+    system's output on the same documents, triples or facts, for each fix's
+    gain at that system's rate.
     """
     modes = [m for m in (command, function, predictions) if m is not None]
     if len(modes) != 1:
@@ -705,6 +724,7 @@ def evaluate_pipeline(
     ran = f" in {output.seconds:.1f} s" if output.seconds is not None else ""
     notes.insert(0, f"{output.how}: {len(output.items)} row(s){ran}, {len(facts)} fact(s)")
     checked = check(facts, corpus, config) if validator else None
+    others = None if reference is None else as_facts(read_output(reference), corpus)[0]
     report = _score(
         corpus,
         facts,
@@ -715,6 +735,7 @@ def evaluate_pipeline(
         level=LEVEL,
         offered=offered,
         examples=examples,
+        reference=others,
     )
     if adjudicate is not None:
         rows = [(PIPELINE, facts)] + ([(VALIDATOR, checked.facts)] if checked else [])
