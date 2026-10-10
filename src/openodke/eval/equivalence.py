@@ -1,5 +1,9 @@
 """The fact-equivalence judge: is a prediction the gold fact in other words? (#143)
 
+Provisional (DECISIONS #48): until label set F's calibration card exists, the
+lenient score it gives is an unvalidated number (DECISIONS #39). It may change
+in a minor release, with a CHANGELOG line.
+
 A scorer compares strings after a normaliser. "Gabby Logan" for "Gabrielle
 Nicole Logan", or "track and field athlete" for "athletics competitor", is
 counted missed and counted spurious, and no normaliser can know otherwise

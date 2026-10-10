@@ -1,5 +1,8 @@
 """Re-DocRED (Tan et al., EMNLP 2022): relations across a whole Wikipedia passage.
 
+Provisional (DECISIONS #48): a benchmark adapter, as `openodke.eval.datasets`
+says. It may change in a minor release, with a CHANGELOG line.
+
 DocRED's documents — the opening paragraphs of Wikipedia articles, annotated
 with 96 Wikidata relations — with the missing labels that made DocRED's
 precision unmeasurable restored. The closest public stand-in for ODKE+'s own

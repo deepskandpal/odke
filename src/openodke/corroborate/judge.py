@@ -1,5 +1,9 @@
 """The entity-pair judge: a model asked about the pairs the resolver's rules leave open (#150).
 
+Provisional (DECISIONS #48): its band and its defaults were set before its
+calibration card on label set R (#151), and it is off unless given. It may
+change in a minor release, with a CHANGELOG line.
+
 The rules settle most pairs. A shared id or domain is proof, a disagreeing one
 kills the match, and a name score at or above the threshold is a `SIMILAR`.
 Below the threshold nothing links, and that is where the misses are: a surname

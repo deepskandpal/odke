@@ -1,5 +1,9 @@
 """neo4j-graphrag's graphs as triples rows, with its chunks as evidence (#111).
 
+Provisional (DECISIONS #48): it reads neo4j-graphrag's objects, whose shape
+changes with that library. It may change in a minor release, with a CHANGELOG
+line.
+
 neo4j-graphrag's extractor reads one chunk at a time, and `SimpleKGPipeline`
 records which. Beside the entities it writes a lexical graph: a `Chunk` node
 holding each chunk's `text`, `FROM_DOCUMENT` from chunk to document, and
