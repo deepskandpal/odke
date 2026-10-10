@@ -45,6 +45,11 @@ sinks the config names, and `--merge` makes it a store to
 [merge with](stores.md#merge-with-the-store): a fact it holds gains the
 batch's sources.
 
+`--update` says the texts are new versions of ones the store already cites:
+each is [retracted](stores.md#reconcile) from the sinks before the new facts
+are written, so a fact the new version no longer states loses that source.
+It needs a sink that can retract, and implies `--merge` for `-o`.
+
 `--dry-run` calls no model and writes nothing. It runs the free checks, the
 locator with `--locate`, and every deterministic stage, then prints what
 would be written. Exit 2 is input or a config that can't be read; exit 1 is a
@@ -113,8 +118,9 @@ The run above did five things:
 - a triples file and the texts it cites;
 - `Fact`s and their texts.
 
-`dry_run=True` is the command's dry run. A `Validator` keeps its stages between
-calls, and each report counts its own call.
+`dry_run=True` is the command's dry run, and `update=True` its `--update`. A
+`Validator` keeps its stages between calls, and each report counts its own
+call.
 
 ## The stages
 
@@ -149,7 +155,8 @@ the relation and the types have nothing to check.
   `refused` (and `refused_by`, the gate's reasons), `merged`, `linked` (and
   `links` by kind), `derived` and `facts_out`. The arithmetic holds:
   in + derived − refused − merged = out. `restated` counts the facts merged
-  with one the store already held; they are in `facts_out`.
+  with one the store already held; they are in `facts_out`. With `update`,
+  `retracted` holds what retracting the old versions did first.
 - **Grounding.** `verdicts` counts every fact in by the verdict grounding left
   it with. `checked` is what the free checks refused.
 - **Cost.** `calls`, `tokens` and `cost_usd` (`None` until a provider reports

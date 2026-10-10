@@ -391,8 +391,9 @@ pairs compared and found.
 
 `Fact.supported_by` is a tuple of `Support`, one per independent source, so
 `support == len(supported_by)` whenever it is filled
-([DECISIONS #33](decisions.md#33)). A reconciler reads it when a source changes or
-disappears: which facts lose support, and whether anything is left.
+([DECISIONS #33](decisions.md#33)). The [reconciler](stores.md#reconcile) reads it
+when a source changes or disappears: which facts lose support, and whether
+anything is left.
 
 | `Support` field | Holds |
 |---|---|

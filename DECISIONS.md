@@ -831,3 +831,53 @@ store.
 back from the relationship's properties, which hold no quotes or mentions, so
 its evidence returns without them. A store never bootstrapped has no
 signature index, so nothing merges with it, and the warning is the only sign.
+
+### 37. A source that changes is retracted, and a fact left with none is retired, not deleted
+
+A layer that only adds keeps facts whose text no longer exists. Support lists
+(#33) make a change mechanical. A deleted document comes out of the evidence
+and the support list of every fact it backed. An updated one is retracted the
+same way, then its new version is validated, so the facts it still states
+merge with the store again (#35) and regain it (#116).
+
+Four calls come with it.
+
+**Retired, not deleted, by default.** A fact left with no source was not
+proven false; it lost its evidence. It keeps its claim, its edge and its valid
+clock, and `Fact.retired_at` records the transaction time it lost its last
+source. Graphiti invalidates an edge rather than delete it (#17), and this is
+the same instinct. A retired fact has no support and is never the value:
+- it is not projected;
+- no cardinality check counts it;
+- no plain RDF triple asserts it.
+
+A source that states it again brings it back, and `hard_delete` removes it
+instead.
+
+**One change, two commands.** `odke reconcile --delete <doc-id>` retracts a
+source that is gone, and needs only the store. An update needs the whole
+layer, to ground the new version's facts against its text. So it is
+`odke validate --update`, which retracts each text it is given before it
+writes. An `--update` on `odke reconcile` would have repeated every option
+`odke validate` has.
+
+**Found through an index, rewritten in one transaction.** `bootstrap()` adds a
+full-text index over `evidence_doc_ids` per predicate. It uses the keyword
+analyzer, so a document id is one exact term. `Neo4jSink.retract` finds every
+fact a document backs through those indexes, never by a scan, and a
+relationship type with none is not read and warns (#31). In one write
+transaction it then:
+- rewrites the evidence and support lists, `support` and `retired_at`, by
+  element id;
+- projects each value again from the claims left.
+
+**Idempotent by construction.** A fact that no longer cites a document is not
+touched, so retracting it twice changes nothing, and a retired fact keeps the
+time it was first retired. An update run twice ends where it ended once: the
+second run retracts what the first wrote, then writes it back.
+
+*Cost:* a full-text index per predicate. An update retracts before it
+validates, so a run that fails in between leaves the old version retracted
+and the new one unwritten; running it again finishes it. The reconciler does
+not rescore, so a fact that lost a source keeps its confidence until it is
+next validated.
