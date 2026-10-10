@@ -79,7 +79,7 @@ batch_size: 500                    # stream; off unless named
 | `store_lookup` | no, off by default | Resolve each batch against what the store already holds, without loading it: `neo4j`, or `package.module:Name` for a `StoreLookup` of your own ([below](#store_lookup)). |
 | `manifest` | no | Where the [run manifest](#the-run-manifest) is written, besides each JSONL sink's `manifest.json`. |
 | `batch_size` | no, off by default | Stream the run: load, run and write that many documents at a time ([Streaming](#streaming)). `--batch-size` overrides it. Not a Neo4j sink's own `batch_size`, which is rows per write transaction. |
-| `tenant` | no, off by default | Key everything the run writes to, and reads from, its store by this tenant, so two tenants' identical facts never merge ([Tenants](stores.md#tenants)). `--tenant` overrides it. |
+| `tenant` | no, off by default | Key everything the run writes to, and reads from, its store by this tenant, so two tenants' identical facts never merge ([Tenants](stores.md#tenants)). `--tenant` overrides it. Part of the config the run manifest hashes, so a replay keeps it, and `--from-manifest` takes no `--tenant`. |
 
 Every relative path (the ontology, each input, `pythonpath`, replay files, a sink's
 output) resolves against the directory the config file is in, so a config runs the
@@ -351,7 +351,7 @@ stage:
 | `coverage` | with `coverage: true`, the default: totals, the relations never offered and never used, and each document's uncovered sentences and missed entities ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)) |
 | `reextract` | with `reextract`: `windows` asked, facts `returned`, `duplicates`, `kept`, `refused` by grounding, and their `verdicts` |
 | `batches` | with `batch_size`: the micro-batches run. Every count above is then the run's, summed over them ([Streaming](#streaming)) |
-| `writes` | once every sink has written: per sink (`0:Neo4jSink`), per kind, the rows `written` new, `merged` into what the store held, and `skipped`, and Neo4j's `transactions` ([the write report](stores.md#the-write-report)). One `writes` line per sink, after the `wrote` lines |
+| `writes` | once every sink has written: per sink (`0:Neo4jSink`), per kind, the rows `written` new, `merged` into what the store held, and `skipped`, and Neo4j's `transactions` ([the write report](stores.md#the-write-report)), for the whole run when it streams. The run manifest's `writes` and the `job.end` event carry it too. One `writes` line per sink, after the `wrote` lines |
 
 A `DoubleStageWarning` raised while the pipeline is built is printed as a
 `warning:` line on standard error.
@@ -618,7 +618,7 @@ rows at a time.
 - **The manifest is the run's.** `batch_size` is in the config the
   [run manifest](#the-run-manifest) records and hashes. Its `counts`, `job` and
   `spent` are the micro-batches' summed, with `batches`, and the `job.end` event
-  logs the same counts. Its inputs hash covers every micro-batch's documents
+  logs the same counts, and both carry the run's write report. Its inputs hash covers every micro-batch's documents
   and rows, in the digest one batch takes of them, so the same inputs hash
   alike streamed or not. `--from-manifest` replays a streamed run streamed:
   it reads the inputs through once and refuses a change before the first

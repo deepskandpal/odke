@@ -317,12 +317,18 @@ Every run ends with what each sink did, per kind (entities, facts, links):
 
 `Neo4jSink` counts from the database: each statement it runs ends with
 `RETURN count(*)`, the rows that reached its `MERGE`, and the counters say how
-many nodes and relationships were made. `JsonlSink` counts the keys its files
-held. A sink that keeps no report is listed with what it was `handed`. A
-sink's `writes` runs on across its writes. The report is `ValidationReport.writes`
-and `stats["writes"]`, keyed by position and class (`0:Neo4jSink`). It is added
-to every JSONL manifest once all the sinks have written, and printed one line
-per sink:
+many nodes and relationships were made. `JsonlSink` counts every line it
+writes or appends as `written`, and with `merge=True` a line that replaced
+one it held as `merged`. A sink that keeps no report is listed with what it
+was `handed`.
+
+A sink's `writes` runs on across its writes, so a job's report is the
+difference from a snapshot taken before it wrote: a
+[streamed run](run.md#streaming) takes it before its first micro-batch and
+reports once after its last. The report is `ValidationReport.writes` and
+`stats["writes"]`, keyed by position and class (`0:Neo4jSink`), the
+[run manifest's](run.md#the-run-manifest) `writes`, and the `job.end` event's.
+It is printed one line per sink:
 
 ```text
 writes        0:Neo4jSink: entities 3 written; facts 2 written, 1 merged; links none; 1 transaction
