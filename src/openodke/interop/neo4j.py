@@ -27,6 +27,7 @@ from typing import Any
 from openodke.corroborate.provenance import CONFLICT, SCORE, SOURCE_FORM
 from openodke.interop.triples import TripleRow
 from openodke.sinks.neo4j import _PROVENANCE, CLAIM_LABEL, ENTITY_LABEL
+from openodke.tenants import tenant_name, unscoped
 from openodke.types import Document, Fact, GroundingVerdict, LinkKind, SpanOrigin
 
 # The stamps a sink stores as JSON text, read back as the mappings they were.
@@ -42,11 +43,12 @@ _PRECEDENCE = (
 )
 
 
-def _queries(text: bool, limited: bool) -> tuple[str, str]:
+def _queries(text: bool, limited: bool, tenant: bool = False) -> tuple[str, str]:
     """What to read, and how many relationships it leaves out, under the caller's options."""
     has_text = " OR r[$text] IS NOT NULL" if text else ""
     lacks_text = " AND r[$text] IS NULL" if text else ""
     of_type = "\n  AND type(r) IN $predicates" if limited else ""
+    of_type += "\n  AND r.tenant = $tenant" if tenant else ""
     read = (
         "MATCH (s)-[r]->(o)\n"
         f"WHERE (r.evidence_doc_ids IS NOT NULL{has_text}){of_type}\n"
@@ -80,6 +82,7 @@ def read_neo4j(
     name_property: str = "name",
     predicates: Iterable[str] | None = None,
     database: str | None = None,
+    tenant: str | None = None,
 ) -> tuple[list[TripleRow], list[Document]]:
     """Rows for the facts a Neo4j graph holds, and the texts they cite.
 
@@ -89,7 +92,9 @@ def read_neo4j(
     relationship property holding each relationship's source text, for a graph
     openodke did not write. `predicates` limits the read to those relationship
     types. Every row's `id` is its relationship's element id, which
-    `write_verdicts` writes back by.
+    `write_verdicts` writes back by. `tenant` reads that tenant's facts alone,
+    from a store `Neo4jSink(tenant=...)` wrote (#159), with the keys its tenant
+    gave them; left out, every relationship is read.
     """
     by_id = {doc.id: doc for doc in documents}
     by_uri = {doc.uri: doc for doc in by_id.values() if doc.uri}
@@ -98,9 +103,10 @@ def read_neo4j(
         "name": name_property,
         "predicates": None if predicates is None else sorted(set(predicates)),
         "links": _LINKS,
+        "tenant": tenant_name(tenant),
     }
 
-    queries = _queries(text_property is not None, predicates is not None)
+    queries = _queries(text_property is not None, predicates is not None, tenant is not None)
 
     def read(tx: Any) -> tuple[list[dict[str, Any]], int]:
         found = list(tx.run(queries[0], **parameters).data())
@@ -112,6 +118,14 @@ def read_neo4j(
     rows: list[TripleRow] = []
     texts: dict[str, Document] = {}
     for record in found:
+        if tenant is not None:
+            record = {
+                **record,
+                "subject_key": unscoped(str(record["subject_key"]), tenant),
+                "object_key": None
+                if record["object_key"] is None
+                else unscoped(str(record["object_key"]), tenant),
+            }
         properties = dict(record["properties"] or {})
         claim: dict[str, Any] = {
             "subject": _name(record, "subject"),

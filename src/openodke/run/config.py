@@ -30,6 +30,7 @@ rather than a stage silently left as the pass-through.
     store_lookup: neo4j              # resolve against the store; off unless named
     manifest: run.manifest.json      # the run manifest here too; see below
     batch_size: 500                  # stream: documents a micro-batch; off unless named
+    tenant: acme                     # key the store's writes and reads by tenant
 
 A stage is a built-in's short name, or `package.module:Name` for your own, and
 either may take options: `{use: name, option: value, ...}`. A stage left out is
@@ -51,6 +52,10 @@ loaded, run through every stage and written, then the next, so the run's
 memory is one micro-batch's. Left out, the run is one batch. It is part of the
 config a run manifest hashes, so a replay of a streamed run streams.
 
+`tenant` keys everything the run writes to, and reads from, its store by that
+tenant (#159, DECISIONS #44): two tenants' identical facts are two facts, and
+a lookup, a merge or a retraction for one never reaches the other.
+
 `gate` was `validator` in 0.2 (DECISIONS #26). The old key still works, with a
 warning, until 1.0.0.
 """
@@ -63,13 +68,22 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from openodke._renamed import deprecated
 from openodke.llm.base import ModelSpec
 from openodke.llm.budget import Budget
 from openodke.llm.roles import ModelRoles
 from openodke.manifest import RunManifest, read_manifest
+from openodke.tenants import tenant_name
 
 # The thirteen, in pipeline order (DECISIONS #20).
 STAGES = (
@@ -301,6 +315,13 @@ class RunConfig(_Strict):
     manifest: str | None = None
     # Documents a micro-batch: the run streams (#158). Left out, it is one batch.
     batch_size: int | None = Field(default=None, ge=1)
+    # The tenant the store keys this run's writes and reads by (#159). None: no tenant.
+    tenant: str | None = None
+
+    @field_validator("tenant")
+    @classmethod
+    def _tenant(cls, value: str | None) -> str | None:
+        return tenant_name(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -387,6 +408,15 @@ class RunConfig(_Strict):
         if size < 1:
             raise ConfigError("--batch-size: at least 1")
         return self.model_copy(update={"batch_size": size})
+
+    def with_tenant(self, tenant: str | None) -> RunConfig:
+        """This config written and read as `tenant`: what `--tenant` applies. None keeps its own."""
+        if tenant is None:
+            return self
+        try:
+            return self.model_copy(update={"tenant": tenant_name(tenant)})
+        except ValueError as exc:
+            raise ConfigError(f"--tenant: {exc}") from None
 
     def with_widen(self) -> RunConfig:
         """This config with the model grounder's widen-and-retry on: what `--widen` applies."""

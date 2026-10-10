@@ -43,7 +43,9 @@ from openodke.corroborate.provenance import (
 from openodke.corroborate.resolve import block_keys
 from openodke.ontology import Ontology, Predicate
 from openodke.reconcile import COUNTS, reconciled, tally
+from openodke.sinks.report import WriteReport
 from openodke.stages import DDL, Constrainer, PlatformProfile
+from openodke.tenants import TENANT, scoped, tenant_name, unscoped
 from openodke.types import (
     Entity,
     EntityLink,
@@ -96,12 +98,15 @@ _PROVENANCE = frozenset(
         "evidence_span_origins",
         "evidence_tiers",
         "evidence_retrieved_at",
+        # The tenant a store keys the fact under (#159).
+        TENANT,
     }
 )
 # Node property names the sink writes from `Entity` fields; an attribute or a
 # projected predicate with one of these names is prefixed, never merged into.
 _ENTITY_FIELDS = frozenset(
     {
+        TENANT,
         "key",
         "label",
         "aliases",
@@ -142,13 +147,17 @@ def projection_property(predicate: str) -> str:
     return f"property_{predicate}" if predicate in _ENTITY_FIELDS else predicate
 
 
-def signature_of(fact: Fact) -> str:
+def signature_of(fact: Fact, tenant: str | None = None) -> str:
     """`Fact.signature` as one fixed-width string: the MERGE key of every fact.
 
     Hashed rather than serialised so the key is index-safe whatever the object
     value's repr is; the components are on the relationship as plain properties.
+    With a `tenant`, the tenant is hashed with it, so two tenants' identical
+    facts have two keys and never merge (#159); without one, the key is what
+    it always was.
     """
-    canonical = json.dumps(fact.signature, separators=(",", ":"), ensure_ascii=False)
+    identity: Any = fact.signature if tenant is None else [tenant, *fact.signature]
+    canonical = json.dumps(identity, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -175,7 +184,7 @@ def storable(value: Any) -> Any:
     return json.dumps(value, default=str, ensure_ascii=False)
 
 
-def provenance_of(fact: Fact, extracted_at: datetime) -> dict[str, Any]:
+def provenance_of(fact: Fact, extracted_at: datetime, tenant: str | None = None) -> dict[str, Any]:
     """Everything a relationship carries to answer "why is this here?".
 
     `retrieved_at` is the freshest evidence — the last time a source confirmed
@@ -194,12 +203,14 @@ def provenance_of(fact: Fact, extracted_at: datetime) -> dict[str, Any]:
     A naive clock beside an aware one is read as UTC, as the corroborator reads
     it: Python cannot compare the two, and to Neo4j they are two types, which no
     list may mix.
+
+    With a `tenant`, the signature is the tenant's and `tenant` names it (#159).
     """
     evidence, sources = fact.evidence, fact.supported_by
     clocks = _one_kind([e.retrieved_at for e in evidence])
     props: dict[str, Any] = {
         "fact_id": fact.id,
-        "signature": signature_of(fact),
+        "signature": signature_of(fact, tenant),
         "polarity": fact.polarity.value,
         "identity_keys": list(fact.identity_keys),
         "extractor": fact.extractor,
@@ -226,6 +237,8 @@ def provenance_of(fact: Fact, extracted_at: datetime) -> dict[str, Any]:
     }
     for key, value in fact.qualifiers.items():
         props[qualifier_property(key)] = storable(value)
+    if tenant is not None:
+        props[TENANT] = tenant
     return props
 
 
@@ -380,17 +393,20 @@ def _end_type(labels: Iterable[str] | None) -> str:
     return found[0] if found else ENTITY_LABEL
 
 
-def _entity_row(entity: Entity) -> dict[str, Any]:
+def _entity_row(entity: Entity, tenant: str | None = None) -> dict[str, Any]:
     resolution = entity.resolution
+    attributes = {attribute_property(k): storable(v) for k, v in entity.attributes.items()}
+    if tenant is not None:
+        attributes[TENANT] = tenant
     return {
-        "key": entity.key,
+        "key": scoped(entity.key, tenant),
         "label": entity.label,
         "aliases": list(entity.aliases),
         "external_id": entity.external_id,
         "resolution_method": resolution.method if resolution else None,
         "resolution_score": resolution.score if resolution else None,
         "resolution_linker": resolution.linker if resolution else None,
-        "attributes": {attribute_property(k): storable(v) for k, v in entity.attributes.items()},
+        "attributes": attributes,
     }
 
 
@@ -440,29 +456,37 @@ class Statement(NamedTuple):
     names: tuple[str, ...] = ()
 
 
-def plan(kg: KnowledgeGraph, *, ontology: Ontology | None = None) -> list[Statement]:
+def plan(
+    kg: KnowledgeGraph, *, ontology: Ontology | None = None, tenant: str | None = None
+) -> list[Statement]:
     """The graph as `UNWIND … MERGE` statements, in write order. Pure, so it is testable.
 
     Order matters: nodes before the relationships that `MATCH` them, links last.
     Within each kind the groups are sorted, so one graph always compiles to the
-    same statements.
+    same statements. With a `tenant`, every key and signature is the tenant's
+    (`openodke.tenants`) and every node and fact names it; the Cypher is the
+    same.
     """
     statements: list[Statement] = []
 
+    def key(entity_key: str) -> str:
+        return scoped(entity_key, tenant)
+
     by_label: dict[str, list[dict[str, Any]]] = {}
     for (label, _), entity in sorted(entities_of(kg).items()):
-        by_label.setdefault(label, []).append(_entity_row(entity))
+        by_label.setdefault(label, []).append(_entity_row(entity, tenant))
     for label, rows in sorted(by_label.items()):
         statements.append(Statement(_entity_cypher(label), rows, "entity", (label,)))
 
     edges: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     claims: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for fact in kg.facts:
-        props = provenance_of(fact, kg.created_at)
-        row = {"subject_key": fact.subject.key, "signature": props["signature"], "props": props}
+        props = provenance_of(fact, kg.created_at, tenant)
+        subject = key(fact.subject.key)
+        row = {"subject_key": subject, "signature": props["signature"], "props": props}
         if fact.object_entity is not None:
             group = (fact.subject.type, fact.predicate, fact.object_entity.type)
-            edges.setdefault(group, []).append({**row, "object_key": fact.object_entity.key})
+            edges.setdefault(group, []).append({**row, "object_key": key(fact.object_entity.key)})
         else:
             claim = {
                 "predicate": fact.predicate,
@@ -478,11 +502,14 @@ def plan(kg: KnowledgeGraph, *, ontology: Ontology | None = None) -> list[Statem
         statements.append(Statement(cypher, rows, "claim", (subject_type, predicate)))
     for (subject_type, predicate), rows in sorted(projections(kg, ontology).items()):
         cypher = _projection_cypher(subject_type, predicate)
+        rows = [{**row, "subject_key": key(row["subject_key"])} for row in rows]
         statements.append(Statement(cypher, rows, "projection", (subject_type, predicate)))
 
     links: dict[str, list[dict[str, Any]]] = {}
     for link in kg.links:
-        links.setdefault(link.kind.value.upper(), []).append(link_row(link))
+        row = link_row(link)
+        row.update(source_key=key(link.source_key), target_key=key(link.target_key))
+        links.setdefault(link.kind.value.upper(), []).append(row)
     for kind, rows in sorted(links.items()):
         statements.append(Statement(_link_cypher(kind), rows, "link", (kind,)))
     return statements
@@ -625,14 +652,21 @@ def _link_cypher(kind: str) -> str:
 # the per-predicate evidence indexes, and rewritten or deleted by signature.
 _TYPES = "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType AS name"
 _LINK_TYPES = ("SAME_AS", "SIMILAR", "DIFFERENT")
-_CITING = (
-    "UNWIND $indexes AS idx\n"
-    "CALL db.index.fulltext.queryRelationships(idx, $terms) YIELD relationship AS r\n"
-    "WITH r, startNode(r) AS s, endNode(r) AS o\n"
-    "RETURN elementId(r) AS id, type(r) AS predicate, properties(r) AS props,\n"
-    "       s.key AS subject_key, labels(s) AS subject_labels,\n"
-    "       o.key AS object_key, labels(o) AS object_labels, o.value AS value"
-)
+
+
+def _citing(tenant: str | None) -> str:
+    """The facts citing a document, through the evidence indexes: the tenant's alone (#159)."""
+    within = "r.tenant = $tenant" if tenant is not None else "r.tenant IS NULL"
+    return (
+        "UNWIND $indexes AS idx\n"
+        "CALL db.index.fulltext.queryRelationships(idx, $terms) YIELD relationship AS r\n"
+        f"WITH r, startNode(r) AS s, endNode(r) AS o WHERE {within}\n"
+        "RETURN elementId(r) AS id, type(r) AS predicate, properties(r) AS props,\n"
+        "       s.key AS subject_key, labels(s) AS subject_labels,\n"
+        "       o.key AS object_key, labels(o) AS object_labels, o.value AS value"
+    )
+
+
 # What a retraction changes on a relationship; everything else stays as written.
 _RETRACTED = (
     "support",
@@ -695,6 +729,30 @@ def _batches(rows: Sequence[dict[str, Any]], size: int) -> Iterator[list[dict[st
         yield list(rows[start : start + size])
 
 
+def transactions(
+    statements: Iterable[Statement], size: int
+) -> Iterator[list[tuple[Statement, list[dict[str, Any]]]]]:
+    """The statements' rows packed into transactions of at most `size` rows, in write order.
+
+    A transaction holds the end of one statement and the start of the next, so
+    a graph of many small groups is a few transactions, not one per group.
+    """
+    held: list[tuple[Statement, list[dict[str, Any]]]] = []
+    count = 0
+    for statement in statements:
+        start = 0
+        while start < len(statement.rows):
+            take = min(size - count, len(statement.rows) - start)
+            held.append((statement, list(statement.rows[start : start + take])))
+            count += take
+            start += take
+            if count >= size:
+                yield held
+                held, count = [], 0
+    if held:
+        yield held
+
+
 # --------------------------------------------------------------------------- #
 # The sink
 # --------------------------------------------------------------------------- #
@@ -708,8 +766,29 @@ def _connect(uri: str, auth: Any) -> Any:
     return GraphDatabase.driver(uri, auth=auth)
 
 
-def _unwind(tx: Any, cypher: str, rows: list[dict[str, Any]]) -> None:
-    tx.run(cypher, rows=rows).consume()
+# What `write()` adds to each statement it runs: how many rows reached the MERGE.
+COUNTED = "\nRETURN count(*) AS reached"
+# Which statements' rows the write report counts, and as what.
+_COUNTED_AS = {"entity": "entities", "edge": "facts", "claim": "facts", "link": "links"}
+
+
+def _unwind(
+    tx: Any, pieces: Sequence[tuple[str, list[dict[str, Any]]]]
+) -> list[tuple[int, int, int]]:
+    """Each piece in one transaction: rows that reached its MERGE, nodes and relationships made."""
+    out: list[tuple[int, int, int]] = []
+    for cypher, rows in pieces:
+        result = tx.run(cypher + COUNTED, rows=rows)
+        found = result.data()
+        counters = getattr(result.consume(), "counters", None)
+        out.append(
+            (
+                int(found[0]["reached"]) if found else 0,
+                int(getattr(counters, "nodes_created", 0)),
+                int(getattr(counters, "relationships_created", 0)),
+            )
+        )
+    return out
 
 
 class Neo4jSink:
@@ -759,10 +838,23 @@ class Neo4jSink:
     before the write and its support list grows rather than being replaced
     (#153). The Validator does this by default.
 
-    Rows go in batches of `batch_size`, one managed transaction each, so a
-    failed batch rolls back whole and never half-writes. Earlier batches stay
+    Rows go in transactions of at most `batch_size` rows, packed across
+    statements in write order (`transactions`), one managed transaction each,
+    so a failed one rolls back whole and never half-writes. Earlier ones stay
     committed; because every statement is a MERGE, recovering is running the
-    write again.
+    write again, and a rerun of the same graph makes nothing new.
+
+    `writes` is the sink's write report, run on across its writes (#159): per
+    kind (entities, facts, links), the rows `written` new, `merged` into a
+    node or relationship the store held, and `skipped` because an end was not
+    there to `MATCH`, and the transactions committed.
+
+    `tenant` keys the sink's writes and reads apart from every other tenant's
+    in the same store (`openodke.tenants`, DECISIONS #44): its entities are
+    keyed `<tenant>/<key>`, its facts' signatures are hashed with the tenant,
+    and `stored()`, `lookup()`, `retract()` and `check()` see that tenant's
+    alone. A sink with no tenant sees only what no tenant wrote.
+    `scoped(tenant)` is the same connection scoped to one.
 
     `profile` says the store constrains: once `bootstrap()` has applied a
     `Neo4jConstrainer`'s DDL, the uniqueness constraints are what make these
@@ -780,9 +872,11 @@ class Neo4jSink:
         batch_size: int = 500,
         driver: Any = None,
         ontology: Ontology | None = None,
+        tenant: str | None = None,
     ) -> None:
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1")
+        self.tenant = tenant_name(tenant)
         if driver is None:
             if uri is None:
                 raise ValueError("Neo4jSink needs a uri (with auth) or a driver")
@@ -790,6 +884,7 @@ class Neo4jSink:
         self._driver = driver
         self.database = database
         self.batch_size = batch_size
+        self.writes = WriteReport()
         # Decides whether a projected property is one value or a list.
         self.ontology = ontology
         # What `stored()` reads through; made on first use, and again after a bootstrap.
@@ -798,14 +893,50 @@ class Neo4jSink:
             ontology.warn_if_unreviewed("Neo4jSink will shape its writes")
 
     def statements(self, kg: KnowledgeGraph) -> list[Statement]:
-        """What `write()` would run, without running it."""
-        return plan(kg, ontology=self.ontology)
+        """What `write()` would run, without running it: each statement then counts its rows."""
+        return plan(kg, ontology=self.ontology, tenant=self.tenant)
 
     def write(self, kg: KnowledgeGraph) -> None:
         with self._driver.session(**self._session_config()) as session:
-            for statement in self.statements(kg):
-                for batch in _batches(statement.rows, self.batch_size):
-                    session.execute_write(_unwind, statement.cypher, batch)
+            for pieces in transactions(self.statements(kg), self.batch_size):
+                counted = session.execute_write(
+                    _unwind, [(statement.cypher, rows) for statement, rows in pieces]
+                )
+                # Counted once the transaction has committed.
+                self.writes.transactions += 1
+                for (statement, rows), (reached, nodes, relationships) in zip(
+                    pieces, counted, strict=True
+                ):
+                    kind = _COUNTED_AS.get(statement.kind)
+                    if kind is None:
+                        continue
+                    made = nodes if statement.kind == "entity" else relationships
+                    self.writes.add(
+                        kind,
+                        written=made,
+                        merged=max(0, reached - made),
+                        skipped=max(0, len(rows) - reached),
+                    )
+
+    def scoped(self, tenant: str | None) -> Neo4jSink:
+        """This sink's connection, reading and writing `tenant` alone (#159).
+
+        The sink itself when it is that tenant's already. A sink scoped to
+        another tenant is refused: one sink never writes for two. The new sink
+        shares the driver, so closing either closes both.
+        """
+        tenant = tenant_name(tenant)
+        if tenant == self.tenant:
+            return self
+        if self.tenant is not None:
+            raise ValueError(f"this sink writes tenant {self.tenant!r}, not {tenant!r}")
+        return Neo4jSink(
+            driver=self._driver,
+            database=self.database,
+            batch_size=self.batch_size,
+            ontology=self.ontology,
+            tenant=tenant,
+        )
 
     def bootstrap(
         self,
@@ -843,15 +974,35 @@ class Neo4jSink:
         A check and never a repair (09-quality §4): nothing here deletes, merges
         or picks a winner. What to do with a Person holding two employers is a
         person's call, and the rows say which ones to look at.
+
+        A subject node is one tenant's, so a check counts within a tenant. A
+        sink with a tenant returns that tenant's violators, keyed as it keys
+        them; one without returns the whole store's, keyed as stored.
         """
         compiled = (constrainer or Neo4jConstrainer()).constrain(ontology)
         found: dict[str, list[dict[str, Any]]] = {}
         with self._driver.session(**self._session_config()) as session:
             for statement in (s for s in compiled if is_check(s)):
-                rows = session.execute_read(_rows, statement)
+                rows = self._own(session.execute_read(_rows, statement))
                 if rows:
                     found[check_target(statement)] = rows
         return found
+
+    def _own(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """A check's rows whose subject is this sink's tenant's, with the tenant's keys."""
+        if self.tenant is None:
+            return rows
+        prefix = scoped("", self.tenant)
+        out = []
+        for row in rows:
+            if not str(row.get("subject", "")).startswith(prefix):
+                continue
+            objects = [
+                unscoped(o, self.tenant) if isinstance(o, str) else o for o in row["objects"]
+            ]
+            subject = unscoped(row["subject"], self.tenant)
+            out.append({**row, "subject": subject, "objects": objects})
+        return out
 
     def stored(self, facts: Sequence[Fact]) -> dict[tuple[Any, ...], Fact]:
         """What the store holds under these facts' signatures, as `Neo4jLookup.stored` reads it.
@@ -878,7 +1029,9 @@ class Neo4jSink:
         with no source is deleted, with its `:Claim`. A value projected from a
         claim that lost support is projected again from the claims left, and
         removed when none is. Returns the counts `openodke.reconcile.COUNTS`
-        names; the same documents retracted twice change nothing.
+        names; the same documents retracted twice change nothing. Only the
+        sink's tenant's facts are touched: another tenant's text with the same
+        id is another tenant's (#159).
         """
         docs = sorted(set(doc_ids))
         reader = self._lookup()
@@ -916,7 +1069,8 @@ class Neo4jSink:
         self, tx: Any, docs: list[str], names: list[str], at: datetime, hard: bool
     ) -> dict[str, int]:
         terms = " OR ".join(_phrase(doc) for doc in docs)
-        rows = tx.run(_CITING, {"indexes": names, "terms": terms}).data()
+        asked = {"indexes": names, "terms": terms, "tenant": self.tenant}
+        rows = tx.run(_citing(self.tenant), asked).data()
         before = [relationship_fact(row) for row in rows]
         after = reconciled(before, set(docs), at)
         updates: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -976,10 +1130,11 @@ class Neo4jSink:
         """A `Neo4jLookup` on this sink's connection, database and ontology.
 
         It shares the driver, so closing the sink closes it. `options` are
-        `Neo4jLookup`'s: `tenant`, `tenant_property`, `limit`, `embed`,
+        `Neo4jLookup`'s: `tenant` (the sink's, unless given), `limit`, `embed`,
         `vector_index`, `vector_k`.
         """
         options.setdefault("ontology", self.ontology)
+        options.setdefault("tenant", self.tenant)
         return Neo4jLookup(driver=self._driver, database=self.database, **options)
 
     def close(self) -> None:
@@ -1142,7 +1297,11 @@ def _native(value: Any) -> Any:
 
 
 def stored_entity(
-    props: Mapping[str, Any], entity_type: str, *, ontology: Ontology | None = None
+    props: Mapping[str, Any],
+    entity_type: str,
+    *,
+    ontology: Ontology | None = None,
+    tenant: str | None = None,
 ) -> Entity:
     """A node the sink wrote, read back as the `Entity` that wrote it.
 
@@ -1150,9 +1309,11 @@ def stored_entity(
     `resolution_*` are fields, an attribute the sink prefixed gets its name
     back, and every other property is an attribute, except a value the ontology
     says was projected from a fact. Written again, it sets every property to
-    what it already holds.
+    what it already holds. A tenant's node comes back under the key its
+    tenant gave it, and `tenant` is the sink's, never an attribute.
     """
     rest = {name: _native(value) for name, value in props.items()}
+    rest.pop(TENANT, None)
     method = rest.pop("resolution_method", None)
     score = rest.pop("resolution_score", None)
     linker = rest.pop("resolution_linker", None)
@@ -1161,7 +1322,7 @@ def stored_entity(
         if method in ("caller", "external_id", "linker")
         else None
     )
-    key = str(rest.pop("key"))
+    key = unscoped(str(rest.pop("key")), tenant)
     label = rest.pop("label", None)
     aliases = tuple(str(a) for a in rest.pop("aliases", None) or ())
     external_id = rest.pop("external_id", None)
@@ -1205,19 +1366,23 @@ class _Blocks:
 
 
 def _block_rows(
-    members: Sequence[Entity], blocks: _Blocks, vectors: Mapping[str, list[float]] | None
+    members: Sequence[Entity],
+    blocks: _Blocks,
+    vectors: Mapping[str, list[float]] | None,
+    tenant: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """One type's distinct block keys as `UNWIND` rows, by how they are looked up.
 
     A block key two entities share is one row, asked once; the rows carry the
-    block's id, and the reply is handed to every entity that asked.
+    block's id, and the reply is handed to every entity that asked. A key is
+    asked for as the tenant's (`openodke.tenants`), so the index finds it.
     """
     rows: dict[str, list[dict[str, Any]]] = {"key": [], "id": [], "names": [], "vector": []}
     for entity in members:
         kind, probe = entity.type, entity.key
         at, new = blocks.ask(("key", kind, entity.key), probe)
         if new:
-            rows["key"].append({"block": at, "value": entity.key})
+            rows["key"].append({"block": at, "value": scoped(entity.key, tenant)})
         keys = block_keys(entity)
         for scheme, value in sorted(keys.ids):
             at, new = blocks.ask(("id", kind, scheme, value), probe)
@@ -1269,9 +1434,13 @@ class Neo4jLookup:
     up, and it warns once saying so, rather than scan. The whole batch is read
     in one read transaction, and nothing is written.
 
-    `tenant` keeps only nodes whose `tenant_property` equals it. Tenant keys
-    arrive with #159; until then it is a filter on a property, applied after
-    the index, so a full-text `limit` counts nodes of every tenant.
+    `tenant` scopes every read to one tenant's nodes and facts (#159,
+    DECISIONS #44). A key is asked for as the tenant's key, so the uniqueness
+    index finds the tenant's node and no other, and a fact by the tenant's
+    signature. An external id, a name or a vector is found through its index
+    and kept when `tenant` is the node's, so a full-text `limit` still counts
+    every tenant's hits. A lookup with no tenant reads only what no tenant
+    wrote.
     """
 
     def __init__(
@@ -1282,7 +1451,6 @@ class Neo4jLookup:
         database: str | None = None,
         driver: Any = None,
         tenant: str | None = None,
-        tenant_property: str = "tenant",
         limit: int = 100,
         embed: Embed | None = None,
         vector_index: str | None = None,
@@ -1300,8 +1468,7 @@ class Neo4jLookup:
             driver = _connect(uri, auth)
         self._driver = driver
         self.database = database
-        self.tenant = tenant
-        self.tenant_property = tenant_property
+        self.tenant = tenant_name(tenant)
         self.limit = limit
         self.embed = embed
         self.vector_index = vector_index
@@ -1332,7 +1499,9 @@ class Neo4jLookup:
             self.stats["statements"] += len(queries)
             for query, rows in zip(queries, results, strict=True):
                 for row in rows:
-                    entity = stored_entity(row["node"], query.type, ontology=self.ontology)
+                    entity = stored_entity(
+                        row["node"], query.type, ontology=self.ontology, tenant=self.tenant
+                    )
                     for probe in probes[row["block"]]:
                         found[probe].setdefault(entity.key, entity)
         return {key: list(stored.values()) for key, stored in found.items()}
@@ -1353,7 +1522,7 @@ class Neo4jLookup:
         """
         by_key: dict[str, list[Fact]] = defaultdict(list)
         for fact in facts:
-            by_key[signature_of(fact)].append(fact)
+            by_key[signature_of(fact, self.tenant)].append(fact)
         queries = self.fact_statements(facts)
         if not queries:
             return {}
@@ -1373,7 +1542,7 @@ class Neo4jLookup:
         indexes = self.indexes()
         by_predicate: dict[str, set[str]] = defaultdict(set)
         for fact in facts:
-            by_predicate[fact.predicate].add(signature_of(fact))
+            by_predicate[fact.predicate].add(signature_of(fact, self.tenant))
         queries: list[LookupQuery] = []
         for predicate in sorted(by_predicate):
             if predicate not in indexes.signatures:
@@ -1397,7 +1566,7 @@ class Neo4jLookup:
             by_type.setdefault(entity.type, []).append(entity)
         queries: list[LookupQuery] = []
         for entity_type in sorted(by_type):
-            rows = _block_rows(by_type[entity_type], blocks, vectors)
+            rows = _block_rows(by_type[entity_type], blocks, vectors, self.tenant)
             queries += self._typed(entity_type, rows, indexes)
         return [q for q in queries if q.params["rows"]], blocks.probes
 
@@ -1466,8 +1635,30 @@ class Neo4jLookup:
 
     def _tenant_conditions(self) -> list[str]:
         if self.tenant is None:
-            return []
-        return [f"n.{_ident(self.tenant_property)} = $tenant"]
+            return [f"n.{_ident(TENANT)} IS NULL"]
+        return [f"n.{_ident(TENANT)} = $tenant"]
+
+    def scoped(self, tenant: str | None) -> Neo4jLookup:
+        """This lookup's connection, reading `tenant` alone; itself when it does already.
+
+        A lookup scoped to another tenant is refused. The new one shares the
+        driver and never closes it.
+        """
+        tenant = tenant_name(tenant)
+        if tenant == self.tenant:
+            return self
+        if self.tenant is not None:
+            raise ValueError(f"this lookup reads tenant {self.tenant!r}, not {tenant!r}")
+        return Neo4jLookup(
+            driver=self._driver,
+            database=self.database,
+            tenant=tenant,
+            limit=self.limit,
+            embed=self.embed,
+            vector_index=self.vector_index,
+            vector_k=self.vector_k,
+            ontology=self.ontology,
+        )
 
     def _vectors(self, entities: Sequence[Entity]) -> dict[str, list[float]]:
         if self.embed is None or not entities:
@@ -1679,6 +1870,7 @@ def _cardinality_check(predicate: str, scope: Iterable[str]) -> str:
 __all__ = [
     "CHECK_MARKER",
     "CLAIM_LABEL",
+    "COUNTED",
     "ENTITY_LABEL",
     "EXTRA_HINT",
     "SHOW_INDEXES",
@@ -1706,6 +1898,7 @@ __all__ = [
     "storable",
     "store_indexes",
     "stored_entity",
+    "transactions",
     "stored_evidence",
     "stored_fact",
     "stored_qualifiers",
