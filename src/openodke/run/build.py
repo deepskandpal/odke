@@ -68,6 +68,7 @@ from openodke.loaders import (
     TsvLoader,
 )
 from openodke.manifest import Served
+from openodke.observe import Observer
 from openodke.ontology import Ontology, OntologyLoadError
 from openodke.pipeline import Pipeline
 from openodke.reextract import Reextract
@@ -146,6 +147,8 @@ class Context:
     cached: list[CachedClient] = field(default_factory=list)
     # The model each role asked for and the ids that answered, for the run manifest.
     served: Served = field(default_factory=Served)
+    # The run's events and spans (`openodke.observe`): every stage and every model call.
+    observer: Observer = field(default_factory=lambda: Observer("run"))
 
     def client(self, role: str, *, stage: str | None = None) -> LLMClient:
         """The client a model-backed stage should use for `role`.
@@ -164,7 +167,9 @@ class Context:
         counted without a stage knowing: under `stage` when given, so the
         grounder's widened retries are a cost row of their own, and under the
         role otherwise. Every answer's model, a cached one's too, is noted
-        under the role for the run manifest (`served`).
+        under the role for the run manifest (`served`). Outermost, the run's
+        observer sees every call, a cached one too, as an event and a span
+        under the same name.
         """
         inner: LLMClient
         replay = self.config.models.replay.get(role)  # type: ignore[call-overload]
@@ -185,9 +190,9 @@ class Context:
             inner = CachedClient(inner, self.cache)
             self.cached.append(inner)
         inner = self.served.client(role, getattr(self.roles, role), inner)
-        if self.meter is None:
-            return inner
-        return self.meter.client(inner, stage=stage or role)
+        if self.meter is not None:
+            inner = self.meter.client(inner, stage=stage or role)
+        return self.observer.client(inner, stage or role)
 
     def cache_stats(self) -> dict[str, Any] | None:
         """The response cache's directory and its hits, misses and failed calls, or None."""
@@ -1155,6 +1160,7 @@ class Built:
             reextract=None
             if "extractor" in overrides
             else reextract_policy(self.config, s["extractor"]),
+            observer=self.context.observer,
         )
 
     def documents(self) -> list[Document]:

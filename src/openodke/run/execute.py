@@ -32,6 +32,7 @@ from openodke.corroborate.provenance import CONFLICT
 from openodke.coverage import summary as coverage_summary
 from openodke.llm.budget import budget_summary, stopped_summary
 from openodke.manifest import FILE, Inputs, Recorder, RunManifest, inputs_of, package, spent_of
+from openodke.observe import JobCounts, Observer, job_counts_of_run, spend
 from openodke.ontology import Ontology
 from openodke.reextract import summary as reextract_summary
 from openodke.run.build import Built, build
@@ -75,6 +76,11 @@ class RunResult:
     def stats(self) -> dict[str, Any]:
         return self.graph.stats
 
+    @property
+    def job(self) -> JobCounts:
+        """Facts in, out, refused, merged, linked and sent to review: the job's counts."""
+        return job_counts_of_run(self.stats)
+
     def render(self) -> str:
         return render(self)
 
@@ -115,6 +121,8 @@ def run_built(
                 f"the manifest was written by openodke {replaying.package.get('openodke')}; "
                 f"this is {package()['openodke']}"
             )
+    observer = built.context.observer
+    observer.start(dry_run=dry_run)
 
     opened: list[Sink] = []
     applied: list[str] = []
@@ -158,9 +166,11 @@ def run_built(
             written = [line for p in built.sinks for line in p.describe(kg)]
         else:
             written = []
+            begun = observer.begin("write")
             for plan, sink in zip(built.sinks, opened, strict=True):
                 sink.write(kg)
                 written.extend(plan.describe(kg))
+            observer.end(begun, {"sinks": len(opened), "facts": len(kg.facts)})
     finally:
         if built.lookup is not None:
             built.lookup.close()
@@ -179,6 +189,8 @@ def run_built(
         failed=stats.get("failed"),
         dry_run=dry_run,
     )
+    manifests = [] if dry_run else write_manifest(built, manifest, kg)
+    finish(observer, job_counts_of_run(stats), stats)
     return RunResult(
         graph=kg,
         dry_run=dry_run,
@@ -186,7 +198,7 @@ def run_built(
         bootstrap=applied,
         warnings=result_warnings,
         manifest=manifest,
-        manifests=[] if dry_run else write_manifest(built, manifest, kg),
+        manifests=manifests,
     )
 
 
@@ -255,6 +267,18 @@ def _refuse_unless_same(
             "Run the config itself for a new run",
             problems=tuple(problems),
         )
+
+
+def finish(observer: Observer, counts: JobCounts, stats: Mapping[str, Any]) -> None:
+    """The job's last event: its counts, and its documents, failures and stop beside them."""
+    stopped = stats.get("stopped")
+    observer.finish(
+        counts,
+        cost=spend(stats.get("spent") or {}),
+        documents=int(stats.get("documents", 0)),
+        failed=len(stats.get("failed") or {}),
+        stopped=stopped.get("limit") if isinstance(stopped, Mapping) else None,
+    )
 
 
 def _bootstrap(built: Built, opened: list[Sink]) -> list[str]:
@@ -551,6 +575,7 @@ __all__ = [
     "RunResult",
     "collect_stats",
     "execute",
+    "finish",
     "handed_in",
     "jsonable",
     "manifest_path",
