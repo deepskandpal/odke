@@ -118,7 +118,8 @@ These rules hold for every graph sink.
 - **A rerun into Neo4j or NetworkX** finds each node, relationship and claim by
   its key and updates it. `SET r =` replaces a relationship's properties, so a
   stale qualifier does not survive. Node attributes and projected values
-  accumulate (`SET n +=`), and nothing is ever deleted. Through the Validator,
+  accumulate (`SET n +=`), and nothing is ever deleted; the
+  [write report](#the-write-report) counts each row `merged`. Through the Validator,
   a fact the store already holds is first [merged with the store](#merge-with-the-store),
   so what replaces the properties carries every source. Retracting a source is
   the [reconciler's](#reconcile) job.
@@ -253,6 +254,80 @@ a document, give the new version to `odke validate --update`: it retracts
 every text it is given from the config's sinks, or from `-o`, which it then
 merges into, before it writes.
 
+## Tenants
+
+One store can hold many tenants, and two tenants who state the same claim own
+two facts ([DECISIONS #44](decisions.md#44)). Give the tenant once:
+`Validator(..., tenant="acme")`, `tenant: acme` in a run config, or
+`--tenant acme` on `odke run`, `odke validate` and `odke reconcile`. Every sink
+and lookup that can be scoped to it is scoped (`scoped(tenant)`).
+
+- **Keys carry the tenant in the store.** A tenant's entity is keyed
+  `acme/<key>`, its facts' signatures are hashed with `acme`, and every node and
+  relationship it writes has `tenant: "acme"`. The constraints `bootstrap()`
+  creates serve every tenant at once: one node per key, one relationship per
+  signature. A store with no tenant is written as before.
+- **Every read stays in the tenant.** The [store lookup](resolution-and-corroboration.md#resolving-against-the-store)
+  asks for the tenant's keys, and keeps the tenant's nodes among the ones an
+  id, a name or a vector finds. [Merging with the store](#merge-with-the-store)
+  reads the tenant's signatures. The [reconciler](#reconcile) retracts a
+  document from the tenant's facts, so another tenant's text with the same id
+  is untouched. `check()` reports the tenant's subjects, under the tenant's
+  keys. `read_neo4j(driver, tenant=...)` reads the tenant's facts. A reader
+  with no tenant sees only what no tenant wrote.
+- **What comes back is the tenant's own key.** A stored node is read back
+  under the key its tenant gave it, and `tenant` is the sink's, never an
+  attribute. An entity attribute or a qualifier named `tenant` is written as
+  `attribute_tenant` or `qualifier_tenant`.
+- **A JSONL directory holds one tenant.** `JsonlSink(..., tenant=...)` names it
+  in the manifest. Merging, reading or retracting a directory another tenant
+  wrote is refused.
+
+A tenant is letters, digits, `_`, `.` and `-`, starting with a letter or digit.
+A sink or lookup scoped to one tenant refuses another.
+
+```python
+from openodke.sinks.neo4j import plan
+
+
+def rows(tenant, kind):
+    return [row for s in plan(kg, tenant=tenant) if s.kind == kind for row in s.rows]
+
+
+assert {row["key"] for row in rows("acme", "entity")} == {
+    "acme/p:ada",
+    "acme/c:acme",
+    "acme/c:acme-ltd",
+}
+assert all(row["props"]["tenant"] == "acme" for row in rows("acme", "edge"))
+# The same claim for another tenant is another relationship.
+assert rows("acme", "edge")[0]["signature"] != rows("beta", "edge")[0]["signature"]
+```
+
+## The write report
+
+Every run ends with what each sink did, per kind (entities, facts, links):
+
+- **`written`**: new to the store, a node, relationship or line it did not hold;
+- **`merged`**: written into one it held. A rerun of the same graph merges every
+  row, so its report says it made nothing new;
+- **`skipped`**: rows that wrote nothing, such as a link whose end had no node to
+  `MATCH`;
+- **`transactions`**: for Neo4j, the transactions committed.
+
+`Neo4jSink` counts from the database: each statement it runs ends with
+`RETURN count(*)`, the rows that reached its `MERGE`, and the counters say how
+many nodes and relationships were made. `JsonlSink` counts the keys its files
+held. A sink that keeps no report is listed with what it was `handed`. A
+sink's `writes` runs on across its writes. The report is `ValidationReport.writes`
+and `stats["writes"]`, keyed by position and class (`0:Neo4jSink`). It is added
+to every JSONL manifest once all the sinks have written, and printed one line
+per sink:
+
+```text
+writes        0:Neo4jSink: entities 3 written; facts 2 written, 1 merged; links none; 1 transaction
+```
+
 ## Choose a sink
 
 | Class | `odke run` name | Extra | Writes | On a second `write` |
@@ -273,8 +348,9 @@ command that installs it. Options per sink are in
 Needs Neo4j 5.7 or later (relationship uniqueness constraints arrived in 5.7);
 Community Edition is enough. `pip install "openodke[neo4j]"`.
 
-`Neo4jSink(uri, auth, *, database=None, batch_size=500, driver=None, ontology=None)`
-writes batched `UNWIND … MERGE`, one transaction per batch. Call
+`Neo4jSink(uri, auth, *, database=None, batch_size=500, driver=None, ontology=None, tenant=None)`
+writes batched `UNWIND … MERGE`, packed into transactions of at most
+`batch_size` rows across statements, in write order, each committed whole. Call
 `sink.bootstrap(ontology)` before the first write: it applies the constraints
 and indexes, each `IF NOT EXISTS`, and `dry_run=True` returns them without
 running them. Creating the sink does not connect.

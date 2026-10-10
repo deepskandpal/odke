@@ -150,6 +150,11 @@ print(streamed.batches, streamed.restated)
 # 4 2
 ```
 
+`Validator(..., tenant="acme")` is `--tenant`: every sink and lookup that can
+be scoped writes and reads that tenant's facts alone ([Tenants](stores.md#tenants)).
+Once the sinks have written, `report.writes` says what each wrote, merged and
+skipped ([the write report](stores.md#the-write-report)).
+
 ## The stages
 
 Each stage defaults to what `odke run` builds under its usual name, with that

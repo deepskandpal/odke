@@ -109,9 +109,15 @@ coverage: true
 # (DECISIONS #31): neo4j reads the neo4j sink's store through the indexes
 # bootstrap creates. A proof re-keys the incoming facts onto the stored key;
 # anything weaker is a SIMILAR link. Off unless named; brings the native
-# resolver when none is named. Options: tenant, tenant_property, limit, and the
-# sink's connection keys to read another store. Or package.module:Name.
-# store_lookup: {use: neo4j, tenant: acme}
+# resolver when none is named. Options: limit, and the sink's connection keys
+# to read another store; it reads the run's tenant. Or package.module:Name.
+# store_lookup: {use: neo4j, limit: 100}
+
+# Key everything the run writes to, and reads from, the store by this tenant
+# (DECISIONS #44): two tenants' identical facts never merge, and a lookup, a
+# merge or a retraction for one never reaches another. Off unless named;
+# --tenant overrides it. Letters, digits, _, . and -.
+# tenant: acme
 
 # Stream the run (DECISIONS #45): load this many documents, run them through
 # every stage and write them, then the next, so memory follows the micro-batch

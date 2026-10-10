@@ -305,13 +305,17 @@ scanned and nothing is written.
 ```python
 with Neo4jSink(uri, auth, ontology=ontology) as sink:
     sink.bootstrap(ontology)
-    validator = Validator(ontology, lookup=sink.lookup(tenant="acme"), sinks=[sink])
+    validator = Validator(ontology, lookup=sink.lookup(), sinks=[sink], tenant="acme")
     kg, report = validator.validate(rows, documents)  # report.store: what it found
 ```
 
-- **Tenant** keeps the nodes whose `tenant_property` equals `tenant`. Tenant
-  keys arrive in 0.7.0 (#159); until then it is a filter on a property, and in
-  Neo4j it applies after the full-text `limit`.
+- **Tenant** scopes the lookup to one tenant's store
+  ([Tenants](stores.md#tenants), [DECISIONS #44](decisions.md#44)). `Neo4jLookup`
+  asks for the tenant's keys, which only the tenant's nodes hold, and keeps
+  the tenant's nodes among those an id, a name or a vector finds, after the
+  full-text `limit`. With no tenant it reads only what no tenant wrote. The
+  Validator scopes the lookup it is given to its own tenant. `MemoryLookup`
+  keeps the entities whose `tenant_property` attribute equals `tenant`.
 - **Vectors** are a slot, not a dependency. With `embed`, a function from
   texts to vectors, the `vector_k` nearest stored labels of the same type are
   candidates too (in Neo4j, from a `vector_index` you keep; openodke writes no

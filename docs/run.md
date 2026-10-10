@@ -60,7 +60,8 @@ stages:
 bootstrap: false
 coverage: true
 reextract: {windows: 3}            # off unless named
-store_lookup: {use: neo4j, tenant: acme}   # off unless named
+store_lookup: neo4j                # off unless named
+tenant: acme                       # key the store by tenant; off unless named
 manifest: runs/last.json           # the run manifest here too
 batch_size: 500                    # stream; off unless named
 ```
@@ -78,6 +79,7 @@ batch_size: 500                    # stream; off unless named
 | `store_lookup` | no, off by default | Resolve each batch against what the store already holds, without loading it: `neo4j`, or `package.module:Name` for a `StoreLookup` of your own ([below](#store_lookup)). |
 | `manifest` | no | Where the [run manifest](#the-run-manifest) is written, besides each JSONL sink's `manifest.json`. |
 | `batch_size` | no, off by default | Stream the run: load, run and write that many documents at a time ([Streaming](#streaming)). `--batch-size` overrides it. Not a Neo4j sink's own `batch_size`, which is rows per write transaction. |
+| `tenant` | no, off by default | Key everything the run writes to, and reads from, its store by this tenant, so two tenants' identical facts never merge ([Tenants](stores.md#tenants)). `--tenant` overrides it. |
 
 Every relative path (the ontology, each input, `pythonpath`, replay files, a sink's
 output) resolves against the directory the config file is in, so a config runs the
@@ -193,7 +195,7 @@ would have to be a Python object, such as a corroborator's `source` callable.
 | `use` | Writes | Options |
 |---|---|---|
 | `jsonl` | [`JsonlSink`](stores.md#jsonl) | `directory` (required); `merge` (default `false`): keep what the files hold and [merge with it](stores.md#merge-with-the-store) |
-| `neo4j` | [`Neo4jSink`](stores.md#neo4j) | `uri` or `uri_env` (one required); `user` or `user_env` (default `neo4j`); `password_env` (default `NEO4J_PASSWORD`); `database`; `batch_size` (default 500) |
+| `neo4j` | [`Neo4jSink`](stores.md#neo4j) | `uri` or `uri_env` (one required); `user` or `user_env` (default `neo4j`); `password_env` (default `NEO4J_PASSWORD`); `database`; `batch_size`, the most rows a write transaction holds (default 500); the run's `tenant` |
 | `cypher_file` | [`CypherFileSink`](stores.md#cypher-file) | `path` (required); `batch_size` (default 500) |
 | `neo4j_admin_csv` | [`Neo4jAdminCsvSink`](stores.md#neo4j-admin-csv) | `directory` (required); `delimiter` (default `,`); `array_delimiter` (default `;`) |
 | `rdf` | [`RdfSink`](stores.md#rdf), needs `rdf` | `path` (required); `format` (`turtle`, `nt`, `json-ld`; default from the suffix); `base`; `schema` |
@@ -235,10 +237,12 @@ predicate, and the run report prints how many were added.
 ([DECISIONS #31](decisions.md#31)). With no `stages.resolver`, it brings `native`;
 a resolver that cannot take a lookup is refused. `neo4j` reads the store the
 run's one neo4j sink writes to, on that sink's connection, after `bootstrap`
-has created the indexes it reads through. Its options are `tenant`,
-`tenant_property` (default `tenant`) and `limit` (hits per name token, default
-100), and the sink's connection keys (`uri`, `uri_env`, `user`, `user_env`,
-`password_env`, `database`) to read a store the run does not write to.
+has created the indexes it reads through. It reads the run's `tenant`, and a
+`tenant` of its own that differs is refused: a run looks up the tenant it
+writes. Its options are `limit` (hits per name token, default 100) and the
+sink's connection keys (`uri`, `uri_env`, `user`, `user_env`, `password_env`,
+`database`) to read a store the run does not write to. A lookup of your own is
+scoped to the run's tenant when it has `scoped(tenant)`.
 `package.module:Name` is constructed with its options, like a stage. A dry run
 opens no store, so it resolves each batch within itself and prints a warning
 saying so. `odke validate --config` reads the same key. The resolver's counts
@@ -347,6 +351,7 @@ stage:
 | `coverage` | with `coverage: true`, the default: totals, the relations never offered and never used, and each document's uncovered sentences and missed entities ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)) |
 | `reextract` | with `reextract`: `windows` asked, facts `returned`, `duplicates`, `kept`, `refused` by grounding, and their `verdicts` |
 | `batches` | with `batch_size`: the micro-batches run. Every count above is then the run's, summed over them ([Streaming](#streaming)) |
+| `writes` | once every sink has written: per sink (`0:Neo4jSink`), per kind, the rows `written` new, `merged` into what the store held, and `skipped`, and Neo4j's `transactions` ([the write report](stores.md#the-write-report)). One `writes` line per sink, after the `wrote` lines |
 
 A `DoubleStageWarning` raised while the pipeline is built is printed as a
 `warning:` line on standard error.
