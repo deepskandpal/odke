@@ -131,7 +131,7 @@ name's default options:
 |---|---|
 | grounder | `LLMGrounder(roles, client=client, locate=locate)`, behind the free checks (`CheckedGrounder`) |
 | normalizer | `ValueNormalizer(ontology)` |
-| resolver | `NativeResolver()` |
+| resolver | `NativeResolver(ontology=ontology)`. `normalize_batch=True` has it [normalise the batch](resolution-and-corroboration.md#normalising-mentions-in-a-batch): look-alikes the batch introduces become one entity when nothing keeps them apart, and `embed=` a function from texts to vectors compares their sentences. Off by default; with a resolver of your own, give it those instead |
 | corroborator | `SignatureCorroborator(ontology, store=...)`, handed every sink that can say what it holds, so a write [merges with the store](stores.md#merge-with-the-store) |
 | scorer | `EvidenceScorer()` |
 | gate | `VerdictGate(schema=True)`: refuses what the text contradicts, and what the free checks refused |
@@ -175,6 +175,10 @@ the relation and the types have nothing to check.
   failed, and the calls a budget refused (`unasked`). Its calls, tokens and
   cost are in the totals, and its two prompt keys in `prompts`. A budget the
   judge reaches first is the report's `stopped`, during resolve.
+- **Batch.** With the batch normalised, `batch` counts the look-alike pairs,
+  those merged, the entities and mentions they made, and the pairs kept apart:
+  by a number, a legal form or context, as alike to two entities kept apart,
+  or refused because a chain would join a pair kept apart.
 
 The graph's `stats` carry the same report under `"validation"`, beside each
 stage's own counts under `"stages"`, so a JSONL sink's `manifest.json` keeps

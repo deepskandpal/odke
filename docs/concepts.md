@@ -125,7 +125,10 @@ was decided: `caller`, `external_id`, or `linker` with a `score`
 ([DECISIONS #18](decisions.md#18)).
 
 A resolver proposes `EntityLink`s between keys. It never merges or replaces
-nodes ([DECISIONS #16](decisions.md#16)).
+a stored node ([DECISIONS #16](decisions.md#16)). Only a proof re-keys
+incoming facts onto a stored entity. Asked to normalise a batch, it makes
+the batch's own look-alikes that nothing keeps apart one entity, before
+anything is written ([DECISIONS #43](decisions.md#43)).
 
 | `LinkKind` | Means |
 |---|---|
