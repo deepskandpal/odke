@@ -146,10 +146,21 @@ from openodke.types import Chunk, Document, Fact, Frozen, KnowledgeGraph, LinkKi
 
 Facts = str | Path | Iterable[TripleRow | Mapping[str, Any] | Fact]
 
+# The run report's format (DECISIONS #48): a minor version adds fields, a major
+# one changes them. `validation_report.schema.json`, beside this file, is its
+# JSON Schema.
+REPORT_VERSION = "1.0"
+REPORT_SCHEMA_PATH = Path(__file__).with_name("validation_report.schema.json")
+
 
 class ValidationReport(Frozen):
-    """What one `Validator.validate()` call did: the job's counts, its cost and its gaps."""
+    """What one `Validator.validate()` call did: the job's counts, its cost and its gaps.
 
+    The run report: its JSON is `KnowledgeGraph.stats["validation"]`, and is
+    versioned (`schema_version`, `REPORT_VERSION`).
+    """
+
+    schema_version: str = REPORT_VERSION
     dry_run: bool = False
     documents: int = 0
     # Facts handed in whose text was given, and those whose text was not.
@@ -1177,4 +1188,12 @@ def _n(count: int, noun: str) -> str:
     return f"{count} {noun if count == 1 else plural}"
 
 
-__all__ = ["ValidationReport", "Validated", "Validator", "stores_of", "validated_counts"]
+__all__ = [
+    "REPORT_SCHEMA_PATH",
+    "REPORT_VERSION",
+    "ValidationReport",
+    "Validated",
+    "Validator",
+    "stores_of",
+    "validated_counts",
+]
