@@ -2,7 +2,7 @@
 
 The done-when: the logs parse as JSON, and the counts the job logs are the
 counts its report prints. Every model call is answered from recorded
-responses.
+responses; the spans go to the OpenTelemetry SDK's in-memory exporter.
 """
 
 from __future__ import annotations
@@ -16,15 +16,28 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from typer.testing import CliRunner
 
+from openodke import Document, Ontology, observe
 from openodke.cli.main import app
-from openodke.llm import ModelSpec
+from openodke.corroborate import PairJudge
+from openodke.llm import ModelRoles, ModelSpec
 from openodke.llm.base import Completion, Message, ProviderError
+from openodke.llm.testing import RecordedClient
+from openodke.loaders import DirectoryLoader
 from openodke.observe import KEYS, JobCounts, Observer, configure_logs
+from openodke.sinks.jsonl import JsonlSink
+from openodke.validator import ValidationReport, Validator
+from test_pair_judge import DOC, GROUNDED, ROWS, _client
+from test_pair_judge import PEOPLE as JUDGED
 
 runner = CliRunner()
+REPO = Path(__file__).parent.parent
+TRIPLES = REPO / "examples" / "triples"
+COUNTED = ("facts_in", "facts_out", "refused", "merged", "linked", "review")
 
 
 @pytest.fixture
@@ -49,6 +62,10 @@ def _one(events: list[dict[str, Any]], name: str) -> dict[str, Any]:
     found = [e for e in events if e["event"] == name]
     assert len(found) == 1, (name, [e["event"] for e in events])
     return found[0]
+
+
+def _texts() -> list[Document]:
+    return list(DirectoryLoader().load(TRIPLES / "texts"))
 
 
 # --------------------------------------------------------------------------- #
@@ -105,10 +122,123 @@ def test_odke_run_logs_json_and_its_job_counts_are_its_reports(example: Path) ->
     assert sum(e["counts"]["facts"] for e in documents) == by_stage["ground"]["counts"]["facts"]
 
 
+def test_the_validators_job_counts_are_its_reports_and_the_queue_is_review(
+    logs: io.StringIO, tmp_path: Path
+) -> None:
+    judge = PairJudge(client=_client("same", "different"), queue=tmp_path / "pairs.jsonl")
+    validator = Validator(JUDGED, client=RecordedClient(GROUNDED), judge=judge)
+    _, report = validator.validate(ROWS, [DOC])
+    end = _one(_events(logs.getvalue()), "job.end")
+
+    assert end["command"] == "validate"
+    assert end["counts"] == report.job.model_dump()
+    assert end["counts"] == {
+        "facts_in": report.facts_in,
+        "facts_out": report.facts_out,
+        "refused": report.refused,
+        "merged": report.merged,
+        "linked": report.linked,
+        "review": report.judge["queued"] if report.judge else -1,
+    }
+    assert end["counts"]["review"] == 1
+    assert end["cost"]["calls"] == report.calls == 4
+    assert JobCounts().model_dump() == dict.fromkeys(COUNTED, 0)
+    assert ValidationReport().job.review == 0
+
+
+def test_odke_validate_and_odke_ground_log_the_counts_they_print(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "recorded.json").write_text(
+        json.dumps([{"match": "Claim:", "response": {"verdict": "supported"}}])
+    )
+    (tmp_path / "models.yaml").write_text("models:\n  replay:\n    ground: recorded.json\n")
+    facts = ["--facts", str(TRIPLES / "triples.jsonl"), "--texts", str(TRIPLES / "texts")]
+    common = [*facts, "--config", "models.yaml", "--log-format", "json"]
+
+    result = runner.invoke(app, ["validate", *common, "-o", "v"])
+    assert result.exit_code == 0, result.output
+    validation = json.loads((tmp_path / "v" / "manifest.json").read_text())["stats"]["validation"]
+    end = _one(_events(result.stderr), "job.end")
+    assert end["command"] == "validate"
+    assert {k: end["counts"][k] for k in COUNTED[:-1]} == {k: validation[k] for k in COUNTED[:-1]}
+    assert f"in            {validation['facts_in']} facts" in result.stdout
+
+    result = runner.invoke(app, ["ground", *common, "-o", "g"])
+    assert result.exit_code == 0, result.output
+    summary = json.loads((tmp_path / "g" / "summary.json").read_text())
+    end = _one(_events(result.stderr), "job.end")
+    assert end["command"] == "ground"
+    assert end["counts"] == {
+        "facts_in": summary["rows"],
+        "facts_out": summary["facts"],
+        "refused": sum(summary["refused"].values()),
+        "merged": 0,
+        "linked": 0,
+        "review": 0,
+    }
+    assert end["cost"]["calls"] == summary["calls"]
+    assert f"free checks   {end['counts']['refused']} refused" in result.stdout
+    # The handler is gone once the command is.
+    assert observe.ROOT.handlers == [] and observe.ROOT.propagate
+
+
 def test_a_bad_log_format_is_a_usage_error(example: Path) -> None:
     config = str(example / "odke.yaml")
     assert runner.invoke(app, ["run", config, "--log-format", "xml"]).exit_code == 2
     assert runner.invoke(app, ["run", config, "--log-text"]).exit_code == 2
+
+
+# --------------------------------------------------------------------------- #
+# No text, no secret
+# --------------------------------------------------------------------------- #
+
+PASSAGE = "Halden Robotics was founded in Trondheim in 2014 by Ingrid Moe."
+REPLY = "I would say the passage mentions Trondheim, so perhaps."
+
+
+class _Rambling:
+    """A model that answers in prose, which the grounder cannot read and logs."""
+
+    def complete(
+        self, messages: Sequence[Message], *, spec: ModelSpec, schema: Any = None
+    ) -> Completion:
+        return Completion(text=REPLY, model="ground-large-20260501", prompt_tokens=40)
+
+
+def test_no_passage_reply_or_secret_reaches_the_logs_unless_asked(tmp_path: Path) -> None:
+    rows = [{"doc": "d", "subject": "Halden Robotics", "predicate": "founded_in",
+             "object": "Trondheim", "quote": "founded in Trondheim"}]  # fmt: skip
+    doc = Document(id="d", text=PASSAGE)
+    secret = ModelSpec(model="acme/ground-large", extra={"api_key": "hunter2"})
+    roles = ModelRoles(extract=secret, ground=secret)
+
+    for text in (False, True):
+        stream = io.StringIO()
+        configure_logs("json", stream=stream, text=text)
+        try:
+            Validator(roles=roles, client=_Rambling(), sinks=[JsonlSink(tmp_path)]).validate(
+                rows, [doc]
+            )
+        finally:
+            configure_logs("text")
+        logged = stream.getvalue()
+        events = _events(logged)
+        warning = next(e for e in events if e["event"] == "log")
+        assert warning["template"] == "unreadable grounding answer for fact %s: %r"
+        assert "hunter2" not in logged
+        call = _one(events, "model.call")
+        assert (call["model"], call["served"]) == (
+            "acme/ground-large",
+            "acme/ground-large-20260501",
+        )
+        if text:
+            assert REPLY in warning["message"]
+        else:
+            assert "message" not in warning
+            for words in (PASSAGE, "Trondheim", "Halden", REPLY):
+                assert words not in logged
 
 
 class _Failing:
@@ -139,6 +269,53 @@ def test_without_a_handler_an_event_goes_nowhere(capsys: pytest.CaptureFixture[s
     assert not logging.getLogger("openodke").handlers
     with pytest.raises(ValueError, match="json or text"):
         configure_logs("xml")  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------------------- #
+# OpenTelemetry
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def spans(monkeypatch: pytest.MonkeyPatch) -> InMemorySpanExporter:
+    """A tracer provider of the test's own, with the in-memory exporter as its stand-in."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(observe, "TRACER_PROVIDER", provider)
+    return exporter
+
+
+def _named(found: Sequence[ReadableSpan], name: str) -> list[ReadableSpan]:
+    return [span for span in found if span.name == name]
+
+
+def test_a_job_is_a_span_each_stage_a_child_and_each_call_a_child_of_its_stage(
+    spans: InMemorySpanExporter,
+) -> None:
+    client = RecordedClient.from_fixture(TRIPLES / "recorded" / "ground.json")
+    ontology = Ontology.from_json(TRIPLES / "ontology.json")
+    _, report = Validator(ontology, client=client).validate(TRIPLES / "triples.jsonl", _texts())
+
+    found = spans.get_finished_spans()
+    (job,) = _named(found, "odke validate")
+    stages = [span for span in found if span.name.startswith("stage ")]
+    assert {span.name for span in stages} >= {"stage extract", "stage ground", "stage gate"}
+    assert all(span.parent is not None for span in stages)
+    assert {span.parent.span_id for span in stages if span.parent} == {job.context.span_id}
+    (ground,) = _named(found, "stage ground")
+    calls = _named(found, "model ground")
+    assert len(calls) == report.calls == 4
+    assert {span.parent.span_id for span in calls if span.parent} == {ground.context.span_id}
+    assert {span.context.trace_id for span in found} == {job.context.trace_id}
+
+    assert job.attributes is not None and ground.attributes is not None
+    assert job.attributes["odke.counts.facts_in"] == report.facts_in
+    assert job.attributes["odke.counts.facts_out"] == report.facts_out
+    assert job.attributes["odke.cost.calls"] == report.calls
+    assert ground.attributes["odke.counts.facts"] == 5
+    assert calls[0].attributes is not None
+    assert calls[0].attributes["odke.model"] == "anthropic/claude-haiku-4-5-20251001"
 
 
 def test_without_a_provider_or_the_extra_there_are_no_spans_and_the_events_still_flow(

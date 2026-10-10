@@ -67,6 +67,11 @@ Every job has a run manifest (`openodke.manifest`, #160), as `report.manifest`:
 what the Validator was, the models and prompts, the ontology, the inputs, the
 times and the counts. It is written into each `JsonlSink`'s `manifest.json`
 beside the counts the sink wrote, and to `manifest` when one is named.
+
+Each call is a job on an `Observer` (`openodke.observe`, #161): a `job.start`
+event, one per stage, one per model call the default grounder makes, and a
+`job.end` whose counts are the report's (`ValidationReport.job`), each a span
+too when OpenTelemetry is configured.
 """
 
 from __future__ import annotations
@@ -98,6 +103,7 @@ from openodke.llm.base import LLMClient, ModelSpec
 from openodke.llm.budget import stopped_summary
 from openodke.llm.roles import ModelRoles
 from openodke.manifest import FILE, Recorder, RunManifest, inputs_of, spent_of
+from openodke.observe import JobCounts, Observer, spend
 from openodke.ontology import Ontology
 from openodke.pipeline import Pipeline
 from openodke.reconcile import Reconciler
@@ -179,6 +185,19 @@ class ValidationReport(Frozen):
         if not isinstance(other, ValidationReport):
             return NotImplemented
         return self.model_dump() == other.model_dump()
+
+    @property
+    def job(self) -> JobCounts:
+        """Facts in, out, refused, merged, linked and queued for a person: this report's own."""
+        queued = self.judge.get("queued", 0) if self.judge is not None else 0
+        return JobCounts(
+            facts_in=self.facts_in,
+            facts_out=self.facts_out,
+            refused=self.refused,
+            merged=self.merged,
+            linked=self.linked,
+            review=queued,
+        )
 
     def render(self) -> str:
         lines = ["odke validate — dry run, no model called" if self.dry_run else "odke validate"]
@@ -326,6 +345,7 @@ class Validator:
         confidence: float = 0.5,
         update: bool = False,
         recorder: Recorder | None = None,
+        observer: Observer | None = None,
     ) -> Validated:
         """The whole layer over `facts` and the texts they cite, written to every sink.
 
@@ -342,6 +362,9 @@ class Validator:
         `recorder` is the run manifest in the making, when the caller began it
         (`odke validate` does, with its options); left out, the manifest
         records this Validator's stages and the call's options.
+
+        `observer` reports the job's events and spans; left out, a fresh one
+        does. `odke validate` passes its own, which its grounder's calls report to.
         """
         if isinstance(facts, Fact) or isinstance(documents, Ontology):
             # It has a gate's method name, so code from before 1.0.0 that used
@@ -355,13 +378,15 @@ class Validator:
 
         if recorder is None:
             recorder = Recorder("validate", self._described(extractor, confidence, update))
+        observer = observer if observer is not None else Observer("validate")
+        observer.start(dry_run=dry_run)
         docs = list(documents)
         source = _source(facts, docs, extractor=extractor, confidence=confidence)
         inputs = inputs_of(docs, handed_in(source))
         retracted: dict[str, int] | None = None
         if update and not dry_run:
             retracted = Reconciler(self.sinks).delete([doc.id for doc in docs]).counts()
-        stages = self._stages(dry_run, recorder)
+        stages = self._stages(dry_run, recorder, observer)
         # The corroborator reads the texts to count a near-duplicate copy once,
         # and the pair judge reads its contexts from them.
         register_documents(stages["corroborator"], docs)
@@ -381,6 +406,7 @@ class Validator:
             sinks=stand_ins,
             inverses=self.inverses,
             coverage=self.coverage,
+            observer=observer,
             **stages,
         )
         kg = pipeline.run(docs)
@@ -395,8 +421,10 @@ class Validator:
             report = report.model_copy(update={"retracted": retracted})
         kg = kg.model_copy(update={"stats": _stats(kg, source, stages, report)})
         if not dry_run:
+            begun = observer.begin("write")
             for sink in self.sinks:
                 sink.write(kg)
+            observer.end(begun, {"sinks": len(self.sinks), "facts": len(kg.facts)})
         manifest = recorder.finish(
             inputs=inputs,
             ontology=self.ontology,
@@ -413,6 +441,13 @@ class Validator:
                     manifest.write_into(sink.directory / FILE)
             if self.manifest is not None:
                 manifest.write(self.manifest, kg)
+        observer.finish(
+            report.job,
+            cost=spend(spent),
+            documents=report.documents,
+            failed=len(report.failed),
+            stopped=report.stopped.get("limit") if report.stopped else None,
+        )
         return Validated(kg, report.model_copy(update={"manifest": manifest}))
 
     def _described(self, extractor: str, confidence: float, update: bool) -> dict[str, Any]:
@@ -438,7 +473,7 @@ class Validator:
             "update": update,
         }
 
-    def _stages(self, dry_run: bool, recorder: Recorder) -> dict[str, Any]:
+    def _stages(self, dry_run: bool, recorder: Recorder, observer: Observer) -> dict[str, Any]:
         """This job's stages: each one given, or its default, built fresh for the job."""
         ontology = self.ontology
         if dry_run:
@@ -450,6 +485,7 @@ class Validator:
                 roles = self.roles if self.roles is not None else ModelRoles()
                 client = self.client if self.client is not None else roles.client_for("ground")
                 client = recorder.served.client("ground", roles.ground, client)
+                client = observer.client(client, "ground")
                 inner = LLMGrounder(roles, client=client, locate=self.locate)
             elif isinstance(spec := getattr(inner, "spec", None), ModelSpec):
                 recorder.served.note("ground", spec)

@@ -41,6 +41,7 @@ from openodke.ground.locate import locate_span
 from openodke.interop.triples import TripleRow, TriplesExtractor, read_triples
 from openodke.llm.budget import stopped_summary
 from openodke.manifest import Recorder, RunManifest, inputs_of, spent_of
+from openodke.observe import JobCounts, Observer
 from openodke.ontology import Ontology
 from openodke.pipeline import Pipeline
 from openodke.stages import Grounder
@@ -93,6 +94,13 @@ class GroundSummary(Frozen):
     stopped: dict[str, Any] | None = None
     # Texts left out because grounding failed for them alone, with why (#162).
     failed: dict[str, str] = Field(default_factory=dict)
+
+    @property
+    def job(self) -> JobCounts:
+        """Rows in, facts out, and what the free checks refused: nothing is dropped or merged."""
+        return JobCounts(
+            facts_in=self.rows, facts_out=self.facts, refused=sum(self.refused.values())
+        )
 
     def render(self) -> str:
         lines = ["odke ground — dry run, no model called" if self.dry_run else "odke ground"]
@@ -160,6 +168,7 @@ def ground_graph(
     grounder: Grounder | None = None,
     locate: bool = False,
     extractor: str = "triples",
+    observer: Observer | None = None,
 ) -> GroundedGraph:
     """Every row's fact through the free checks, the locator and `grounder`, and a summary.
 
@@ -168,13 +177,14 @@ def ground_graph(
     locator when `locate=True`, and no model. With a grounder, the grounder
     locates (`LLMGrounder(locate=True)`). Nothing is resolved, merged, derived
     or dropped: one fact comes back for each row whose text was given.
+    `observer` is the job's, whose events and spans each stage reports to.
     """
     docs = list(documents)
     read = read_triples(rows)
     schema = ontology if ontology is not None else Ontology()
     stage = TriplesExtractor(read, extractor=extractor, documents=docs)
     checked = CheckedGrounder(grounder, ontology=schema, locate=locate)
-    kg = Pipeline(schema, stage, grounder=checked, inverses=False).run(docs)
+    kg = Pipeline(schema, stage, grounder=checked, inverses=False, observer=observer).run(docs)
     facts = list(kg.facts)
     reads_span = getattr(grounder, "context", "span") == "span"
     summary = summarize(

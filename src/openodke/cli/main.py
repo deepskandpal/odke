@@ -472,6 +472,7 @@ def _grounder(
     budget_usd: float | None = None,
     budget_calls: int | None = None,
     recorder: Any = None,
+    observer: Any = None,
 ) -> Any:
     """The model grounder `odke run` would build from these models, or the config's replay.
 
@@ -480,7 +481,8 @@ def _grounder(
     every call that goes out. The response cache is `--cache` when given, else
     the block's, and answers in front of both, for nothing. The run manifest's
     `recorder` is told the models block as resolved, the cache and the budget,
-    and sees every answer's model.
+    and sees every answer's model; the job's `observer` sees every call, a
+    cached one too.
     """
     from openodke.ground import LLMGrounder
     from openodke.llm.base import ProviderNotInstalled
@@ -526,6 +528,8 @@ def _grounder(
         recorder.cache = store.directory if store is not None else None
         recorder.budget = models.budget.limits if models.budget is not None else None
         client = recorder.served.client("ground", roles.ground, client)
+    if observer is not None:
+        client = observer.client(client, "ground")
     mode: dict[str, Any] = {"context": "document", "verdicts": "binary"} if paper else {}
     return LLMGrounder(roles, client=client, locate=locate, **mode)
 
@@ -548,6 +552,7 @@ def _echo_warnings(caught: list[warnings.WarningMessage]) -> None:
 
 @app.command("ground")
 def ground_command(
+    ctx: typer.Context,
     facts: str = typer.Option(..., "--facts", help=FACTS_HELP),
     out: Path = typer.Option(
         ..., "--out", "-o", help="Directory to write facts.jsonl and summary.json into."
@@ -579,6 +584,8 @@ def ground_command(
     cache: Path | None = typer.Option(None, "--cache", help=CACHE_HELP),
     budget_usd: float | None = typer.Option(None, "--budget-usd", min=0, help=BUDGET_USD_HELP),
     budget_calls: int | None = typer.Option(None, "--budget-calls", min=0, help=BUDGET_CALLS_HELP),
+    log_format: str = typer.Option("text", "--log-format", help=LOG_FORMAT_HELP),
+    log_text: bool = typer.Option(False, "--log-text", help=LOG_TEXT_HELP),
 ) -> None:
     """Ground a graph openodke did not build, and say what is wrong with it.
 
@@ -602,9 +609,13 @@ def ground_command(
     from openodke.interop import ground_graph, ground_manifest, write_verdicts
     from openodke.llm.base import ProviderError
     from openodke.manifest import FILE, Recorder
+    from openodke.observe import Observer, spend
     from openodke.run import ConfigError
 
     chosen = _qualified(model, model_provider)
+    _logs(ctx, log_format, log_text)
+    observer = Observer("ground")
+    observer.start(dry_run=dry_run)
     recorder = Recorder(
         "ground",
         {
@@ -640,6 +651,7 @@ def ground_command(
                 budget_usd=budget_usd,
                 budget_calls=budget_calls,
                 recorder=recorder,
+                observer=observer,
             )
         )
         store = _Store(
@@ -659,9 +671,15 @@ def ground_command(
             warnings.simplefilter("always")
             # With a model, the grounder locates; a dry run's free checks do it themselves.
             grounded = ground_graph(
-                rows, docs, ontology=schema, grounder=grounder, locate=locate and dry_run
+                rows,
+                docs,
+                ontology=schema,
+                grounder=grounder,
+                locate=locate and dry_run,
+                observer=observer,
             )
         _echo_warnings(caught)
+        begun = observer.begin("write")
         if write_back:
             written = write_verdicts(driver, grounded.facts, database=database)
         paths = grounded.write(out)
@@ -669,12 +687,21 @@ def ground_command(
             recorder, grounded, rows, docs, ontology=schema, grounder=grounder
         )
         paths.append(manifest.write(out / FILE))
+        observer.end(begun, {"facts": len(grounded.facts)})
     except (ProviderError, OSError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
     finally:
         if driver is not None:
             driver.close()
+    summary = grounded.summary
+    observer.finish(
+        summary.job,
+        cost=spend(getattr(grounder, "stats", None) or {}),
+        documents=len(docs),
+        failed=len(summary.failed),
+        stopped=summary.stopped.get("limit") if summary.stopped else None,
+    )
     typer.echo(grounded.summary.render())
     typer.echo("")
     typer.echo(f"wrote {', '.join(str(p) for p in paths)}")
@@ -698,6 +725,7 @@ VALIDATE_CONFIG_HELP = (
 
 @app.command("validate")
 def validate_command(
+    ctx: typer.Context,
     config: Path | None = typer.Option(None, "--config", help=VALIDATE_CONFIG_HELP),
     facts: str | None = typer.Option(None, "--facts", help=FACTS_HELP),
     texts: Path | None = typer.Option(None, "--texts", help=TEXTS_HELP),
@@ -737,6 +765,8 @@ def validate_command(
     cache: Path | None = typer.Option(None, "--cache", help=CACHE_HELP),
     budget_usd: float | None = typer.Option(None, "--budget-usd", min=0, help=BUDGET_USD_HELP),
     budget_calls: int | None = typer.Option(None, "--budget-calls", min=0, help=BUDGET_CALLS_HELP),
+    log_format: str = typer.Option("text", "--log-format", help=LOG_FORMAT_HELP),
+    log_text: bool = typer.Option(False, "--log-text", help=LOG_TEXT_HELP),
 ) -> None:
     """Validate another extractor's facts: ground, resolve, corroborate, gate and write.
 
@@ -770,12 +800,15 @@ def validate_command(
     from openodke.interop import TriplesExtractor
     from openodke.llm.base import ProviderError
     from openodke.manifest import FILE, Recorder
+    from openodke.observe import Observer
     from openodke.run import ConfigError, build
     from openodke.run.execute import _bootstrap, manifest_path
     from openodke.sinks.jsonl import JsonlSink
     from openodke.validator import stores_of
 
     chosen = _qualified(model, model_provider)
+    _logs(ctx, log_format, log_text)
+    observer = Observer("validate")
     # What the run manifest records as the job's config: these options, and
     # the models block or the run config as resolved below.
     options: dict[str, Any] = {
@@ -820,6 +853,7 @@ def validate_command(
                     budget_usd=budget_usd,
                     budget_calls=budget_calls,
                     recorder=recorder,
+                    observer=observer,
                 )
             )
             store = _Store(
@@ -861,6 +895,9 @@ def validate_command(
                 cache=context.cache.directory if context.cache is not None else None,
                 budget=context.ledger.budget.limits,
             )
+            # The run's observer, which every client the config built reports to.
+            observer = built.context.observer
+            observer.command = "validate"
             extractor = built.stages["extractor"]
             if not isinstance(extractor, TriplesExtractor):
                 raise ConfigError(
@@ -928,7 +965,13 @@ def validate_command(
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             kg, report = validator.validate(
-                rows, docs, dry_run=dry_run, update=update, recorder=recorder, **named
+                rows,
+                docs,
+                dry_run=dry_run,
+                update=update,
+                recorder=recorder,
+                observer=observer,
+                **named,
             )
     except (ProviderError, OSError) as exc:
         typer.echo(f"error: {exc}", err=True)
