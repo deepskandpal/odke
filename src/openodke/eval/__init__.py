@@ -51,7 +51,11 @@ pool of what they found together, which overstates true recall and says so
 Where a run lost its facts is `openodke.eval.diagnosis`: every miss in one cause
 bucket. What to change first is `openodke.eval.fixes`, each fix with the recall
 gain the arithmetic expects; and `openodke.eval.track` keeps each prediction
-beside what the next run measured.
+beside what the next run measured. A near miss there, a prediction with the gold
+fact's relation and one end but the other end named another way, goes to the
+fact-equivalence judge (`FactJudge`, `openodke.eval.equivalence`), asked in
+both orders; one judged the same fact counts in a lenient score printed beside
+the strict one.
 """
 
 from openodke.eval.ablation import per_document, report_ablation, run_ablation
