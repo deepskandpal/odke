@@ -130,7 +130,7 @@ class Pipeline:
     `stats["reextract"]`. Both are off by default.
 
     `validator=` is the 0.2 name of `gate=`, and works with a warning until
-    1.0.0 (DECISIONS #26).
+    2.0.0 (DECISIONS #26, #48).
 
     `observer` is the job's `Observer`, whose events and spans each stage
     reports to; a run without one reports to a fresh one.
@@ -222,7 +222,7 @@ class Pipeline:
 
     @property
     def validator(self) -> Gate:
-        """The 0.2 name of `gate`; reading it warns until 1.0.0 (DECISIONS #26)."""
+        """The 0.2 name of `gate`; reading it warns until 2.0.0 (DECISIONS #26, #48)."""
         deprecated("Pipeline.validator", "Pipeline.gate")
         return self.gate
 

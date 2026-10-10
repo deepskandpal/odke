@@ -7,7 +7,7 @@ and every query has to remember to filter it out. That something is a `Gate`,
 and this is the one `odke run` ships.
 
 In 0.2 it was `openodke.validators.VerdictValidator`. That name still works,
-with a warning, until 1.0.0 (DECISIONS #26).
+with a warning, until 2.0.0 (DECISIONS #26, #48).
 """
 
 from __future__ import annotations

@@ -28,6 +28,7 @@ from datetime import date, datetime, time
 from enum import Enum
 from typing import Any, NamedTuple
 
+from openodke._renamed import deprecated
 from openodke.corroborate.lookup import Embed, embedding_text
 from openodke.corroborate.merge import _aware
 from openodke.corroborate.provenance import (
@@ -1718,11 +1719,7 @@ def check_target(statement: str) -> str:
 
 def cardinality_scope(predicate: Predicate) -> tuple[str, ...]:
     """Deprecated: `predicate.scope_keys`, which the constrainer reads itself."""
-    warnings.warn(
-        "cardinality_scope(predicate) is deprecated; use predicate.scope_keys",
-        DeprecationWarning,
-        stacklevel=2,
-    )
+    deprecated("openodke.sinks.neo4j.cardinality_scope(predicate)", "predicate.scope_keys")
     return predicate.scope_keys
 
 

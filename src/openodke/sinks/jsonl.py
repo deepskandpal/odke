@@ -246,3 +246,6 @@ def _upsert(held: list[M], incoming: list[M], key: Callable[[M], Hashable]) -> l
     for item in incoming:
         merged[key(item)] = item
     return list(merged.values())
+
+
+__all__ = ["JsonlSink"]

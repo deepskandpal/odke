@@ -330,7 +330,7 @@ def test_the_default_router_passes_everything() -> None:
 
 
 def test_validator_is_the_old_name_of_gate_and_warns() -> None:
-    """`Pipeline(validator=...)` and `.validator` still work until 1.0.0 (DECISIONS #26)."""
+    """`Pipeline(validator=...)` and `.validator` still work until 2.0.0 (DECISIONS #26, #48)."""
     gate = _RefusingGate()
     with pytest.warns(DeprecationWarning, match=r"Pipeline\(validator=\.\.\.\) is deprecated"):
         pipeline = Pipeline(
