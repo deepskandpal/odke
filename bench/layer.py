@@ -759,7 +759,7 @@ def markdown(result: Mapping[str, Any]) -> str:
     lines: list[str] = []
     for kind, systems in result.items():
         lines += [
-            f"### {DATASETS.get(kind, kind)}",
+            f"### On {DATASETS.get(kind, kind)}",
             "",
             "| Extractor | Row | Facts | Triples | P | R | F1 | ΔP | ΔF1 |",
             "|---|---|---|---|---|---|---|---|---|",
