@@ -556,6 +556,9 @@ class Validator:
         source.feed(())
         for rest in micro_batches((doc for doc in docs if doc.id not in ran), size):
             run(rest)
+        if not totals.batches:
+            # Nothing at all is one empty micro-batch, written as an unbatched job writes it.
+            run([])
         stats, report = self._so_far(totals, len(ran), source, stages, dry_run, before)
         report = report.model_copy(update={"retracted": retracted})
         graph = totals.graph()

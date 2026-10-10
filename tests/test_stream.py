@@ -14,12 +14,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from typer.testing import CliRunner
 
 from openodke import Document, Entity, Evidence, Fact, KnowledgeGraph, Span, Validator
+from openodke.cli.main import app
 from openodke.interop import to_fact
 from openodke.interop.triples import TripleRow
 from openodke.llm.budget import Budget, Ledger
 from openodke.llm.testing import RecordedClient
+from openodke.run import ConfigError, StageSpec, build, execute, load_config
 from openodke.sinks import JsonlSink
 from openodke.stream import KEPT, Totals, by_text, micro_batches, shape, streams, write
 from openodke.types import EntityLink, LinkKind
@@ -268,6 +271,84 @@ def test_a_budget_stop_in_one_micro_batch_stops_the_rest_and_keeps_what_each_has
     # Every micro-batch still wrote what it kept.
     assert len((tmp_path / "facts.jsonl").read_text(encoding="utf-8").splitlines()) >= 3
     assert kg.stats["stopped"] == report.stopped
+
+
+# --------------------------------------------------------------------------- #
+# odke run and odke validate, a micro-batch at a time
+# --------------------------------------------------------------------------- #
+
+
+def test_odke_run_streams_the_example_with_the_calls_and_counts_of_one_batch(
+    example: Path,
+) -> None:
+    whole = execute(load_config(example / "odke.yaml"))
+    streamed = execute(load_config(example / "odke.yaml"), batch_size=2)
+    for key in ("documents", "chunks", "empty_extractions", "refused"):
+        assert streamed.stats[key] == whole.stats[key], key
+    # The same documents asked the same questions: one ledger, the same bill.
+    assert streamed.stats["spent"]["calls"] == whole.stats["spent"]["calls"] > 0
+    assert streamed.stats["batches"] == -(-whole.stats["documents"] // 2)
+    assert streamed.graph.facts == () and streamed.stats["graph"]["facts"] >= len(whole.graph.facts)
+    out = example / "out"
+    lines = (out / "facts.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == streamed.stats["graph"]["facts"]
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert (
+        manifest["facts"] == len(lines)
+        and manifest["stats"]["batches"] == streamed.stats["batches"]
+    )
+    text = streamed.render()
+    assert f"in {streamed.stats['batches']} micro-batches" in text
+    assert "appended in" in streamed.written[0]
+
+    # A dry run streams too, and prints the first facts it would have written.
+    dry = execute(load_config(example / "odke.yaml").with_batch_size(3), dry_run=True)
+    assert dry.sample and "facts that would be written:" in dry.render()
+
+
+def test_a_streamed_run_reads_its_documents_one_at_a_time_under_the_ids_one_batch_gives(
+    example: Path,
+) -> None:
+    config = load_config(example / "odke.yaml")
+    twice = config.model_copy(update={"inputs": (*config.inputs, config.inputs[0])})
+    built = build(twice)
+    streamed = [doc.id for doc in built.iter_documents()]
+    assert streamed == [doc.id for doc in built.documents()]
+    assert any(name.endswith("~2") for name in streamed)
+
+
+def test_a_streamed_run_refuses_a_sink_that_writes_the_whole_graph(example: Path) -> None:
+    config = load_config(example / "odke.yaml")
+    sink = StageSpec.model_validate({"use": "cypher_file", "path": "out/graph.cypher"})
+    whole = config.model_copy(update={"stages": config.stages.model_copy(update={"sink": (sink,)})})
+    with pytest.raises(ConfigError, match="cypher_file writes a file of the whole graph"):
+        build(whole.with_batch_size(2))
+    with pytest.raises(ConfigError, match="batch_size: cypher_file"):
+        execute(whole, batch_size=2)
+
+
+def test_the_commands_take_batch_size_and_a_bad_row_is_named_mid_stream(
+    example: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = CliRunner().invoke(app, ["run", str(example / "odke.yaml"), "--batch-size", "3"])
+    assert result.exit_code == 0, result.output
+    assert "micro-batches" in result.output and "appended in" in result.output
+
+    monkeypatch.chdir(tmp_path)
+    triples = Path(__file__).parent.parent / "examples" / "triples"
+    args = ["validate", "--facts", str(triples / "triples.jsonl"), "--texts"]
+    args += [str(triples / "texts"), "-o", "out", "--dry-run", "--batch-size", "2"]
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, result.output
+    # One text: its rows stay together up to twice the size, then split.
+    assert "5 facts from 1 text, in 2 micro-batches" in result.output
+
+    rows = (triples / "triples.jsonl").read_text(encoding="utf-8")
+    (tmp_path / "bad.jsonl").write_text(rows + "{not json\n", encoding="utf-8")
+    args[2] = str(tmp_path / "bad.jsonl")
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 2
+    assert "bad.jsonl:6: not JSON" in result.output
 
 
 # --------------------------------------------------------------------------- #

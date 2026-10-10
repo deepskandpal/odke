@@ -11,6 +11,10 @@ real sink's `PlatformProfile` and write nothing: the double-stage warning still
 fires at construction (DECISIONS #21), and the real sinks write once the stats
 are in `KnowledgeGraph.stats`, where a `JsonlSink` manifest and a report can
 read them. `pipeline.py` is unchanged.
+
+With `batch_size` the run streams (#158): the inputs are read a micro-batch
+of documents at a time, each is run and written, and `openodke.stream.Totals`
+sums their counts, so the report and the manifest describe the run.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
+from itertools import chain
 from pathlib import Path
 from typing import Any
 
@@ -32,13 +37,24 @@ from openodke.corroborate.provenance import CONFLICT
 from openodke.coverage import summary as coverage_summary
 from openodke.interop.triples import TriplesExtractor, read_triples
 from openodke.llm.budget import budget_summary, stopped_summary
-from openodke.manifest import FILE, Inputs, Recorder, RunManifest, inputs_of, package, spent_of
+from openodke.manifest import (
+    FILE,
+    Inputs,
+    InputsHash,
+    Recorder,
+    RunManifest,
+    inputs_of,
+    package,
+    spent_of,
+)
 from openodke.observe import JobCounts, Observer, job_counts_of_run, spend
 from openodke.ontology import Ontology
 from openodke.reextract import summary as reextract_summary
-from openodke.run.build import Built, build
+from openodke.run.build import Built, build, check_streams
 from openodke.run.config import STAGES, ConfigError, RunConfig
 from openodke.stages import PlatformProfile, Sink
+from openodke.stream import Totals, micro_batches, shape
+from openodke.stream import write as stream_write
 from openodke.types import Document, Fact, KnowledgeGraph
 
 # How many facts a dry run prints before saying how many more there were.
@@ -62,7 +78,11 @@ class _StandIn:
 
 @dataclass
 class RunResult:
-    """What a run produced, wrote or would have written, and what it warned about."""
+    """What a run produced, wrote or would have written, and what it warned about.
+
+    A streamed run keeps no graph: `graph` holds the run's stats and no facts,
+    and `sample` the first facts, which a dry run prints.
+    """
 
     graph: KnowledgeGraph
     dry_run: bool
@@ -72,6 +92,7 @@ class RunResult:
     # What the run was, and every file it was written to; a dry run writes none.
     manifest: RunManifest | None = None
     manifests: list[str] = field(default_factory=list)
+    sample: list[Fact] = field(default_factory=list)
 
     @property
     def stats(self) -> dict[str, Any]:
@@ -87,21 +108,39 @@ class RunResult:
 
 
 def execute(
-    config: RunConfig, *, dry_run: bool = False, replaying: RunManifest | None = None
+    config: RunConfig,
+    *,
+    dry_run: bool = False,
+    batch_size: int | None = None,
+    replaying: RunManifest | None = None,
 ) -> RunResult:
     """Run the config. A dry run loads, extracts and grounds, and writes nothing.
 
-    `replaying` is the manifest the config came from (`from_manifest`): the run
-    is refused, as a `ConfigError`, when the ontology or the inputs are not
-    what it recorded, because then it would not be that run again.
+    `batch_size`, or the config's own, streams the run in micro-batches of
+    that many documents (#158). `replaying` is the manifest the config came
+    from (`from_manifest`): the run is refused, as a `ConfigError`, when the
+    ontology or the inputs are not what it recorded, because then it would not
+    be that run again.
     """
+    if batch_size is not None:
+        config = config.with_batch_size(batch_size)
     return run_built(build(config), dry_run=dry_run, replaying=replaying)
 
 
 def run_built(
-    built: Built, *, dry_run: bool = False, replaying: RunManifest | None = None
+    built: Built,
+    *,
+    dry_run: bool = False,
+    batch_size: int | None = None,
+    replaying: RunManifest | None = None,
 ) -> RunResult:
     config = built.config
+    if batch_size is not None:
+        # What the manifest records is the run that ran.
+        config = config.with_batch_size(batch_size)
+    size = config.batch_size
+    if size is not None:
+        check_streams(built.sinks)
     recorder = Recorder(
         "run",
         config.canonical(),
@@ -124,6 +163,8 @@ def run_built(
             )
     observer = built.context.observer
     observer.start(dry_run=dry_run)
+    sample: list[Fact] = []
+    shape_of: dict[str, Any] | None = None
 
     opened: list[Sink] = []
     applied: list[str] = []
@@ -153,25 +194,34 @@ def run_built(
             # After the bootstrap, so the indexes it creates are there to read through.
             built.open_lookup(opened)
 
-        docs = built.documents()
-        inputs = inputs_of(docs, handed_in(built.stages["extractor"]))
-        if replaying is not None:
-            _refuse_unless_same(replaying, inputs=inputs)
-        register_documents(built.stages["extractor"], docs)
-        register_documents(built.stages.get("corroborator"), docs)
-        register_documents(built.stages.get("resolver"), docs)
-        kg = pipeline.run(docs)
-        kg = kg.model_copy(update={"stats": collect_stats(built, kg)})
-
-        if dry_run:
-            written = [line for p in built.sinks for line in p.describe(kg)]
+        if size is not None:
+            if replaying is not None:
+                # A pass over the inputs before the first micro-batch is written.
+                _refuse_unless_same(replaying, inputs=streamed_inputs(built))
+            kg, written, sample, inputs = _streamed(
+                built, pipeline, opened, size, dry_run=dry_run, observer=observer
+            )
+            shape_of = kg.stats.get("graph")
         else:
-            written = []
-            begun = observer.begin("write")
-            for plan, sink in zip(built.sinks, opened, strict=True):
-                sink.write(kg)
-                written.extend(plan.describe(kg))
-            observer.end(begun, {"sinks": len(opened), "facts": len(kg.facts)})
+            docs = built.documents()
+            inputs = inputs_of(docs, handed_in(built.stages["extractor"]))
+            if replaying is not None:
+                _refuse_unless_same(replaying, inputs=inputs)
+            register_documents(built.stages["extractor"], docs)
+            register_documents(built.stages.get("corroborator"), docs)
+            register_documents(built.stages.get("resolver"), docs)
+            kg = pipeline.run(docs)
+            kg = kg.model_copy(update={"stats": collect_stats(built, kg)})
+
+            if dry_run:
+                written = [line for p in built.sinks for line in p.describe(kg)]
+            else:
+                written = []
+                begun = observer.begin("write")
+                for plan, sink in zip(built.sinks, opened, strict=True):
+                    sink.write(kg)
+                    written.extend(plan.describe(kg))
+                observer.end(begun, {"sinks": len(opened), "facts": len(kg.facts)})
     finally:
         if built.lookup is not None:
             built.lookup.close()
@@ -192,7 +242,8 @@ def run_built(
         run=observer.run,
         job=job_counts_of_run(stats).model_dump(),
     )
-    manifests = [] if dry_run else write_manifest(built, manifest, kg)
+    manifests = [] if dry_run else write_manifest(built, manifest, kg, shape=shape_of)
+    # A streamed run's stats are its micro-batches' summed: so are the job's counts.
     finish(observer, job_counts_of_run(stats), stats)
     return RunResult(
         graph=kg,
@@ -202,13 +253,21 @@ def run_built(
         warnings=result_warnings,
         manifest=manifest,
         manifests=manifests,
+        sample=sample,
     )
 
 
-def write_manifest(built: Built, manifest: RunManifest, kg: KnowledgeGraph) -> list[str]:
+def write_manifest(
+    built: Built,
+    manifest: RunManifest,
+    kg: KnowledgeGraph,
+    *,
+    shape: Mapping[str, Any] | None = None,
+) -> list[str]:
     """The run manifest into each JSONL sink's `manifest.json`, and to `manifest:` when named.
 
     A run with neither writes it beside its config, as `<name>.manifest.json`.
+    `shape` is a streamed run's graph counts, which its graph does not hold.
     """
     config = built.config
     into = [
@@ -219,7 +278,7 @@ def write_manifest(built: Built, manifest: RunManifest, kg: KnowledgeGraph) -> l
     written = [str(manifest.write_into(path)) for path in into]
     own = manifest_path(config, jsonl=bool(into))
     if own is not None:
-        written.append(str(manifest.write(own, kg)))
+        written.append(str(manifest.write(own, kg, shape=shape)))
     return written
 
 
@@ -262,6 +321,9 @@ def run_counts(stats: Mapping[str, Any]) -> dict[str, int]:
     counts.update({key: int(graph.get(key, 0)) for key in _GRAPH})
     counts["links"] = sum(int(v) for v in (graph.get("links") or {}).values())
     counts["failed"] = len(stats.get("failed") or {})
+    if "batches" in stats:
+        # A streamed run's counts are its micro-batches' summed (#158).
+        counts["batches"] = int(stats["batches"])
     return counts
 
 
@@ -292,6 +354,64 @@ def finish(observer: Observer, counts: JobCounts, stats: Mapping[str, Any]) -> N
         failed=len(stats.get("failed") or {}),
         stopped=stopped.get("limit") if isinstance(stopped, Mapping) else None,
     )
+
+
+def _streamed(
+    built: Built,
+    pipeline: Any,
+    opened: list[Sink],
+    size: int,
+    *,
+    dry_run: bool,
+    observer: Observer,
+) -> tuple[KnowledgeGraph, list[str], list[Fact], Inputs]:
+    """The run a micro-batch of documents at a time: each loaded, run and written in turn.
+
+    Each stage that looks the documents up holds the micro-batch's alone. Each
+    micro-batch is handed to the sinks with the run's stats so far, so a JSONL
+    manifest describes the run whenever it is read. An input with no
+    documents is one empty micro-batch, written as an unbatched run writes it.
+    Every micro-batch's documents are hashed into the run manifest's inputs as
+    they are read.
+    """
+    totals = Totals()
+    sample: list[Fact] = []
+    handed = handed_in(built.stages["extractor"])
+    hashing = InputsHash(facts=handed is not None)
+    hashing.add_facts(handed or ())
+    looking = [built.stages["extractor"], built.stages.get("corroborator")]
+    looking.append(built.stages.get("resolver"))
+    stats: dict[str, Any] = {}
+    batches = micro_batches(built.iter_documents(), size)
+    for docs in chain(batches, [[]]):
+        if not docs and totals.batches:
+            break
+        hashing.add_documents(docs)
+        for stage in looking:
+            register_documents(stage, docs, replace=True)
+        kg = pipeline.run(docs)
+        totals.add(kg, resolver=built.stages.get("resolver"))
+        stats = collect_stats(built, kg, totals=totals)
+        if dry_run:
+            sample.extend(kg.facts[: SAMPLE - len(sample)])
+        else:
+            begun = observer.begin("write")
+            stream_write(opened, kg.model_copy(update={"stats": stats}), first=totals.batches == 1)
+            observer.end(begun, {"sinks": len(opened), "facts": len(kg.facts)})
+    written = [
+        line for plan in built.sinks for line in plan.streamed(totals.graph(), totals.batches)
+    ]
+    graph = KnowledgeGraph(ontology_name=built.ontology.name, stats=stats)
+    return graph, written, sample, hashing.inputs()
+
+
+def streamed_inputs(built: Built) -> Inputs:
+    """A streamed run's inputs, read through once without running: what a replay checks first."""
+    handed = handed_in(built.stages["extractor"])
+    hashing = InputsHash(facts=handed is not None)
+    hashing.add_documents(built.iter_documents())
+    hashing.add_facts(handed or ())
+    return hashing.inputs()
 
 
 def _bootstrap(built: Built, opened: list[Sink]) -> list[str]:
@@ -329,22 +449,24 @@ def register_documents(stage: Any, docs: list[Document], *, replace: bool = Fals
 # --------------------------------------------------------------------------- #
 
 
-def collect_stats(built: Built, kg: KnowledgeGraph) -> dict[str, Any]:
+def collect_stats(
+    built: Built, kg: KnowledgeGraph, *, totals: Totals | None = None
+) -> dict[str, Any]:
     """The pipeline's counts, the graph's shape, and every stage's own counts.
 
     A stage reports by carrying a `stats` mapping, as the grounders and the
     verdict gate do; a user's stage that does the same is reported the
     same way. The extractor's rejections and routing report, and the
     corroborator's conflicts, are read from where those stages keep them.
+
+    With `totals`, a streamed run's: the pipeline's counts and the shape are
+    the run's so far, and `batches` says how many micro-batches made them. A
+    stage's own counts are its own, which run on across micro-batches.
     """
-    stats: dict[str, Any] = dict(kg.stats)
-    stats["graph"] = {
-        "facts": len(kg.facts),
-        "edges": len(kg.edges),
-        "properties": len(kg.properties),
-        "entities": len(kg.entities),
-        "links": dict(sorted(Counter(link.kind.value for link in kg.links).items())),
-    }
+    stats: dict[str, Any] = dict(kg.stats) if totals is None else totals.stats()
+    stats["graph"] = shape(kg) if totals is None else totals.graph()
+    if totals is not None:
+        stats["batches"] = totals.batches
     stages: dict[str, Any] = {}
     for name in STAGES:
         stage = built.stages.get(name)
@@ -356,6 +478,9 @@ def collect_stats(built: Built, kg: KnowledgeGraph) -> dict[str, Any]:
             report.update(_extractor_stats(stage))
         if name == "corroborator":
             report["conflicts"] = _conflicts(kg.facts)
+        if name == "resolver" and totals is not None and totals.store is not None:
+            # The resolver counts one call; the run's are summed.
+            report["store"] = jsonable(totals.store)
         if report:
             stages[_REPORTED_AS.get(name, name)] = report
     stats["stages"] = stages
@@ -469,12 +594,14 @@ def render(result: RunResult) -> str:
         lines.append(_row("stopped", stopped_summary(stopped)))
     if isinstance(failed := stats.get("failed"), Mapping) and failed:
         lines.append(_row("failed", failed_summary(failed, of=int(stats.get("documents", 0)))))
+    batches = stats.get("batches")
+    streamed = f", in {batches} micro-batch{'' if batches == 1 else 'es'}" if batches else ""
     lines.append(
         _row(
             "documents",
             f"{stats.get('documents', 0)} ({stats.get('chunks', 0)} chunks; "
             f"{stats.get('skipped', 0)} skipped, {stats.get('deferred', 0)} deferred, "
-            f"{stats.get('empty_extractions', 0)} empty)",
+            f"{stats.get('empty_extractions', 0)} empty){streamed}",
         )
     )
     for name, report in stats.get("stages", {}).items():
@@ -521,13 +648,15 @@ def render(result: RunResult) -> str:
     if result.manifests:
         lines.append(_row("manifest", result.manifests[0]))
         lines.extend(f"  {path}" for path in result.manifests[1:])
-    if result.dry_run and result.graph.facts:
+    shown = list(result.graph.facts) or result.sample
+    if result.dry_run and shown:
+        total = int(graph.get("facts", len(shown)))
         lines.append("")
         lines.append("facts that would be written:")
-        for fact in result.graph.facts[:SAMPLE]:
+        for fact in shown[:SAMPLE]:
             lines.append(f"  {_fact_line(fact)}")
-        if len(result.graph.facts) > SAMPLE:
-            lines.append(f"  … and {len(result.graph.facts) - SAMPLE} more")
+        if total > SAMPLE:
+            lines.append(f"  … and {total - SAMPLE} more")
     return "\n".join(lines)
 
 
@@ -601,5 +730,6 @@ __all__ = [
     "render",
     "run_built",
     "run_counts",
+    "streamed_inputs",
     "write_manifest",
 ]
