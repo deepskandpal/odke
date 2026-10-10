@@ -1213,6 +1213,12 @@ def eval_stage(
     examples: int = typer.Option(
         3, "--examples", min=0, help="extract and pipeline: examples kept per cause bucket."
     ),
+    reference: Path | None = typer.Option(
+        None,
+        "--reference",
+        help="pipeline: another system's triples on the same documents, for each fix's gain "
+        "at the rate that system finds the same facts.",
+    ),
 ) -> None:
     """Score one stage against your own labelled data.
 
@@ -1253,7 +1259,8 @@ def eval_stage(
     caveat that it overstates true recall.
 
     `extract` and `pipeline` also say where the facts went, every miss in one
-    cause bucket; `--trace` says what the extractor was offered.
+    cause bucket, and what to change, each fix with the recall gain the
+    arithmetic expects; `--trace` says what the extractor was offered.
 
     Extraction, the ablation and pipeline print precision, recall and F1 with
     95% ranges over your documents. `--report` writes the versioned eval
@@ -1287,6 +1294,7 @@ def eval_stage(
         "--validator": validator,
         "--timeout": timeout != 600.0,
         "--adjudicate": adjudicate is not None,
+        "--reference": reference is not None,
     }
     sampled = {
         "--make-sheet": make_sheet is not None,
@@ -1370,6 +1378,7 @@ def eval_stage(
                 adjudicate=adjudicate,
                 trace=trace,
                 examples=examples,
+                reference=reference,
             )
         elif stage == "pool":
             report = _eval_pool(

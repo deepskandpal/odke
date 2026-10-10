@@ -22,6 +22,7 @@ from openodke.eval.calibration import evaluate_calibration, run_score
 from openodke.eval.diagnosis import EXAMPLES, Offered, diagnose, gold_view
 from openodke.eval.eval_report import Dataset, EvalReport, Run, extraction_rows, from_stage
 from openodke.eval.extraction import evaluate_extraction, run_extract
+from openodke.eval.fixes import fixes
 from openodke.eval.formats import (
     LABEL_FORMATS,
     CalibrationLabel,
@@ -207,10 +208,10 @@ def report_inputs(
 
     For `extract` the report has a row: precision, recall and F1 with their
     ranges, the counts, and conformance when an ontology is given, whether or
-    not anything ran; and the diagnosis of its misses (#140), with `offered`
-    the trace of what the extractor was shown and `texts` the documents.
-    Every other stage's report carries its `StageReport` and no row.
-    `labels` names the dataset.
+    not anything ran; and the diagnosis of its misses with the fixes ranked
+    (#140, #141), with `offered` the trace of what the extractor was shown and
+    `texts` the documents. Every other stage's report carries its
+    `StageReport` and no row. `labels` names the dataset.
     """
     name = Path(labels).name if labels is not None else f"{stage} labels"
     dataset = Dataset(name=name, path=None if labels is None else str(labels))
@@ -238,6 +239,7 @@ def report_inputs(
         bootstrap=how,
         run=Run(dataset=dataset),
         diagnosis=diagnosed.buckets,
+        fixes=fixes(diagnosed),
     )
 
 
