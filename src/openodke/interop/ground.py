@@ -27,7 +27,7 @@ the citation, so its refusals are all the first.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -40,6 +40,7 @@ from openodke.ground.checks import REASONS, VERDICTS, CheckedGrounder, refusals
 from openodke.ground.locate import locate_span
 from openodke.interop.triples import TripleRow, TriplesExtractor, read_triples
 from openodke.llm.budget import stopped_summary
+from openodke.manifest import Recorder, RunManifest, inputs_of, spent_of
 from openodke.ontology import Ontology
 from openodke.pipeline import Pipeline
 from openodke.stages import Grounder
@@ -192,6 +193,46 @@ def ground_graph(
     return GroundedGraph(facts, summary)
 
 
+def ground_manifest(
+    recorder: Recorder,
+    grounded: GroundedGraph,
+    rows: Sequence[Any],
+    documents: Iterable[Document],
+    *,
+    ontology: Ontology | None = None,
+    grounder: Grounder | None = None,
+) -> RunManifest:
+    """The run manifest of one `ground_graph` call, finished now (#160).
+
+    `rows` and `documents` are what was grounded, and `grounder` the model
+    grounder that was asked, whose spend the manifest keeps. `odke ground`
+    writes it beside `facts.jsonl` and `summary.json`.
+    """
+    summary = grounded.summary
+    counts = {
+        "rows": summary.rows,
+        "facts": summary.facts,
+        "unmatched_rows": summary.unmatched_rows,
+        "refused": sum(summary.refused.values()),
+        **summary.verdicts,
+        "no_span": summary.no_span,
+        "located": summary.located,
+        "unsupported": summary.unsupported.count,
+        "too_narrow": summary.too_narrow.count,
+    }
+    stats = getattr(grounder, "stats", None)
+    return recorder.finish(
+        inputs=inputs_of(documents, rows),
+        ontology=ontology,
+        prompts=summary.prompts,
+        counts=counts,
+        spent=spent_of(stats if isinstance(stats, Mapping) else {}),
+        stopped=summary.stopped,
+        failed=summary.failed,
+        dry_run=summary.dry_run,
+    )
+
+
 def summarize(
     facts: Iterable[Fact],
     documents: Iterable[Document],
@@ -289,5 +330,6 @@ __all__ = [
     "GroundSummary",
     "GroundedGraph",
     "ground_graph",
+    "ground_manifest",
     "summarize",
 ]

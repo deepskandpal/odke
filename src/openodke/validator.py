@@ -62,6 +62,11 @@ client held to a budget (`openodke.llm.budget`) that stops the job leaves a
 partial graph, written as usual, and the report's `stopped` says where and why.
 A dry run asks no model and writes nothing: the free checks, the locator, and
 every deterministic stage.
+
+Every job has a run manifest (`openodke.manifest`, #160), as `report.manifest`:
+what the Validator was, the models and prompts, the ontology, the inputs, the
+times and the counts. It is written into each `JsonlSink`'s `manifest.json`
+beside the counts the sink wrote, and to `manifest` when one is named.
 """
 
 from __future__ import annotations
@@ -89,12 +94,14 @@ from openodke.gate import VerdictGate
 from openodke.ground import LLMGrounder
 from openodke.ground.checks import REASONS, VERDICTS, CheckedGrounder, refusals
 from openodke.interop.triples import TripleRow, TriplesExtractor
-from openodke.llm.base import LLMClient
+from openodke.llm.base import LLMClient, ModelSpec
 from openodke.llm.budget import stopped_summary
 from openodke.llm.roles import ModelRoles
+from openodke.manifest import FILE, Recorder, RunManifest, inputs_of, spent_of
 from openodke.ontology import Ontology
 from openodke.pipeline import Pipeline
 from openodke.reconcile import Reconciler
+from openodke.sinks.jsonl import JsonlSink
 from openodke.stages import (
     Corroborator,
     FactLookup,
@@ -163,6 +170,15 @@ class ValidationReport(Frozen):
     stopped: dict[str, Any] | None = None
     # Texts left out because something failed for them alone, with why (#162).
     failed: dict[str, str] = Field(default_factory=dict)
+    # The job's run manifest (#160). Not in the report's JSON, which the graph's
+    # stats keep: it is a file of its own.
+    manifest: RunManifest | None = Field(default=None, exclude=True)
+
+    def __eq__(self, other: object) -> bool:
+        """Two reports of one job are equal: the manifest, which says when it ran, is left out."""
+        if not isinstance(other, ValidationReport):
+            return NotImplemented
+        return self.model_dump() == other.model_dump()
 
     def render(self) -> str:
         lines = ["odke validate — dry run, no model called" if self.dry_run else "odke validate"]
@@ -263,6 +279,7 @@ class Validator:
         judge: PairJudge | None = None,
         normalize_batch: bool | None = None,
         embed: Embed | None = None,
+        manifest: str | Path | None = None,
     ) -> None:
         if grounder is not None and locate:
             raise ValueError("with a grounder of your own, it locates: LLMGrounder(locate=True)")
@@ -296,6 +313,8 @@ class Validator:
         self.judge = judge
         self.normalize_batch = normalize_batch
         self.embed = embed
+        # Where each job's run manifest is written, besides every JsonlSink's.
+        self.manifest = Path(manifest) if manifest is not None else None
 
     def validate(
         self,
@@ -306,6 +325,7 @@ class Validator:
         extractor: str = "triples",
         confidence: float = 0.5,
         update: bool = False,
+        recorder: Recorder | None = None,
     ) -> Validated:
         """The whole layer over `facts` and the texts they cite, written to every sink.
 
@@ -318,6 +338,10 @@ class Validator:
         cites under its id: it is retracted from the sinks first, so what the
         new version no longer states loses that source. A dry run retracts
         nothing.
+
+        `recorder` is the run manifest in the making, when the caller began it
+        (`odke validate` does, with its options); left out, the manifest
+        records this Validator's stages and the call's options.
         """
         if isinstance(facts, Fact) or isinstance(documents, Ontology):
             # It has a gate's method name, so code from before 1.0.0 that used
@@ -327,14 +351,17 @@ class Validator:
                 "is the verification layer since 1.0.0, and the gate is openodke.Gate "
                 "(DECISIONS #26)"
             )
-        from openodke.run.execute import register_documents
+        from openodke.run.execute import handed_in, register_documents
 
+        if recorder is None:
+            recorder = Recorder("validate", self._described(extractor, confidence, update))
         docs = list(documents)
         source = _source(facts, docs, extractor=extractor, confidence=confidence)
+        inputs = inputs_of(docs, handed_in(source))
         retracted: dict[str, int] | None = None
         if update and not dry_run:
             retracted = Reconciler(self.sinks).delete([doc.id for doc in docs]).counts()
-        stages = self._stages(dry_run)
+        stages = self._stages(dry_run, recorder)
         # The corroborator reads the texts to count a near-duplicate copy once,
         # and the pair judge reads its contexts from them.
         register_documents(stages["corroborator"], docs)
@@ -370,9 +397,48 @@ class Validator:
         if not dry_run:
             for sink in self.sinks:
                 sink.write(kg)
-        return Validated(kg, report)
+        manifest = recorder.finish(
+            inputs=inputs,
+            ontology=self.ontology,
+            prompts=report.prompts,
+            counts=validated_counts(report),
+            spent=spent_of(spent),
+            stopped=report.stopped,
+            failed=report.failed,
+            dry_run=dry_run,
+        )
+        if not dry_run:
+            for sink in self.sinks:
+                if isinstance(sink, JsonlSink):
+                    manifest.write_into(sink.directory / FILE)
+            if self.manifest is not None:
+                manifest.write(self.manifest, kg)
+        return Validated(kg, report.model_copy(update={"manifest": manifest}))
 
-    def _stages(self, dry_run: bool) -> dict[str, Any]:
+    def _described(self, extractor: str, confidence: float, update: bool) -> dict[str, Any]:
+        """What the manifest of a job with no recorder of its own records as its config."""
+        roles = self.roles if self.roles is not None else ModelRoles()
+        return {
+            "validator": {
+                "grounder": _named(self.grounder) or "LLMGrounder",
+                "roles": roles.model_dump(mode="json") if self.grounder is None else None,
+                "locate": self.locate,
+                **{
+                    name: _named(getattr(self, name))
+                    for name in ("normalizer", "resolver", "corroborator", "scorer", "gate")
+                },
+                "judge": _named(self.judge),
+                "lookup": _named(self.lookup),
+                "inverses": self.inverses,
+                "coverage": self.coverage,
+                "sinks": [_named(sink) for sink in self.sinks],
+            },
+            "extractor": extractor,
+            "confidence": confidence,
+            "update": update,
+        }
+
+    def _stages(self, dry_run: bool, recorder: Recorder) -> dict[str, Any]:
         """This job's stages: each one given, or its default, built fresh for the job."""
         ontology = self.ontology
         if dry_run:
@@ -381,7 +447,12 @@ class Validator:
         else:
             inner = self.grounder
             if inner is None:
-                inner = LLMGrounder(self.roles, client=self.client, locate=self.locate)
+                roles = self.roles if self.roles is not None else ModelRoles()
+                client = self.client if self.client is not None else roles.client_for("ground")
+                client = recorder.served.client("ground", roles.ground, client)
+                inner = LLMGrounder(roles, client=client, locate=self.locate)
+            elif isinstance(spec := getattr(inner, "spec", None), ModelSpec):
+                recorder.served.note("ground", spec)
             grounder = CheckedGrounder(inner, ontology=ontology)
         resolver = self.resolver
         if resolver is None:
@@ -492,6 +563,11 @@ class _Replay:
         return list(self.by_doc.get(chunk.doc_id, ()))
 
     @property
+    def rows(self) -> dict[str | None, list[Fact]]:
+        """The facts handed in, by the text they cite, as a triples stage keeps its rows."""
+        return self.by_doc
+
+    @property
     def stats(self) -> dict[str, int]:
         served = sum(len(f) for doc, f in self.by_doc.items() if doc in self._served)
         total = sum(len(f) for f in self.by_doc.values())
@@ -518,6 +594,37 @@ def _source(facts: Facts, docs: list[Document], *, extractor: str, confidence: f
         raise ValueError("pass triples rows or Facts, not both")
     rows = [item for item in items if not isinstance(item, Fact)]
     return TriplesExtractor(rows, extractor=extractor, confidence=confidence, documents=docs)
+
+
+def validated_counts(report: ValidationReport) -> dict[str, int]:
+    """A job's counts, as its run manifest keeps them: the report's, by the report's names."""
+    counts = {key: int(getattr(report, key)) for key in _COUNTED}
+    counts["failed"] = len(report.failed)
+    return counts
+
+
+_COUNTED = (
+    "documents",
+    "facts_in",
+    "unmatched",
+    "refused",
+    "merged",
+    "restated",
+    "linked",
+    "derived",
+    "facts_out",
+    "edges",
+    "properties",
+    "entities",
+)
+
+
+def _named(stage: Any) -> str | None:
+    """A stage by its class, as `module.Class`; None for none."""
+    if stage is None:
+        return None
+    kind = type(stage)
+    return f"{kind.__module__}.{kind.__qualname__}"
 
 
 def stores_of(sinks: Iterable[Any]) -> tuple[FactLookup, ...]:
@@ -685,4 +792,4 @@ def _n(count: int, noun: str) -> str:
     return f"{count} {noun if count == 1 else plural}"
 
 
-__all__ = ["ValidationReport", "Validated", "Validator", "stores_of"]
+__all__ = ["ValidationReport", "Validated", "Validator", "stores_of", "validated_counts"]

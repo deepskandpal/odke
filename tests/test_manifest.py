@@ -1,8 +1,9 @@
 """The run manifest (#160): what a run was asked, what answered it, and what it made.
 
-Every run here answers from the e2e example's recorded responses. The
-done-when is the replay: two runs of one manifest are the same run, and
-`odke run --from-manifest` is how the second is made.
+Every run here answers from recorded responses: the e2e example's for
+`odke run`, the triples example's for the Validator, `odke validate` and
+`odke ground`. The done-when is the replay: two runs of one manifest are the
+same run, and `odke run --from-manifest` is how the second is made.
 """
 
 from __future__ import annotations
@@ -14,15 +15,18 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
 import openodke
-from openodke import Ontology, prompts
+from openodke import Document, Ontology, prompts
 from openodke.cli.main import app
 from openodke.llm import ModelSpec
 from openodke.llm.base import Completion, Message
 from openodke.llm.roles import DEFAULT_EXTRACT
+from openodke.llm.testing import RecordedClient
+from openodke.loaders import DirectoryLoader
 from openodke.manifest import (
     REDACTED,
     SINK_KEYS,
@@ -33,8 +37,12 @@ from openodke.manifest import (
     read_manifest,
 )
 from openodke.run import load_config, parse_config
+from openodke.sinks.jsonl import JsonlSink
+from openodke.validator import Validator
 
 runner = CliRunner()
+REPO = Path(__file__).parent.parent
+TRIPLES = REPO / "examples" / "triples"
 TIMES = ("started_at", "ended_at", "created_at")
 
 
@@ -321,3 +329,141 @@ def test_the_pinned_id_that_answered_is_recorded_beside_the_alias_asked_for() ->
             model="anthropic/claude-large", served=("anthropic/claude-large-20260501",)
         ),
     }
+
+
+# --------------------------------------------------------------------------- #
+# The Validator, odke validate and odke ground
+# --------------------------------------------------------------------------- #
+
+
+def _texts() -> list[Document]:
+    return list(DirectoryLoader().load(TRIPLES / "texts"))
+
+
+def test_the_validator_writes_its_manifest_into_each_jsonl_sink_and_where_named(
+    tmp_path: Path,
+) -> None:
+    client = RecordedClient.from_fixture(TRIPLES / "recorded" / "ground.json")
+    ontology = Ontology.from_json(TRIPLES / "ontology.json")
+    validator = Validator(
+        ontology, client=client, sinks=[JsonlSink(tmp_path / "out")], manifest=tmp_path / "m.json"
+    )
+    kg, report = validator.validate(TRIPLES / "triples.jsonl", _texts(), extractor="hand-written")
+
+    manifest = report.manifest
+    assert manifest is not None and manifest.command == "validate"
+    assert read_manifest(tmp_path / "out") == manifest == read_manifest(tmp_path / "m.json")
+    assert _read(tmp_path / "out" / "manifest.json")["facts"] == 5
+    assert _read(tmp_path / "m.json")["facts"] == 5
+    described = manifest.config["validator"]
+    assert described["grounder"] == "LLMGrounder"
+    assert described["gate"] is None and described["sinks"] == ["openodke.sinks.jsonl.JsonlSink"]
+    assert (manifest.config["extractor"], manifest.config["update"]) == ("hand-written", False)
+    assert manifest.models["ground"].model == "anthropic/claude-haiku-4-5-20251001"
+    assert manifest.prompts == {"ground.span@1": prompts.get("ground.span@1").sha256}
+    assert manifest.ontology_hash == ontology.fingerprint
+    assert manifest.inputs.facts is not None and manifest.inputs.facts.rows == 5
+    assert manifest.counts == {
+        "documents": 1,
+        "facts_in": 5,
+        "unmatched": 0,
+        "refused": 0,
+        "merged": 0,
+        "restated": 0,
+        "linked": 0,
+        "derived": 0,
+        "facts_out": 5,
+        "edges": 4,
+        "properties": 1,
+        "entities": 5,
+        "failed": 0,
+    }
+    assert manifest.spent["calls"] == report.calls == 4
+    # The report is what it was: its JSON and its equality leave the manifest out.
+    assert "manifest" not in kg.stats["validation"]
+    assert report == report.model_copy(update={"manifest": None})
+
+    _, dry = Validator(ontology).validate(TRIPLES / "triples.jsonl", _texts(), dry_run=True)
+    assert dry.manifest is not None and dry.manifest.dry_run
+    assert dry.manifest.ontology_hash == ontology.fingerprint and dry.manifest.models == {}
+
+
+def test_a_merging_store_keeps_its_own_counts_beside_the_jobs(tmp_path: Path) -> None:
+    rows = [json.loads(line) for line in (TRIPLES / "triples.jsonl").read_text().splitlines()]
+    client = RecordedClient.from_fixture(TRIPLES / "recorded" / "ground.json")
+    validator = Validator(client=client, sinks=[JsonlSink(tmp_path, merge=True)])
+    validator.validate(rows[:3], _texts())
+    _, report = validator.validate(rows[3:], _texts())
+    document = _read(tmp_path / "manifest.json")
+    assert report.manifest is not None and report.manifest.counts["facts_in"] == len(rows) - 3
+    assert document["counts"]["facts_out"] == report.facts_out < document["facts"]
+    assert document["facts"] == len((tmp_path / "facts.jsonl").read_text().splitlines())
+
+
+@pytest.fixture
+def here(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A working directory holding examples/triples, recorded answers and a models file."""
+    shutil.copytree(TRIPLES, tmp_path / "triples", ignore=shutil.ignore_patterns("out"))
+    recorded = [
+        {"match": "— Berlin (City)", "response": {"verdict": "not_found"}},
+        {"match": "Claim:", "response": {"verdict": "supported"}},
+    ]
+    (tmp_path / "recorded.json").write_text(json.dumps(recorded), encoding="utf-8")
+    (tmp_path / "models.yaml").write_text(
+        "models:\n  replay:\n    ground: recorded.json\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+def test_odke_validate_records_what_a_second_run_needs_to_be_the_same_run(here: Path) -> None:
+    """The recipe for a manifest of odke validate: its options, and its models block as a file."""
+    args = ["--facts", "triples/triples.jsonl", "--texts", "triples/texts"]
+    result = runner.invoke(app, ["validate", *args, "--config", "models.yaml", "-o", "out"])
+    assert result.exit_code == 0, result.output
+    assert "manifest      out/manifest.json" in result.output
+    first = read_manifest(here / "out")
+    assert first.command == "validate"
+    assert first.config["facts"] == "triples/triples.jsonl"
+    assert first.config["models"]["replay"] == {"ground": "recorded.json"}
+    assert first.models["ground"].served == ("anthropic/claude-haiku-4-5-20251001",)
+
+    # The recipe: the options as flags, and `models` written to a file of its own.
+    (here / "again.json").write_text(json.dumps({"models": first.config["models"]}))
+    options = first.config
+    again = [
+        "--facts", options["facts"], "--texts", options["texts"], "--adapter", options["adapter"],
+        "--config", "again.json", "-o", "again",
+    ]  # fmt: skip
+    assert runner.invoke(app, ["validate", *again]).exit_code == 0
+    second = read_manifest(here / "again")
+    assert {**second.config, "out": "out"} == first.config
+    assert (second.inputs, second.counts, second.models) == (
+        first.inputs,
+        first.counts,
+        first.models,
+    )
+
+    # A run config's manifest keeps the run config, and where its paths resolve.
+    result = runner.invoke(app, ["validate", "--config", "triples/odke.yaml"])
+    assert result.exit_code == 0, result.output
+    from_config = read_manifest(here / "triples" / "out")
+    assert from_config.config["run"] == load_config(here / "triples" / "odke.yaml").canonical()
+    assert (from_config.config_file, from_config.base_dir) == ("odke.yaml", str(here / "triples"))
+
+
+def test_odke_ground_writes_its_manifest_beside_its_summary(here: Path) -> None:
+    args = ["--facts", "triples/triples.jsonl", "--texts", "triples/texts", "-o", "out"]
+    result = runner.invoke(app, ["ground", *args, "--config", "models.yaml"])
+    assert result.exit_code == 0, result.output
+    assert "out/manifest.json" in result.output
+    manifest, summary = read_manifest(here / "out"), _read(here / "out" / "summary.json")
+    assert (manifest.command, manifest.config["adapter"]) == ("ground", "triples")
+    assert manifest.counts["rows"] == summary["rows"] == 5
+    assert manifest.counts["supported"] == summary["verdicts"]["supported"]
+    assert manifest.spent["calls"] == summary["calls"]
+    assert manifest.inputs.facts is not None and manifest.inputs.facts.rows == 5
+
+    result = runner.invoke(app, ["ground", *args, "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert read_manifest(here / "out").dry_run
