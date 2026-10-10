@@ -22,7 +22,9 @@ moves. So every run writes one manifest: `odke run`, `odke validate`,
 - `counts`, `spent`, and the `stopped` and `failed` summaries;
 - `run`, the id every log event of the run carries, and `job`, the counts its
   `job.end` event logs (`openodke.observe`), so a manifest and a log stream
-  can be joined, and say the same.
+  can be joined, and say the same;
+- `writes`, what each sink wrote, merged and skipped (`openodke.sinks.report`),
+  which `job.end` logs too.
 
 Two runs with the same inputs write the same manifest but for its two times
 and its run id.
@@ -66,18 +68,10 @@ REDACTED = "<redacted>"
 
 # What a `JsonlSink` writes into `manifest.json`. A run adds its own fields
 # beside these and never replaces them: the sink's counts are the files'.
-# `tenant` is the store's: a JSONL directory holds one tenant (#159).
-SINK_KEYS = (
-    "ontology",
-    "created_at",
-    "entities",
-    "facts",
-    "edges",
-    "properties",
-    "links",
-    "stats",
-    "tenant",
-)
+SINK_KEYS = ("ontology", "created_at", "entities", "facts", "edges", "properties", "links", "stats")
+# What a sink writes there only when it has one, and a run keeps as the sink
+# wrote it: the tenant a JSONL directory holds (#159).
+STORE_KEYS = ("tenant",)
 
 Command = Literal["run", "validate", "ground"]
 # The graph's counts a streamed run takes from its totals, not its (empty) graph.
@@ -210,6 +204,8 @@ class RunManifest(Frozen):
     counts: dict[str, int] = Field(default_factory=dict)
     # Facts in, out, refused, merged, linked and sent to review: what `job.end` logs.
     job: dict[str, int] = Field(default_factory=dict)
+    # Per sink, what it wrote, merged and skipped (`openodke.sinks.report`); job.end logs it too.
+    writes: dict[str, dict[str, Any]] = Field(default_factory=dict)
     spent: dict[str, Any] = Field(default_factory=dict)
     stopped: dict[str, Any] | None = None
     failed: dict[str, str] = Field(default_factory=dict)
@@ -258,7 +254,7 @@ class RunManifest(Frozen):
         if target.is_file():
             found = json.loads(target.read_text(encoding="utf-8"))
             if isinstance(found, dict):
-                held = {key: found[key] for key in SINK_KEYS if key in found}
+                held = {key: found[key] for key in (*SINK_KEYS, *STORE_KEYS) if key in found}
         document = {**self.model_dump(mode="json"), **held}
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
@@ -307,7 +303,8 @@ def read_manifest(path: str | Path) -> RunManifest:
     version = data.get("manifest_version")
     if version != FORMAT:
         raise ValueError(f"{source}: manifest_version {version!r}; this openodke reads {FORMAT}")
-    return RunManifest.model_validate({k: v for k, v in data.items() if k not in SINK_KEYS})
+    own = {k: v for k, v in data.items() if k not in SINK_KEYS and k not in STORE_KEYS}
+    return RunManifest.model_validate(own)
 
 
 # --------------------------------------------------------------------------- #
@@ -499,6 +496,7 @@ class Recorder:
         dry_run: bool = False,
         run: str | None = None,
         job: Mapping[str, int] | None = None,
+        writes: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> RunManifest:
         """The manifest, ended now. An ontology with no types and no predicates is none."""
         schema = (
@@ -524,6 +522,7 @@ class Recorder:
             ended_at=now(),
             counts={str(k): int(v) for k, v in (counts or {}).items()},
             job={str(k): int(v) for k, v in (job or {}).items()},
+            writes={str(k): canonical(dict(v)) for k, v in (writes or {}).items()},
             spent=canonical(dict(spent or {})),
             stopped=canonical(dict(stopped)) if stopped else None,
             failed={str(k): str(v) for k, v in (failed or {}).items()},
@@ -547,6 +546,7 @@ __all__ = [
     "FORMAT",
     "REDACTED",
     "SINK_KEYS",
+    "STORE_KEYS",
     "FactsIn",
     "Inputs",
     "InputsHash",

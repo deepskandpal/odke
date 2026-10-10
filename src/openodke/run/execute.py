@@ -52,6 +52,8 @@ from openodke.ontology import Ontology
 from openodke.reextract import summary as reextract_summary
 from openodke.run.build import Built, build, check_streams
 from openodke.run.config import STAGES, ConfigError, RunConfig
+from openodke.sinks.report import Writes
+from openodke.sinks.report import summary as write_summary
 from openodke.stages import PlatformProfile, Sink
 from openodke.stream import PER_CALL, Totals, micro_batches, shape
 from openodke.stream import write as stream_write
@@ -93,6 +95,8 @@ class RunResult:
     manifest: RunManifest | None = None
     manifests: list[str] = field(default_factory=list)
     sample: list[Fact] = field(default_factory=list)
+    # The tenant the run's store keyed it by (#159).
+    tenant: str | None = None
 
     @property
     def stats(self) -> dict[str, Any]:
@@ -194,6 +198,8 @@ def run_built(
             # After the bootstrap, so the indexes it creates are there to read through.
             built.open_lookup(opened)
 
+        # What each sink had written before this run: its report is the difference.
+        writes = Writes(opened)
         if size is not None:
             if replaying is not None:
                 # A pass over the inputs before the first micro-batch is written.
@@ -222,6 +228,10 @@ def run_built(
                     sink.write(kg)
                     written.extend(plan.describe(kg))
                 observer.end(begun, {"sinks": len(opened), "facts": len(kg.facts)})
+        if not dry_run:
+            # Once every sink has written, a streamed run's last micro-batch included.
+            report = writes.report(kg, shape=kg.stats.get("graph"))
+            kg = kg.model_copy(update={"stats": {**kg.stats, "writes": report}})
     finally:
         if built.lookup is not None:
             built.lookup.close()
@@ -241,6 +251,7 @@ def run_built(
         dry_run=dry_run,
         run=observer.run,
         job=job_counts_of_run(stats).model_dump(),
+        writes=stats.get("writes"),
     )
     manifests = [] if dry_run else write_manifest(built, manifest, kg, shape=shape_of)
     # A streamed run's stats are its micro-batches' summed: so are the job's counts.
@@ -254,6 +265,7 @@ def run_built(
         manifest=manifest,
         manifests=manifests,
         sample=sample,
+        tenant=config.tenant,
     )
 
 
@@ -353,6 +365,8 @@ def finish(observer: Observer, counts: JobCounts, stats: Mapping[str, Any]) -> N
         documents=int(stats.get("documents", 0)),
         failed=len(stats.get("failed") or {}),
         stopped=stopped.get("limit") if isinstance(stopped, Mapping) else None,
+        # What each sink wrote, merged and skipped (#159); none in a dry run.
+        writes=stats.get("writes"),
     )
 
 
@@ -592,6 +606,8 @@ def render(result: RunResult) -> str:
     stats = result.stats
     graph = stats.get("graph", {})
     lines = ["odke run — dry run, nothing written" if result.dry_run else "odke run"]
+    if result.tenant is not None:
+        lines.append(_row("tenant", result.tenant))
     if isinstance(stopped := stats.get("stopped"), Mapping):
         lines.append(_row("stopped", stopped_summary(stopped)))
     if isinstance(failed := stats.get("failed"), Mapping) and failed:
@@ -647,6 +663,8 @@ def render(result: RunResult) -> str:
         lines.extend(f"  {line}" for line in result.written[1:])
     else:
         lines.append(_row(verb, "nothing — no sink configured"))
+    for name, wrote in (stats.get("writes") or {}).items():
+        lines.append(_row("writes", f"{name}: {write_summary(wrote)}"))
     if result.manifests:
         lines.append(_row("manifest", result.manifests[0]))
         lines.extend(f"  {path}" for path in result.manifests[1:])

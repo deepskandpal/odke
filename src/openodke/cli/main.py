@@ -270,6 +270,10 @@ BATCH_SIZE_HELP = (
     "validate) at a time, so a batch of any size runs in the memory of one. Overrides "
     "batch_size."
 )
+TENANT_HELP = (
+    "Key everything written to, and read from, the store by this tenant: two tenants' "
+    "identical facts never merge (DECISIONS #44). Overrides tenant."
+)
 # The exit status of a run a budget stopped: what it kept was written.
 EXIT_BUDGET = 3
 LOG_FORMAT_HELP = (
@@ -350,6 +354,7 @@ def run_command(
     log_format: str = typer.Option("text", "--log-format", help=LOG_FORMAT_HELP),
     log_text: bool = typer.Option(False, "--log-text", help=LOG_TEXT_HELP),
     batch_size: int | None = typer.Option(None, "--batch-size", min=1, help=BATCH_SIZE_HELP),
+    tenant: str | None = typer.Option(None, "--tenant", help=TENANT_HELP),
 ) -> None:
     """Run the whole pipeline from a config file.
 
@@ -376,14 +381,20 @@ def run_command(
 
     chosen = _qualified(model, model_provider)
     _logs(ctx, log_format, log_text)
-    overrides = chosen is not None or widen or cache is not None or batch_size is not None
+    overrides = (
+        chosen is not None
+        or widen
+        or cache is not None
+        or batch_size is not None
+        or tenant is not None
+    )
     if (config is None) == (from_manifest is None):
         typer.echo("error: give a config, or --from-manifest, and not both", err=True)
         raise typer.Exit(2)
     if from_manifest is not None and (overrides or (budget_usd, budget_calls) != (None, None)):
         typer.echo(
             "error: --from-manifest runs the config it recorded; --model, --widen, --cache, "
-            "--batch-size and the budget flags would make it another run",
+            "--batch-size, --tenant and the budget flags would make it another run",
             err=True,
         )
         raise typer.Exit(2)
@@ -404,6 +415,7 @@ def run_command(
             loaded = loaded.with_cache(cache)
         loaded = loaded.with_budget(usd=budget_usd, calls=budget_calls)
         loaded = loaded.with_batch_size(batch_size)
+        loaded = loaded.with_tenant(tenant)
         result = execute(loaded, dry_run=dry_run, replaying=replaying)
     except (ConfigError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
@@ -475,7 +487,7 @@ class _Store:
 
 
 def _read_facts(
-    adapter: str, facts: str, texts: Path | None, store: _Store
+    adapter: str, facts: str, texts: Path | None, store: _Store, tenant: str | None = None
 ) -> tuple[Iterable[Any], list[Any], Any]:
     """The rows `--facts` holds, the texts they cite, and the driver if a store was read.
 
@@ -532,6 +544,7 @@ def _read_facts(
                 documents=docs,
                 text_property=store.text_property,
                 database=store.database,
+                tenant=tenant,
             )
             # Every text given, not only those matched by id or URI: a row that
             # names a file by its name still finds it in the extractor.
@@ -849,6 +862,7 @@ def validate_command(
     log_format: str = typer.Option("text", "--log-format", help=LOG_FORMAT_HELP),
     log_text: bool = typer.Option(False, "--log-text", help=LOG_TEXT_HELP),
     batch_size: int | None = typer.Option(None, "--batch-size", min=1, help=BATCH_SIZE_HELP),
+    tenant: str | None = typer.Option(None, "--tenant", help=TENANT_HELP),
 ) -> None:
     """Validate another extractor's facts: ground, resolve, corroborate, gate and write.
 
@@ -875,6 +889,11 @@ def validate_command(
 
     With --batch-size (or a config's `batch_size`) the triples are read, run
     and written that many rows at a time, and the texts are held.
+
+    With --tenant (or a config's `tenant`) the stores key the job by that
+    tenant: its facts never merge with another tenant's, and the neo4j adapter
+    reads that tenant's. The report ends with what each sink wrote, merged and
+    skipped.
 
     Exit 2 is input or a config that cannot be read, exit 1 a run that failed,
     exit 3 a run its budget stopped, which still wrote what it kept.
@@ -910,6 +929,7 @@ def validate_command(
         "user": user,
         "password_env": password_env,
         "batch_size": batch_size,
+        "tenant": tenant,
     }
     recorder = Recorder("validate", options)
     driver: Any = None
@@ -950,10 +970,12 @@ def validate_command(
             )
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
-                rows, docs, driver = _read_facts(adapter, facts, texts, store)
+                rows, docs, driver = _read_facts(adapter, facts, texts, store, tenant)
             if batch_size is None:
                 rows = list(rows)
-            validator = Validator(schema, grounder=grounder, locate=locate and grounder is None)
+            validator = Validator(
+                schema, grounder=grounder, locate=locate and grounder is None, tenant=tenant
+            )
             named: dict[str, Any] = {}
         else:
             assert config is not None  # one of the two is given
@@ -972,6 +994,8 @@ def validate_command(
             loaded = loaded.with_budget(usd=budget_usd, calls=budget_calls)
             loaded = loaded.with_batch_size(batch_size)
             batch_size = loaded.batch_size
+            loaded = loaded.with_tenant(tenant)
+            tenant = loaded.tenant
             if locate:
                 raise ValueError("with a run config, the locator is the grounder's: locate: true")
             built = build(loaded)
@@ -1028,11 +1052,12 @@ def validate_command(
                 gate=stage["gate"],
                 inverses=loaded.inverses,
                 coverage=loaded.coverage,
+                tenant=tenant,
             )
             jsonl = out is not None or any(plan.name == "jsonl" for plan in plans)
             validator.manifest = manifest_path(loaded, jsonl=jsonl)
         if out is not None and not dry_run:
-            sinks.append(JsonlSink(out, merge=merge))
+            sinks.append(JsonlSink(out, merge=merge, tenant=tenant))
         validator.sinks = tuple(sinks)
         # A record of what the gate refuses, and why: -o writes it as refused.jsonl.
         kept = Kept(validator.gate if validator.gate is not None else VerdictGate(schema=True))
@@ -1077,7 +1102,7 @@ def validate_command(
         _close(driver, [*lookups, *sinks])
     _echo_warnings(caught)
     refused = kept.write(out / REFUSED_FILE) if out is not None and not dry_run else None
-    typer.echo(report.render())
+    typer.echo(report.render(writes=False))
     verb = "would write" if dry_run else "wrote"
     if applied:
         done = "would apply" if dry_run else "applied"
@@ -1103,6 +1128,8 @@ def validate_command(
         )
     for line in written or ["nothing: give -o, or name a sink in the config"]:
         typer.echo(f"{verb:<13} {line}")
+    for line in report.write_lines():
+        typer.echo(line)
     manifests = [str(s.directory / FILE) for s in sinks if isinstance(s, JsonlSink)]
     if validator.manifest is not None:
         manifests.append(str(validator.manifest))
@@ -1163,6 +1190,9 @@ def reconcile_command(
     database: str | None = typer.Option(None, "--database", help="Neo4j: the database."),
     user: str = typer.Option("neo4j", "--user", envvar="NEO4J_USER", help=USER_HELP),
     password_env: str = typer.Option("NEO4J_PASSWORD", "--password-env", help=PASSWORD_ENV_HELP),
+    tenant: str | None = typer.Option(
+        None, "--tenant", help="The tenant whose facts lose the documents; no other's change."
+    ),
 ) -> None:
     """Retract documents that are gone from the store, and retire facts left with no source.
 
@@ -1193,14 +1223,16 @@ def reconcile_command(
                 )
             from openodke.sinks.neo4j import Neo4jSink
 
-            store = Neo4jSink(sink, (user, password), database=database, ontology=schema)
+            store = Neo4jSink(
+                sink, (user, password), database=database, ontology=schema, tenant=tenant
+            )
         else:
             if ontology is not None or database is not None:
                 raise ValueError("--ontology and --database are for a Neo4j store")
             directory = Path(sink)
             if not (directory / "facts.jsonl").is_file():
                 raise ValueError(f"{directory} holds no facts.jsonl: not a store odke wrote")
-            store = JsonlSink(directory, merge=True)
+            store = JsonlSink(directory, merge=True, tenant=tenant)
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             report = Reconciler([store], hard_delete=hard_delete).delete(delete)

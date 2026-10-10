@@ -65,13 +65,18 @@ def since(now: Mapping[str, Any], before: Mapping[str, Any] | None) -> dict[str,
     return out
 
 
-def handed(kg: KnowledgeGraph) -> dict[str, Any]:
-    """What a sink that keeps no report was given to write."""
-    return {
-        "entities": {"handed": len(kg.entities)},
-        "facts": {"handed": len(kg.facts)},
-        "links": {"handed": len(kg.links)},
-    }
+def handed(kg: KnowledgeGraph, shape: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """What a sink that keeps no report was given to write.
+
+    `shape` is the run's counts (`openodke.stream.shape`), which a streamed
+    run's graph, holding no facts, cannot give.
+    """
+    if shape is not None:
+        links = sum(int(v) for v in (shape.get("links") or {}).values())
+        counts = (int(shape.get("entities", 0)), int(shape.get("facts", 0)), links)
+    else:
+        counts = (len(kg.entities), len(kg.facts), len(kg.links))
+    return {kind: {"handed": count} for kind, count in zip(KINDS, counts, strict=True)}
 
 
 def sink_name(at: int, sink: Any) -> str:
@@ -80,17 +85,24 @@ def sink_name(at: int, sink: Any) -> str:
 
 
 class Writes:
-    """The write report of one job over its sinks: snapshot before, `report(kg)` after."""
+    """The write report of one job over its sinks: snapshot before, `report(kg)` after.
+
+    A streamed run (#158) takes the snapshot before its first micro-batch and
+    the report after its last, so the report is the run's.
+    """
 
     def __init__(self, sinks: Sequence[Any]) -> None:
         self.sinks = list(sinks)
         self.before = [report_of(sink) for sink in self.sinks]
 
-    def report(self, kg: KnowledgeGraph) -> dict[str, dict[str, Any]]:
+    def report(
+        self, kg: KnowledgeGraph, *, shape: Mapping[str, Any] | None = None
+    ) -> dict[str, dict[str, Any]]:
+        """Each sink's writes since the snapshot; `shape` is the run's counts, for the rest."""
         out: dict[str, dict[str, Any]] = {}
         for at, (sink, before) in enumerate(zip(self.sinks, self.before, strict=True)):
             now = report_of(sink)
-            out[sink_name(at, sink)] = handed(kg) if now is None else since(now, before)
+            out[sink_name(at, sink)] = handed(kg, shape) if now is None else since(now, before)
         return out
 
 

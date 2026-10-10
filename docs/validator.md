@@ -30,6 +30,7 @@ out           5 facts (4 edges, 1 property), 5 entities
 cost          4 model calls, 657 tokens, USD unknown (ground.span@1)
 coverage      0 of 1 sentences naming two known entities uncovered, 0 entities in no fact, relations offered: unknown, 0 unused
 wrote         jsonl → out: entities.jsonl 5, facts.jsonl 5, links.jsonl 0, manifest.json, refused.jsonl 0
+writes        0:JsonlSink: entities 5 written; facts 5 written; links none
 manifest      out/manifest.json
 ```
 

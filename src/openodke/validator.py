@@ -61,7 +61,15 @@ calls, tokens and cost; the registered prompts sent; and the coverage report. A
 client held to a budget (`openodke.llm.budget`) that stops the job leaves a
 partial graph, written as usual, and the report's `stopped` says where and why.
 A dry run asks no model and writes nothing: the free checks, the locator, and
-every deterministic stage.
+every deterministic stage. Once the sinks have written, the report's `writes`
+says what each wrote, merged and skipped (`openodke.sinks.report`); the run
+manifest and `job.end` carry it too.
+
+`tenant` keys everything the job writes to, and reads from, its stores by
+that tenant (#159, DECISIONS #44): each sink and the lookup that can be scoped
+(`scoped(tenant)`: `Neo4jSink`, `JsonlSink`, `Neo4jLookup`, `MemoryLookup`)
+is, so two tenants' identical facts never merge, and a lookup, a store merge
+or a retraction for one never reaches the other.
 
 Every job has a run manifest (`openodke.manifest`, #160), as `report.manifest`:
 what the Validator was, the models and prompts, the ontology, the inputs, the
@@ -117,6 +125,8 @@ from openodke.ontology import Ontology
 from openodke.pipeline import Pipeline
 from openodke.reconcile import Reconciler
 from openodke.sinks.jsonl import JsonlSink
+from openodke.sinks.report import Writes
+from openodke.sinks.report import summary as write_summary
 from openodke.stages import (
     Corroborator,
     FactLookup,
@@ -131,6 +141,7 @@ from openodke.stages import (
 )
 from openodke.stream import Totals, by_text, micro_batches, shape, streams
 from openodke.stream import write as stream_write
+from openodke.tenants import tenant_name
 from openodke.types import Chunk, Document, Fact, Frozen, KnowledgeGraph, LinkKind
 
 Facts = str | Path | Iterable[TripleRow | Mapping[str, Any] | Fact]
@@ -189,6 +200,10 @@ class ValidationReport(Frozen):
     failed: dict[str, str] = Field(default_factory=dict)
     # With `batch_size`: the micro-batches run (#158). None when the job was one batch.
     batches: int | None = None
+    # The tenant the stores keyed the job by (#159).
+    tenant: str | None = None
+    # Per sink, what it wrote, merged and skipped (`openodke.sinks.report`); None in a dry run.
+    writes: dict[str, dict[str, Any]] | None = None
     # The job's run manifest (#160). Not in the report's JSON, which the graph's
     # stats keep: it is a file of its own.
     manifest: RunManifest | None = Field(default=None, exclude=True)
@@ -212,8 +227,11 @@ class ValidationReport(Frozen):
             review=queued,
         )
 
-    def render(self) -> str:
+    def render(self, *, writes: bool = True) -> str:
+        """The report as `odke validate` prints it; `writes=False` leaves the write report out."""
         lines = ["odke validate — dry run, no model called" if self.dry_run else "odke validate"]
+        if self.tenant is not None:
+            lines.append(_row("tenant", self.tenant))
         if self.retracted is not None:
             lines.append(_row("update", _retracted_line(self.retracted)))
         if self.stopped is not None:
@@ -269,7 +287,16 @@ class ValidationReport(Frozen):
             )
         if self.coverage is not None:
             lines.append(_row("coverage", coverage_summary(self.coverage)))
+        if writes:
+            lines.extend(self.write_lines())
         return "\n".join(lines)
+
+    def write_lines(self) -> list[str]:
+        """One line per sink: what it wrote, merged and skipped."""
+        return [
+            _row("writes", f"{name}: {write_summary(wrote)}")
+            for name, wrote in (self.writes or {}).items()
+        ]
 
 
 class Validated(NamedTuple):
@@ -313,6 +340,7 @@ class Validator:
         normalize_batch: bool | None = None,
         embed: Embed | None = None,
         manifest: str | Path | None = None,
+        tenant: str | None = None,
     ) -> None:
         if grounder is not None and locate:
             raise ValueError("with a grounder of your own, it locates: LLMGrounder(locate=True)")
@@ -348,6 +376,7 @@ class Validator:
         self.embed = embed
         # Where each job's run manifest is written, besides every JsonlSink's.
         self.manifest = Path(manifest) if manifest is not None else None
+        self.tenant = tenant_name(tenant)
 
     def validate(
         self,
@@ -400,6 +429,7 @@ class Validator:
         observer = observer if observer is not None else Observer("validate")
         observer.start(dry_run=dry_run)
         docs = list(documents)
+        sinks = self._sinks()
         if batch_size is not None:
             return self._streamed(
                 facts,
@@ -411,13 +441,14 @@ class Validator:
                 update=update,
                 recorder=recorder,
                 observer=observer,
+                sinks=sinks,
             )
         source = _source(facts, docs, extractor=extractor, confidence=confidence)
         inputs = inputs_of(docs, handed_in(source))
         retracted: dict[str, int] | None = None
         if update and not dry_run:
-            retracted = Reconciler(self.sinks).delete([doc.id for doc in docs]).counts()
-        stages = self._stages(dry_run, recorder, observer)
+            retracted = Reconciler(sinks).delete([doc.id for doc in docs]).counts()
+        stages = self._stages(dry_run, recorder, observer, sinks)
         # The corroborator reads the texts to count a near-duplicate copy once,
         # and the pair judge reads its contexts from them.
         register_documents(stages["corroborator"], docs)
@@ -426,7 +457,7 @@ class Validator:
         before = _Before(stages)
         # Stand-ins: the double-stage warning sees each sink's platform, and the
         # real sinks write once the report is in the graph's stats.
-        stand_ins = [_StandIn(getattr(sink, "profile", None)) for sink in self.sinks]
+        stand_ins = [_StandIn(getattr(sink, "profile", None)) for sink in sinks]
         pipeline = Pipeline(
             self.ontology,
             source,
@@ -439,14 +470,15 @@ class Validator:
         kg = pipeline.run(docs)
         graph = shape(kg)
         report = self._report(kg.stats, graph, source, stages, dry_run, before)
-        if retracted is not None:
-            report = report.model_copy(update={"retracted": retracted})
+        report = report.model_copy(update={"retracted": retracted, "tenant": self.tenant})
         kg = kg.model_copy(update={"stats": _stats(kg.stats, graph, source, stages, report)})
         if not dry_run:
+            writes = Writes(sinks)
             begun = observer.begin("write")
-            for sink in self.sinks:
+            for sink in sinks:
                 sink.write(kg)
-            observer.end(begun, {"sinks": len(self.sinks), "facts": len(kg.facts)})
+            observer.end(begun, {"sinks": len(sinks), "facts": len(kg.facts)})
+            report, kg = _written(report, kg, writes.report(kg))
         spent = _job_spent(stages, before)
         manifest = recorder.finish(
             inputs=inputs,
@@ -459,9 +491,10 @@ class Validator:
             dry_run=dry_run,
             run=observer.run,
             job=report.job.model_dump(),
+            writes=report.writes,
         )
         if not dry_run:
-            for sink in self.sinks:
+            for sink in sinks:
                 if isinstance(sink, JsonlSink):
                     manifest.write_into(sink.directory / FILE)
             if self.manifest is not None:
@@ -472,8 +505,19 @@ class Validator:
             documents=report.documents,
             failed=len(report.failed),
             stopped=report.stopped.get("limit") if report.stopped else None,
+            writes=report.writes,
         )
         return Validated(kg, report.model_copy(update={"manifest": manifest}))
+
+    def _sinks(self) -> list[Sink]:
+        """Every sink, scoped to the tenant where it can be (`scoped(tenant)`, #159)."""
+        if self.tenant is None:
+            return list(self.sinks)
+        out: list[Sink] = []
+        for sink in self.sinks:
+            to_tenant = getattr(sink, "scoped", None)
+            out.append(to_tenant(self.tenant) if callable(to_tenant) else sink)
+        return out
 
     def _streamed(
         self,
@@ -487,6 +531,7 @@ class Validator:
         update: bool,
         recorder: Recorder,
         observer: Observer,
+        sinks: list[Sink],
     ) -> Validated:
         """`validate` a micro-batch at a time (#158): read, run, write, and on to the next.
 
@@ -498,7 +543,7 @@ class Validator:
 
         if size < 1:
             raise ValueError("batch_size must be at least 1")
-        whole = [type(sink).__name__ for sink in self.sinks if not streams(sink)]
+        whole = [type(sink).__name__ for sink in sinks if not streams(sink)]
         if whole:
             raise ValueError(
                 f"{', '.join(whole)} writes the whole graph on every write, so a run in "
@@ -515,11 +560,11 @@ class Validator:
         )
         retracted: dict[str, int] | None = None
         if update and not dry_run:
-            retracted = Reconciler(self.sinks).delete([doc.id for doc in docs]).counts()
-        stages = self._stages(dry_run, recorder, observer)
+            retracted = Reconciler(sinks).delete([doc.id for doc in docs]).counts()
+        stages = self._stages(dry_run, recorder, observer, sinks)
         # A stage given is kept between calls, so its counts are read as a difference.
         before = _Before(stages)
-        stand_ins = [_StandIn(getattr(sink, "profile", None)) for sink in self.sinks]
+        stand_ins = [_StandIn(getattr(sink, "profile", None)) for sink in sinks]
         pipeline = Pipeline(
             self.ontology,
             source,
@@ -532,6 +577,8 @@ class Validator:
         texts = _Texts(docs)
         totals = Totals()
         ran: set[str] = set()
+        # Before the first micro-batch: the write report is the run's, after the last.
+        writes = Writes(sinks)
 
         def run(cited: list[Document]) -> None:
             for stage in (source, stages["corroborator"], stages["resolver"]):
@@ -540,13 +587,13 @@ class Validator:
             totals.add(kg, resolver=stages["resolver"])
             ran.update(doc.id for doc in cited)
             stats, report = self._so_far(totals, len(ran), source, stages, dry_run, before)
-            report = report.model_copy(update={"retracted": retracted})
+            report = report.model_copy(update={"retracted": retracted, "tenant": self.tenant})
             graph = totals.graph()
             if not dry_run:
                 kg = kg.model_copy(update={"stats": _stats(stats, graph, source, stages, report)})
                 begun = observer.begin("write")
-                stream_write(self.sinks, kg, first=totals.batches == 1)
-                observer.end(begun, {"sinks": len(self.sinks), "facts": len(kg.facts)})
+                stream_write(sinks, kg, first=totals.batches == 1)
+                observer.end(begun, {"sinks": len(sinks), "facts": len(kg.facts)})
 
         for batch in by_text(items, size, _text_of):
             source.feed(batch)
@@ -560,10 +607,12 @@ class Validator:
             # Nothing at all is one empty micro-batch, written as an unbatched job writes it.
             run([])
         stats, report = self._so_far(totals, len(ran), source, stages, dry_run, before)
-        report = report.model_copy(update={"retracted": retracted})
+        report = report.model_copy(update={"retracted": retracted, "tenant": self.tenant})
         graph = totals.graph()
         stats = _stats(stats, graph, source, stages, report)
         kg = KnowledgeGraph(ontology_name=self.ontology.name, stats=stats)
+        if not dry_run:
+            report, kg = _written(report, kg, writes.report(kg, shape=graph))
         spent = _job_spent(stages, before)
         # The report's counts are the micro-batches' summed, so the job's are too.
         manifest = recorder.finish(
@@ -577,9 +626,10 @@ class Validator:
             dry_run=dry_run,
             run=observer.run,
             job=report.job.model_dump(),
+            writes=report.writes,
         )
         if not dry_run:
-            for sink in self.sinks:
+            for sink in sinks:
                 if isinstance(sink, JsonlSink):
                     manifest.write_into(sink.directory / FILE)
             if self.manifest is not None:
@@ -590,6 +640,7 @@ class Validator:
             documents=report.documents,
             failed=len(report.failed),
             stopped=report.stopped.get("limit") if report.stopped else None,
+            writes=report.writes,
         )
         return Validated(kg, report.model_copy(update={"manifest": manifest}))
 
@@ -640,9 +691,12 @@ class Validator:
             "confidence": confidence,
             "update": update,
             "batch_size": batch_size,
+            "tenant": self.tenant,
         }
 
-    def _stages(self, dry_run: bool, recorder: Recorder, observer: Observer) -> dict[str, Any]:
+    def _stages(
+        self, dry_run: bool, recorder: Recorder, observer: Observer, sinks: Sequence[Sink]
+    ) -> dict[str, Any]:
         """This job's stages: each one given, or its default, built fresh for the job."""
         ontology = self.ontology
         if dry_run:
@@ -664,9 +718,11 @@ class Validator:
             batch: dict[str, Any] = {"embed": self.embed}
             if self.normalize_batch is not None:
                 batch["normalize_batch"] = self.normalize_batch
-            resolver = NativeResolver(
-                lookup=self.lookup, judge=self.judge, ontology=ontology, **batch
-            )
+            lookup = self.lookup
+            to_tenant = getattr(lookup, "scoped", None)
+            if self.tenant is not None and callable(to_tenant):
+                lookup = to_tenant(self.tenant)
+            resolver = NativeResolver(lookup=lookup, judge=self.judge, ontology=ontology, **batch)
         if dry_run and isinstance(resolver, NativeResolver) and resolver.judge is not None:
             # A dry run asks no model: the rules alone, on a copy.
             resolver = copy.copy(resolver)
@@ -678,7 +734,7 @@ class Validator:
             "corroborator": (
                 self.corroborator
                 if self.corroborator is not None
-                else SignatureCorroborator(ontology, store=() if dry_run else stores_of(self.sinks))
+                else SignatureCorroborator(ontology, store=() if dry_run else stores_of(sinks))
             ),
             "scorer": _given(self.scorer, EvidenceScorer),
             "gate": self.gate if self.gate is not None else VerdictGate(schema=True),
@@ -846,6 +902,15 @@ class _Texts:
             else:
                 found.update({doc.id: doc for doc in self.by_name.get(name, ())})
         return sorted(found.values(), key=lambda doc: self.order[doc.id])
+
+
+def _written(
+    report: ValidationReport, kg: KnowledgeGraph, writes: Mapping[str, Mapping[str, Any]]
+) -> tuple[ValidationReport, KnowledgeGraph]:
+    """The report and the graph's stats with each sink's write report, once all have written."""
+    report = report.model_copy(update={"writes": {k: dict(v) for k, v in writes.items()}})
+    told = {"writes": report.writes, "validation": report.model_dump(mode="json")}
+    return report, kg.model_copy(update={"stats": {**kg.stats, **told}})
 
 
 def _job_spent(stages: Mapping[str, Any], before: _Before) -> dict[str, Any]:
