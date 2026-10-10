@@ -121,6 +121,7 @@ jobs:
             tests/test_store_lookup.py \
             tests/test_support.py \
             tests/test_store_merge.py \
+            tests/test_reconcile.py \
             -k live_neo4j -rA --junitxml=live-neo4j.xml
           python3 - <<'EOF'
           import xml.etree.ElementTree as ET
