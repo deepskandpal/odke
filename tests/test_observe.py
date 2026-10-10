@@ -28,6 +28,7 @@ from openodke.llm import ModelRoles, ModelSpec
 from openodke.llm.base import Completion, Message, ProviderError
 from openodke.llm.testing import RecordedClient
 from openodke.loaders import DirectoryLoader
+from openodke.manifest import read_manifest
 from openodke.observe import KEYS, JobCounts, Observer, configure_logs
 from openodke.sinks.jsonl import JsonlSink
 from openodke.validator import ValidationReport, Validator
@@ -144,6 +145,39 @@ def test_the_validators_job_counts_are_its_reports_and_the_queue_is_review(
     assert end["cost"]["calls"] == report.calls == 4
     assert JobCounts().model_dump() == dict.fromkeys(COUNTED, 0)
     assert ValidationReport().job.review == 0
+
+
+def test_the_manifest_records_what_the_logs_report(
+    example: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One run, one validation, one grounding: each manifest names its log stream and agrees."""
+    result = runner.invoke(app, ["run", str(example / "odke.yaml"), "--log-format", "json"])
+    assert result.exit_code == 0, result.output
+    manifests = [read_manifest(example / "out")]
+    streams = [_events(result.stderr)]
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "recorded.json").write_text(
+        json.dumps([{"match": "Claim:", "response": {"verdict": "supported"}}])
+    )
+    (tmp_path / "models.yaml").write_text("models:\n  replay:\n    ground: recorded.json\n")
+    facts = ["--facts", str(TRIPLES / "triples.jsonl"), "--texts", str(TRIPLES / "texts")]
+    common = [*facts, "--config", "models.yaml", "--log-format", "json"]
+    for command, out in (("validate", "v"), ("ground", "g")):
+        result = runner.invoke(app, [command, *common, "-o", out])
+        assert result.exit_code == 0, result.output
+        manifests.append(read_manifest(tmp_path / out))
+        streams.append(_events(result.stderr))
+
+    for manifest, events in zip(manifests, streams, strict=True):
+        end = _one(events, "job.end")
+        assert manifest.run == end["run"] and {e["run"] for e in events} == {manifest.run}
+        assert manifest.command == end["command"]
+        assert manifest.job == end["counts"]
+        assert manifest.spent == end["cost"]
+        assert manifest.counts["documents" if manifest.command != "ground" else "rows"] == (
+            end["documents"] if manifest.command != "ground" else end["counts"]["facts_in"]
+        )
 
 
 def test_odke_validate_and_odke_ground_log_the_counts_they_print(

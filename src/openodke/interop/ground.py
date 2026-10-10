@@ -211,12 +211,14 @@ def ground_manifest(
     *,
     ontology: Ontology | None = None,
     grounder: Grounder | None = None,
+    run: str | None = None,
 ) -> RunManifest:
     """The run manifest of one `ground_graph` call, finished now (#160).
 
     `rows` and `documents` are what was grounded, and `grounder` the model
-    grounder that was asked, whose spend the manifest keeps. `odke ground`
-    writes it beside `facts.jsonl` and `summary.json`.
+    grounder that was asked, whose spend the manifest keeps. `run` is the id
+    the job's log events carry. `odke ground` writes it beside `facts.jsonl`
+    and `summary.json`.
     """
     summary = grounded.summary
     counts = {
@@ -240,6 +242,8 @@ def ground_manifest(
         stopped=summary.stopped,
         failed=summary.failed,
         dry_run=summary.dry_run,
+        run=run,
+        job=summary.job.model_dump(),
     )
 
 

@@ -19,9 +19,13 @@ moves. So every run writes one manifest: `odke run`, `odke validate`,
   in (a triples file's rows, say) as a count and a hash, and `hash`, one over
   all of it;
 - `cache` and `budget`, `started_at` and `ended_at`;
-- `counts`, `spent`, and the `stopped` and `failed` summaries.
+- `counts`, `spent`, and the `stopped` and `failed` summaries;
+- `run`, the id every log event of the run carries, and `job`, the counts its
+  `job.end` event logs (`openodke.observe`), so a manifest and a log stream
+  can be joined, and say the same.
 
-Two runs with the same inputs write the same manifest but for its two times.
+Two runs with the same inputs write the same manifest but for its two times
+and its run id.
 
 The manifest is `manifest.json`. A JSONL sink already writes one there, with
 the graph's counts and stats; the run adds its fields beside them after the
@@ -172,6 +176,8 @@ class RunManifest(Frozen):
     manifest_version: int = FORMAT
     command: Command
     dry_run: bool = False
+    # The id every log event of this run carries (`openodke.observe`).
+    run: str | None = None
     config: dict[str, Any] = Field(default_factory=dict)
     config_hash: str
     # Where the config's relative paths resolve, and the file it was read from,
@@ -189,6 +195,8 @@ class RunManifest(Frozen):
     started_at: datetime
     ended_at: datetime
     counts: dict[str, int] = Field(default_factory=dict)
+    # Facts in, out, refused, merged, linked and sent to review: what `job.end` logs.
+    job: dict[str, int] = Field(default_factory=dict)
     spent: dict[str, Any] = Field(default_factory=dict)
     stopped: dict[str, Any] | None = None
     failed: dict[str, str] = Field(default_factory=dict)
@@ -423,6 +431,8 @@ class Recorder:
         stopped: Mapping[str, Any] | None = None,
         failed: Mapping[str, str] | None = None,
         dry_run: bool = False,
+        run: str | None = None,
+        job: Mapping[str, int] | None = None,
     ) -> RunManifest:
         """The manifest, ended now. An ontology with no types and no predicates is none."""
         schema = (
@@ -432,6 +442,7 @@ class Recorder:
         return RunManifest(
             command=self.command,
             dry_run=dry_run,
+            run=run,
             config=config,
             config_hash=digest(config),
             config_file=self.config_file,
@@ -446,6 +457,7 @@ class Recorder:
             started_at=self.started_at,
             ended_at=now(),
             counts={str(k): int(v) for k, v in (counts or {}).items()},
+            job={str(k): int(v) for k, v in (job or {}).items()},
             spent=canonical(dict(spent or {})),
             stopped=canonical(dict(stopped)) if stopped else None,
             failed={str(k): str(v) for k, v in (failed or {}).items()},
