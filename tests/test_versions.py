@@ -32,6 +32,7 @@ from openodke import (
 from openodke.cli.main import app
 from openodke.corroborate import ONTOLOGY, SCHEMA_SLICE, checked_by, checked_under
 from openodke.eval.spans import load_facts
+from openodke.manifest import read_manifest
 from openodke.sinks import neo4j as neo4j_module
 from openodke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink
 from openodke.sinks.jsonl import JsonlSink
@@ -142,11 +143,19 @@ class _Supported:
 
 
 def test_odke_run_stamps_every_fact_and_the_model_path_the_slice_it_saw(example: Path) -> None:
-    result = runner.invoke(app, ["run", str(example / "odke.yaml")])
+    result = runner.invoke(app, ["run", str(example / "odke.yaml"), "--log-format", "json"])
     assert result.exit_code == 0, result.output
     facts = load_facts(example / "out")
     ontology = Ontology.from_json(example / "ontology.json")
     assert {checked_by(fact) for fact in facts} == {ontology.fingerprint}
+    # The stamps, the run manifest and the job's last log event name one run.
+    manifest = read_manifest(example / "out")
+    events = [json.loads(line) for line in result.stderr.splitlines() if line.startswith("{")]
+    (end,) = [event for event in events if event["event"] == "job.end"]
+    assert manifest.ontology_hash == ontology.fingerprint
+    assert manifest.job == end["counts"] and manifest.run == end["run"]
+    assert manifest.spent == end["cost"]
+    assert end["counts"]["facts_out"] == len(checked_under(facts, manifest.ontology_hash))
     sliced = [fact for fact in facts if SCHEMA_SLICE in fact.qualifiers]
     # The facts the model extracted carry the slice it was shown for their subject's type.
     assert sliced and all(
