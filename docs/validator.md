@@ -190,6 +190,13 @@ The graph's `stats` carry the same report under `"validation"`, beside each
 stage's own counts under `"stages"`, so a JSONL sink's `manifest.json` keeps
 it too.
 
+`report.manifest` is the job's [run manifest](run.md#the-run-manifest): the
+Validator's stages, the models and prompts, the ontology's fingerprint, the
+texts' and the facts' hashes, the times and the counts. Each `JsonlSink` gets
+it in its `manifest.json`, and `Validator(manifest=path)` writes it there too.
+It is not in the report's JSON, and two reports of one job are equal without
+it.
+
 The name `openodke.Validator` meant the gate until 1.0.0. That alias is gone.
 `openodke.Gate` is the gate, and `openodke.stages.Validator` still names it,
 with a warning ([DECISIONS #26](decisions.md#26)).
