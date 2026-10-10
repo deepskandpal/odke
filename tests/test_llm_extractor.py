@@ -119,6 +119,16 @@ def test_sound_facts_survive_and_every_fault_is_dropped_and_recorded(people: Ont
     ]
     invented = {r.quote for r in extractor.rejections if r.reason == "quote not in the passage"}
     assert invented == {"born on 11 December 1815", "Augusta Ada King", "ada lovelace"}
+    # Each keeps the candidate as the model wrote it, as far as it got.
+    said = {(r.reason, r.subject, r.predicate, r.value) for r in extractor.rejections}
+    assert said == {
+        ("predicate not in the snippet", "Ada Lovelace", "spouse", "William King"),
+        ("quote not in the passage", "Ada Lovelace", "full_name", "Ada Lovelace"),
+        ("quote not in the passage", "Ada Lovelace", "full_name", "Augusta Ada King"),
+        ("quote not in the passage", "Ada Lovelace", "birth_date", "1815-12-11"),
+        ("type not in the prompt: 'City'", "London", None, None),
+        ("unknown polarity", "Ada Lovelace", "employer", "Babbage & Co"),
+    }
     # An extraction that yielded facts is silent: nothing counted, nothing kept.
     assert (extractor.empty_extractions, extractor.malformed) == (0, [])
 

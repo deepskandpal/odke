@@ -103,13 +103,20 @@ class MalformedReply:
 
 @dataclass(frozen=True, slots=True)
 class Rejection:
-    """A candidate the extractor refused, and why. A drop is a count, not a mystery."""
+    """A candidate the extractor refused, and why. A drop is a count, not a mystery.
+
+    `subject`, `predicate`, `value` and `quote` are the candidate as the model
+    wrote it, as far as it got before it was refused: a malformed one may have
+    none of them.
+    """
 
     doc_id: str
     chunk_index: int
     reason: str
     predicate: str | None = None
     quote: str | None = None
+    subject: str | None = None
+    value: Any = None
 
 
 def response_schema(snippets: Sequence[OntologySnippet]) -> dict[str, Any]:
@@ -561,7 +568,12 @@ class LLMExtractor:
         raw_type = entity.get("type")
         snippet = by_type.get(raw_type) if isinstance(raw_type, str) else None
         if snippet is None:
-            self._reject(ctx.chunk, f"type not in the prompt: {raw_type!r}")
+            named = entity.get("name")
+            self._reject(
+                ctx.chunk,
+                f"type not in the prompt: {raw_type!r}",
+                subject=named if isinstance(named, str) else None,
+            )
             return []
         name, items = entity.get("name"), entity.get("facts")
         if not isinstance(name, str) or not name.strip() or not isinstance(items, list):
@@ -591,20 +603,21 @@ class LLMExtractor:
         predicate = allowed.get(raw_predicate) if isinstance(raw_predicate, str) else None
         label = str(raw_predicate) if raw_predicate is not None else None
         quoted = quote if isinstance(quote, str) else None
+        said = {"subject": subject.label or subject.key, "value": value}
         if predicate is None:
-            self._reject(ctx.chunk, "predicate not in the snippet", label, quoted)
+            self._reject(ctx.chunk, "predicate not in the snippet", label, quoted, **said)
             return None
         if value is None or value == "" or isinstance(value, dict | list):
-            self._reject(ctx.chunk, "no value", label, quoted)
+            self._reject(ctx.chunk, "no value", label, quoted, **said)
             return None
         polarity = _polarity(item.get("polarity"))
         if polarity is None:
-            self._reject(ctx.chunk, "unknown polarity", label, quoted)
+            self._reject(ctx.chunk, "unknown polarity", label, quoted, **said)
             return None
         start = _locate(ctx.chunk.text, quoted, item.get("start")) if quoted else None
         span = ctx.span(start, quoted) if start is not None and quoted else None
         if span is None or start is None or quoted is None:
-            self._reject(ctx.chunk, "quote not in the passage", label, quoted)
+            self._reject(ctx.chunk, "quote not in the passage", label, quoted, **said)
             return None
         mention = _mention(ctx, item.get("mention"), quoted, start)
         raw_qualifiers = item.get("qualifiers")
@@ -636,6 +649,9 @@ class LLMExtractor:
         reason: str,
         predicate: str | None = None,
         quote: str | None = None,
+        *,
+        subject: str | None = None,
+        value: Any = None,
     ) -> None:
         rejection = Rejection(
             doc_id=chunk.doc_id,
@@ -643,6 +659,8 @@ class LLMExtractor:
             reason=reason,
             predicate=predicate,
             quote=quote,
+            subject=subject,
+            value=value,
         )
         with self._lock:
             self.rejections.append(rejection)
