@@ -32,6 +32,7 @@ from openodke import (
 from openodke.cli.main import app
 from openodke.corroborate import ONTOLOGY, SCHEMA_SLICE, checked_by, checked_under
 from openodke.eval.spans import load_facts
+from openodke.sinks import neo4j as neo4j_module
 from openodke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink
 from openodke.sinks.jsonl import JsonlSink
 from openodke.sinks.neo4j import (
@@ -328,3 +329,58 @@ class _Listed:
 
     def extract(self, chunk: Any, ontology: Ontology) -> list[Fact]:
         return list(self.facts) if chunk.index == 0 else []
+
+
+# --------------------------------------------------------------------------- #
+# odke ontology diff --store
+# --------------------------------------------------------------------------- #
+
+
+def _write(path: Path, ontology: Ontology) -> Path:
+    path.write_text(ontology.model_dump_json(), encoding="utf-8")
+    return path
+
+
+def test_the_diff_says_which_stored_facts_the_old_ontology_checked(tmp_path: Path) -> None:
+    JsonlSink(tmp_path / "store", merge=True).write(_graph(OLD))
+    JsonlSink(tmp_path / "store", merge=True).write(
+        KnowledgeGraph(facts=(FACTS[1].model_copy(update={"subject": ADA}),))
+    )
+    old, new = _write(tmp_path / "old.json", OLD), _write(tmp_path / "new.json", NEW)
+    result = runner.invoke(
+        app, ["ontology", "diff", str(old), str(new), "--store", str(tmp_path / "store")]
+    )
+    assert result.exit_code == 0, result.output
+    assert "breaking   changed predicates.employer.cardinality" in result.output
+    assert f"old           {OLD.fingerprint[:12]}: 2 stored facts checked under it" in result.output
+    assert f"new           {NEW.fingerprint[:12]}: 0 stored facts checked under it" in result.output
+    assert "other         1 stored fact checked under neither, or never" in result.output
+    assert "  p:ada —employer→ c:acme  [" in result.output
+
+    store = str(tmp_path / "store")
+    same = runner.invoke(app, ["ontology", "diff", str(old), str(old), "--store", store])
+    assert "the same schema: nothing to validate again" in same.output
+    empty = runner.invoke(app, ["ontology", "diff", str(old), str(new), "--store", str(tmp_path)])
+    assert empty.exit_code == 2 and "holds no facts.jsonl" in empty.output
+
+
+def test_the_diff_reads_a_neo4j_store_through_its_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = FakeDriver(
+        {
+            SHOW_INDEXES: [_index("employer"), _index("hq")],
+            "db.relationshipTypes": [{"name": "employer"}, {"name": "hq"}],
+        }
+    )
+    monkeypatch.setattr(neo4j_module, "_connect", lambda uri, auth: driver)
+    monkeypatch.setenv("NEO4J_PASSWORD", "unused")
+    old, new = _write(tmp_path / "old.json", OLD), _write(tmp_path / "new.json", NEW)
+    result = runner.invoke(
+        app, ["ontology", "diff", str(old), str(new), "--store", "bolt://example.invalid:7687"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "0 stored facts checked under it" in result.output
+    sent = [params["fingerprint"] for mode, _, params in driver.calls if mode == "read"]
+    assert sent == [OLD.fingerprint] * 2 + [NEW.fingerprint] * 2
+    assert driver.closed
