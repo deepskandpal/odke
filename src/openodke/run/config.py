@@ -48,7 +48,8 @@ A run with neither writes it beside this file as `<name>.manifest.json`.
 
 `batch_size` streams the run (#158, DECISIONS #45): that many documents are
 loaded, run through every stage and written, then the next, so the run's
-memory is one micro-batch's. Left out, the run is one batch.
+memory is one micro-batch's. Left out, the run is one batch. It is part of the
+config a run manifest hashes, so a replay of a streamed run streams.
 
 `gate` was `validator` in 0.2 (DECISIONS #26). The old key still works, with a
 warning, until 1.0.0.

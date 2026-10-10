@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from openodke import Document, Entity, Evidence, Fact, KnowledgeGraph, Span, Validator
@@ -22,10 +23,14 @@ from openodke.interop import to_fact
 from openodke.interop.triples import TripleRow
 from openodke.llm.budget import Budget, Ledger
 from openodke.llm.testing import RecordedClient
+from openodke.manifest import read_manifest
+from openodke.observe import configure_logs
 from openodke.run import ConfigError, StageSpec, build, execute, load_config
 from openodke.sinks import JsonlSink
 from openodke.stream import KEPT, Totals, by_text, micro_batches, shape, streams, write
 from openodke.types import EntityLink, LinkKind
+from test_manifest import _facts, _timeless
+from test_observe import _events, _one
 from test_validator import PLACES, RECORDED, ROWS, A, B
 
 ADA = Entity(key="p:ada", type="Person", label="Ada")
@@ -363,6 +368,125 @@ def test_the_commands_take_batch_size_and_a_bad_row_is_named_mid_stream(
     result = CliRunner().invoke(app, args)
     assert result.exit_code == 2
     assert "bad.jsonl:6: not JSON" in result.output
+
+
+# --------------------------------------------------------------------------- #
+# The run manifest, the job's events, and a replay
+# --------------------------------------------------------------------------- #
+
+
+def _streamed_config(example: Path, size: int = 2) -> Path:
+    """The example's config with `batch_size`, beside it."""
+    data = yaml.safe_load((example / "odke.yaml").read_text(encoding="utf-8"))
+    path = example / "streamed.yaml"
+    path.write_text(yaml.safe_dump({**data, "batch_size": size}), encoding="utf-8")
+    return path
+
+
+def test_a_streamed_manifest_holds_the_summed_run_and_the_inputs_one_batch_hashes(
+    example: Path,
+) -> None:
+    whole = execute(load_config(example / "odke.yaml"))
+    streamed = execute(load_config(_streamed_config(example)))
+    one, many = whole.manifest, streamed.manifest
+    assert one is not None and many is not None
+    # Every micro-batch's documents, hashed into the digest one batch takes.
+    assert many.inputs == one.inputs
+    # batch_size is part of the run, and of its hash.
+    assert (many.config["batch_size"], one.config["batch_size"]) == (2, None)
+    assert many.config_hash != one.config_hash
+    # The counts are the micro-batches' summed.
+    assert many.counts["batches"] == streamed.stats["batches"] > 1 and "batches" not in one.counts
+    for key in ("documents", "chunks", "refused", "empty_extractions"):
+        assert many.counts[key] == one.counts[key], key
+    assert many.counts["facts"] == streamed.stats["graph"]["facts"] >= one.counts["facts"]
+    assert many.spent == one.spent
+    # And so are the job's: every candidate the micro-batches took in.
+    assert many.job == streamed.job.model_dump() and streamed.job.facts_in == whole.job.facts_in
+    written = read_manifest(example / "out")
+    assert written.counts == many.counts and written.inputs == many.inputs
+    on_disk = json.loads((example / "out" / "manifest.json").read_text(encoding="utf-8"))
+    lines = (example / "out" / "facts.jsonl").read_text(encoding="utf-8").splitlines()
+    assert on_disk["facts"] == len(lines) == many.counts["facts"]
+
+
+def test_a_streamed_validation_hashes_its_rows_as_one_batch_does(tmp_path: Path) -> None:
+    rows = tmp_path / "rows.jsonl"
+    # Out of order on purpose: a, b, a, a, b.
+    rows.write_text("".join(json.dumps(row) + "\n" for row in ROWS), encoding="utf-8")
+    _, whole = Validator(PLACES, client=RecordedClient(RECORDED)).validate(rows, [A, B])
+    _, streamed = Validator(PLACES, client=RecordedClient(RECORDED)).validate(
+        rows, [A, B], batch_size=1
+    )
+    assert whole.manifest is not None and streamed.manifest is not None
+    assert streamed.manifest.inputs == whole.manifest.inputs
+    assert streamed.manifest.inputs.facts is not None
+    assert streamed.manifest.inputs.facts.rows == 5
+    assert streamed.manifest.counts["batches"] == streamed.batches
+    assert streamed.manifest.job == streamed.job.model_dump()
+    assert streamed.manifest.config["batch_size"] == 1
+
+
+def test_a_streamed_run_is_replayed_streamed_from_its_manifest(example: Path) -> None:
+    runner = CliRunner()
+    assert runner.invoke(app, ["run", str(_streamed_config(example))]).exit_code == 0
+    first = json.loads((example / "out" / "manifest.json").read_text(encoding="utf-8"))
+    facts = _facts(example / "out")
+
+    result = runner.invoke(app, ["run", "--from-manifest", str(example / "out")])
+    assert result.exit_code == 0, result.output
+    assert f"config {first['config_hash'][:12]}" in result.output
+    assert f"in {first['counts']['batches']} micro-batches" in result.output
+    second = json.loads((example / "out" / "manifest.json").read_text(encoding="utf-8"))
+    assert _timeless(second) == _timeless(first) and _facts(example / "out") == facts
+
+    # The micro-batch size is part of the run, so a replay takes no other.
+    result = runner.invoke(
+        app, ["run", "--from-manifest", str(example / "out"), "--batch-size", "3"]
+    )
+    assert result.exit_code == 2 and "--batch-size" in result.output
+    # A changed text is refused before the first micro-batch is written.
+    note = example / "corpus" / "notes" / "corvid-analytics.md"
+    note.write_text(note.read_text(encoding="utf-8") + "\nCorvid moved.\n", encoding="utf-8")
+    result = runner.invoke(app, ["run", "--from-manifest", str(example / "out")])
+    assert result.exit_code == 2
+    assert "documents changed: corpus/notes/corvid-analytics.md" in result.output
+    assert json.loads((example / "out" / "manifest.json").read_text(encoding="utf-8")) == second
+
+
+def test_a_streamed_jobs_manifest_and_its_log_events_say_the_same(
+    example: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One streamed run and one streamed validation: job.end is the summed run, as the manifest."""
+    runner = CliRunner()
+    args = ["run", str(example / "odke.yaml"), "--batch-size", "2", "--log-format", "json"]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    manifests, streams = [read_manifest(example / "out")], [_events(result.stderr)]
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "recorded.json").write_text(
+        json.dumps([{"match": "Claim:", "response": {"verdict": "supported"}}])
+    )
+    (tmp_path / "models.yaml").write_text("models:\n  replay:\n    ground: recorded.json\n")
+    triples = Path(__file__).parent.parent / "examples" / "triples"
+    args = ["validate", "--facts", str(triples / "triples.jsonl"), "--texts"]
+    args += [str(triples / "texts"), "--config", "models.yaml", "-o", "v"]
+    result = runner.invoke(app, [*args, "--batch-size", "2", "--log-format", "json"])
+    assert result.exit_code == 0, result.output
+    manifests.append(read_manifest(tmp_path / "v"))
+    streams.append(_events(result.stderr))
+    configure_logs("text")
+
+    for manifest, events in zip(manifests, streams, strict=True):
+        end = _one(events, "job.end")
+        _one(events, "job.start")
+        assert manifest.run == end["run"] and {e["run"] for e in events} == {manifest.run}
+        assert manifest.job == end["counts"] and manifest.spent == end["cost"]
+        assert manifest.counts["documents"] == end["documents"]
+        # One write a micro-batch, each its own event.
+        writes = [e for e in events if e["event"] == "stage" and e["stage"] == "write"]
+        assert len(writes) == manifest.counts["batches"] > 1
 
 
 # --------------------------------------------------------------------------- #
