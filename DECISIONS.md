@@ -1050,6 +1050,53 @@ fact whose entity was never extracted counts as cross-sentence. Gains overlap,
 so they never add. And the inverse replay matches a partner on the triple,
 which is what Re-DocRED scores but not every detail a labelled `Fact` carries.
 
+### 39. The fact-equivalence judge reads only the pre-filter's pairs, in both orders, and its score sits beside the strict one
+
+A scorer compares strings after a normaliser. "Gabby Logan" for "Gabrielle
+Nicole Logan", or "track and field athlete" for "athletics competitor", is one
+miss and one false positive, and no normaliser can know otherwise without the
+passage. A model can (#143). Three things about how are decided here.
+
+**A deterministic pre-filter decides which pairs reach it.** A gold fact the
+scorer counted missed and a prediction it left unmatched, in one document, make
+a pair when they have the same relation and polarity, one end equal after
+normalisation, and the other end not exactly equal as written. A name is
+compared by `name_key` against every name the gold end goes by; a value by
+`normalise_value`. Nothing else is asked. A pair with only the relation in
+common is not a question of wording, and two identical triples are the
+scorer's question, not the judge's. So the judge sets one bucket, and its bill
+grows with the near misses, not with misses times predictions. The diagnosis's
+surface-form bucket (#140) reads the same pre-filter, so the bucket and the
+lenient score count the same pairs.
+
+**The swap rule, as the pair judge's (#34).** Each pair is asked with the gold
+fact first and with the prediction first. "same" counts only when both orders
+say same, and anything else counts nothing. The gold fact is the reference, as
+in reference-guided judging (Zheng et al. 2023). A quantity, date or number
+must have one value, EnterpriseRAG-Bench's correctness rule (arXiv
+2605.05253): "1988" is not "27 October 1988", however the facts are worded.
+
+**Lenient beside strict, never instead.** A pair judged the same moves one miss
+and one false positive to a hit, at most once per gold fact and once per
+prediction. Each row's lenient precision, recall and F1 sit beside its strict
+ones in the report's `lenient` section (schema 1.2), resampled on the same
+draws. The strict number is the one that compares across runs and papers; the
+lenient one says how much of the gap is wording. Like adjudication (#36), it
+trusts a model on exactly the facts in question, so label set F measures that
+trust: 300 pairs the pre-filter made from the published comparison, labelled
+blind, 100 dev and 200 gate by document. A sheet never says which fact is
+gold, and each item's order is drawn from its id.
+
+The prompt is `fact_equiv@1` and its user message `fact_equiv.user@1` (#27).
+It asks the `ground` role's model, the same size of question, metered as the
+stage `judge`.
+
+*Cost:* two calls a pair. Until F's calibration card exists, the lenient score
+is an unvalidated number printed beside a validated one. And the pre-filter is
+a normaliser's: a pair whose ends `name_key` matches on neither side never
+reaches the judge, so the lenient score is a floor on what wording costs, not a
+measure of it.
+
 ### 43. A batch's own look-alikes are one entity unless something keeps them apart
 
 #16 let only a proof re-key, and #34 made the judge's "same" a link. Issue
