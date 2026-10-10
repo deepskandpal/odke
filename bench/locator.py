@@ -88,7 +88,7 @@ class System:
             p.stem: Document(id=p.stem, text=p.read_text(encoding="utf-8"))
             for p in sorted((folder / "docs").glob("*.txt"))
         }
-        rows = read_triples(folder / "facts.jsonl")
+        rows = list(read_triples(folder / "facts.jsonl"))
         self.facts = [to_fact(row, self.docs[row.doc], ontology) for row in rows]
         self.doc_of = [row.doc for row in rows]
         kept = _predictions(folder / "predictions" / "grounding.jsonl")
