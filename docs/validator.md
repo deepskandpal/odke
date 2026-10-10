@@ -143,9 +143,7 @@ from pathlib import Path
 from openodke.sinks import JsonlSink
 
 store = JsonlSink(Path(tempfile.mkdtemp()), merge=True)
-_, streamed = Validator(places, client=client, sinks=[store]).validate(
-    rows, [a, b], batch_size=1
-)
+_, streamed = Validator(places, client=client, sinks=[store]).validate(rows, [a, b], batch_size=1)
 # a, b, a a, b: each micro-batch ends where its rows' text changes.
 print(streamed.batches, streamed.restated)
 # 4 2

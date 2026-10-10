@@ -74,8 +74,12 @@ entity.
   rows and the other a warning. Give such texts ids.
 - A document's triples all arrive with its first chunk, so leave the chunker
   out.
-- `read_triples(path)` reads a file into `TripleRow`s;
+- `read_triples(path)` reads a file into `TripleRow`s, a line at a time as
+  they are asked for (an iterator: `list(...)` reads it all);
   `to_fact(row, doc, ontology)` makes one `Fact`.
+- A stage made from a file checks every row when it is made and holds none
+  until they are asked for; `feed(rows)` swaps in the next micro-batch's,
+  which is how the Validator [streams](run.md#streaming) a file.
 
 When a graph comes back smaller than the file, check `TriplesExtractor.stats`.
 It counts `rows` by evidence (`cited`, `quoted`, `quote_not_found`, `context`),
