@@ -17,7 +17,9 @@ whether the orders disagreed.
 
 **What a decision makes.** "same" is a `SIMILAR` link whose reason names the
 judge, its prompt and its model, never a merge: only a proof re-keys
-(DECISIONS #16, #31). "different" is a `DIFFERENT` link. Unsure makes no link,
+(DECISIONS #16, #31). The exception is a resolver normalising its batch, which
+merges two of the batch's own mentions the judge calls the same (#43).
+"different" is a `DIFFERENT` link. Unsure makes no link,
 and goes to the review queue when there is one.
 
 **The review queue** is a JSONL file of `odke label make pair` rows, appended
@@ -218,8 +220,8 @@ def parse_answer(completion: Completion) -> Answer:
     )
 
 
-def context_around(text: str, start: int, end: int) -> str:
-    """The sentence holding `[start, end)` and one sentence either side, on one line.
+def context_around(text: str, start: int, end: int, *, around: int = 1) -> str:
+    """The sentence holding `[start, end)` and `around` sentences either side, on one line.
 
     Sentences are the chunker's (`openodke.chunking.sentences`). A window
     longer than `MAX_CONTEXT` is cut to that many characters around the
@@ -231,7 +233,8 @@ def context_around(text: str, start: int, end: int) -> str:
     at = next((k for k, (s, e) in enumerate(bounds) if s <= start < e), None)
     if at is None:
         at = min(range(len(bounds)), key=lambda k: abs(bounds[k][0] - start))
-    lo, hi = bounds[max(0, at - 1)][0], bounds[min(len(bounds) - 1, at + 1)][1]
+    lo = bounds[max(0, at - around)][0]
+    hi = bounds[min(len(bounds) - 1, at + around)][1]
     if hi - lo > MAX_CONTEXT:
         half = (MAX_CONTEXT - (end - start)) // 2
         lo, hi = max(lo, start - half), min(hi, end + half)
@@ -257,6 +260,30 @@ def _occurrence(names: Sequence[str], text: str, near: int) -> tuple[int, int] |
         ]
         if found:
             return min(found, key=lambda span: (abs(span[0] - near), span[0]))
+    return None
+
+
+def cited_context(
+    entity: Entity, fact: Fact, documents: Mapping[str, Document], *, around: int = 1
+) -> str | None:
+    """Where `fact` mentions `entity`: its sentence and `around` either side, or None.
+
+    The first evidence whose document is in `documents` gives it, at the
+    entity's name nearest the span; without the document, the span's quote
+    stands in.
+    """
+    for evidence in fact.evidence:
+        doc = documents.get(evidence.doc_id)
+        span = evidence.span
+        if doc is not None:
+            near = span.start if span is not None else 0
+            at = _occurrence(_names(entity), doc.text, near)
+            if at is None and span is not None:
+                at = (span.start, span.end)
+            if at is not None:
+                return context_around(doc.text, *at, around=around) or None
+        elif span is not None and span.quote:
+            return _line(span.quote)[:MAX_CONTEXT]
     return None
 
 
@@ -411,19 +438,7 @@ class PairJudge:
         return out
 
     def _context(self, entity: Entity, fact: Fact) -> str | None:
-        for evidence in fact.evidence:
-            doc = self.documents.get(evidence.doc_id)
-            span = evidence.span
-            if doc is not None:
-                near = span.start if span is not None else 0
-                at = _occurrence(_names(entity), doc.text, near)
-                if at is None and span is not None:
-                    at = (span.start, span.end)
-                if at is not None:
-                    return context_around(doc.text, *at) or None
-            elif span is not None and span.quote:
-                return _line(span.quote)[:MAX_CONTEXT]
-        return None
+        return cited_context(entity, fact, self.documents)
 
     # ----------------------------------------------------------------------- #
     # Deciding
@@ -683,6 +698,7 @@ __all__ = [
     "PairDecision",
     "PairJudge",
     "build_messages",
+    "cited_context",
     "context_around",
     "judge_stop",
     "link_for",
