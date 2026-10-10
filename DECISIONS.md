@@ -1299,3 +1299,45 @@ too; the `document` and `document.failed` events carry those. A model call
 names its stage and not its document. A stage with a client of its own, the
 Validator's pair judge say, sends no call events, though its spend is in
 `job.end`.
+
+### 42. A fact names the ontology that last checked it, as a stamp and not a field
+
+A schema changes under a live graph, and after a breaking change the
+question is which stored facts the old schema checked (#163). An ontology has
+a fingerprint, the hash of its types and predicates, and a fact now carries
+the one it was checked under, `odke.ontology`. A fact the model extracted also
+carries the fingerprint of the slice of the schema it was shown,
+`odke.schema_slice`.
+
+Four calls come with it.
+
+**A reserved qualifier, not a field.** `Fact` already has a namespaced home for
+what a stage did (`corroborate/provenance.py`): a stamp is never in the
+signature, and every sink already writes qualifiers. A field would have meant
+a change to the frozen type and to every sink's writer (#4). As a stamp, the
+JSONL file, the Neo4j relationship, the Cypher script, the CSV, the NetworkX
+edge and the RDF statement all carry it with no sink changed.
+
+**Stamped by the pipeline, at the gate, every time.** The gate is the last
+check, and the pipeline holds the ontology it ran. So every fact the gate lets
+through is stamped, by `odke run`, the Validator and `odke ground` alike, and a
+fact checked again carries the latest ontology. That is the one a reader
+needs: a fact the new schema has checked is not stale, whatever wrote it
+first. An ontology with no types and no predicates checks nothing, and
+stamps nothing.
+
+**The content, not the label.** The fingerprint leaves out `name`, `version`
+and the review fields. Two files that check every fact alike share it. A
+version string bumped with nothing changed does not make the store look
+stale, and a schema edited without a bump does.
+
+**Found through an index, never a scan.** `bootstrap()` adds a range index on
+`odke.ontology` per predicate. `Neo4jSink.checked_under` names that index in
+its query, and does not read a type that has none (#31). `odke ontology diff
+--store` puts the changes beside the stored facts each ontology checked.
+
+*Cost:* 64 characters more on every fact, and one more index per predicate. A
+fact written before 1.0 carries no stamp, and is checked under neither
+ontology until it is validated again. The slice is the one shown for the
+subject's type: a fact merged from several extractions keeps the slice of
+the one that ranked first.
