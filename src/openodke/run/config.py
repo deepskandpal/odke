@@ -57,7 +57,7 @@ tenant (#159, DECISIONS #44): two tenants' identical facts are two facts, and
 a lookup, a merge or a retraction for one never reaches the other.
 
 `gate` was `validator` in 0.2 (DECISIONS #26). The old key still works, with a
-warning, until 1.0.0.
+warning, until 2.0.0 (DECISIONS #48).
 """
 
 from __future__ import annotations
@@ -262,6 +262,12 @@ class StagesConfig(_Strict):
         # 3: past pydantic's `model_validate`, to the line that called it.
         deprecated("stages.validator", "stages.gate", stacklevel=3)
         return {("gate" if key == "validator" else key): item for key, item in value.items()}
+
+    @property
+    def validator(self) -> StageSpec | None:
+        """The 0.2 name of `gate`; reading it warns until 2.0.0 (DECISIONS #26, #48)."""
+        deprecated("StagesConfig.validator", "StagesConfig.gate")
+        return self.gate
 
     @model_validator(mode="before")
     @classmethod

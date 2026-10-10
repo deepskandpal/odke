@@ -422,3 +422,26 @@ class KnowledgeGraph(Frozen):
 
     def __len__(self) -> int:
         return len(self.facts)
+
+
+# `Frozen` is the base every model here shares, and stays out: it is not a
+# promise (DECISIONS #48).
+__all__ = [
+    "Chunk",
+    "Document",
+    "Entity",
+    "EntityLink",
+    "Evidence",
+    "Fact",
+    "GroundingVerdict",
+    "KnowledgeGraph",
+    "LinkKind",
+    "Polarity",
+    "Resolution",
+    "RouteVerdict",
+    "SourceTier",
+    "Span",
+    "SpanOrigin",
+    "Support",
+    "ValidationVerdict",
+]

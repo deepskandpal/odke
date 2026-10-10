@@ -20,7 +20,7 @@ handed its documents, so they are not among the thirteen.
 
 The tenth stage was `Validator` in 0.2. It is `Gate` now, because "Validator"
 names the whole verification layer (DECISIONS #26); `Validator` and
-`PassThroughValidator` still work here, with a warning, until 1.0.0.
+`PassThroughValidator` still work here, with a warning, until 2.0.0 (#48).
 """
 
 from __future__ import annotations

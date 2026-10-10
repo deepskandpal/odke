@@ -1,4 +1,4 @@
-"""The 0.2 home of the gate, kept so old imports still work until 1.0.0.
+"""The 0.2 home of the gate, kept so old imports still work until 2.0.0 (DECISIONS #48).
 
 `VerdictValidator` is now `openodke.gate.VerdictGate`: "Validator" names the
 whole verification layer, and the gate is one stage of it (DECISIONS #26).
