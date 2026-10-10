@@ -142,6 +142,20 @@ def test_a_streamed_coverage_report_keeps_the_first_documents_with_a_gap() -> No
     assert kept["uncovered"] == 3 * KEPT and len(kept["documents"]) == KEPT
 
 
+def test_the_resolvers_per_call_counts_are_summed_over_micro_batches() -> None:
+    """Its store lookup's and batch normalisation's counts describe one call each."""
+
+    class Resolver:
+        stats = {"store": {"looked_up": 2, "rekeyed": 1}, "batch": {"alike": 3, "merged": 2}}
+
+    totals = Totals()
+    for _ in range(3):
+        totals.add(KnowledgeGraph(), resolver=Resolver())
+    assert totals.store == {"looked_up": 6, "rekeyed": 3}
+    assert totals.resolver("batch") == {"alike": 9, "merged": 6}
+    assert Totals().resolver("batch") is None
+
+
 # --------------------------------------------------------------------------- #
 # The JSONL sink appends
 # --------------------------------------------------------------------------- #
