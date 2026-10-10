@@ -38,6 +38,12 @@ of a claim from a second source then adds that source to the stored fact's
 support list, and writes no second edge. A corroborator passed in merges with
 the stores it was given, and a dry run reads no sink.
 
+`validate(..., update=True)` says the texts are new versions of ones the
+store already cites (#116). Each is retracted from every sink that can
+retract a source first (`openodke.Reconciler`), so the facts the new version
+still states merge with the store again and regain its support, and the rest
+are left with less, or retired.
+
 `validate()` returns the graph and a `ValidationReport` of the job: facts in,
 refused, merged, linked and derived; the model calls, tokens and cost; the
 registered prompts sent; and the coverage report. A client held to a budget
@@ -72,6 +78,7 @@ from openodke.llm.budget import stopped_summary
 from openodke.llm.roles import ModelRoles
 from openodke.ontology import Ontology
 from openodke.pipeline import Pipeline
+from openodke.reconcile import Reconciler
 from openodke.stages import (
     Corroborator,
     FactLookup,
@@ -108,6 +115,8 @@ class ValidationReport(Frozen):
     merged: int = 0
     # Merged with a fact the store already held under its signature (#153).
     restated: int = 0
+    # With `update`: what retracting the old versions did first (#116).
+    retracted: dict[str, int] | None = None
     # Links the resolver proposed between entities, by kind.
     linked: int = 0
     links: dict[str, int] = Field(default_factory=dict)
@@ -135,6 +144,8 @@ class ValidationReport(Frozen):
 
     def render(self) -> str:
         lines = ["odke validate — dry run, no model called" if self.dry_run else "odke validate"]
+        if self.retracted is not None:
+            lines.append(_row("update", _retracted_line(self.retracted)))
         if self.stopped is not None:
             lines.append(_row("stopped", stopped_summary(self.stopped)))
         if self.failed:
@@ -253,6 +264,7 @@ class Validator:
         dry_run: bool = False,
         extractor: str = "triples",
         confidence: float = 0.5,
+        update: bool = False,
     ) -> Validated:
         """The whole layer over `facts` and the texts they cite, written to every sink.
 
@@ -260,6 +272,11 @@ class Validator:
         `TriplesExtractor` makes them, named `extractor` with `confidence` as
         their prior; `Fact`s are taken as they are, each with the text its
         first evidence cites. A dry run calls no model and writes nothing.
+
+        With `update`, each text is a new version of one the store already
+        cites under its id: it is retracted from the sinks first, so what the
+        new version no longer states loses that source. A dry run retracts
+        nothing.
         """
         if isinstance(facts, Fact) or isinstance(documents, Ontology):
             # It has a gate's method name, so code from before 1.0.0 that used
@@ -273,6 +290,9 @@ class Validator:
 
         docs = list(documents)
         source = _source(facts, docs, extractor=extractor, confidence=confidence)
+        retracted: dict[str, int] | None = None
+        if update and not dry_run:
+            retracted = Reconciler(self.sinks).delete([doc.id for doc in docs]).counts()
         stages = self._stages(dry_run)
         # The corroborator reads the texts to count a near-duplicate copy once.
         register_documents(stages["corroborator"], docs)
@@ -299,6 +319,8 @@ class Validator:
         report = self._report(
             kg, source, stages, dry_run, _spent(stages["grounder"].grounder, spent), refused_by
         )
+        if retracted is not None:
+            report = report.model_copy(update={"retracted": retracted})
         kg = kg.model_copy(update={"stats": _stats(kg, source, stages, report)})
         if not dry_run:
             for sink in self.sinks:
@@ -491,6 +513,15 @@ def _stats(
 
 def _row(label: str, text: str) -> str:
     return f"{label:<13} {text}"
+
+
+def _retracted_line(counts: Mapping[str, int]) -> str:
+    cited = counts.get("cited", 0)
+    head = f"the old versions retracted first: {_n(cited, 'fact')} cited them"
+    if not cited:
+        return head
+    gone = counts.get("retired", 0) + counts.get("deleted", 0)
+    return f"{head}, {counts.get('lost', 0)} kept a source, {gone} left with none"
 
 
 def _store_line(store: Mapping[str, int]) -> str:

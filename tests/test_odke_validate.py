@@ -136,6 +136,26 @@ def test_a_merging_jsonl_store_gains_a_rerun_rather_than_losing_the_last_one(her
     assert result.exit_code == 2 and "stages.sink.merge: true or false" in result.output
 
 
+def test_update_retracts_the_old_versions_before_it_writes_the_new(here: Path) -> None:
+    """--update: the text's old facts lose it first, and what the new version states regains it."""
+    args = ["--facts", "triples/triples.jsonl", "--texts", "triples/texts", "--config"]
+    assert _validate(*args, "models.yaml", "-o", "o").exit_code == 0
+    for _ in range(2):
+        result = _validate(*args, "models.yaml", "-o", "o", "--update")
+        assert result.exit_code == 0, result.output
+        assert (
+            "update        the old versions retracted first: 5 facts cited them, "
+            "0 kept a source, 5 left with none"
+        ) in result.output
+    lines = (here / "o" / "facts.jsonl").read_text(encoding="utf-8").splitlines()
+    facts = [json.loads(line) for line in lines]
+    assert len(facts) == 5 and all(f["retired_at"] is None and f["support"] == 1 for f in facts)
+
+    result = _validate(*args, "models.yaml", "--update")
+    assert result.exit_code == 2
+    assert "--update retracts the old versions from the store: give -o" in result.output
+
+
 def _neo4j_sink() -> dict[str, Any]:
     return {"use": "neo4j", "uri": "bolt://example.invalid:7687", "password_env": "ODKE_SECRET"}
 

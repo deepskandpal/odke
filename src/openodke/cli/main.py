@@ -614,6 +614,12 @@ def validate_command(
         "--merge",
         help="Merge into the JSONL already at -o: a fact it holds gains this batch's sources.",
     ),
+    update: bool = typer.Option(
+        False,
+        "--update",
+        help="The texts are new versions of ones the store cites: retract each first, so "
+        "what a new version no longer states loses it. Implies --merge.",
+    ),
     model: str | None = typer.Option(None, "--model", help=MODEL_HELP),
     model_provider: str | None = typer.Option(None, "--model-provider", help=MODEL_PROVIDER_HELP),
     locate: bool = typer.Option(
@@ -649,13 +655,17 @@ def validate_command(
 
     A store merges: a fact a Neo4j sink already holds gains this batch's
     sources rather than a second edge, and so does one in the JSONL at -o with
-    --merge, or in a config's jsonl sink with `merge: true`.
+    --merge, or in a config's jsonl sink with `merge: true`. With --update the
+    texts replace the versions the store cites: each is retracted from the
+    sinks first, so a fact the new version no longer states loses that source,
+    and is retired when it has none. To retract a text that is gone, use
+    `odke reconcile --delete`.
 
     Exit 2 is input or a config that cannot be read, exit 1 a run that failed,
     exit 3 a run its budget stopped, which still wrote what it kept.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
-    from openodke import SignatureCorroborator, Validator
+    from openodke import Retractable, SignatureCorroborator, Validator
     from openodke.interop import TriplesExtractor
     from openodke.llm.base import ProviderError
     from openodke.run import ConfigError, build
@@ -676,6 +686,7 @@ def validate_command(
             raise ValueError("give the facts with --facts, or a run config with --config")
         if merge and out is None:
             raise ValueError("--merge merges into the JSONL at -o: give -o")
+        merge = merge or update
         if facts is not None:
             schema = _strict_ontology(ontology) if ontology is not None else None
             grounder = (
@@ -761,6 +772,11 @@ def validate_command(
         if out is not None and not dry_run:
             sinks.append(JsonlSink(out, merge=merge))
         validator.sinks = tuple(sinks)
+        if update and not dry_run and not any(isinstance(s, Retractable) for s in sinks):
+            raise ValueError(
+                "--update retracts the old versions from the store: give -o, or a config "
+                "with a jsonl or neo4j sink"
+            )
         # A corroborator the config names merges with the sinks, as the default does.
         configured = validator.corroborator
         if isinstance(configured, SignatureCorroborator) and not configured.store:
@@ -776,7 +792,7 @@ def validate_command(
     try:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            kg, report = validator.validate(rows, docs, dry_run=dry_run, **named)
+            kg, report = validator.validate(rows, docs, dry_run=dry_run, update=update, **named)
     except (ProviderError, OSError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -821,6 +837,81 @@ def _close(driver: Any, sinks: list[Any]) -> None:
         close = getattr(held, "close", None)
         if callable(close):
             close()
+
+
+# --------------------------------------------------------------------------- #
+# odke reconcile — a source that is gone
+# --------------------------------------------------------------------------- #
+
+
+@app.command("reconcile")
+def reconcile_command(
+    sink: str = typer.Option(
+        ...,
+        "--sink",
+        help="The store: a directory odke wrote as JSONL, or a Neo4j URI (bolt://, neo4j://).",
+    ),
+    delete: list[str] = typer.Option(
+        ..., "--delete", help="The id of a document that is gone. Repeat for several."
+    ),
+    hard_delete: bool = typer.Option(
+        False, "--hard-delete", help="Delete a fact left with no source, rather than retire it."
+    ),
+    ontology: Path | None = typer.Option(
+        None,
+        "--ontology",
+        help="Neo4j: decides whether a value projected again is one value or a list.",
+    ),
+    database: str | None = typer.Option(None, "--database", help="Neo4j: the database."),
+    user: str = typer.Option("neo4j", "--user", envvar="NEO4J_USER", help=USER_HELP),
+    password_env: str = typer.Option("NEO4J_PASSWORD", "--password-env", help=PASSWORD_ENV_HELP),
+) -> None:
+    """Retract documents that are gone from the store, and retire facts left with no source.
+
+    Every fact a document backed loses that document: its evidence, and its
+    place in the support list. A fact with another source keeps it; a fact
+    with none is retired, marked with the time it lost its last source and
+    kept, or deleted with --hard-delete. Its valid clock is left alone. Run
+    the same command twice and the second changes nothing.
+
+    A document that changed is an update, not a delete: give the new version
+    to `odke validate --update`, which retracts the old one first, so the
+    facts the new version still states regain their support.
+
+    Exit 2 is a store that cannot be read.
+    """
+    from openodke.reconcile import Reconciler
+    from openodke.sinks.jsonl import JsonlSink
+
+    store: Any = None
+    try:
+        if "://" in sink:
+            schema = _strict_ontology(ontology) if ontology is not None else None
+            password = os.environ.get(password_env)
+            if password is None:
+                raise ValueError(
+                    f"{password_env} is not set: the Neo4j password is read from the "
+                    "environment variable --password-env names, never from a flag or a file"
+                )
+            from openodke.sinks.neo4j import Neo4jSink
+
+            store = Neo4jSink(sink, (user, password), database=database, ontology=schema)
+        else:
+            if ontology is not None or database is not None:
+                raise ValueError("--ontology and --database are for a Neo4j store")
+            directory = Path(sink)
+            if not (directory / "facts.jsonl").is_file():
+                raise ValueError(f"{directory} holds no facts.jsonl: not a store odke wrote")
+            store = JsonlSink(directory, merge=True)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            report = Reconciler([store], hard_delete=hard_delete).delete(delete)
+    except (ValueError, OntologyLoadError, ImportError, OSError) as exc:
+        _close(None, [store])
+        _data_error(exc)
+    _close(None, [store])
+    _echo_warnings(caught)
+    typer.echo(report.render())
 
 
 @ontology_app.command("infer")
