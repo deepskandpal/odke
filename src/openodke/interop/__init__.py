@@ -17,6 +17,7 @@ from openodke.interop.ground import (
     GroundedGraph,
     GroundSummary,
     ground_graph,
+    ground_manifest,
 )
 from openodke.interop.langchain import from_graph_documents
 from openodke.interop.langextract import attribute_triples, from_langextract
@@ -45,6 +46,7 @@ __all__ = [
     "from_graphrag",
     "from_langextract",
     "ground_graph",
+    "ground_manifest",
     "read_graphrag",
     "read_neo4j",
     "read_triples",

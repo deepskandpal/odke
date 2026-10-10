@@ -440,13 +440,16 @@ def _grounder(
     cache: Path | None = None,
     budget_usd: float | None = None,
     budget_calls: int | None = None,
+    recorder: Any = None,
 ) -> Any:
     """The model grounder `odke run` would build from these models, or the config's replay.
 
     Every call holds a slot of its provider's limit, from the `models` block's
     `limits`, process-wide. A budget, from the flags over the block's, counts
     every call that goes out. The response cache is `--cache` when given, else
-    the block's, and answers in front of both, for nothing.
+    the block's, and answers in front of both, for nothing. The run manifest's
+    `recorder` is told the models block as resolved, the cache and the budget,
+    and sees every answer's model.
     """
     from openodke.ground import LLMGrounder
     from openodke.llm.base import ProviderNotInstalled
@@ -487,8 +490,18 @@ def _grounder(
         client = Ledger(models.budget).client(client)
     if store is not None:
         client = CachedClient(client, store)
+    if recorder is not None:
+        recorder.config["models"] = models.canonical()
+        recorder.cache = store.directory if store is not None else None
+        recorder.budget = models.budget.limits if models.budget is not None else None
+        client = recorder.served.client("ground", roles.ground, client)
     mode: dict[str, Any] = {"context": "document", "verdicts": "binary"} if paper else {}
     return LLMGrounder(roles, client=client, locate=locate, **mode)
+
+
+def _path(path: Path | None) -> str | None:
+    """A path option as the run manifest records it: as given."""
+    return str(path) if path is not None else None
 
 
 def _strict_ontology(path: Path) -> Ontology:
@@ -551,14 +564,33 @@ def ground_command(
     Models come from --config's `models` block, as in `odke run`.
 
     Exit 2 is input that cannot be read, exit 1 a run that failed, exit 3 a run
-    its budget stopped, which still wrote what it grounded.
+    its budget stopped, which still wrote what it grounded. OUT/manifest.json is
+    the run manifest: these options, the models, prompts, ontology and inputs.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
-    from openodke.interop import ground_graph, write_verdicts
+    from openodke.interop import ground_graph, ground_manifest, write_verdicts
     from openodke.llm.base import ProviderError
+    from openodke.manifest import FILE, Recorder
     from openodke.run import ConfigError
 
     chosen = _qualified(model, model_provider)
+    recorder = Recorder(
+        "ground",
+        {
+            "facts": facts,
+            "texts": _path(texts),
+            "adapter": adapter,
+            "ontology": _path(ontology),
+            "out": _path(out),
+            "locate": locate,
+            "paper": paper,
+            "text_property": text_property,
+            "database": database,
+            "user": user,
+            "password_env": password_env,
+            "write_verdicts": write_back,
+        },
+    )
     try:
         if write_back and adapter != "neo4j":
             raise ValueError("--write-verdicts writes to the Neo4j graph the neo4j adapter read")
@@ -576,6 +608,7 @@ def ground_command(
                 cache=cache,
                 budget_usd=budget_usd,
                 budget_calls=budget_calls,
+                recorder=recorder,
             )
         )
         store = _Store(
@@ -601,6 +634,10 @@ def ground_command(
         if write_back:
             written = write_verdicts(driver, grounded.facts, database=database)
         paths = grounded.write(out)
+        manifest = ground_manifest(
+            recorder, grounded, rows, docs, ontology=schema, grounder=grounder
+        )
+        paths.append(manifest.write(out / FILE))
     except (ProviderError, OSError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -701,12 +738,30 @@ def validate_command(
     from openodke.gate import REFUSED_FILE, Kept, VerdictGate
     from openodke.interop import TriplesExtractor
     from openodke.llm.base import ProviderError
+    from openodke.manifest import FILE, Recorder
     from openodke.run import ConfigError, build
-    from openodke.run.execute import _bootstrap
+    from openodke.run.execute import _bootstrap, manifest_path
     from openodke.sinks.jsonl import JsonlSink
     from openodke.validator import stores_of
 
     chosen = _qualified(model, model_provider)
+    # What the run manifest records as the job's config: these options, and
+    # the models block or the run config as resolved below.
+    options: dict[str, Any] = {
+        "facts": facts,
+        "texts": _path(texts),
+        "adapter": adapter,
+        "ontology": _path(ontology),
+        "out": _path(out),
+        "merge": merge,
+        "update": update,
+        "locate": locate,
+        "text_property": text_property,
+        "database": database,
+        "user": user,
+        "password_env": password_env,
+    }
+    recorder = Recorder("validate", options)
     driver: Any = None
     applied: list[str] = []
     plans: list[Any] = []
@@ -733,6 +788,7 @@ def validate_command(
                     cache=cache,
                     budget_usd=budget_usd,
                     budget_calls=budget_calls,
+                    recorder=recorder,
                 )
             )
             store = _Store(
@@ -764,6 +820,16 @@ def validate_command(
             if locate:
                 raise ValueError("with a run config, the locator is the grounder's: locate: true")
             built = build(loaded)
+            context = built.context
+            recorder = Recorder(
+                "validate",
+                {**options, "run": loaded.canonical()},
+                config_file=loaded.source.name if loaded.source is not None else None,
+                base_dir=loaded.base_dir,
+                served=context.served,
+                cache=context.cache.directory if context.cache is not None else None,
+                budget=context.ledger.budget.limits,
+            )
             extractor = built.stages["extractor"]
             if not isinstance(extractor, TriplesExtractor):
                 raise ConfigError(
@@ -802,6 +868,8 @@ def validate_command(
                 inverses=loaded.inverses,
                 coverage=loaded.coverage,
             )
+            jsonl = out is not None or any(plan.name == "jsonl" for plan in plans)
+            validator.manifest = manifest_path(loaded, jsonl=jsonl)
         if out is not None and not dry_run:
             sinks.append(JsonlSink(out, merge=merge))
         validator.sinks = tuple(sinks)
@@ -828,7 +896,9 @@ def validate_command(
     try:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            kg, report = validator.validate(rows, docs, dry_run=dry_run, update=update, **named)
+            kg, report = validator.validate(
+                rows, docs, dry_run=dry_run, update=update, recorder=recorder, **named
+            )
     except (ProviderError, OSError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -850,6 +920,13 @@ def validate_command(
         )
     for line in written or ["nothing: give -o, or name a sink in the config"]:
         typer.echo(f"{verb:<13} {line}")
+    manifests = [str(s.directory / FILE) for s in sinks if isinstance(s, JsonlSink)]
+    if validator.manifest is not None:
+        manifests.append(str(validator.manifest))
+    if manifests and not dry_run:
+        typer.echo(f"{'manifest':<13} {manifests[0]}")
+        for path in manifests[1:]:
+            typer.echo(f"  {path}")
     if report.stopped:
         raise typer.Exit(EXIT_BUDGET)
     _every_document_failed(report.failed, report.documents)

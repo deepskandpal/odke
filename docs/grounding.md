@@ -42,7 +42,7 @@ failures
 
 spans  (n=5)
   …
-wrote out/facts.jsonl, out/summary.json
+wrote out/facts.jsonl, out/summary.json, out/manifest.json
 ```
 
 Each fact goes through three steps, cheapest first, and a fact one step settles
