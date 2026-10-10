@@ -19,6 +19,7 @@ from typer.testing import CliRunner
 
 from openodke import Document, Entity, Evidence, Fact, KnowledgeGraph, Span, Validator
 from openodke.cli.main import app
+from openodke.corroborate.provenance import ONTOLOGY
 from openodke.interop import to_fact
 from openodke.interop.triples import TripleRow
 from openodke.llm.budget import Budget, Ledger
@@ -408,6 +409,9 @@ def test_a_streamed_manifest_holds_the_summed_run_and_the_inputs_one_batch_hashe
     on_disk = json.loads((example / "out" / "manifest.json").read_text(encoding="utf-8"))
     lines = (example / "out" / "facts.jsonl").read_text(encoding="utf-8").splitlines()
     assert on_disk["facts"] == len(lines) == many.counts["facts"]
+    # Every micro-batch's gate stamps the ontology it checked under (#163).
+    stamps = {json.loads(line)["qualifiers"].get(ONTOLOGY) for line in lines}
+    assert stamps == {many.ontology_hash} and many.ontology_hash is not None
 
 
 def test_a_streamed_validation_hashes_its_rows_as_one_batch_does(tmp_path: Path) -> None:
