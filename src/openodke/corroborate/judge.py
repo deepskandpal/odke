@@ -34,6 +34,10 @@ its strongest supporting fact. Nothing in the store keeps text, so without
 `store_context` it has none. A pair with a side that has no context is not
 asked, since the prompt may not decide from names alone: it is unsure, and
 queued for a person.
+
+A budget stop (`openodke.llm.budget`) ends the calls, not the resolver: a pair
+the stop reached is `unasked`, makes no link, is not queued, and is asked
+again by the next run. `stats["stopped"]` says where the budget stood.
 """
 
 from __future__ import annotations
@@ -59,6 +63,7 @@ from openodke.llm.base import (
     ModelSpec,
     ProviderNotInstalled,
 )
+from openodke.llm.budget import BudgetExceeded
 from openodke.llm.registry import resolve as resolve_client
 from openodke.llm.roles import ModelRoles
 from openodke.prompts import get as get_prompt
@@ -129,8 +134,9 @@ class Answer(Frozen):
 class PairDecision(Frozen):
     """What was decided about one pair, by whom, and on what.
 
-    `decision` is `same`, `different`, `unsure`, or `failed` when a call
-    failed: no link, not queued, asked again on the next run. `forward` is the
+    `decision` is `same`, `different`, `unsure`, `failed` when a call
+    failed, or `unasked` when a budget stop came first: neither of the last
+    two links or is queued, and the next run asks again. `forward` is the
     answer asked as (A, B), `backward` as (B, A); neither is set when no model
     was asked. `disagreed` is whether the two orders gave different answers.
     `why` says what made a pair unsure.
@@ -138,7 +144,7 @@ class PairDecision(Frozen):
 
     a: str
     b: str
-    decision: Literal["same", "different", "unsure", "failed"]
+    decision: Literal["same", "different", "unsure", "failed", "unasked"]
     by: Literal["judge", "person"] = "judge"
     score: float | None = None
     forward: Answer | None = None
@@ -296,11 +302,15 @@ class PairJudge:
     `stats`: pairs handed in, pairs asked, calls, `swapped` (the calls in the
     (B, A) order), `disagreed` (pairs whose orders differed), each decision's
     count, `person`, `queued`, `no_context`, `failed` calls, `unparseable`
-    answers, tokens, cost, and the prompt keys sent. `decisions` keeps every
+    answers, tokens, cost, and the prompt keys sent. Calls a response cache
+    answered are counted under `cached` too, and calls a budget refused under
+    `unasked`, with the stop under `stopped`. `decisions` keeps every
     `PairDecision`.
 
     A call is retried under `retry`; when it still fails the pair is `failed`.
-    A missing key or adapter raises instead, since it would fail every call.
+    A missing key or adapter raises instead, since it would fail every call. A
+    budget stop does not: the resolver's rules still run, and the pairs it
+    reached are `unasked`.
     """
 
     def __init__(
@@ -336,6 +346,8 @@ class PairJudge:
         self._queued: set[frozenset[str]] | None = None
         self._lock = threading.Lock()
         self._cost: float | None = None
+        # The first budget stop, as `BudgetExceeded.report()` gives it.
+        self._stopped: dict[str, Any] | None = None
         self._counts = Counts(
             "pairs",
             "asked",
@@ -479,12 +491,14 @@ class PairJudge:
         a: Mention,
         b: Mention,
         score: float | None,
-        forward: Answer | None,
-        backward: Answer | None,
+        forward: Answer | Exception,
+        backward: Answer | Exception,
     ) -> PairDecision:
-        if forward is None or backward is None:
-            decision: Literal["same", "different", "unsure", "failed"] = "failed"
-            disagreed, why = False, "a call failed"
+        decision: Literal["same", "different", "unsure", "failed", "unasked"]
+        if isinstance(forward, BudgetExceeded) or isinstance(backward, BudgetExceeded):
+            decision, disagreed, why = "unasked", False, "the budget stopped the run first"
+        elif isinstance(forward, Exception) or isinstance(backward, Exception):
+            decision, disagreed, why = "failed", False, "a call failed"
         else:
             disagreed = forward.decision != backward.decision
             if disagreed:
@@ -503,38 +517,60 @@ class PairJudge:
             b=b.key,
             decision=decision,
             score=score,
-            forward=forward,
-            backward=backward,
+            forward=forward if isinstance(forward, Answer) else None,
+            backward=backward if isinstance(backward, Answer) else None,
             disagreed=disagreed,
             why=why,
             prompt=PROMPT.key,
             model=self.spec.model,
         )
 
-    def _ask(self, a: Mention, b: Mention, swapped: bool) -> Answer | None:
-        """The model's answer for the order (A, B), or None when the call failed."""
+    def _ask(self, a: Mention, b: Mention, swapped: bool) -> Answer | Exception:
+        """The model's answer for the order (A, B), or what stopped the call."""
         messages = build_messages(a, b)
 
         def on_retry(attempt: int, exc: BaseException, wait: float) -> None:
             self._counts.bump("retries")
             log.info("retrying pair call %s/%s in %.2fs: %s", a.key, b.key, wait, exc)
 
-        def complete() -> Completion:
+        def counted() -> None:
             self._counts.bump("calls")
             if swapped:
                 self._counts.bump("swapped")
-            return self.client.complete(messages, spec=self.spec, schema=PAIR_SCHEMA)
+
+        def complete() -> Completion:
+            try:
+                completion = self.client.complete(messages, spec=self.spec, schema=PAIR_SCHEMA)
+            except BudgetExceeded:
+                # Refused before it was made: not a call.
+                raise
+            except BaseException:
+                counted()
+                raise
+            counted()
+            return completion
 
         try:
             completion = call_with_retry(complete, self.retry, sleep=self._sleep, on_retry=on_retry)
         except (MissingAPIKey, ProviderNotInstalled):
             raise
+        except BudgetExceeded as stop:
+            # The run's, not the pair's: no answer, and the next run asks.
+            self._counts.bump("unasked")
+            with self._lock:
+                if self._stopped is None:
+                    self._stopped = stop.report()
+            return stop
         except Exception as exc:  # isolation: one failed call never fails the batch
             self._counts.bump("failed")
             log.warning("pair call failed for %s/%s: %s", a.key, b.key, exc)
-            return None
+            return exc
         self._counts.bump("prompt_tokens", completion.prompt_tokens)
         self._counts.bump("completion_tokens", completion.completion_tokens)
+        if completion.cached:
+            # Counted among `calls`, and only once one happens, so a run
+            # without a response cache reports exactly as it did.
+            self._counts.bump("cached")
         if completion.cost_usd is not None:
             with self._lock:
                 self._cost = (self._cost or 0.0) + completion.cost_usd
@@ -588,6 +624,8 @@ class PairJudge:
         out: dict[str, Any] = self._counts.snapshot()
         with self._lock:
             out["cost_usd"] = self._cost
+            if self._stopped is not None:
+                out["stopped"] = dict(self._stopped)
         out["low"] = self.low
         # The registered prompts the calls sent, by key: none when no call was made.
         out["prompts"] = [PROMPT.key, FRAME.key] if out["calls"] else []
@@ -620,6 +658,19 @@ def link_for(decision: PairDecision) -> EntityLink | None:
     )
 
 
+def judge_stop(resolved: Any) -> dict[str, Any] | None:
+    """A budget stop the pair judge reached first, as a run's `stopped`: during resolve.
+
+    The resolver's rules ran in full, so nothing was left unchecked; the
+    judge's own `unasked` says how many calls the budget refused.
+    """
+    judged = resolved.get("judge") if isinstance(resolved, Mapping) else None
+    stop = judged.get("stopped") if isinstance(judged, Mapping) else None
+    if not isinstance(stop, Mapping):
+        return None
+    return {**stop, "stage": "resolve", "unextracted": 0, "unchecked": 0}
+
+
 __all__ = [
     "DECISIONS",
     "DEFAULT_LOW",
@@ -633,6 +684,7 @@ __all__ = [
     "PairJudge",
     "build_messages",
     "context_around",
+    "judge_stop",
     "link_for",
     "parse_answer",
     "render_pair",

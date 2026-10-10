@@ -22,6 +22,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from openodke._batch import failed_summary
+from openodke.corroborate.judge import judge_stop
 from openodke.corroborate.provenance import CONFLICT
 from openodke.coverage import summary as coverage_summary
 from openodke.llm.budget import budget_summary, stopped_summary
@@ -194,6 +195,9 @@ def collect_stats(built: Built, kg: KnowledgeGraph) -> dict[str, Any]:
         if report:
             stages[_REPORTED_AS.get(name, name)] = report
     stats["stages"] = stages
+    if "stopped" not in stats and (stop := judge_stop(stages.get("resolver"))) is not None:
+        # The budget ran out in the pair judge, after everything else had asked.
+        stats["stopped"] = stop
     meter = built.context.meter
     if meter is not None:
         cost = meter.report(documents=int(kg.stats.get("documents", 0))).as_stage_report()
