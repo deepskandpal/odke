@@ -434,6 +434,35 @@ def test_a_failed_call_is_no_link_and_is_not_queued(tmp_path: Path) -> None:
     assert resolver.stats is not None and resolver.stats["judge"]["failed"] == 1
 
 
+def test_a_budget_stop_leaves_the_pair_unasked_and_the_rules_still_run(tmp_path: Path) -> None:
+    from openodke.llm.budget import Budget, Ledger
+
+    # Room for one of the two orders: the other is refused, never made.
+    client = Ledger(Budget(calls=1)).client(_client("same", "same"))
+    judge = _judge(client, queue=tmp_path / "q.jsonl")
+    facts, links, resolver = _resolve(judge)
+
+    assert links == [] and not (tmp_path / "q.jsonl").exists()
+    assert [f.subject.key for f in facts] == ["p:ada", "p:lovelace"]
+    (decision,) = judge.decisions
+    assert (decision.decision, decision.why) == ("unasked", "the budget stopped the run first")
+    assert resolver.stats is not None
+    judged = resolver.stats["judge"]
+    assert (judged["calls"], judged["unasked"]) == (1, 1)
+    assert judged["stopped"]["limit"] == "calls"
+
+
+def test_calls_a_response_cache_answered_are_counted() -> None:
+    from openodke.llm.cache import CachedClient
+
+    cached = CachedClient(_client("same", "same"))
+    for _ in range(2):
+        _, links, resolver = _resolve(_judge(cached))
+        assert [link.kind for link in links] == [LinkKind.SIMILAR]
+    assert resolver.stats is not None
+    assert (resolver.stats["judge"]["calls"], resolver.stats["judge"]["cached"]) == (2, 2)
+
+
 def test_a_missing_key_fails_the_run_rather_than_every_pair() -> None:
     class NoKey:
         def complete(self, messages: Any, *, spec: ModelSpec, schema: Any = None) -> Completion:
@@ -581,6 +610,7 @@ def test_the_validator_asks_the_judge_and_reports_its_counts_calls_and_prompts()
         "queued": 0,
         "no_context": 0,
         "failed": 0,
+        "unasked": 0,
     }
     # Two grounding calls and the judge's two.
     assert report.calls == 4
@@ -592,6 +622,20 @@ def test_the_validator_asks_the_judge_and_reports_its_counts_calls_and_prompts()
     # A second job reports itself alone.
     _, again = validator.validate(ROWS, [DOC])
     assert again.judge is not None and again.judge["calls"] == 2 and again.calls == 4
+
+
+def test_a_budget_the_judge_reaches_first_stops_the_job_during_resolve() -> None:
+    from openodke.llm.budget import Budget, Ledger
+
+    judge = PairJudge(client=Ledger(Budget(calls=0)).client(_client("same", "same")))
+    validator = Validator(PEOPLE, client=RecordedClient(GROUNDED), judge=judge)
+    kg, report = validator.validate(ROWS, [DOC])
+    assert kg.links == ()
+    assert report.stopped is not None
+    assert (report.stopped["stage"], report.stopped["limit"]) == ("resolve", "calls")
+    assert report.judge is not None and (report.judge["calls"], report.judge["unasked"]) == (0, 2)
+    assert "during resolve" in report.render()
+    assert "2 calls the budget refused" in report.render()
 
 
 def test_a_dry_run_never_asks_the_judge() -> None:
@@ -659,6 +703,19 @@ def test_a_run_config_turns_the_judge_on_with_paths_relative_to_it(tmp_path: Pat
     # The meter counts the judge's calls as a stage of their own.
     assert result.stats["cost"]["stages"]["judge"]["calls"] == 2
     assert (tmp_path / "review" / "pairs.jsonl").is_file()
+
+
+def test_a_run_whose_budget_runs_out_in_the_judge_says_it_stopped_during_resolve(
+    tmp_path: Path,
+) -> None:
+    config = _run_config(tmp_path, {"use": "native", "judge": True})
+    # Two grounding calls fit, and one of the judge's two.
+    config["models"]["budget"] = {"calls": 3}
+    result = execute(parse_config(config, base_dir=tmp_path))
+    stopped = result.stats["stopped"]
+    assert (stopped["stage"], stopped["limit"], stopped["unchecked"]) == ("resolve", "calls", 0)
+    assert result.stats["stages"]["resolver"]["judge"]["unasked"] == 1
+    assert "stopped       at budget, calls 3 of 3, during resolve" in result.render()
 
 
 def test_the_judge_is_off_unless_named(tmp_path: Path) -> None:

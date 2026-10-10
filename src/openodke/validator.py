@@ -76,6 +76,7 @@ from openodke.corroborate import (
     SignatureCorroborator,
     ValueNormalizer,
 )
+from openodke.corroborate.judge import judge_stop
 from openodke.coverage import summary as coverage_summary
 from openodke.gate import VerdictGate
 from openodke.ground import LLMGrounder
@@ -401,6 +402,8 @@ class Validator:
         resolved = getattr(stages["resolver"], "stats", None)
         store = resolved.get("store") if isinstance(resolved, Mapping) else None
         stopped = kg.stats.get("stopped")
+        if not isinstance(stopped, Mapping):
+            stopped = judge_stop(resolved)
         failed = kg.stats.get("failed")
         corroborated = getattr(stages["corroborator"], "stats", None)
         held = corroborated.get("store") if isinstance(corroborated, Mapping) else None
@@ -545,6 +548,7 @@ _JUDGED = (
     "queued",
     "no_context",
     "failed",
+    "unasked",
 )
 
 
@@ -619,6 +623,7 @@ def _judge_line(judged: Mapping[str, int]) -> str:
             ("queued", "queued"),
             ("no_context", "without context"),
             ("failed", "failed calls"),
+            ("unasked", "calls the budget refused"),
         )
         if judged.get(k)
     ]
