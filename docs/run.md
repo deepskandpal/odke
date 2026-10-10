@@ -610,6 +610,14 @@ rows at a time.
   validate` does this, `odke run` does not yet. Without one, a JSONL file holds a
   line for each, and a reader keeps the last. Entities resolve within a
   micro-batch, and across them with [`store_lookup`](#store_lookup).
+- **The manifest is the run's.** `batch_size` is in the config the
+  [run manifest](#the-run-manifest) records and hashes. Its `counts`, `job` and
+  `spent` are the micro-batches' summed, with `batches`, and the `job.end` event
+  logs the same counts. Its inputs hash covers every micro-batch's documents
+  and rows, in the digest one batch takes of them, so the same inputs hash
+  alike streamed or not. `--from-manifest` replays a streamed run streamed:
+  it reads the inputs through once and refuses a change before the first
+  micro-batch is written. It takes no `--batch-size`, which would be another run.
 - **Rows stay with their text.** `odke validate` closes a micro-batch only where
   the next row cites another text, so one text's rows, sorted together, are
   grounded and measured once; a text with more than twice N rows is split

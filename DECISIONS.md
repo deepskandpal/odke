@@ -1347,6 +1347,9 @@ micro-batch.
   gap.
 
 What comes back holds the run's stats and no facts; the sinks hold those.
+The run manifest (#40) records `batch_size` in its config and hash, the summed
+counts with `batches`, and inputs hashed as one batch hashes them, so a replay
+streams.
 Measured with every default stage and a scripted client, 50,000 rows peak at
 the RSS of 25,000, about 66 MB, against 141 MB for 5,000 rows in one batch.
 

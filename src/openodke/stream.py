@@ -36,8 +36,18 @@ from openodke.types import KnowledgeGraph
 
 T = TypeVar("T")
 
-# The pipeline's own counts, each summed over the micro-batches.
-COUNTED = ("documents", "chunks", "skipped", "deferred", "empty_extractions", "derived", "refused")
+# The pipeline's own counts, each summed over the micro-batches. `candidates`
+# is the facts the batch stages took in: a job's "in" (`openodke.observe`).
+COUNTED = (
+    "documents",
+    "chunks",
+    "skipped",
+    "deferred",
+    "empty_extractions",
+    "derived",
+    "refused",
+    "candidates",
+)
 # How many documents' coverage records a streamed run keeps: those with a gap,
 # the first this many. The totals count every document.
 KEPT = 100
