@@ -66,6 +66,7 @@ from openodke.eval.cost import (
     StageCost,
     compare_costs,
 )
+from openodke.eval.equivalence import FactJudge
 from openodke.eval.eval_report import EvalReport, check_report, read_report
 from openodke.eval.extraction import evaluate_extraction, match_extraction, run_extract
 from openodke.eval.formats import (
@@ -112,6 +113,7 @@ __all__ = [
     "CostMeter",
     "CostReport",
     "EvalReport",
+    "FactJudge",
     "GoldFact",
     "GroundingLabel",
     "ItemRow",
