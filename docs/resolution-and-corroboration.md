@@ -139,6 +139,8 @@ Normalising is idempotent: normalising a normalised fact changes nothing.
 is the dependency-free resolver. It follows the standard recipe in its standard
 order, and adds the two parts the surveyed resolvers leave out: a disagreement
 rule, and a refusal to destroy anything ([DECISIONS #16](decisions.md#16)).
+Asked to, it also [normalises the batch](#normalising-mentions-in-a-batch): the
+batch's own look-alikes that nothing keeps apart become one entity.
 
 ```mermaid
 flowchart TD
@@ -190,9 +192,11 @@ whose ids disagree, through a third that has none, is refused and recorded as
 
 **Nothing is destroyed.** Only a `SAME_AS`, which is proof rather than resemblance,
 re-keys facts onto one canonical entity, and the other keys, labels and aliases
-survive as that entity's aliases. The canonical entity is the one the caller
-keyed, then one already in the index, then the smallest key, so a re-run picks the
-same one. A `SIMILAR` is a proposal with a score and changes no key. A wrong merge
+survive as that entity's aliases. The one exception is the batch's own
+look-alikes when the batch is [normalised](#normalising-mentions-in-a-batch),
+before anything is written; a stored node is never re-keyed on resemblance. The canonical entity is
+the one the caller keyed, then one already in the index, then one with an
+`external_id`, then the smallest key, so a re-run picks the same one. A `SIMILAR` is a proposal with a score and changes no key. A wrong merge
 silently corrupts every query that touches the node, while a missed one costs a
 duplicate the link still points at. Thresholds are wrong on the first try, and a
 link can be re-run at a new threshold; a merge cannot.
@@ -442,6 +446,147 @@ config the judge is an option of the native resolver,
 was read off Re-DocRED's dev split, where 533 of 2,076 blocked pairs fall in
 it, nearly a third of them one entity; the calibration card on label set R
 (#151) is where the judge and the band are measured.
+
+### Normalising mentions in a batch
+
+`NativeResolver(normalize_batch=True, embed=None, context_floor=0.5,
+ontology=None)` makes two mentions the batch itself introduces one entity when
+they look alike and nothing in their names or contexts says otherwise
+([DECISIONS #43](decisions.md#43)). It is off by default. Nothing is written
+yet, so nothing is replaced: the incoming mentions are re-keyed onto one
+canonical key. A key the store holds is never part of it, and a pair with a
+store entity is still only linked ([Resolving against the store](#resolving-against-the-store)).
+
+1. **Normalise.** Names compare by their keys (`odke.name_key`, or
+   `name_key(label)`): case, accents, punctuation and legal forms dropped.
+   Given `ontology` (the Validator and `odke run` pass theirs), a type's
+   aliases are that type, case- and punctuation-blind, so an `organisation`
+   mention is a `Company`.
+2. **Block** as resolution does: one type, and a shared first or last name
+   token, id or domain.
+3. **Compare.** A pair no id or domain settled, with a name score at the
+   `threshold`, merges unless:
+    - **the names disagree**: both carry numbers and they differ (`1900` and
+      `1902 County Championship`, `Robert II` and `Robert III`), or both end
+      in a legal form and the forms differ (`Acme GmbH` and `Acme Ltd`). A
+      name without one may be either;
+    - **the contexts differ**: given `embed`, a function from texts to
+      vectors, the cosine of the two mentions' sentences is below
+      `context_floor`. A mention's sentence is where the first fact citing it
+      names it, read from `documents` or its span's quote. Each distinct
+      sentence is embedded once, in one call; a mention with none is decided
+      on its name.
+4. **Judge.** In the band below the threshold, with a [pair judge](#the-pair-judge),
+   the judge's "same" (or a person's, from `reviewed`) merges the pair if the
+   names do not disagree; its swap rule, queue and counts are #34's. Its
+   "different" keeps the pair apart. Nothing below the band is asked.
+5. **Merge.** One canonical entity per group: the key a caller chose, then
+   one already in the index, then one with an `external_id`, then one typed
+   with the ontology's own name, then the smallest key. Every other key,
+   label and alias survives as its aliases. Its `resolution` is `linker` with
+   the weakest score the group was joined at, so a group joined by the judge
+   is a query: `score < 0.9`.
+
+**Evidence against wins, through any chain.** Merges are made strongest first.
+One that would put in one entity two ids that disagree, two keys a caller
+chose, or two mentions kept apart (by a `DIFFERENT`, a number, a legal form or
+their contexts) is refused. A mention alike to two entities that are kept apart
+could be either, and merges with neither. Each merge is a `SAME_AS` link with
+the name score and a reason starting `in-batch merge:`; each pair kept apart
+keeps its `SIMILAR` link, with `not merged:` and why in its reason.
+
+```python
+sky = Document(
+    id="sky",
+    text="Mercury is the planet closest to the Sun. Mercury is a metal that stays "
+    "liquid at room temperature. Mercury takes 88 days to orbit the Sun.",
+)
+
+
+def mention(key, quote):
+    start = sky.text.index(quote)
+    span = Span(doc_id="sky", start=start, end=start + len(quote))
+    entity = Entity(key=key, type="Thing", label="Mercury")
+    return Fact(
+        subject=entity, predicate="mentioned", object_value=quote,
+        evidence=(Evidence(doc_id="sky", span=span),),
+    )  # fmt: skip
+
+
+def embed(texts):  # stands in for a model: a sentence about orbits, or about metals
+    return [[float("planet" in t or "orbit" in t), float("metal" in t)] for t in texts]
+
+
+facts = [
+    mention("t:planet", "Mercury is the planet"),
+    mention("t:metal", "Mercury is a metal"),
+    mention("t:orbit", "Mercury takes 88 days"),
+]
+resolver = NativeResolver(normalize_batch=True, embed=embed)
+resolver.documents[sky.id] = sky
+resolved, links = resolver.resolve(facts, {})
+for link in links:
+    print(link.kind.value, link.source_key, link.target_key, "|", link.reason)
+# similar t:metal t:orbit | not merged: the contexts differ (0.0000 < 0.5)
+# similar t:metal t:planet | not merged: the contexts differ (0.0000 < 0.5)
+# same_as t:orbit t:planet | in-batch merge: names 1.0, contexts 1.0000
+
+planet = resolved[0].subject
+assert [f.subject.key for f in resolved] == ["t:orbit", "t:metal", "t:orbit"]
+assert planet.aliases == ("t:planet",) and planet.resolution.score == 1.0
+print(resolver.stats["batch"])
+# {'alike': 3, 'merged': 1, 'groups': 1, 'mentions': 2, 'numbers': 0, 'forms': 0, 'context': 2, 'ambiguous': 0, 'refused': 0, 'embedded': 3}
+```
+
+`stats["batch"]` counts the look-alike pairs (`alike`), those `merged`, the
+`groups` they made and the `mentions` in them, and the pairs kept apart by
+`numbers`, legal `forms`, `context`, as `ambiguous` or `refused` by a chain;
+`embedded` is the sentences embedded. The Validator reports it as `batch`.
+`normalize_batch=True` turns it on: `Validator(normalize_batch=True)`, or
+[`resolver: {use: native, normalize_batch: true}`](run.md#stages) in a run
+config. `embed` is a function, so it is Python only; `context_floor` is a
+default set before anything was measured, since every model has its own scale.
+
+**Measured** on [label set R](https://github.com/deepskandpal/odke/blob/main/bench/labels/README.md#r-entity-pairs-151)
+by `bench/batch_normalize.py`, offline, against R's labels from the dataset:
+one batch a document, each pair scored by whether it ended in one entity. The
+resolver as it was merges on proof only, and R has no ids, so its "same" is
+its `SIMILAR` link, counted as merged. The perfect judge is R's own labels
+handed in as `reviewed`, never called: an upper bound for the band, and the
+real judge's numbers come from its calibration card.
+
+| Setting | Dev merged | Dev P | Dev R | Gate merged | Gate P | Gate R |
+|---|---:|---:|---:|---:|---:|---:|
+| the resolver as it was | 4 (3 right) | 75.0% | 3.0% | 7 (2 right) | 28.6% | 1.0% |
+| batch, judge-free | 4 (3 right) | 75.0% | 3.0% | 4 (2 right) | 50.0% | 1.0% |
+| batch, names alone (no number or legal-form rule) | 4 (3 right) | 75.0% | 3.0% | 7 (2 right) | 28.6% | 1.0% |
+| the resolver as it was + perfect judge | 21 (20 right) | 95.2% | 20.0% | 36 (31 right) | 86.1% | 15.5% |
+| batch + perfect judge | 21 (20 right) | 95.2% | 20.0% | 32 (30 right) | 93.8% | 15.0% |
+
+A rule stated before measuring said on by default only if, on R's gate split,
+the judge-free batch's precision of merged pairs is at least the resolver's as
+it was, at equal or better recall. It passed (50.0% against 28.6%, both at
+1.0%), and it ties without the number rule, which would pass too. It is off by
+default all the same: four merged pairs is a small sample, R is drawn to be
+hard (its 200 different pairs share a name token or score 0.5), and it leaves
+out pairs whose names share one key, which are most of what the option merges.
+The documents as they come, below, decided it. The number rule kept apart three wrong merges
+on the gate split and one R labels the same, `8th Route Army` and `19th Route
+Army`, which reads as a slip in the dataset's clusters.
+
+On Re-DocRED's 500 test documents as they come (`--redocred`: one batch each,
+8,202 mentions, all 69,720 pairs labelled by the clusters), the batch merges
+103 pairs, 52 of them one entity by the clusters (50.5%, recall 3.8%), where
+the resolver as it was linked 129, 57 of them right (44.2%, 4.1%). About half
+of the 51 others are one entity the dataset splits ("the United States",
+"SpaceX.", a change of case); the rest are the name score's own mistakes, which
+it makes for a link too: a demonym ("South Africa", "South African"), "West
+Germany" and "East Germany", a number on one side only ("Borderlands 2"),
+names reordered ("José Maria", "María José"). They score above the judge's
+band, so only `embed`'s context check can keep them apart. A wrong merge is
+the worst error [#16](decisions.md#16) names, so a default that re-keys waits
+for stronger evidence: the judge's calibration card on R with `embed`'s
+context check, or the owner's audit labels on R ([#43](decisions.md#43)).
 
 ## Corroborate
 

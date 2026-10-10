@@ -302,8 +302,11 @@ and which reconcile (`start_time`), and that decides what counts as one claim.
   reason.
 - **The grounder sees the cited span, never the document.** That is what keeps
   it cheap, and a span that leaves out the subject cannot support the claim.
-- **Resolution never merges on names.** Only a shared identifier re-keys an
-  entity; a name match is a `SIMILAR` link for someone to act on.
+- **Resolution never merges a stored node on names.** Only a shared
+  identifier re-keys onto one; a name match is a `SIMILAR` link for someone to
+  act on. Asked to (`normalize_batch=True`, off by default), it makes a
+  batch's own look-alikes that nothing in their names or context keeps apart
+  one entity before anything is written (DECISIONS #43).
 - **Inference drafts; it never decides.** `odke ontology infer` proposes a small
   schema for a person to review and freeze, and nothing infers implicitly
   (DECISIONS #8).

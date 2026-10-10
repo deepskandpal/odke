@@ -171,6 +171,11 @@ threshold can be changed and the resolver re-run.
 The numbers came from `e2e_stages.py`, a stage of this example's own named in
 the config as `e2e_stages:RegistryResolver`. It is twenty lines: this corpus
 has an identifier, the package cannot know that, and a stage is how it says so.
+It also pins [normalising the batch](../../docs/resolution-and-corroboration.md#normalising-mentions-in-a-batch)
+off, as `NativeResolver` has it by default, because `gold.jsonl` keys each
+text's facts as they were extracted. With it on, *"Corvid Analytics"* in a note and
+the register's *"Corvid Analytics Ltd"* become one entity, and *"Halden
+Robotics"*, alike to two companies kept apart, merges with neither.
 
 ### A company with two head offices
 
