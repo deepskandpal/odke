@@ -41,6 +41,9 @@ COUNTED = ("documents", "chunks", "skipped", "deferred", "empty_extractions", "d
 # How many documents' coverage records a streamed run keeps: those with a gap,
 # the first this many. The totals count every document.
 KEPT = 100
+# What the resolver counts for one call, which a streamed run sums: the store
+# lookup's counts and batch normalisation's.
+PER_CALL = ("store", "batch")
 
 
 def micro_batches(items: Iterable[T], size: int) -> Iterator[list[T]]:
@@ -139,12 +142,13 @@ class Totals:
         self._stopped: dict[str, Any] | None = None
         self._coverage: dict[str, Any] | None = None
         self._reextract: dict[str, Any] | None = None
-        self._store: dict[str, Any] | None = None
+        self._resolver: dict[str, dict[str, Any]] = {}
 
     def add(self, kg: KnowledgeGraph, *, resolver: Any = None) -> None:
         """One micro-batch's graph, and the resolver that resolved it.
 
-        The resolver's `stats["store"]` counts one call, so it is summed here.
+        The resolver's `stats["store"]` and `stats["batch"]` count one call, so
+        they are summed here.
         """
         stats = kg.stats
         self.batches += 1
@@ -169,8 +173,9 @@ class Totals:
         if isinstance(reextract := stats.get("reextract"), Mapping):
             self._reextract = _summed(self._reextract or {}, reextract)
         own = getattr(resolver, "stats", None)
-        if isinstance(own, Mapping) and isinstance(store := own.get("store"), Mapping):
-            self._store = _summed(self._store or {}, store)
+        for key in PER_CALL:
+            if isinstance(own, Mapping) and isinstance(counts := own.get(key), Mapping):
+                self._resolver[key] = _summed(self._resolver.get(key, {}), counts)
 
     def stats(self) -> dict[str, Any]:
         """The pipeline's counts for the run so far, keyed as `Pipeline.run` keys them."""
@@ -192,10 +197,15 @@ class Totals:
             "links": dict(sorted(self._links.items())),
         }
 
+    def resolver(self, key: str) -> dict[str, Any] | None:
+        """The resolver's per-call counts under `key` (`PER_CALL`), summed; None if none."""
+        found = self._resolver.get(key)
+        return None if found is None else dict(found)
+
     @property
     def store(self) -> dict[str, Any] | None:
         """The resolver's store counts, summed; None when no micro-batch had a lookup."""
-        return None if self._store is None else dict(self._store)
+        return self.resolver("store")
 
 
 def _coverage(held: dict[str, Any] | None, new: Mapping[str, Any]) -> dict[str, Any]:
@@ -235,4 +245,14 @@ def _summed(held: Mapping[str, Any], new: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
-__all__ = ["COUNTED", "KEPT", "Totals", "by_text", "micro_batches", "shape", "streams", "write"]
+__all__ = [
+    "COUNTED",
+    "KEPT",
+    "PER_CALL",
+    "Totals",
+    "by_text",
+    "micro_batches",
+    "shape",
+    "streams",
+    "write",
+]

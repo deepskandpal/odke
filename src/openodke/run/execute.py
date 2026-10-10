@@ -53,7 +53,7 @@ from openodke.reextract import summary as reextract_summary
 from openodke.run.build import Built, build, check_streams
 from openodke.run.config import STAGES, ConfigError, RunConfig
 from openodke.stages import PlatformProfile, Sink
-from openodke.stream import Totals, micro_batches, shape
+from openodke.stream import PER_CALL, Totals, micro_batches, shape
 from openodke.stream import write as stream_write
 from openodke.types import Document, Fact, KnowledgeGraph
 
@@ -478,9 +478,11 @@ def collect_stats(
             report.update(_extractor_stats(stage))
         if name == "corroborator":
             report["conflicts"] = _conflicts(kg.facts)
-        if name == "resolver" and totals is not None and totals.store is not None:
+        if name == "resolver" and totals is not None:
             # The resolver counts one call; the run's are summed.
-            report["store"] = jsonable(totals.store)
+            for key in PER_CALL:
+                if (summed := totals.resolver(key)) is not None:
+                    report[key] = jsonable(summed)
         if report:
             stages[_REPORTED_AS.get(name, name)] = report
     stats["stages"] = stages

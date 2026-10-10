@@ -605,7 +605,14 @@ class Validator:
         """The run's stats and report after the micro-batches `totals` has added up."""
         stats = {**totals.stats(), "documents": documents}
         report = self._report(
-            stats, totals.graph(), source, stages, dry_run, before, store=totals.store
+            stats,
+            totals.graph(),
+            source,
+            stages,
+            dry_run,
+            before,
+            store=totals.store,
+            batch=totals.resolver("batch"),
         )
         return stats, report.model_copy(update={"batches": totals.batches})
 
@@ -687,9 +694,11 @@ class Validator:
         before: _Before,
         *,
         store: Mapping[str, Any] | None = None,
+        batch: Mapping[str, Any] | None = None,
     ) -> ValidationReport:
         """The report from the pipeline's `stats` and the graph's `shape`, counting each
-        stage since `before`; `store`, the resolver's store counts summed over micro-batches."""
+        stage since `before`; `store` and `batch`, the resolver's per-call counts summed
+        over micro-batches."""
         judge_stage = getattr(stages["resolver"], "judge", None)
         spent = _job_spent(stages, before)
         refused_by = {
@@ -707,7 +716,8 @@ class Validator:
         resolved = getattr(stages["resolver"], "stats", None)
         if store is None and isinstance(resolved, Mapping):
             store = resolved.get("store")
-        batch = resolved.get("batch") if isinstance(resolved, Mapping) else None
+        if batch is None and isinstance(resolved, Mapping):
+            batch = resolved.get("batch")
         stopped = stats.get("stopped")
         if not isinstance(stopped, Mapping):
             stopped = judge_stop(resolved)
