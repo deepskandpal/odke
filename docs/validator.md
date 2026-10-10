@@ -36,6 +36,11 @@ The two `not_found` facts are written, because the default gate refuses only
 what the text contradicts (see the stage table below). To keep them out, pass
 `VerdictGate(refuse_not_found=True, schema=True)`.
 
+Beside the graph, `-o` writes `refused.jsonl`: each fact the gate refused in
+this run, with the gate's reason. Nothing reads what a gate throws away unless
+it is kept, and [`odke eval refusals`](evaluation.md#what-the-grounder-refused)
+draws a sample of it for a person to judge.
+
 `odke validate --config run.yaml` runs a run config instead, provided its
 extractor is `triples`. The config gives the inputs, the ontology, the models,
 the stages and the sinks, and a stage it leaves out gets the Validator's
