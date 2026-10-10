@@ -25,6 +25,7 @@ from openodke.ground import LLMGrounder
 from openodke.interop import THING, TripleRow, TriplesExtractor, read_triples, to_fact
 from openodke.llm.testing import RecordedClient
 from openodke.run import ConfigError, build, parse_config
+from openodke.types import Chunk
 
 runner = CliRunner()
 
@@ -97,12 +98,47 @@ def test_reading_a_file_names_the_line_a_bad_row_is_on(tmp_path: Path) -> None:
     path = tmp_path / "triples.jsonl"
     path.write_text(good + "\n\n" + good.replace('"object":"Lyon",', "") + "\n")
     with pytest.raises(ValueError, match=r"triples.jsonl:3: object: Field required"):
-        read_triples(path)
+        list(read_triples(path))
     path.write_text(good + "\n{not json\n")
     with pytest.raises(ValueError, match=r"triples.jsonl:2: not JSON"):
-        read_triples(path)
+        list(read_triples(path))
     path.write_text(good + "\n\n" + good + "\n")
-    assert len(read_triples(path)) == 2
+    assert len(list(read_triples(path))) == 2
+
+
+def test_a_file_is_read_a_row_at_a_time_and_the_stage_holds_none_until_asked(
+    tmp_path: Path,
+) -> None:
+    """`read_triples` is an iterator (#158); a stage made from a file checks it and keeps none."""
+    good = _row().model_dump_json(exclude_none=True)
+    path = tmp_path / "triples.jsonl"
+    path.write_text(good + "\n" + good + "\n{not json\n")
+    rows = read_triples(path)
+    # The rows before the bad line come out before it is reached.
+    assert next(rows).doc == next(rows).doc == "halden"
+    with pytest.raises(ValueError, match=r"triples.jsonl:3: not JSON"):
+        next(rows)
+    # A stage made from the file refuses it whole, before any extraction.
+    with pytest.raises(ValueError, match=r"triples.jsonl:3"):
+        TriplesExtractor(path)
+    path.write_text(good + "\n" + good.replace("halden", "other") + "\n")
+    stage = TriplesExtractor(path)
+    assert stage._rows is None
+    assert sorted(stage.rows) == ["halden", "other"] and stage.source == path
+
+
+def test_a_stage_fed_micro_batches_keeps_its_counts_and_where_each_name_went(
+    companies: Ontology, halden: Document
+) -> None:
+    """`feed` swaps the rows; what earlier rows left unmatched, and the names served, stay."""
+    chunk = Chunk(doc_id="halden", start=0, end=len(TEXT), text=TEXT, index=0)
+    stage = TriplesExtractor([_row(), _row(doc="gone")], documents=[halden])
+    assert len(stage.extract(chunk, companies)) == 1 and stage.served == {"halden": "halden"}
+    stage.feed([_row(object="Leeds")])
+    (leeds,) = stage.extract(chunk, companies)
+    assert leeds.object_entity is not None and leeds.object_entity.label == "Leeds"
+    assert stage.stats["rows"] == 2
+    assert stage.stats["unmatched_rows"] == 1 and stage.stats["unmatched_docs"] == ["gone"]
 
 
 # --------------------------------------------------------------------------- #

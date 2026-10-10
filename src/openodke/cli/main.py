@@ -494,7 +494,7 @@ def _read_facts(
     if adapter == "triples":
         if texts is None:
             raise ValueError("triples cite texts by name: give them as --texts")
-        return interop.read_triples(facts), docs, None
+        return list(interop.read_triples(facts)), docs, None
     if adapter == "langchain":
         rows, docs = interop.from_graph_documents(facts)
         return rows, docs, None

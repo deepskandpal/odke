@@ -180,7 +180,7 @@ def ground_graph(
     `observer` is the job's, whose events and spans each stage reports to.
     """
     docs = list(documents)
-    read = read_triples(rows)
+    read = list(read_triples(rows))
     schema = ontology if ontology is not None else Ontology()
     stage = TriplesExtractor(read, extractor=extractor, documents=docs)
     checked = CheckedGrounder(grounder, ontology=schema, locate=locate)
