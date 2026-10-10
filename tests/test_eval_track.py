@@ -31,6 +31,7 @@ from openodke.eval.track import (
     summary,
 )
 
+TRIPLES = Path(__file__).resolve().parents[1] / "examples" / "triples"
 runner = CliRunner()
 
 A = [ItemRow(id=f"d{i}", tp=2, fp=1, fn=2) for i in range(12)]
@@ -146,8 +147,67 @@ def test_what_cannot_be_recorded_says_why(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# From the shell
+# From the shell: report, compare, report again
 # --------------------------------------------------------------------------- #
+
+
+def _pipeline(predictions: Path, out: Path) -> list[str]:
+    return [
+        "eval", "pipeline",
+        "--labels", str(TRIPLES / "gold.jsonl"),
+        "--documents", str(TRIPLES / "texts"),
+        "--ontology", str(TRIPLES / "ontology.json"),
+        "--predictions", str(predictions),
+        "--report", str(out / "report.json"),
+        "--items", str(out / "items.jsonl"),
+    ]  # fmt: skip
+
+
+def test_the_record_grows_with_each_report_and_each_comparison(tmp_path: Path) -> None:
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir(), b.mkdir()
+    fixed = tmp_path / "fixed.jsonl"
+    rows = [json.loads(line) for line in (TRIPLES / "triples.jsonl").read_text().splitlines()]
+    rows[-1] = {**rows[-1], "object": 2014, "quote": "founded in Leeds in 2014"}
+    fixed.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+    first = runner.invoke(app, _pipeline(TRIPLES / "triples.jsonl", a))
+    assert first.exit_code == 0, first.output
+    report = read_report(a / "report.json")
+    assert [f.id for f in report.fixes] == ["reextract"]
+    assert "where it loses facts  (pipeline: 1 miss)" in first.output
+    assert f"track record  ({a / 'track-record.jsonl'}): 1 prediction(s) from 1 run(s)" in (
+        first.output
+    )
+    assert runner.invoke(app, _pipeline(fixed, b)).exit_code == 0
+
+    shared = tmp_path / "record.jsonl"
+    compare = [
+        "eval", "compare", str(a / "items.jsonl"), str(b / "items.jsonl"),
+        "--applied", "reextract",
+    ]  # fmt: skip
+    # Each report went beside itself; compare finds A's prediction beside A's items.
+    done = runner.invoke(app, compare)
+    assert done.exit_code == 0, done.output
+    assert "track record: reextract expected +18.8 (ceiling +25.0), measured +25.0" in done.output
+    (line,) = [x for x in read(a / "track-record.jsonl") if isinstance(x, MeasuredLine)]
+    assert line.applied == "--applied"
+
+    # A named record holds nothing of A: nothing is appended, and it says so.
+    alone = runner.invoke(app, [*compare, "--track-record", str(shared)])
+    assert alone.exit_code == 0 and "predicted nothing in" in alone.output
+    assert not shared.exists()
+
+    again = runner.invoke(app, _pipeline(TRIPLES / "triples.jsonl", a))
+    assert again.exit_code == 0, again.output
+    (prediction,) = read_report(a / "report.json").fixes
+    (record,) = prediction.record
+    assert (record.expected, record.measured) == (pytest.approx(0.1875), pytest.approx(0.25))
+    assert "     - track record: expected +18.8 (ceiling +25.0), measured +25.0" in again.output
+    assert (
+        "2 prediction(s) from 2 run(s), 1 measured, 1 inside its expected-to-ceiling range"
+        in again.output
+    )
 
 
 def test_extract_records_its_fixes_beside_its_report(tmp_path: Path) -> None:
@@ -167,3 +227,15 @@ def test_extract_records_its_fixes_beside_its_report(tmp_path: Path) -> None:
     assert isinstance(line, RunLine) and line.report == str(tmp_path / "r.json")
     assert [p.fix for p in line.predictions] == [f.id for f in report.fixes]
     assert line.predictions[0].fix == "offer-relations"
+
+
+def test_the_track_record_flags_belong_to_their_stages() -> None:
+    labels = str(TRIPLES / "gold.jsonl")
+    for args, message in (
+        (["eval", "ground", "--labels", labels, "--trace", "t.json"], "--trace: for extract"),
+        (["eval", "ground", "--labels", labels, "--track-record", "t.jsonl"], "--track-record"),
+        (["eval", "extract", "--labels", labels, "--applied", "inverses"], "--applied: for"),
+        (["eval", "extract", "--labels", labels, "--reference", "r.jsonl"], "for pipeline"),
+    ):
+        result = runner.invoke(app, args)
+        assert result.exit_code == 2 and message in result.output, (args, result.output)

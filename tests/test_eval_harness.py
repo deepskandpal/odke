@@ -399,6 +399,7 @@ def test_odke_eval_pipeline_runs_the_bench_set_s_own_checks(tmp_path: Path, benc
         ([], "exactly one of --cmd, --run and --predictions", 2),
         (["--predictions", "p.jsonl", "--cmd", "x {in} {out}"], "exactly one of", 2),
         (["--predictions", str(TRIPLES / "triples.jsonl"), "--config", "x.yaml"], "--config", 2),
+        (["--predictions", str(TRIPLES / "triples.jsonl"), "--applied", "inverses"], "compare", 2),
         (["--cmd", f"{sys.executable} -c pass {{in}} {{out}}"], "wrote nothing at {out}", 1),
     ],
 )
