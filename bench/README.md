@@ -126,8 +126,10 @@ back from `predictions/extraction-alone.jsonl`; each competitor's from
 set; and it runs `PatternExtractor` itself. The value normaliser is off, since
 the gold keeps the source's words; `--value-normalizer` keeps it on.
 
-When the grounder's default prompt or model changes, `ground` and `table` on the
-same `OUT` refresh the tables, and only grounding is paid for again.
+Once the calibration contest (#134) picks the default grounder prompt, `ground`
+reruns these rows with that default, from the saved extractions and the cache:
+set each `OUT/<set>/<system>/odke.json`'s grounder to `"llm"`, then run `ground`
+and `table`; only questions the cache has not seen are paid for.
 
 ## The span locator
 

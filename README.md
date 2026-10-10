@@ -84,8 +84,10 @@ grounding caught one of four wrong candidates, and normalisation did more for
 precision than grounding. The paper's 98.8% is neither reproduced nor claimed.
 [What the example shows, and does not](examples/e2e/README.md#5-the-ablation-on-this-example).
 
-On public data, [five extractors run with and without the layer](https://openodke.dev/benchmarks/#every-extractor-with-and-without-the-layer)
-(Claude models, grounding uncalibrated). On Re-DocRED's documents the grounder
+On public data, [five extractors run with and without the layer](https://openodke.dev/benchmarks/#every-extractor-with-and-without-the-layer),
+with ODKE+'s [paper-mode grounder](https://openodke.dev/grounding/#paper-mode-the-odke-grounder-as-written)
+reading each whole document (Claude models, uncalibrated), not the Validator's
+default span prompt. On Re-DocRED's documents the grounder
 raised precision for all four model-based extractors, by 1.8 to 4.3 points, for
 one Haiku call per triple ($4.23 to $9.01 per 1,000 documents), with F1 unchanged
 within its interval. On Text2KGBench's single sentences it lowered precision for
