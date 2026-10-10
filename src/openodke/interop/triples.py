@@ -21,6 +21,11 @@ The ontology, when there is one, decides what the extractor's labels cannot.
 A predicate whose range is an entity type makes an edge, and a subject with no
 type takes the predicate's domain. Without one, a string object is an entity
 unless `object_type` names a literal type, and anything untyped is a `Thing`.
+
+The format is versioned (`schema_version`, "1.0"; DECISIONS #48), and
+`triples.schema.json`, beside this file, is its JSON Schema for writers in any
+language. A row may name the version it was written to, and one that names
+another major version is refused by name. Left out, a row is read as this one.
 """
 
 from __future__ import annotations
@@ -33,7 +38,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from pydantic import Field, ValidationError, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 
 from openodke.extract._common import entity_key
 from openodke.ground.span import Counts
@@ -49,6 +54,10 @@ from openodke.types import (
     Span,
     SpanOrigin,
 )
+
+# The format's version: a minor adds optional fields, a major changes them.
+SCHEMA_VERSION = "1.0"
+SCHEMA_PATH = Path(__file__).with_name("triples.schema.json")
 
 # What an entity is called when nothing says what it is.
 THING = "Thing"
@@ -68,6 +77,8 @@ class TripleRow(Frozen):
     load its text like any other.
     """
 
+    # The format version the row was written to; left out, it is this one.
+    schema_version: str = SCHEMA_VERSION
     doc: str = Field(min_length=1)
     subject: str = Field(min_length=1)
     predicate: str = Field(min_length=1)
@@ -86,6 +97,18 @@ class TripleRow(Frozen):
     extractor: str | None = None
     # Give one to join the row's fact to labels or to another run.
     id: str | None = None
+
+    @field_validator("schema_version")
+    @classmethod
+    def _one_major_version(cls, value: str) -> str:
+        major, _, minor = value.partition(".")
+        if not (major.isdigit() and minor.isdigit()):
+            raise ValueError(
+                f"schema_version {value!r} is not major.minor, such as {SCHEMA_VERSION!r}"
+            )
+        if major != SCHEMA_VERSION.split(".")[0]:
+            raise ValueError(f"schema_version {value!r}: this openodke reads {SCHEMA_VERSION}")
+        return value
 
     @model_validator(mode="after")
     def _offsets_come_in_pairs(self) -> TripleRow:
@@ -384,6 +407,8 @@ def _file_name(doc: Document) -> str | None:
 
 __all__ = [
     "LITERAL_TYPES",
+    "SCHEMA_PATH",
+    "SCHEMA_VERSION",
     "THING",
     "TripleRow",
     "TriplesExtractor",
