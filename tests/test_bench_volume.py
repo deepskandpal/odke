@@ -15,7 +15,7 @@ import pytest
 
 from openodke import GroundingVerdict, Ontology
 from openodke.extract import LLMExtractor
-from openodke.llm import Message, ModelSpec, register, unregister
+from openodke.llm import Message, ModelSpec, register, set_limit, unregister
 from openodke.types import Chunk
 
 BENCH = Path(__file__).parent.parent / "bench"
@@ -169,7 +169,9 @@ def test_a_run_folder_runs_on_the_simulated_model(tmp_path: Path) -> None:
         built = build(parse_config(config, base_dir=tmp_path))
         stats = run_built(built).stats
     finally:
+        # Both are process-wide: the provider, and the limit the config set for it.
         unregister("sim")
+        set_limit("sim", None)
     assert stats["documents"] == 2 and stats["spent"]["calls"] == 2 + 4
     curated = {f["evidence"][0]["tier"] for f in _facts(tmp_path / "out")}
     assert curated <= {"curated", "unverified"} and "curated" in curated
