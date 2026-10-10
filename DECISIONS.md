@@ -1296,6 +1296,61 @@ only `embed` can catch the name score's mistakes, and its `context_floor` of
 the end-to-end example's is, scores a right merge as a miss, so that example
 pins the option off.
 
+### 44. A tenant is a prefix on the key and a salt on the signature, not a second key property
+
+One store, many tenants, and two tenants who state the same claim must own two
+facts (#159). Everything that finds a node or a fact in the store does it by
+one indexed value: the sink's `MERGE` on `key` and on `signature`, the
+uniqueness constraints that make those MERGEs safe under concurrent writers,
+the store lookup (#31), the store merge (#35) and the reconciler's rewrite
+(#37). So the tenant goes into those values. In the store an entity's key is
+`<tenant>/<key>`, a fact's signature is hashed with its tenant, and every
+node and relationship also carries `tenant`, for queries and for the filters
+an index cannot do. In memory nothing changes: one run is one tenant, and its
+keys are the ones its extractor gave.
+
+The alternative was a `tenant` property beside the key, and a composite
+uniqueness constraint `(tenant, key)`. Two things about Neo4j decided against
+it. A uniqueness constraint skips a node that lacks any of its properties, so a
+store with untenanted nodes would have no constraint on them at all. And
+`MERGE` refuses a null property, so an untenanted write would need Cypher of its
+own. Every store would then need one regime or the other, chosen when it was
+bootstrapped, and an existing store a migration. With the prefix, a store
+with no tenant is written byte for byte as before, and one constraint per type
+serves every tenant.
+
+Three calls come with it.
+
+**Every read is scoped, and no tenant is a scope too.** A key or a signature is
+asked for as the tenant's, so the index finds the tenant's and no other. An
+external id, a name, a vector, a document's facts and a check's subjects are
+found through their index, then kept when `tenant` is the reader's. A reader
+with no tenant keeps what no tenant wrote. A sink or lookup scoped to one tenant
+refuses to be scoped to another, and a JSONL directory holds one tenant.
+
+**The tenant is the run's.** `Validator(tenant=...)`, `tenant:` in a config and
+`--tenant` scope every sink and lookup that can be scoped (`scoped(tenant)`). A
+`store_lookup` naming another tenant is refused, because a run looks up the
+tenant it writes. A tenant is a name of letters, digits, `_`, `.` and `-`, so a
+scoped key splits at its first `/`.
+
+**Writes are packed, and counted.** Rows go in transactions of at most
+`batch_size`, across statements in write order, so a graph of many small groups
+is a few transactions, and each one commits whole. Each statement returns the
+rows that reached its `MERGE`, and the database's counters say what was made.
+So every sink reports, per kind, the rows it wrote new (`written`), wrote into
+what it held (`merged`) and could not write (`skipped`), and a rerun's report
+says it made nothing new.
+
+*Cost:* a stored key is not the key a person types: finding Ada by hand
+means `acme/p:ada`. The sink now owns `tenant`, so an entity attribute or a
+qualifier of that name is written as `attribute_tenant` or `qualifier_tenant`.
+The store lookup's `tenant_property`, a stand-in until this landed (#31), is
+gone. A full-text name lookup still counts every tenant's hits in its `limit`.
+An unscoped `check()` reports the whole store, keyed as stored. And the
+`RETURN count(*)` each write statement ends with is one more row per
+statement, which `CypherFileSink` does not write.
+
 ### 45. A large run is micro-batches, and the store joins them
 
 A batch is held whole. The pipeline runs each phase over all of it, every
