@@ -8,12 +8,14 @@ against without a database.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Hashable, Iterable, Sequence
+from collections.abc import Callable, Collection, Hashable, Iterable, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
+from openodke.reconcile import reconciled, tally
 from openodke.types import Entity, EntityLink, Fact, KnowledgeGraph
 
 M = TypeVar("M", bound=BaseModel)
@@ -29,6 +31,11 @@ class JsonlSink:
     which of a batch's facts the file already holds, so the corroborator can
     merge their support lists before the write; the Validator hands it the
     sink to do that (#153). Without `merge`, there is nothing to merge with.
+
+    `retract(doc_ids, at=...)` reconciles the files with a source that changed
+    or went: `facts.jsonl` is read, every fact citing the documents is
+    retracted and retired when left with none, and the file is written back
+    (#116).
     """
 
     def __init__(self, directory: str | Path, *, merge: bool = False) -> None:
@@ -69,6 +76,35 @@ class JsonlSink:
             ),
             encoding="utf-8",
         )
+
+    def retract(
+        self, doc_ids: Collection[str], *, at: datetime, hard: bool = False
+    ) -> dict[str, int]:
+        """Take these documents out of every fact in `facts.jsonl` that cites them.
+
+        As `openodke.reconcile.retract` does it: a fact left with no source is
+        retired at `at` and kept, or dropped with `hard`, and a derived fact is
+        retired with its parent. The manifest's counts follow. Retracting the
+        same documents again leaves the files as they are.
+        """
+        before = self._read("facts.jsonl", Fact)
+        after = reconciled(before, set(doc_ids), at)
+        counts = tally(before, after, hard=hard)
+        if not counts["cited"]:
+            return counts
+        gone = [
+            hard and new is not old and new.retired_at is not None
+            for old, new in zip(before, after, strict=True)
+        ]
+        kept = [fact for fact, dropped in zip(after, gone, strict=True) if not dropped]
+        self._write("facts.jsonl", kept)
+        manifest = self.directory / "manifest.json"
+        if manifest.is_file():
+            found = json.loads(manifest.read_text(encoding="utf-8"))
+            edges = sum(fact.is_edge for fact in kept)
+            found.update(facts=len(kept), edges=edges, properties=len(kept) - edges)
+            manifest.write_text(json.dumps(found, indent=2), encoding="utf-8")
+        return counts
 
     def _read(self, name: str, model: type[M]) -> list[M]:
         path = self.directory / name

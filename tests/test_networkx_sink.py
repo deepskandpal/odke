@@ -119,6 +119,7 @@ def _fact_back(g: Any, u: str, v: str, attrs: dict[str, Any], projected: set[str
         verdict=GroundingVerdict(attrs["verdict"]),
         support=attrs["support"],
         supported_by=support_from(attrs),
+        retired_at=attrs["retired_at"],
     )
 
 

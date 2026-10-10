@@ -326,6 +326,7 @@ PROVENANCE = {
     "valid_to",
     "retrieved_at",
     "extracted_at",
+    "retired_at",
     "evidence_doc_ids",
     "evidence_uris",
     "evidence_starts",

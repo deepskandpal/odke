@@ -104,7 +104,9 @@ def test_facts_are_unique_per_signature_so_the_sinks_merges_are_safe() -> None:
 def test_the_ddl_is_idempotent_stable_and_enterprise_free() -> None:
     schema = _schema()
     assert schema == _schema()
-    assert len(schema) == 2 + 3 * 2 + 4
+    # Per type a key constraint and two indexes; per predicate a signature constraint
+    # and an evidence index.
+    assert len(schema) == 2 + 3 * 2 + 4 * 2
     for statement in schema:
         assert statement.startswith("CREATE ") and " IF NOT EXISTS " in statement
         # Existence, type and node-key constraints are Enterprise-only.
@@ -159,7 +161,10 @@ def test_a_check_returns_violators_and_changes_nothing() -> None:
 
 def test_denials_and_expired_facts_are_not_violations() -> None:
     """'Not employed by X' is not a second employer, and a job that ended is history."""
-    assert "WHERE r.polarity = 'asserted' AND r.valid_to IS NULL" in _check("employer")
+    assert (
+        "WHERE r.polarity = 'asserted' AND r.valid_to IS NULL AND r.retired_at IS NULL"
+        in _check("employer")
+    )
 
 
 def test_identity_qualifiers_scope_the_check() -> None:

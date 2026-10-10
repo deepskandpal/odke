@@ -23,7 +23,7 @@ import re
 import unicodedata
 import warnings
 from collections import defaultdict
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from datetime import date, datetime, time
 from enum import Enum
 from typing import Any, NamedTuple
@@ -41,6 +41,7 @@ from openodke.corroborate.provenance import (
 )
 from openodke.corroborate.resolve import block_keys
 from openodke.ontology import Ontology, Predicate
+from openodke.reconcile import COUNTS, reconciled, tally
 from openodke.stages import DDL, Constrainer, PlatformProfile
 from openodke.types import (
     Entity,
@@ -86,6 +87,7 @@ _PROVENANCE = frozenset(
         "valid_to",
         "retrieved_at",
         "extracted_at",
+        "retired_at",
         "evidence_doc_ids",
         "evidence_uris",
         "evidence_starts",
@@ -212,6 +214,7 @@ def provenance_of(fact: Fact, extracted_at: datetime) -> dict[str, Any]:
         "valid_to": fact.valid_to,
         "retrieved_at": max(clocks, default=None),
         "extracted_at": extracted_at,
+        "retired_at": fact.retired_at,
         "evidence_doc_ids": [e.doc_id for e in evidence],
         "evidence_uris": [e.uri or "" for e in evidence],
         "evidence_starts": [e.span.start if e.span else -1 for e in evidence],
@@ -341,8 +344,39 @@ def stored_fact(fact: Fact, props: Mapping[str, Any]) -> Fact:
         "confidence": float(props.get("confidence") or 0.0),
         "valid_from": _native(props.get("valid_from")),
         "valid_to": _native(props.get("valid_to")),
+        "retired_at": _native(props.get("retired_at")),
     }
     return fact.model_copy(update=update)
+
+
+def relationship_fact(row: Mapping[str, Any]) -> Fact:
+    """A fact relationship read back with its two ends, as the reconciler reads it.
+
+    `row` holds the relationship's `predicate` and `props`, and each end's
+    `key` and `labels`; a `:Claim` object also its `value`. The type of an end
+    is its label other than `Entity` and `Claim`. The relationship's own
+    receipts are `stored_fact`'s.
+    """
+    subject = Entity(key=str(row["subject_key"]), type=_end_type(row["subject_labels"]))
+    props = row["props"]
+    claim = CLAIM_LABEL in (row.get("object_labels") or ())
+    obj = (
+        None if claim else Entity(key=str(row["object_key"]), type=_end_type(row["object_labels"]))
+    )
+    stated = Fact(
+        subject=subject,
+        predicate=str(row["predicate"]),
+        object_entity=obj,
+        object_value=_native(row.get("value")) if claim else None,
+        polarity=Polarity(props.get("polarity") or Polarity.ASSERTED.value),
+        identity_keys=tuple(str(k) for k in props.get("identity_keys") or ()),
+    )
+    return stored_fact(stated, props)
+
+
+def _end_type(labels: Iterable[str] | None) -> str:
+    found = sorted(set(labels or ()) - {ENTITY_LABEL, CLAIM_LABEL})
+    return found[0] if found else ENTITY_LABEL
 
 
 def _entity_row(entity: Entity) -> dict[str, Any]:
@@ -362,6 +396,15 @@ def _entity_row(entity: Entity) -> dict[str, Any]:
 def is_scoped(fact: Fact) -> bool:
     """True when the fact carries a value for one of its identity-bearing qualifiers."""
     return any(k in fact.qualifiers for k in fact.identity_keys)
+
+
+def is_retired(fact: Fact) -> bool:
+    """True when the reconciler took the fact's last source away (#116).
+
+    A retired fact stays a record, as a voted-down one does, and is never
+    the value: it is not projected, and no plain RDF triple asserts it.
+    """
+    return fact.retired_at is not None
 
 
 def is_outvoted(fact: Fact) -> bool:
@@ -470,8 +513,9 @@ def projections(
     Only asserted, unscoped claims with a value project: a denial is not a
     value, and a value with an identity-bearing qualifier means nothing without
     its scope. Nor does a claim the corroborator voted down, however many
-    sources back it. A single-valued predicate projects its best-supported
-    claim; a multi-valued one, when the ontology says so, the list in that order.
+    sources back it, or one the reconciler retired. A single-valued predicate
+    projects its best-supported claim; a multi-valued one, when the ontology
+    says so, the list in that order.
     """
     grouped: dict[tuple[str, str, str], list[Fact]] = {}
     for fact in kg.facts:
@@ -481,6 +525,7 @@ def projections(
             or fact.polarity is not Polarity.ASSERTED
             or is_scoped(fact)
             or is_outvoted(fact)
+            or is_retired(fact)
         ):
             continue
         grouped.setdefault((fact.subject.type, fact.predicate, fact.subject.key), []).append(fact)
@@ -575,6 +620,57 @@ def _link_cypher(kind: str) -> str:
     )
 
 
+# The reconciler's statements (#116). Facts citing a document are found through
+# the per-predicate evidence indexes, and rewritten or deleted by signature.
+_TYPES = "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType AS name"
+_LINK_TYPES = ("SAME_AS", "SIMILAR", "DIFFERENT")
+_CITING = (
+    "UNWIND $indexes AS idx\n"
+    "CALL db.index.fulltext.queryRelationships(idx, $terms) YIELD relationship AS r\n"
+    "WITH r, startNode(r) AS s, endNode(r) AS o\n"
+    "RETURN elementId(r) AS id, type(r) AS predicate, properties(r) AS props,\n"
+    "       s.key AS subject_key, labels(s) AS subject_labels,\n"
+    "       o.key AS object_key, labels(o) AS object_labels, o.value AS value"
+)
+# What a retraction changes on a relationship; everything else stays as written.
+_RETRACTED = (
+    "support",
+    "support_sources",
+    "support_doc_ids",
+    "support_doc_sources",
+    "support_tiers",
+    "support_retrieved_at",
+    "retrieved_at",
+    "retired_at",
+    "evidence_doc_ids",
+    "evidence_uris",
+    "evidence_starts",
+    "evidence_ends",
+    "evidence_span_origins",
+    "evidence_tiers",
+    "evidence_retrieved_at",
+)
+
+
+def _retract_cypher(predicate: str) -> str:
+    # Found again by its MERGE key, through the uniqueness constraint's index.
+    return (
+        "UNWIND $rows AS row\n"
+        f"MATCH ()-[r:{_ident(predicate)} {{signature: row.signature}}]->()\n"
+        "SET r += row.props"
+    )
+
+
+def _delete_cypher(predicate: str) -> str:
+    return (
+        "UNWIND $rows AS row\n"
+        f"MATCH ()-[r:{_ident(predicate)} {{signature: row.signature}}]->(o)\n"
+        "DELETE r\n"
+        f"WITH o WHERE o:{_ident(CLAIM_LABEL)}\n"
+        "DETACH DELETE o"
+    )
+
+
 def _batches(rows: Sequence[dict[str, Any]], size: int) -> Iterator[list[dict[str, Any]]]:
     for start in range(0, len(rows), size):
         yield list(rows[start : start + size])
@@ -631,8 +727,8 @@ class Neo4jSink:
     confidence, support and the sources it counts, both clocks, and the
     reconcilable qualifiers as properties. "Why is this edge here?" is a read
     of the edge. Forgetting a source is not a delete: other sources may back
-    the same fact, and its `:Claim` and projected value would stay. That is
-    the reconciler's job (#116).
+    the same fact, and its `:Claim` and projected value would stay.
+    `retract()` is the reconciler's way to do it (#116).
 
     A single-valued predicate with two objects is written as two edges, not
     replaced: the store holds the conflict and a check query reports it
@@ -746,9 +842,97 @@ class Neo4jSink:
         its signature before anything is written (#153). One read transaction,
         through the signature indexes `bootstrap()` creates.
         """
+        return self._lookup().stored(facts)
+
+    def retract(
+        self, doc_ids: Collection[str], *, at: datetime, hard: bool = False
+    ) -> dict[str, int]:
+        """Take these documents out of every fact they back, in one write transaction (#116).
+
+        The facts are found through the per-predicate full-text index over
+        `evidence_doc_ids` that `bootstrap()` creates, never by a scan, and a
+        relationship type with no such index is not read and warns. Each is
+        read back, retracted by `openodke.reconcile.retract`, and its evidence,
+        support list, `support` and `retired_at` set again, found by its
+        signature through the uniqueness constraint's index; a derived fact
+        whose parent is retired is retired with it. With `hard`, a fact left
+        with no source is deleted, with its `:Claim`. A value projected from a
+        claim that lost support is projected again from the claims left, and
+        removed when none is. Returns the counts `openodke.reconcile.COUNTS`
+        names; the same documents retracted twice change nothing.
+        """
+        docs = sorted(set(doc_ids))
+        reader = self._lookup()
+        indexes = reader.indexes()
+        with self._driver.session(**self._session_config()) as session:
+            types = [row["name"] for row in session.run(_TYPES).data()]
+            for name in sorted(set(types) - set(indexes.evidence) - set(_LINK_TYPES)):
+                reader._unindexed(name, "evidence_doc_ids")
+            names = sorted(indexes.evidence.values())
+            if not docs or not names:
+                return dict.fromkeys(COUNTS, 0)
+            counts: dict[str, int] = session.execute_write(self._retract, docs, names, at, hard)
+        return counts
+
+    def _retract(
+        self, tx: Any, docs: list[str], names: list[str], at: datetime, hard: bool
+    ) -> dict[str, int]:
+        terms = " OR ".join(_phrase(doc) for doc in docs)
+        rows = tx.run(_CITING, {"indexes": names, "terms": terms}).data()
+        before = [relationship_fact(row) for row in rows]
+        after = reconciled(before, set(docs), at)
+        updates: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        deletes: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        claims: dict[tuple[str, str], set[str]] = defaultdict(set)
+        for row, old, new in zip(rows, before, after, strict=True):
+            if new is old:
+                continue
+            # The stored key, not one computed again: a value read back may not repr the same.
+            signature = row["props"]["signature"]
+            if hard and new.retired_at is not None:
+                deletes[new.predicate].append({"signature": signature})
+            else:
+                props = provenance_of(new, at)
+                changed = {key: props[key] for key in _RETRACTED}
+                near = qualifier_property(NEAR_DUPLICATES)
+                changed[near] = props.get(near)
+                updates[new.predicate].append({"signature": signature, "props": changed})
+            if new.object_entity is None:
+                claims[(new.subject.type, new.predicate)].add(new.subject.key)
+        for predicate, batch in sorted(updates.items()):
+            tx.run(_retract_cypher(predicate), rows=batch).consume()
+        for predicate, batch in sorted(deletes.items()):
+            tx.run(_delete_cypher(predicate), rows=batch).consume()
+        self._project_again(tx, claims)
+        return tally(before, after, hard=hard)
+
+    def _project_again(self, tx: Any, claims: Mapping[tuple[str, str], set[str]]) -> None:
+        """The projected value of each subject and predicate, from the claims it has left."""
+        for (subject_type, predicate), keys in sorted(claims.items()):
+            cypher = (
+                "UNWIND $rows AS row\n"
+                f"MATCH (s:{_ident(subject_type)} {{key: row.key}})"
+                f"-[r:{_ident(predicate)}]->(c:{_ident(CLAIM_LABEL)})\n"
+                "RETURN row.key AS subject_key, labels(s) AS subject_labels, "
+                "properties(r) AS props, labels(c) AS object_labels, c.value AS value"
+            )
+            found = tx.run(cypher, rows=[{"key": key} for key in sorted(keys)]).data()
+            left = [
+                relationship_fact({**row, "predicate": predicate, "object_key": None})
+                for row in found
+            ]
+            graph = KnowledgeGraph(facts=tuple(left))
+            values = {
+                row["subject_key"]: row["value"]
+                for row in projections(graph, self.ontology).get((subject_type, predicate), ())
+            }
+            rows = [{"subject_key": key, "value": values.get(key)} for key in sorted(keys)]
+            tx.run(_projection_cypher(subject_type, predicate), rows=rows).consume()
+
+    def _lookup(self) -> Neo4jLookup:
         if self._reader is None:
             self._reader = self.lookup()
-        return self._reader.stored(facts)
+        return self._reader
 
     def lookup(self, **options: Any) -> Neo4jLookup:
         """A `Neo4jLookup` on this sink's connection, database and ontology.
@@ -796,6 +980,9 @@ class StoreIndexes(NamedTuple):
     # Relationship types with a range index on `signature`: the uniqueness
     # constraint's, through which a stored fact is found by its MERGE key.
     signatures: frozenset[str] = frozenset()
+    # Relationship type -> a full-text index over `evidence_doc_ids`, through
+    # which the reconciler finds the facts a document backs.
+    evidence: Mapping[str, str] = {}
 
 
 def store_indexes(rows: Iterable[Mapping[str, Any]]) -> StoreIndexes:
@@ -804,6 +991,7 @@ def store_indexes(rows: Iterable[Mapping[str, Any]]) -> StoreIndexes:
     ids: set[str] = set()
     names: dict[str, str] = {}
     signatures: set[str] = set()
+    evidence: dict[str, str] = {}
     entity_key = False
     for row in sorted(rows, key=lambda r: str(r.get("name"))):
         labels = list(row.get("labelsOrTypes") or ())
@@ -812,6 +1000,11 @@ def store_indexes(rows: Iterable[Mapping[str, Any]]) -> StoreIndexes:
         if row.get("entityType") == "RELATIONSHIP":
             if kind == "RANGE" and len(labels) == 1 and props == ["signature"]:
                 signatures.add(labels[0])
+            elif kind == "FULLTEXT" and props == ["evidence_doc_ids"]:
+                for label in labels:
+                    own = _schema_name("evidence", label)
+                    if label not in evidence or row.get("name") == own:
+                        evidence[label] = str(row["name"])
         elif kind == "RANGE" and len(labels) == 1 and props == ["key"]:
             if labels[0] == ENTITY_LABEL:
                 entity_key = True
@@ -823,7 +1016,9 @@ def store_indexes(rows: Iterable[Mapping[str, Any]]) -> StoreIndexes:
                 own = _schema_name("names", label)
                 if label not in names or row.get("name") == own:
                     names[label] = str(row["name"])
-    return StoreIndexes(frozenset(keys), entity_key, frozenset(ids), names, frozenset(signatures))
+    return StoreIndexes(
+        frozenset(keys), entity_key, frozenset(ids), names, frozenset(signatures), evidence
+    )
 
 
 class LookupQuery(NamedTuple):
@@ -1324,8 +1519,11 @@ class Neo4jConstrainer:
 
     Indexes, which enforce nothing: `external_id` per type; a full-text index
     over `label` and `aliases` per type, full-text being the index kind that
-    covers a `LIST<STRING>` property; and `key` on the sink's `:Entity` label,
-    which is how a link finds a node without knowing its type.
+    covers a `LIST<STRING>` property; `key` on the sink's `:Entity` label,
+    which is how a link finds a node without knowing its type; and a
+    full-text index over `evidence_doc_ids` per predicate, with the keyword
+    analyzer so a document id is one exact term, which is how the reconciler
+    finds every fact a document backs without a scan (#116).
 
     Neo4j cannot enforce:
 
@@ -1335,10 +1533,10 @@ class Neo4jConstrainer:
       and changes nothing — the rule used as a check, not as inference: a
       reasoner told "at most one" concludes the two employers are one company
       (09-quality §4). Only asserted, open-ended relationships count: a denial
-      is not a value, and one with `valid_to` set expired correctly (DECISIONS
-      #17). The check groups by the predicate's `scope_keys`, its
-      identity-bearing qualifiers and any declared `cardinality_scope`: uptime
-      is single per percentile. Nothing runs these on write;
+      is not a value, one with `valid_to` set expired correctly (DECISIONS
+      #17), and a retired one lost its evidence (#116). The check groups by
+      the predicate's `scope_keys`, its identity-bearing qualifiers and any
+      declared `cardinality_scope`: uptime is single per percentile. Nothing runs these on write;
       `Neo4jSink.check()` does.
     - existence, property-type and node-key constraints. Neo4j has them in
       Enterprise Edition only, so none is emitted and `EntityType.keys` is not
@@ -1376,10 +1574,13 @@ class Neo4jConstrainer:
                 f"FOR (n:{label}) ON EACH [n.label, n.aliases]",
             ]
         for name in sorted(ontology.predicates):
-            out.append(
+            out += [
                 f"CREATE CONSTRAINT {_schema_name('signature', name)} IF NOT EXISTS "
-                f"FOR ()-[r:{_ident(name)}]-() REQUIRE r.signature IS UNIQUE"
-            )
+                f"FOR ()-[r:{_ident(name)}]-() REQUIRE r.signature IS UNIQUE",
+                f"CREATE FULLTEXT INDEX {_schema_name('evidence', name)} IF NOT EXISTS "
+                f"FOR ()-[r:{_ident(name)}]-() ON EACH [r.evidence_doc_ids] "
+                "OPTIONS {indexConfig: {`fulltext.analyzer`: 'keyword'}}",
+            ]
         return out
 
     def checks(self, ontology: Ontology) -> list[str]:
@@ -1397,7 +1598,7 @@ def _cardinality_check(predicate: str, scope: Iterable[str]) -> str:
     lines = [
         f"{CHECK_MARKER}{predicate}",
         f"MATCH (s)-[r:{_ident(predicate)}]->(o)",
-        "WHERE r.polarity = 'asserted' AND r.valid_to IS NULL",
+        "WHERE r.polarity = 'asserted' AND r.valid_to IS NULL AND r.retired_at IS NULL",
     ]
     if scoped:
         lines += [
@@ -1432,11 +1633,13 @@ __all__ = [
     "id_forms",
     "is_check",
     "is_outvoted",
+    "is_retired",
     "is_scoped",
     "link_row",
     "plan",
     "projections",
     "provenance_of",
+    "relationship_fact",
     "signature_of",
     "storable",
     "store_indexes",
