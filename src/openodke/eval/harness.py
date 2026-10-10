@@ -35,6 +35,11 @@ The last row is diagnosed: every miss in one cause bucket, with the gate's
 refusals when the Validator ran and what the extractor was offered when a
 `trace` says (`openodke.eval.diagnosis`, #140), and the fixes ranked by the
 recall the arithmetic expects of them (`openodke.eval.fixes`, #141).
+
+With `lenient`, the fact-equivalence judge reads each pair the pre-filter makes
+from a row's misses and its unmatched predictions (`openodke.eval.equivalence`,
+#143): a lenient score, counting a surface form judged the gold fact as a hit,
+is printed beside each row's strict one, and every pair is written for audit.
 """
 
 from __future__ import annotations
@@ -108,7 +113,7 @@ DESCRIPTION = """\
 odke eval pipeline (--cmd TEMPLATE | --run MODULE:FUNCTION | --predictions FILE)
                    (--labels GOLD_FACTS --documents DOCS | --bench PREPARED)
                    [--adapter NAME] [--ontology FILE] [--validator] [--config RUN_CONFIG]
-                   [--adjudicate LIST]
+                   [--adjudicate LIST] [--lenient PAIRS]
 
 Runs your pipeline over the documents and scores what it returns.
 
@@ -138,7 +143,14 @@ gold lacks is grounded three times against its document (--config's grounder,
 or the default one). One supported in two of the three runs is possibly
 missing from gold. Each row's adjudicated precision, counting those as hits,
 is printed beside its strict one, which never changes, and every prediction
-the gold lacks goes to LIST (JSONL) with its three verdicts."""
+the gold lacks goes to LIST (JSONL) with its three verdicts.
+
+--lenient PAIRS, with --labels: a missed gold fact and an unmatched prediction
+with the relation and one end in common are asked about, in both orders, by the
+fact-equivalence judge (--config's ground model, or the default one). A pair
+judged the same fact in both orders counts as a hit in each row's lenient
+precision, recall and F1, printed beside the strict ones, which never change;
+every pair goes to PAIRS (JSONL) with both answers."""
 
 
 class PipelineError(RuntimeError):
@@ -698,6 +710,7 @@ def evaluate_pipeline(
     trace: str | Path | None = None,
     examples: int = EXAMPLES,
     reference: str | Path | None = None,
+    lenient: str | Path | None = None,
 ) -> EvalReport:
     """Run a pipeline one way, read its output, validate it if asked, and score it.
 
@@ -711,7 +724,9 @@ def evaluate_pipeline(
     the extractor was offered, for the diagnosis: a run's `manifest.json`, or
     the run config that produced the predictions. `reference` is another
     system's output on the same documents, triples or facts, for each fix's
-    gain at that system's rate.
+    gain at that system's rate. `lenient` names the file the fact-equivalence
+    judge's pairs go to, and adds the lenient score (`openodke.eval.equivalence`);
+    it needs `labels` too.
     """
     return evaluate(
         command=command,
@@ -729,6 +744,7 @@ def evaluate_pipeline(
         trace=trace,
         examples=examples,
         reference=reference,
+        lenient=lenient,
     ).report
 
 
@@ -749,6 +765,7 @@ def evaluate(
     trace: str | Path | None = None,
     examples: int = EXAMPLES,
     reference: str | Path | None = None,
+    lenient: str | Path | None = None,
 ) -> Evaluation:
     """`evaluate_pipeline`, with the last row's items and the run config beside the report."""
     modes = [m for m in (command, function, predictions) if m is not None]
@@ -762,15 +779,20 @@ def evaluate(
         raise ValueError(f"unknown adapter {adapter!r}; one of {', '.join(FORMATS)}")
     if function is not None and adapter != "triples":
         raise ValueError("--adapter reads files; a callable returns rows or facts itself")
-    if config is not None and not (validator or adjudicate is not None):
+    if config is not None and not (validator or adjudicate is not None or lenient is not None):
         raise ValueError(
-            "--config is for --validator and --adjudicate: the Validator's stages and "
-            "models, and the grounder's"
+            "--config is for --validator, --adjudicate and --lenient: the Validator's stages "
+            "and models, the grounder's and the judge's"
         )
     if adjudicate is not None and labels is None:
         raise ValueError(
             "--adjudicate needs --labels: it lists the predictions your gold facts lack, by "
             "openodke's matching, and a --bench set is scored by its benchmark's own"
+        )
+    if lenient is not None and labels is None:
+        raise ValueError(
+            "--lenient needs --labels: it pairs your gold facts' misses with the predictions "
+            "openodke's matching left, and a --bench set is scored by its benchmark's own"
         )
     offered, produced = read_trace(trace) if trace is not None else (None, None)
     if labels is not None:
@@ -812,6 +834,9 @@ def evaluate(
     if adjudicate is not None:
         rows = [(PIPELINE, facts)] + ([(VALIDATOR, checked.facts)] if checked else [])
         report = adjudicated(report, corpus, rows, Path(adjudicate), config)
+    if lenient is not None:
+        rows = [(PIPELINE, facts)] + ([(VALIDATOR, checked.facts)] if checked else [])
+        report = leniently(report, corpus, rows, Path(lenient), config)
     if produced is None and validator and config is not None:
         produced = _data(config)
     return Evaluation(report, found.items, produced)
@@ -876,6 +901,63 @@ def adjudicated(
             "notes": (*report.notes, note),
             "run": run,
         }
+    )
+
+
+def leniently(
+    report: EvalReport,
+    corpus: Corpus,
+    rows: Sequence[tuple[str, Sequence[Fact]]],
+    pairs: Path,
+    config: str | Path | None = None,
+) -> EvalReport:
+    """`report` with its lenient section, after writing every pair asked to `pairs`.
+
+    The judge is `FactJudge` on `config`'s ground model, recorded responses
+    and all, or the default one; metered under the stage `judge` either way,
+    so the report names the model it called. The ontology describes each
+    relation to it.
+    """
+    from openodke.eval.cost import CostMeter
+    from openodke.eval.equivalence import FactJudge, lenient, write_pairs
+    from openodke.llm.roles import ModelRoles
+
+    assert corpus.gold is not None
+    ontology = corpus.ontology
+    if config is not None:
+        from openodke.run.build import build
+        from openodke.run.config import load_config
+
+        loaded = load_config(config)
+        built = build(
+            loaded.model_copy(update={"models": loaded.models.model_copy(update={"meter": True})})
+        )
+        roles = built.context.roles
+        client = built.context.client("ground", stage="judge")
+        meter = built.context.meter
+        assert meter is not None
+        ontology = ontology or built.ontology
+    else:
+        roles = ModelRoles()
+        meter = CostMeter()
+        client = meter.client(roles.client_for("ground"), "judge")
+    judge = FactJudge(roles, client=client, ontology=ontology)
+    section, entries = lenient(rows, corpus.gold, corpus.documents, judge)
+    write_pairs(pairs, entries)
+    same = sum(1 for e in entries if e.decision is not None and e.decision.decision == "same")
+    note = (
+        f"lenient: {len(entries)} pair(s) the pre-filter let through, asked in both orders; "
+        f"{same} judged the same fact (every one, with both answers, in {pairs})"
+    )
+    called = models_called(meter.records, {"judge": roles.ground.model})
+    run = report.run.model_copy(
+        update={
+            "models": {**called, **report.run.models},
+            "prompts": tuple(dict.fromkeys([*report.run.prompts, *judge.stats["prompts"]])),
+        }
+    )
+    return report.model_copy(
+        update={"lenient": section, "notes": (*report.notes, note), "run": run}
     )
 
 

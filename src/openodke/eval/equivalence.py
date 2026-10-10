@@ -34,22 +34,41 @@ quantity, date or number must have the same value, as EnterpriseRAG-Bench's
 correctness rule has it ("quantities must match", Onyx, arXiv 2605.05253).
 
 It asks the `ground` role's model, the same size of question as grounding.
+
+**The lenient score** (`lenient`) asks the judge about every pair the
+pre-filter makes from a row's misses and its unmatched predictions, document by
+document. A pair judged the same in both orders moves one miss and one false
+positive to a hit, at most once per gold fact and once per prediction. Each
+row's lenient precision, recall and F1 are printed beside its strict ones and
+resampled on the same draws; the strict numbers never change.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import threading
 import time
+from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 from openodke.chunking import sentences
 from openodke.corroborate.judge import Answer, parse_answer, swap_rule
 from openodke.corroborate.normalize import name_key
-from openodke.eval.extraction import normalise_value
+from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED, bootstrap
+from openodke.eval.eval_report import Lenient, LenientRow, Performance, micro, performance
+from openodke.eval.extraction import (
+    document_counts,
+    match_extraction,
+    normalise_value,
+    per_document,
+)
+from openodke.eval.formats import GoldFact
 from openodke.ground.llm import render_claim
 from openodke.ground.locate import locate_span
 from openodke.ground.retry import RetryPolicy, call_with_retry
@@ -538,6 +557,176 @@ class FactJudge:
         return out
 
 
+# --------------------------------------------------------------------------- #
+# The lenient score
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class Pairing:
+    """One pair the pre-filter let through, in the document it was scored in, and its decision."""
+
+    doc_id: str
+    gold: Fact
+    predicted: Fact
+    side: Side
+    passage: str
+    rows: list[str]
+    decision: Equivalence | None = None
+
+    def row(self) -> dict[str, Any]:
+        decided = self.decision
+        return {
+            "doc_id": self.doc_id,
+            "gold": render_claim(self.gold),
+            "predicted": render_claim(self.predicted),
+            "differs": self.side,
+            "passage": self.passage,
+            "rows": self.rows,
+            "decision": decided.decision if decided else None,
+            "gold_first": decided.gold_first.decision if decided and decided.gold_first else None,
+            "prediction_first": (
+                decided.prediction_first.decision if decided and decided.prediction_first else None
+            ),
+            "why": decided.why if decided else None,
+        }
+
+
+# A pair, by its document and the two facts' signatures: asked once for every row it is in.
+_Key = tuple[str, tuple[Any, ...], tuple[Any, ...]]
+
+
+def lenient(
+    configurations: Sequence[tuple[str, Sequence[Fact]]],
+    gold: Sequence[GoldFact],
+    documents: Sequence[Document],
+    judge: FactJudge,
+    *,
+    resamples: int = RESAMPLES,
+    seed: int = SEED,
+    level: float = LEVEL,
+) -> tuple[Lenient, list[Pairing]]:
+    """Each `(name, facts)` row strict and lenient, and every pair the judge was asked about.
+
+    The pairs are the pre-filter's (`candidate`) between the gold facts the
+    matcher (`match_extraction`) counted missed and the predictions it did not
+    match, within each document the texts include; the prediction the matcher
+    already set against a gold fact, as a wrong value or entity, is tried
+    first. A pair judged the same is a hit, at most once per gold fact and once
+    per prediction, in the order the matcher gives them. The strict numbers are
+    `extraction_rows`'s, range and all; the lenient ones are resampled on the
+    same draws.
+    """
+    texts = {doc.id: doc for doc in documents}
+    asked: dict[_Key, Pairing] = {}
+    found: dict[str, list[tuple[str, int, int, _Key]]] = {}
+    for name, facts in configurations:
+        outcomes = match_extraction(gold, per_document(facts))
+        missed: dict[str, list[tuple[int, Fact]]] = defaultdict(list)
+        unmatched: dict[str, list[tuple[int, Fact]]] = defaultdict(list)
+        for at, outcome in enumerate(outcomes):
+            where = outcome.doc_id
+            if outcome.kind == "correct" or where is None or where not in texts:
+                continue
+            if outcome.gold is not None:
+                missed[where].append((at, outcome.gold))
+            if outcome.predicted is not None:
+                unmatched[where].append((at, outcome.predicted))
+        pairs = found[name] = []
+        for doc_id, misses in missed.items():
+            for g_at, g in misses:
+                spare = [i for i in unmatched[doc_id] if i[0] == g_at]
+                spare += [i for i in unmatched[doc_id] if i[0] != g_at]
+                for p_at, p in spare:
+                    side = candidate(g, p)
+                    if side is None:
+                        continue
+                    key: _Key = (doc_id, g.signature, p.signature)
+                    entry = asked.get(key)
+                    if entry is None:
+                        passage = passage_for(g, texts[doc_id])
+                        entry = asked[key] = Pairing(doc_id, g, p, side, passage, [])
+                    if name not in entry.rows:
+                        entry.rows.append(name)
+                    pairs.append((doc_id, g_at, p_at, key))
+    entries = list(asked.values())
+    decided = judge.judge_many([(e.gold, e.predicted, e.passage) for e in entries])
+    for entry, answered in zip(entries, decided, strict=True):
+        entry.decision = answered
+
+    rows = []
+    for name, facts in configurations:
+        counts = document_counts(gold, facts)
+        moved = dict.fromkeys(counts.by_doc, 0)
+        tally = dict.fromkeys(("same", "different", "unsure"), 0)
+        golds: set[int] = set()
+        predictions: set[int] = set()
+        for doc_id, g_at, p_at, key in found[name]:
+            decision = asked[key].decision
+            said = decision.decision if decision is not None else "unsure"
+            tally[said if said in tally else "unsure"] += 1
+            if said == "same" and g_at not in golds and p_at not in predictions:
+                golds.add(g_at)
+                predictions.add(p_at)
+                moved[doc_id] += 1
+        strict = list(counts.by_doc.values())
+        lenient_units = [
+            (tp + moved[d], fp - moved[d], fn - moved[d])
+            for d, (tp, fp, fn) in counts.by_doc.items()
+        ]
+        fixed = (0, counts.uncited, 0)
+        estimates = [
+            _performance(units, fixed, resamples=resamples, seed=seed, level=level)
+            for units in (strict, lenient_units)
+        ]
+        rows.append(
+            LenientRow(
+                name=name,
+                candidates=len(found[name]),
+                **tally,
+                counted=sum(moved.values()),
+                strict=estimates[0],
+                lenient=estimates[1],
+            )
+        )
+    section = Lenient(
+        judge=PROMPT.key,
+        model=judge.spec.model,
+        questions=len(entries),
+        disagreed=sum(1 for e in entries if e.decision is not None and e.decision.disagreed),
+        rows=tuple(rows),
+    )
+    return section, entries
+
+
+def _performance(
+    units: Sequence[tuple[int, int, int]],
+    fixed: tuple[int, int, int],
+    *,
+    resamples: int,
+    seed: int,
+    level: float,
+) -> Performance:
+    def statistic(draw: Sequence[tuple[int, int, int]]) -> dict[str, Any]:
+        return micro([*draw, fixed])
+
+    ranges = bootstrap(units, statistic, resamples=resamples, seed=seed, level=level)
+    return performance(statistic(units), ranges)
+
+
+def write_pairs(path: str | Path, entries: Sequence[Pairing]) -> Path:
+    """Every pair the judge was asked about, one JSON line each, the ones judged same first."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    ordered = sorted(entries, key=lambda e: e.decision is None or e.decision.decision != "same")
+    target.write_text(
+        "".join(json.dumps(e.row(), ensure_ascii=False) + "\n" for e in ordered),
+        encoding="utf-8",
+        newline="\n",
+    )
+    return target
+
+
 __all__ = [
     "DECISIONS",
     "EQUIV_SCHEMA",
@@ -546,12 +735,15 @@ __all__ = [
     "PROMPT",
     "Equivalence",
     "FactJudge",
+    "Pairing",
     "build_messages",
     "candidate",
+    "lenient",
     "names",
     "passage_for",
     "relation_key",
     "render_plain",
     "render_question",
     "surface_pair",
+    "write_pairs",
 ]

@@ -68,6 +68,10 @@
     "pooled_recall": {
       "description": "Added in 1.1, so not required: two or more runs' recall relative to the pool of the supported facts they found, with no gold (#146); null when not asked for.",
       "anyOf": [{"type": "null"}, {"$ref": "#/$defs/pooled_recall"}]
+    },
+    "lenient": {
+      "description": "Added in 1.2, so not required: each row strict and lenient, the surface forms the fact-equivalence judge called the gold fact in both orders counted as hits (#143); null when not asked for.",
+      "anyOf": [{"type": "null"}, {"$ref": "#/$defs/lenient"}]
     }
   },
   "$defs": {
@@ -527,6 +531,33 @@
         "runs": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/pool_member"}},
         "bootstrap": {"$ref": "#/$defs/bootstrap"},
         "caveat": {"type": "string"}
+      }
+    },
+    "lenient_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "candidates", "same", "different", "unsure", "counted", "strict", "lenient"],
+      "properties": {
+        "name": {"type": "string"},
+        "candidates": {"$ref": "#/$defs/count", "description": "Pairs the pre-filter let through: a missed gold fact and an unmatched prediction with the relation and one end in common."},
+        "same": {"$ref": "#/$defs/count"},
+        "different": {"$ref": "#/$defs/count"},
+        "unsure": {"$ref": "#/$defs/count"},
+        "counted": {"$ref": "#/$defs/count", "description": "Misses counted found: once per gold fact, once per prediction."},
+        "strict": {"$ref": "#/$defs/performance"},
+        "lenient": {"$ref": "#/$defs/performance"}
+      }
+    },
+    "lenient": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["judge", "model", "questions", "disagreed", "rows"],
+      "properties": {
+        "judge": {"type": "string", "description": "The registered prompt key the calls sent."},
+        "model": {"type": ["string", "null"]},
+        "questions": {"$ref": "#/$defs/count"},
+        "disagreed": {"$ref": "#/$defs/count", "description": "Pairs whose two orders answered differently."},
+        "rows": {"type": "array", "items": {"$ref": "#/$defs/lenient_row"}}
       }
     }
   }

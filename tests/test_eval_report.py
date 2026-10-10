@@ -191,7 +191,7 @@ def test_conformance_checks_the_relation_and_both_ends(people: Ontology) -> None
 def test_the_schema_ships_inside_the_package() -> None:
     assert SCHEMA_PATH.parent.name == "eval" and SCHEMA_PATH.is_file()
     assert schema()["properties"]["schema_version"]["pattern"] == r"^1\.[0-9]+$"
-    assert SCHEMA_VERSION == "1.1"
+    assert SCHEMA_VERSION == "1.2"
 
 
 def test_the_check_names_what_is_wrong() -> None:
@@ -271,7 +271,7 @@ def test_render_prints_the_numbers_the_json_holds() -> None:
     (row,) = data.rows
     assert rendered_rows(text, ["extract"])["extract"] == expected_cells(row)
     assert "95% ranges: 2 documents resampled 2000 times (percentile bootstrap, seed 0)" in text
-    assert f"openodke {data.run.openodke} · eval report 1.1" in text
+    assert f"openodke {data.run.openodke} · eval report 1.2" in text
 
 
 def test_render_keeps_a_stage_s_own_table_when_it_is_not_the_rows() -> None:
