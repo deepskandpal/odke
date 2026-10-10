@@ -166,19 +166,88 @@ def ontology_diff(
     fail_on_breaking: bool = typer.Option(
         False, "--fail-on-breaking", help="Exit 1 if any change is breaking."
     ),
+    store: str | None = typer.Option(
+        None,
+        "--store",
+        help="Also say which stored facts each ontology checked: a directory odke wrote as "
+        "JSONL, or a Neo4j URI (bolt://, neo4j://).",
+    ),
+    database: str | None = typer.Option(None, "--database", help="Neo4j: the database."),
+    user: str = typer.Option("neo4j", "--user", envvar="NEO4J_USER", help="Neo4j: the user."),
+    password_env: str = typer.Option(
+        "NEO4J_PASSWORD",
+        "--password-env",
+        help="Neo4j: the environment variable holding the password. Never a flag or a file.",
+    ),
 ) -> None:
     """Added, removed and changed types, predicates, qualifiers and cardinality.
 
     Breaking changes print first, because "does this break the live graph?" is
     the question being asked; `--fail-on-breaking` makes the answer an exit code.
+
+    With --store, the next question too: which stored facts the old ontology
+    checked, by the fingerprint each fact carries (`odke.ontology`), so the
+    facts a breaking change may no longer fit can be validated again. Exit 2
+    is a store that cannot be read.
     """
-    changes = _load_or_exit(old).diff(_load_or_exit(new))
+    before, after = _load_or_exit(old), _load_or_exit(new)
+    changes = before.diff(after)
     for change in sorted(changes, key=lambda c: not c.breaking):
         typer.echo(str(change))
     breaking = sum(c.breaking for c in changes)
     typer.echo(f"{_count(len(changes), 'change')}, {breaking} breaking")
+    if store is not None:
+        connection = _Store(
+            text_property=None, database=database, user=user, password_env=password_env
+        )
+        try:
+            for line in _checked_lines(store, before, after, connection):
+                typer.echo(line)
+        except (ValueError, ImportError, OSError) as exc:
+            _data_error(exc)
     if breaking and fail_on_breaking:
         raise typer.Exit(1)
+
+
+def _checked_lines(store: str, old: Ontology, new: Ontology, connection: _Store) -> list[str]:
+    """Which facts in `store` each ontology last checked, as `odke ontology diff` prints it."""
+    from openodke.corroborate import checked_by, checked_under
+    from openodke.eval.spans import load_facts
+
+    first, second = old.fingerprint, new.fingerprint
+    if "://" in store:
+        from openodke.sinks.neo4j import Neo4jSink
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with Neo4jSink(driver=connection.driver(store), database=connection.database) as sink:
+                stale = sink.checked_under(first)
+                current = len(sink.checked_under(second)) if second != first else len(stale)
+        _echo_warnings(caught)
+        other = None
+    else:
+        directory = Path(store)
+        if not (directory / "facts.jsonl").is_file():
+            raise ValueError(f"{directory} holds no facts.jsonl: not a store odke wrote")
+        facts = load_facts(directory)
+        stale = checked_under(facts, first)
+        current = len(checked_under(facts, second))
+        other = sum(checked_by(fact) not in (first, second) for fact in facts)
+    lines = [f"old           {first[:12]}: {_count(len(stale), 'stored fact')} checked under it"]
+    if second == first:
+        lines.append("new           the same schema: nothing to validate again")
+        return lines
+    lines.append(f"new           {second[:12]}: {_count(current, 'stored fact')} checked under it")
+    if other is not None:
+        lines.append(
+            f"other         {_count(other, 'stored fact')} checked under neither, or never"
+        )
+    for fact in stale[:5]:
+        target = fact.object_entity.key if fact.object_entity is not None else fact.object_value
+        lines.append(f"  {fact.subject.key} —{fact.predicate}→ {target}  [{fact.id}]")
+    if len(stale) > 5:
+        lines.append(f"  … and {len(stale) - 5} more")
+    return lines
 
 
 MODEL_HELP = "Provider-qualified model for every role, e.g. openai/gpt-5.5. Overrides `models`."
