@@ -59,22 +59,8 @@ class JsonlSink:
         self._write("entities.jsonl", entities)
         self._write("facts.jsonl", facts)
         self._write("links.jsonl", links)
-        edges = sum(fact.is_edge for fact in facts)
         (self.directory / "manifest.json").write_text(
-            json.dumps(
-                {
-                    "ontology": kg.ontology_name,
-                    "created_at": kg.created_at.isoformat(),
-                    "entities": len(entities),
-                    "facts": len(facts),
-                    "edges": edges,
-                    "properties": len(facts) - edges,
-                    "links": len(links),
-                    "stats": kg.stats,
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
+            json.dumps(manifest_of(kg, entities, facts, links), indent=2), encoding="utf-8"
         )
 
     def retract(
@@ -117,6 +103,31 @@ class JsonlSink:
         with (self.directory / name).open("w", encoding="utf-8") as fh:
             for row in rows:
                 fh.write(row.model_dump_json() + "\n")
+
+
+def manifest_of(
+    kg: KnowledgeGraph,
+    entities: Sequence[Entity],
+    facts: Sequence[Fact],
+    links: Sequence[EntityLink],
+) -> dict[str, Any]:
+    """What `manifest.json` says of a graph: its ontology, when it was made, its counts, its stats.
+
+    The counts are of what the files hold, which with `merge=True` is more
+    than this graph. A run adds its own manifest beside these keys
+    (`openodke.manifest`) and never replaces them.
+    """
+    edges = sum(fact.is_edge for fact in facts)
+    return {
+        "ontology": kg.ontology_name,
+        "created_at": kg.created_at.isoformat(),
+        "entities": len(entities),
+        "facts": len(facts),
+        "edges": edges,
+        "properties": len(facts) - edges,
+        "links": len(links),
+        "stats": kg.stats,
+    }
 
 
 def _entity_key(entity: Entity) -> Hashable:
