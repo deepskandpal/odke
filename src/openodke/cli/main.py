@@ -1224,7 +1224,14 @@ def eval_stage(
         None,
         "--track-record",
         help="extract and pipeline: append this run's predicted fixes here (default "
-        "track-record.jsonl beside --report).",
+        "track-record.jsonl beside --report). compare: where to find them and record what B "
+        "measured (default beside each --items file).",
+    ),
+    applied: list[str] | None = typer.Option(
+        None,
+        "--applied",
+        help="compare: a fix A predicted that B applied, by its id (offer-relations, inverses, "
+        "...); without it, the runs' configs are diffed.",
     ),
 ) -> None:
     """Score one stage against your own labelled data.
@@ -1268,7 +1275,8 @@ def eval_stage(
     `extract` and `pipeline` also say where the facts went, every miss in one
     cause bucket, and what to change, each fix with the recall gain the
     arithmetic expects; `--trace` says what the extractor was offered. With
-    `--report`, the predicted fixes go to a track record.
+    `--report`, the predicted fixes go to a track record, and `compare` adds
+    what the next run measured when it applied one.
 
     Extraction, the ablation and pipeline print precision, recall and F1 with
     95% ranges over your documents. `--report` writes the versioned eval
@@ -1323,14 +1331,17 @@ def eval_stage(
         if stage not in ("extract", "pipeline") and any(diagnosed.values()):
             named = ", ".join(flag for flag, given in diagnosed.items() if given)
             raise ValueError(f"{named}: for extract and pipeline")
-        if stage not in ("extract", "pipeline") and track_record is not None:
-            raise ValueError("--track-record: for extract and pipeline")
+        if stage not in ("extract", "pipeline", "compare") and track_record is not None:
+            raise ValueError("--track-record: for extract, pipeline and compare")
+        if stage != "compare" and applied:
+            raise ValueError("--applied: for compare only")
         if stage == "compare":
             if any(v is not None for v in inputs):
                 raise ValueError("compare reads two --items files and takes no other inputs")
             comparison = _eval_compare(runs or [], describe, as_json, metric, resamples, seed)
             if comparison is None:
                 return
+            _measure_fixes(comparison, runs or [], track_record, applied or [], as_json)
             if report_to is not None:
                 from openodke.eval.eval_report import EvalReport
 
@@ -1662,6 +1673,44 @@ def _record_fixes(
     lines = read(path)
     fixes = tuple(f.model_copy(update={"record": measured(lines, f.id)}) for f in report.fixes)
     return report.model_copy(update={"fixes": fixes}), summary(lines, path)
+
+
+def _measure_fixes(
+    comparison: Comparison,
+    runs: list[Path],
+    track_record: Path | None,
+    applied: list[str],
+    as_json: bool,
+) -> None:
+    """After a comparison: record what B measured of the fixes A predicted and B applied."""
+    from openodke.eval.compare import ItemRow
+    from openodke.eval.formats import load_jsonl
+    from openodke.eval.track import TRACK_RECORD, record_comparison
+
+    if track_record is not None:
+        records = [track_record]
+    else:
+        records = list(dict.fromkeys(run.parent / TRACK_RECORD for run in runs))
+        records = [path for path in records if path.is_file()]
+    if not records and not applied:
+        return
+    lines, notes = record_comparison(
+        comparison,
+        load_jsonl(runs[0], ItemRow),
+        load_jsonl(runs[1], ItemRow),
+        records,
+        applied=applied,
+        into=track_record,
+    )
+    for line in lines:
+        typer.echo(
+            f"track record: {line.fix} expected {line.expected * 100:+.1f} (ceiling "
+            f"{line.ceiling * 100:+.1f}), measured {line.measured * 100:+.1f} "
+            f"[{line.low * 100:+.1f}, {line.high * 100:+.1f}] {line.verdict} ({line.applied})",
+            err=as_json,
+        )
+    for note in notes:
+        typer.echo(note, err=True)
 
 
 def _write_rows(path: Path, rows: list[ItemRow]) -> None:
