@@ -128,6 +128,29 @@ The run above did five things:
 `Validator` keeps its stages between calls, and each report counts its own
 call.
 
+`batch_size=N` is its `--batch-size`: the rows are read N at a time, each
+micro-batch closed where the text its rows cite changes, run through every
+stage and written, so a batch of any size runs in the memory of one
+([Streaming](run.md#streaming)). The texts are held. The report sums the run
+and says how many micro-batches it took; the graph returned holds the stats
+and no facts, since the sinks hold those. A fact two micro-batches both state
+merges through a sink that says what it holds, as a rerun does.
+
+```python
+import tempfile
+from pathlib import Path
+
+from openodke.sinks import JsonlSink
+
+store = JsonlSink(Path(tempfile.mkdtemp()), merge=True)
+_, streamed = Validator(places, client=client, sinks=[store]).validate(
+    rows, [a, b], batch_size=1
+)
+# a, b, a a, b: each micro-batch ends where its rows' text changes.
+print(streamed.batches, streamed.restated)
+# 4 2
+```
+
 ## The stages
 
 Each stage defaults to what `odke run` builds under its usual name, with that

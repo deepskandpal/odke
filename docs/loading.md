@@ -7,7 +7,9 @@ into `Document.text` ([DECISIONS #3](decisions.md#3)). Both live in
 
 ## Loaders
 
-`load(source)` takes a path or bytes and returns documents.
+`load(source)` takes a path or bytes and returns documents. `JsonlLoader`
+returns an iterator, reading a file a line at a time as its documents are
+asked for, so a file of any size [streams](run.md#streaming).
 
 | Loader | Suffix | One document per | `modality` | Extra |
 |---|---|---|---|---|

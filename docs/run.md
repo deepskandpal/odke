@@ -15,6 +15,7 @@ odke run examples/e2e/odke.yaml --model ollama/llama3.1  # every role on one mod
 odke run examples/e2e/odke.yaml --budget-usd 1.50        # stop cleanly before spending more, keeping what is done
 odke run --from-manifest examples/e2e/out                # run again what a run's manifest recorded
 odke run examples/e2e/odke.yaml --log-format json        # every stage, document and model call as a JSON line
+odke run examples/e2e/odke.yaml --batch-size 500         # stream: 500 documents at a time, in bounded memory
 ```
 
 | Exit status | Means |
@@ -61,6 +62,7 @@ coverage: true
 reextract: {windows: 3}            # off unless named
 store_lookup: {use: neo4j, tenant: acme}   # off unless named
 manifest: runs/last.json           # the run manifest here too
+batch_size: 500                    # stream; off unless named
 ```
 
 | Key | Required | What it is |
@@ -75,6 +77,7 @@ manifest: runs/last.json           # the run manifest here too
 | `reextract` | no, off by default | Hand those gaps back to the extractor and ground what returns: `true`, or `{windows: N}`, the most windows per document (default 3). The extractor must have a `reextract` method (`llm` and `hybrid` do). Not part of `odke eval ablation` ([the re-extract hook](grounding.md#handing-a-gap-back-the-re-extract-hook)). |
 | `store_lookup` | no, off by default | Resolve each batch against what the store already holds, without loading it: `neo4j`, or `package.module:Name` for a `StoreLookup` of your own ([below](#store_lookup)). |
 | `manifest` | no | Where the [run manifest](#the-run-manifest) is written, besides each JSONL sink's `manifest.json`. |
+| `batch_size` | no, off by default | Stream the run: load, run and write that many documents at a time ([Streaming](#streaming)). `--batch-size` overrides it. Not a Neo4j sink's own `batch_size`, which is rows per write transaction. |
 
 Every relative path (the ontology, each input, `pythonpath`, replay files, a sink's
 output) resolves against the directory the config file is in, so a config runs the
@@ -343,6 +346,7 @@ stage:
 | `stopped` | when the budget stopped the run: the `limit`, the `budget`, what was `spent`, the `stage` it stopped in, the chunks left `unextracted` and the facts left `unchecked`. The `stopped` line, first in the report |
 | `coverage` | with `coverage: true`, the default: totals, the relations never offered and never used, and each document's uncovered sentences and missed entities ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)) |
 | `reextract` | with `reextract`: `windows` asked, facts `returned`, `duplicates`, `kept`, `refused` by grounding, and their `verdicts` |
+| `batches` | with `batch_size`: the micro-batches run. Every count above is then the run's, summed over them ([Streaming](#streaming)) |
 
 A `DoubleStageWarning` raised while the pipeline is built is printed as a
 `warning:` line on standard error.
@@ -573,6 +577,52 @@ except BudgetExceeded as exc:
 # stopped at budget: calls 2 of 2; no further model call is made
 assert ledger.spent.calls == 2 and ledger.stopped is not None
 ```
+
+## Streaming
+
+A batch is held whole: every chunk is extracted, then every document grounded,
+then resolution, corroboration and the gate run over all of it. `batch_size: N`
+(or `--batch-size N`) cuts the run into micro-batches instead
+([DECISIONS #45](decisions.md#45)): N documents are loaded, run through every
+stage and written, then the next, so memory follows the micro-batch, not the
+run. `odke validate` and `Validator.validate(..., batch_size=N)` read N triples
+rows at a time.
+
+- **Inputs are read as they are needed.** `read_triples` and the JSON Lines
+  loader are iterators, a directory is walked a file at a time, and every input
+  is checked before the first is read. Document ids are the ones one batch
+  gives.
+- **Each micro-batch is written as it is made.** A JSONL sink is written by the
+  first and appended to by the rest; its manifest's counts are its lines, and
+  its `stats` the run's so far. Neo4j merges each one. RDF, `cypher_file` and
+  `neo4j_admin_csv` rewrite a file of the whole graph on every write, so a
+  streamed run refuses them before anything runs. A sink of your own is
+  written once a micro-batch.
+- **One run, whatever its slices.** One ledger counts every call against the
+  [budget](#budgets), the [response cache](models.md#the-response-cache)
+  answers across micro-batches, one document's failure is its own, and the
+  report sums every micro-batch (`stats["batches"]` says how many). What
+  `execute` returns holds those stats and no facts, and a dry run prints the
+  first facts it would have written.
+- **The store joins micro-batches, not memory.** A fact two micro-batches both
+  state merges when the second is written, through a sink that says what it
+  holds ([merge with the store](stores.md#merge-with-the-store)): `odke
+  validate` does this, `odke run` does not yet. Without one, a JSONL file holds a
+  line for each, and a reader keeps the last. Entities resolve within a
+  micro-batch, and across them with [`store_lookup`](#store_lookup).
+- **Rows stay with their text.** `odke validate` closes a micro-batch only where
+  the next row cites another text, so one text's rows, sorted together, are
+  grounded and measured once; a text with more than twice N rows is split
+  there. The texts are held, because a row may cite any of them. `odke run`
+  with a `triples` extractor holds its rows; stream them with `odke validate`.
+
+What a micro-batch cannot see: a rival value stated in another micro-batch is
+not contested (`check()` finds the pair in a Neo4j store), near-duplicate texts
+are compared within one, the coverage report knows its micro-batch's names and
+keeps the records of the first 100 documents with a gap, and a count summed
+over micro-batches counts an entity once in each. Measured on 25,000 and
+50,000 synthetic triples rows, every default stage and a scripted client, the
+peak RSS is the same, about 66 MB; 5,000 rows in one batch peak at 141 MB.
 
 ## The default gate: `VerdictGate`
 
