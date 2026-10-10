@@ -72,13 +72,22 @@ Each call is a job on an `Observer` (`openodke.observe`, #161): a `job.start`
 event, one per stage, one per model call the default grounder makes, and a
 `job.end` whose counts are the report's (`ValidationReport.job`), each a span
 too when OpenTelemetry is configured.
+
+`validate(..., batch_size=N)` streams (#158, DECISIONS #45): the facts are
+read N at a time, each micro-batch closed where the text its rows cite
+changes, run through every stage and written, so a batch of any size runs in
+the memory of one micro-batch. The texts are held, because a row may cite any
+of them. What comes back is the run's report and a graph with its stats and no
+facts: the sinks hold those. `openodke.stream` says what a micro-batch cannot
+see.
 """
 
 from __future__ import annotations
 
 import copy
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from itertools import chain
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -98,11 +107,11 @@ from openodke.coverage import summary as coverage_summary
 from openodke.gate import VerdictGate
 from openodke.ground import LLMGrounder
 from openodke.ground.checks import REASONS, VERDICTS, CheckedGrounder, refusals
-from openodke.interop.triples import TripleRow, TriplesExtractor
+from openodke.interop.triples import TripleRow, TriplesExtractor, _file_name, read_triples
 from openodke.llm.base import LLMClient, ModelSpec
 from openodke.llm.budget import stopped_summary
 from openodke.llm.roles import ModelRoles
-from openodke.manifest import FILE, Recorder, RunManifest, inputs_of, spent_of
+from openodke.manifest import FILE, InputsHash, Recorder, RunManifest, inputs_of, spent_of
 from openodke.observe import JobCounts, Observer, spend
 from openodke.ontology import Ontology
 from openodke.pipeline import Pipeline
@@ -120,6 +129,8 @@ from openodke.stages import (
     Sink,
     StoreLookup,
 )
+from openodke.stream import Totals, by_text, micro_batches, shape, streams
+from openodke.stream import write as stream_write
 from openodke.types import Chunk, Document, Fact, Frozen, KnowledgeGraph, LinkKind
 
 Facts = str | Path | Iterable[TripleRow | Mapping[str, Any] | Fact]
@@ -176,6 +187,8 @@ class ValidationReport(Frozen):
     stopped: dict[str, Any] | None = None
     # Texts left out because something failed for them alone, with why (#162).
     failed: dict[str, str] = Field(default_factory=dict)
+    # With `batch_size`: the micro-batches run (#158). None when the job was one batch.
+    batches: int | None = None
     # The job's run manifest (#160). Not in the report's JSON, which the graph's
     # stats keep: it is a file of its own.
     manifest: RunManifest | None = Field(default=None, exclude=True)
@@ -210,9 +223,10 @@ class ValidationReport(Frozen):
                 _row("failed", failed_summary(self.failed, of=self.documents, noun="text"))
             )
         unmatched = f"; {self.unmatched} name a text that was not given" if self.unmatched else ""
-        lines.append(
-            _row("in", f"{_n(self.facts_in, 'fact')} from {_n(self.documents, 'text')}{unmatched}")
-        )
+        given = f"{_n(self.facts_in, 'fact')} from {_n(self.documents, 'text')}"
+        if self.batches is not None:
+            given += f", in {self.batches} micro-batch{'' if self.batches == 1 else 'es'}"
+        lines.append(_row("in", given + unmatched))
         lines.append(_row("grounded", ", ".join(f"{k} {v}" for k, v in self.verdicts.items())))
         checked = sum(self.checked.values())
         reasons = ", ".join(f"{v} {REASONS[k]}" for k, v in self.checked.items() if v)
@@ -346,6 +360,7 @@ class Validator:
         update: bool = False,
         recorder: Recorder | None = None,
         observer: Observer | None = None,
+        batch_size: int | None = None,
     ) -> Validated:
         """The whole layer over `facts` and the texts they cite, written to every sink.
 
@@ -365,6 +380,9 @@ class Validator:
 
         `observer` reports the job's events and spans; left out, a fresh one
         does. `odke validate` passes its own, which its grounder's calls report to.
+
+        With `batch_size`, the facts are read and written a micro-batch at a
+        time (#158), and the graph returned holds the stats and no facts.
         """
         if isinstance(facts, Fact) or isinstance(documents, Ontology):
             # It has a gate's method name, so code from before 1.0.0 that used
@@ -377,10 +395,23 @@ class Validator:
         from openodke.run.execute import handed_in, register_documents
 
         if recorder is None:
-            recorder = Recorder("validate", self._described(extractor, confidence, update))
+            described = self._described(extractor, confidence, update, batch_size)
+            recorder = Recorder("validate", described)
         observer = observer if observer is not None else Observer("validate")
         observer.start(dry_run=dry_run)
         docs = list(documents)
+        if batch_size is not None:
+            return self._streamed(
+                facts,
+                docs,
+                batch_size,
+                dry_run=dry_run,
+                extractor=extractor,
+                confidence=confidence,
+                update=update,
+                recorder=recorder,
+                observer=observer,
+            )
         source = _source(facts, docs, extractor=extractor, confidence=confidence)
         inputs = inputs_of(docs, handed_in(source))
         retracted: dict[str, int] | None = None
@@ -392,11 +423,7 @@ class Validator:
         register_documents(stages["corroborator"], docs)
         register_documents(stages["resolver"], docs)
         # A stage given is kept between calls, so its counts are read as a difference.
-        judge = getattr(stages["resolver"], "judge", None)
-        spent = _spent(stages["grounder"].grounder)
-        judged = _spent(judge)
-        judged_before = _counted(judge)
-        refused_before = _refused_by(stages["gate"])
+        before = _Before(stages)
         # Stand-ins: the double-stage warning sees each sink's platform, and the
         # real sinks write once the report is in the graph's stats.
         stand_ins = [_StandIn(getattr(sink, "profile", None)) for sink in self.sinks]
@@ -410,21 +437,17 @@ class Validator:
             **stages,
         )
         kg = pipeline.run(docs)
-        refused_by = {
-            reason: count - refused_before.get(reason, 0)
-            for reason, count in _refused_by(stages["gate"]).items()
-            if count - refused_before.get(reason, 0)
-        }
-        spent = _added(_spent(stages["grounder"].grounder, spent), _spent(judge, judged))
-        report = self._report(kg, source, stages, dry_run, spent, refused_by, judged_before)
+        graph = shape(kg)
+        report = self._report(kg.stats, graph, source, stages, dry_run, before)
         if retracted is not None:
             report = report.model_copy(update={"retracted": retracted})
-        kg = kg.model_copy(update={"stats": _stats(kg, source, stages, report)})
+        kg = kg.model_copy(update={"stats": _stats(kg.stats, graph, source, stages, report)})
         if not dry_run:
             begun = observer.begin("write")
             for sink in self.sinks:
                 sink.write(kg)
             observer.end(begun, {"sinks": len(self.sinks), "facts": len(kg.facts)})
+        spent = _job_spent(stages, before)
         manifest = recorder.finish(
             inputs=inputs,
             ontology=self.ontology,
@@ -452,7 +475,140 @@ class Validator:
         )
         return Validated(kg, report.model_copy(update={"manifest": manifest}))
 
-    def _described(self, extractor: str, confidence: float, update: bool) -> dict[str, Any]:
+    def _streamed(
+        self,
+        facts: Facts,
+        docs: list[Document],
+        size: int,
+        *,
+        dry_run: bool,
+        extractor: str,
+        confidence: float,
+        update: bool,
+        recorder: Recorder,
+        observer: Observer,
+    ) -> Validated:
+        """`validate` a micro-batch at a time (#158): read, run, write, and on to the next.
+
+        The run manifest hashes every text given and every fact as it is read,
+        into the digest one batch takes of them all, and records the run's
+        summed counts and its micro-batches.
+        """
+        from openodke.run.execute import register_documents
+
+        if size < 1:
+            raise ValueError("batch_size must be at least 1")
+        whole = [type(sink).__name__ for sink in self.sinks if not streams(sink)]
+        if whole:
+            raise ValueError(
+                f"{', '.join(whole)} writes the whole graph on every write, so a run in "
+                "micro-batches would leave only the last; leave batch_size out"
+            )
+        items, replay = _items(facts)
+        hashing = InputsHash(facts=True)
+        hashing.add_documents(docs)
+        items = _hashed(items, hashing)
+        source: _Replay | TriplesExtractor = (
+            _Replay(())
+            if replay
+            else TriplesExtractor((), extractor=extractor, confidence=confidence)
+        )
+        retracted: dict[str, int] | None = None
+        if update and not dry_run:
+            retracted = Reconciler(self.sinks).delete([doc.id for doc in docs]).counts()
+        stages = self._stages(dry_run, recorder, observer)
+        # A stage given is kept between calls, so its counts are read as a difference.
+        before = _Before(stages)
+        stand_ins = [_StandIn(getattr(sink, "profile", None)) for sink in self.sinks]
+        pipeline = Pipeline(
+            self.ontology,
+            source,
+            sinks=stand_ins,
+            inverses=self.inverses,
+            coverage=self.coverage,
+            observer=observer,
+            **stages,
+        )
+        texts = _Texts(docs)
+        totals = Totals()
+        ran: set[str] = set()
+
+        def run(cited: list[Document]) -> None:
+            for stage in (source, stages["corroborator"], stages["resolver"]):
+                register_documents(stage, cited, replace=True)
+            kg = pipeline.run(cited)
+            totals.add(kg, resolver=stages["resolver"])
+            ran.update(doc.id for doc in cited)
+            stats, report = self._so_far(totals, len(ran), source, stages, dry_run, before)
+            report = report.model_copy(update={"retracted": retracted})
+            graph = totals.graph()
+            if not dry_run:
+                kg = kg.model_copy(update={"stats": _stats(stats, graph, source, stages, report)})
+                begun = observer.begin("write")
+                stream_write(self.sinks, kg, first=totals.batches == 1)
+                observer.end(begun, {"sinks": len(self.sinks), "facts": len(kg.facts)})
+
+        for batch in by_text(items, size, _text_of):
+            source.feed(batch)
+            names = {_text_of(item) for item in batch}
+            run(texts.cited(names, getattr(source, "served", {})))
+        # The texts no row cited are run too, as an unbatched job runs every text given.
+        source.feed(())
+        for rest in micro_batches((doc for doc in docs if doc.id not in ran), size):
+            run(rest)
+        stats, report = self._so_far(totals, len(ran), source, stages, dry_run, before)
+        report = report.model_copy(update={"retracted": retracted})
+        graph = totals.graph()
+        stats = _stats(stats, graph, source, stages, report)
+        kg = KnowledgeGraph(ontology_name=self.ontology.name, stats=stats)
+        spent = _job_spent(stages, before)
+        # The report's counts are the micro-batches' summed, so the job's are too.
+        manifest = recorder.finish(
+            inputs=hashing.inputs(),
+            ontology=self.ontology,
+            prompts=report.prompts,
+            counts=validated_counts(report),
+            spent=spent_of(spent),
+            stopped=report.stopped,
+            failed=report.failed,
+            dry_run=dry_run,
+            run=observer.run,
+            job=report.job.model_dump(),
+        )
+        if not dry_run:
+            for sink in self.sinks:
+                if isinstance(sink, JsonlSink):
+                    manifest.write_into(sink.directory / FILE)
+            if self.manifest is not None:
+                manifest.write(self.manifest, kg, shape=graph)
+        observer.finish(
+            report.job,
+            cost=spend(spent),
+            documents=report.documents,
+            failed=len(report.failed),
+            stopped=report.stopped.get("limit") if report.stopped else None,
+        )
+        return Validated(kg, report.model_copy(update={"manifest": manifest}))
+
+    def _so_far(
+        self,
+        totals: Totals,
+        documents: int,
+        source: Any,
+        stages: Mapping[str, Any],
+        dry_run: bool,
+        before: _Before,
+    ) -> tuple[dict[str, Any], ValidationReport]:
+        """The run's stats and report after the micro-batches `totals` has added up."""
+        stats = {**totals.stats(), "documents": documents}
+        report = self._report(
+            stats, totals.graph(), source, stages, dry_run, before, store=totals.store
+        )
+        return stats, report.model_copy(update={"batches": totals.batches})
+
+    def _described(
+        self, extractor: str, confidence: float, update: bool, batch_size: int | None = None
+    ) -> dict[str, Any]:
         """What the manifest of a job with no recorder of its own records as its config."""
         roles = self.roles if self.roles is not None else ModelRoles()
         return {
@@ -473,6 +629,7 @@ class Validator:
             "extractor": extractor,
             "confidence": confidence,
             "update": update,
+            "batch_size": batch_size,
         }
 
     def _stages(self, dry_run: bool, recorder: Recorder, observer: Observer) -> dict[str, Any]:
@@ -519,46 +676,57 @@ class Validator:
 
     def _report(
         self,
-        kg: KnowledgeGraph,
+        stats: Mapping[str, Any],
+        graph: Mapping[str, Any],
         source: Any,
         stages: Mapping[str, Any],
         dry_run: bool,
-        spent: Mapping[str, Any],
-        refused_by: Mapping[str, int],
-        judged_before: Mapping[str, int] | None,
+        before: _Before,
+        *,
+        store: Mapping[str, Any] | None = None,
     ) -> ValidationReport:
+        """The report from the pipeline's `stats` and the graph's `shape`, counting each
+        stage since `before`; `store`, the resolver's store counts summed over micro-batches."""
+        judge_stage = getattr(stages["resolver"], "judge", None)
+        spent = _job_spent(stages, before)
+        refused_by = {
+            reason: count - before.refused.get(reason, 0)
+            for reason, count in _refused_by(stages["gate"]).items()
+            if count - before.refused.get(reason, 0)
+        }
         own: dict[str, Any] = dict(getattr(source, "stats", {}))
         # A triples stage counts rows that found their text; a replay, facts.
         facts_in = int(own.get("rows") or own.get("facts") or 0)
         grounding = stages["grounder"].stats
-        derived, refused = int(kg.stats.get("derived", 0)), int(kg.stats.get("refused", 0))
-        links = Counter(link.kind.value for link in kg.links)
-        coverage = kg.stats.get("coverage")
+        derived, refused = int(stats.get("derived", 0)), int(stats.get("refused", 0))
+        links: Mapping[str, int] = graph["links"]
+        coverage = stats.get("coverage")
         resolved = getattr(stages["resolver"], "stats", None)
-        store = resolved.get("store") if isinstance(resolved, Mapping) else None
+        if store is None and isinstance(resolved, Mapping):
+            store = resolved.get("store")
         batch = resolved.get("batch") if isinstance(resolved, Mapping) else None
-        stopped = kg.stats.get("stopped")
+        stopped = stats.get("stopped")
         if not isinstance(stopped, Mapping):
             stopped = judge_stop(resolved)
-        failed = kg.stats.get("failed")
+        failed = stats.get("failed")
         corroborated = getattr(stages["corroborator"], "stats", None)
         held = corroborated.get("store") if isinstance(corroborated, Mapping) else None
-        judge = _counted(getattr(stages["resolver"], "judge", None), judged_before)
+        judge = _counted(judge_stage, before.counted)
         prompts = dict.fromkeys(str(p) for p in grounding.get("prompts", ()))
         if judge is not None and judge.get("calls") and isinstance(resolved, Mapping):
             prompts.update(dict.fromkeys(str(p) for p in resolved.get("prompts", ())))
         return ValidationReport(
             dry_run=dry_run,
-            documents=int(kg.stats.get("documents", 0)),
+            documents=int(stats.get("documents", 0)),
             facts_in=facts_in,
             unmatched=int(own.get("unmatched_rows", 0)),
             verdicts={v.value: int(grounding["verdicts"].get(v.value, 0)) for v in VERDICTS},
             checked=refusals(grounding),
             refused=refused,
             refused_by=dict(refused_by),
-            merged=facts_in + derived - refused - len(kg.facts),
+            merged=facts_in + derived - refused - int(graph["facts"]),
             restated=int(held.get("merged", 0)) if isinstance(held, Mapping) else 0,
-            linked=len(kg.links),
+            linked=sum(links.values()),
             links=dict(sorted(links.items())),
             store=(
                 {str(k): int(v) for k, v in store.items()} if isinstance(store, Mapping) else None
@@ -568,10 +736,10 @@ class Validator:
                 {str(k): int(v) for k, v in batch.items()} if isinstance(batch, Mapping) else None
             ),
             derived=derived,
-            facts_out=len(kg.facts),
-            edges=len(kg.edges),
-            properties=len(kg.properties),
-            entities=len(kg.entities),
+            facts_out=int(graph["facts"]),
+            edges=int(graph["edges"]),
+            properties=int(graph["properties"]),
+            entities=int(graph["entities"]),
             calls=int(spent.get("calls", 0)),
             cached=int(spent.get("cached", 0)),
             tokens=int(spent.get("prompt_tokens", 0)) + int(spent.get("completion_tokens", 0)),
@@ -590,9 +758,19 @@ class _Replay:
 
     def __init__(self, facts: Iterable[Fact]) -> None:
         self.by_doc: dict[str | None, list[Fact]] = defaultdict(list)
-        for fact in facts:
-            self.by_doc[fact.evidence[0].doc_id if fact.evidence else None].append(fact)
         self._served: set[str] = set()
+        self._before: Counter[str] = Counter()
+        # The facts as handed in, when they came as a list: what the manifest hashes.
+        self.source = facts if isinstance(facts, list | tuple) else None
+        self.feed(facts)
+
+    def feed(self, facts: Iterable[Fact]) -> None:
+        """The next micro-batch's facts in place of these, which stay counted (#158)."""
+        self._before.update(self._counts())
+        self.by_doc = defaultdict(list)
+        self._served = set()
+        for fact in facts:
+            self.by_doc[_text_of(fact)].append(fact)
 
     def extract(self, chunk: Chunk, ontology: Ontology) -> list[Fact]:
         if chunk.index != 0:
@@ -605,11 +783,95 @@ class _Replay:
         """The facts handed in, by the text they cite, as a triples stage keeps its rows."""
         return self.by_doc
 
-    @property
-    def stats(self) -> dict[str, int]:
+    def _counts(self) -> dict[str, int]:
         served = sum(len(f) for doc, f in self.by_doc.items() if doc in self._served)
         total = sum(len(f) for f in self.by_doc.values())
         return {"facts": served, "unmatched_rows": total - served}
+
+    @property
+    def stats(self) -> dict[str, int]:
+        return {key: self._before[key] + count for key, count in self._counts().items()}
+
+
+class _Before:
+    """What the stages had counted before a job: a stage given is kept between calls."""
+
+    def __init__(self, stages: Mapping[str, Any]) -> None:
+        judge = getattr(stages["resolver"], "judge", None)
+        self.spent = _spent(stages["grounder"].grounder)
+        self.judged = _spent(judge)
+        self.counted = _counted(judge)
+        self.refused = _refused_by(stages["gate"])
+
+
+class _Texts:
+    """The texts a streamed job was given, found by the names its rows cite them by."""
+
+    def __init__(self, docs: Sequence[Document]) -> None:
+        self.order = {doc.id: at for at, doc in enumerate(docs)}
+        self.by_id = {doc.id: doc for doc in docs}
+        self.by_name: dict[str, list[Document]] = defaultdict(list)
+        for doc in docs:
+            if (name := _file_name(doc)) is not None:
+                self.by_name[name].append(doc)
+
+    def cited(self, names: Iterable[str | None], served: Mapping[str, str]) -> list[Document]:
+        """The texts these names cite, in the order given: by id, else by file name.
+
+        A file name two texts share cites both, so the triples stage settles
+        which one its rows go to, as it does unbatched, and once it has, the
+        one it chose.
+        """
+        found: dict[str, Document] = {}
+        for name in names:
+            if name is None:
+                continue
+            if name in self.by_id:
+                found[name] = self.by_id[name]
+            elif name in served and served[name] in self.by_id:
+                found[served[name]] = self.by_id[served[name]]
+            else:
+                found.update({doc.id: doc for doc in self.by_name.get(name, ())})
+        return sorted(found.values(), key=lambda doc: self.order[doc.id])
+
+
+def _job_spent(stages: Mapping[str, Any], before: _Before) -> dict[str, Any]:
+    """The model calls, tokens and cost the grounder and the pair judge spent on this job."""
+    judge = getattr(stages["resolver"], "judge", None)
+    return _added(_spent(stages["grounder"].grounder, before.spent), _spent(judge, before.judged))
+
+
+def _hashed(items: Iterator[Any], hashing: InputsHash) -> Iterator[Any]:
+    """`items`, each hashed into the run manifest's inputs as it is read."""
+    for item in items:
+        hashing.add_facts((item,))
+        yield item
+
+
+def _text_of(item: Any) -> str | None:
+    """The text a triples row or a `Fact` cites: its `doc`, or its first evidence's."""
+    if isinstance(item, Fact):
+        return item.evidence[0].doc_id if item.evidence else None
+    return str(item.doc)
+
+
+def _items(facts: Facts) -> tuple[Iterator[Any], bool]:
+    """The facts to stream, read as they are needed, and whether they are `Fact`s."""
+    if isinstance(facts, str | Path):
+        return read_triples(facts), False
+    items = iter(facts)
+    first = next(items, None)
+    if first is None:
+        return iter(()), False
+    replay = isinstance(first, Fact)
+
+    def checked() -> Iterator[Any]:
+        for item in chain([first], items):
+            if isinstance(item, Fact) != replay:
+                raise ValueError("pass triples rows or Facts, not both")
+            yield item
+
+    return (checked() if replay else read_triples(checked())), replay
 
 
 class _StandIn:
@@ -627,7 +889,7 @@ def _source(facts: Facts, docs: list[Document], *, extractor: str, confidence: f
         return TriplesExtractor(facts, extractor=extractor, confidence=confidence, documents=docs)
     items = list(facts)
     if items and all(isinstance(item, Fact) for item in items):
-        return _Replay(item for item in items if isinstance(item, Fact))
+        return _Replay([item for item in items if isinstance(item, Fact)])
     if any(isinstance(item, Fact) for item in items):
         raise ValueError("pass triples rows or Facts, not both")
     rows = [item for item in items if not isinstance(item, Fact)]
@@ -638,6 +900,9 @@ def validated_counts(report: ValidationReport) -> dict[str, int]:
     """A job's counts, as its run manifest keeps them: the report's, by the report's names."""
     counts = {key: int(getattr(report, key)) for key in _COUNTED}
     counts["failed"] = len(report.failed)
+    if report.batches is not None:
+        # A streamed job's counts are its micro-batches' summed (#158).
+        counts["batches"] = report.batches
     return counts
 
 
@@ -737,14 +1002,18 @@ def _counted(judge: Any, before: Mapping[str, int] | None = None) -> dict[str, i
 
 
 def _stats(
-    kg: KnowledgeGraph, source: Any, stages: Mapping[str, Any], report: ValidationReport
+    pipeline: Mapping[str, Any],
+    graph: Mapping[str, Any],
+    source: Any,
+    stages: Mapping[str, Any],
+    report: ValidationReport,
 ) -> dict[str, Any]:
     """The pipeline's counts, each stage's own and the report: what a JSONL manifest keeps."""
     from openodke.run.execute import jsonable
 
-    stats: dict[str, Any] = dict(kg.stats)
+    stats: dict[str, Any] = dict(pipeline)
     stats["graph"] = {
-        "facts": len(kg.facts),
+        "facts": int(graph["facts"]),
         "edges": report.edges,
         "properties": report.properties,
         "entities": report.entities,
