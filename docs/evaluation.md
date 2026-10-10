@@ -121,9 +121,10 @@ check the major version first.
   prints the eval report.
 - `odke bench run` writes it as `report.json` beside the predictions; `--report`
   puts it elsewhere.
-- 1.1 added `judged_precision`, `adjudication` and `pooled_recall`. The schema
-  does not require them, so a 1.0 report still reads. It also typed the
-  `diagnosis[]` and `fixes[]` entries, which a 1.0 report leaves empty.
+- 1.1 added `judged_precision`, `adjudication` and `pooled_recall`, and 1.2
+  added `lenient`. The schema does not require them, so an older report still
+  reads. 1.1 also typed the `diagnosis[]` and `fixes[]` entries, which a 1.0
+  report leaves empty.
 - The schema ships in the package, as `openodke/eval/eval_report.schema.json`.
   `check_report(data)` holds a document to it in plain Python and lists every
   mismatch. The package checks each report before writing it, and
@@ -131,7 +132,7 @@ check the major version first.
 
 | Key | What it holds |
 |---|---|
-| `schema_version` | `"1.1"`; `diagnosis[]` and `fixes[]` are typed within it, and stay required |
+| `schema_version` | `"1.2"`; `diagnosis[]` and `fixes[]` are typed within it, and stay required |
 | `title`, `n` | what was scored (`extract`, `ablation`, `text2kgbench:ont_1_movie`) and how many rows |
 | `run` | `openodke` (the version), `models` (role → model), `prompts` (the registered keys sent), `dataset` (name, path, documents, labels, details) |
 | `bootstrap` | how the ranges were drawn: `unit`, `units`, `resamples`, `seed`, `level`, `method`; `null` with no rows |
@@ -150,6 +151,7 @@ check the major version first.
 | `judged_precision` | 1.1, `null` unless asked for: a judge's precision with no gold, `judge_only`, `corrected` and `labels_only` as `{value, low, high}`; `facts`, `labels`, `false_support`, `lost_support`, `calibrated` and `coverage` ([Your data, no gold](#your-data-no-gold)) |
 | `adjudication` | 1.1, `null` unless asked for: `runs`, `needed`, `questions`, the `audit` path, and per row `strict` and `adjudicated` precision with `not_in_gold`, `asked` and `possibly_missing` ([Is the gold complete?](#is-the-gold-complete)) |
 | `pooled_recall` | 1.1, `null` unless asked for: the `pool`, its `documents`, the `bootstrap`, the `caveat`, and per run `relative_recall`, `supported`, `unique` and `coverage` |
+| `lenient` | 1.2, `null` unless asked for: the `judge` prompt key, its `model`, `questions` and `disagreed`, and per row `strict` and `lenient` performance with `candidates`, `same`, `different`, `unsure` and `counted` ([Surface forms: the lenient score](#surface-forms-the-lenient-score)) |
 
 - **The ranges are 95% bootstrap ranges over documents.** Facts from one
   document share one reading of it, so they are not independent; resampling
@@ -1060,15 +1062,82 @@ list beside the labels: its precision, its recall, and how many of G's planted
 false facts it lists. Until `bench/labels/G/labels.jsonl` exists, it says so
 and exits 0.
 
+## Surface forms: the lenient score
+
+A scorer compares strings after a normaliser, so "Gabby Logan" for "Gabrielle
+Nicole Logan" is a miss and a false positive. `--lenient` asks a model whether
+such a near miss is the gold fact in other words, and prints a lenient score
+beside the strict one, never instead of it ([DECISIONS #39](decisions.md#39)).
+
+```bash
+odke eval pipeline --labels gold.jsonl --documents texts/ --predictions out.jsonl \
+    --config odke.yaml --lenient pairs.jsonl
+```
+
+- **The pre-filter** decides which pairs reach the judge, with no model
+  (`candidate`, `surface_pair`): a gold fact the matcher counted missed and a
+  prediction it left unmatched, in one document, with the same relation and
+  polarity, one end equal after normalisation (`name_key` against every name
+  the gold end goes by, `normalise_value` for a value) and the other end not
+  exactly equal as written. A prediction the matcher already set against the
+  gold fact, as a wrong value or entity, is tried first.
+- **The judge** (`FactJudge`) reads the relation and its description, both
+  facts as the grounder renders a claim, and the gold fact's evidence: the
+  sentences its span covers, else those naming both its ends, else the start
+  of its document. It sends `fact_equiv@1` and `fact_equiv.user@1` to the
+  `ground` role's model, `--config`'s or the default, metered as `judge`.
+- **The swap rule**: each pair is asked with the gold fact first and with the
+  prediction first. "same" counts only when both orders say same; a
+  disagreement, an unsure or an unreadable answer counts nothing.
+  `disagreed` counts the pairs whose orders differed.
+- **The lenient score** moves each pair judged the same from a miss and a
+  false positive to a hit, at most once per gold fact and once per prediction,
+  and is resampled on the strict range's own draws. A pair two rows share is
+  asked once.
+- **The pairs** go to the path given, one JSON line each, those judged the
+  same first: `doc_id`, `gold`, `predicted`, `differs` (the end that differs),
+  `passage`, `rows`, `decision`, `gold_first`, `prediction_first` and `why`.
+- **It needs `--labels`.** A `--bench` set is scored by its benchmark's own
+  matching, which this does not read.
+
+```python
+from openodke import Document, Entity, Evidence, Fact
+from openodke.eval import GoldFact
+from openodke.eval.equivalence import FactJudge, lenient
+from openodke.llm import RecordedClient
+
+ada = Entity(key="ada", type="Person", label="Ada Lovelace")
+doc = Document(id="a1", text="Ada Lovelace was born in London on 10 December 1815.")
+cited = (Evidence(doc_id="a1"),)
+gold = [GoldFact(doc_id="a1", fact=Fact(subject=ada, predicate="born", object_value="1815"))]
+said = [Fact(subject=ada, predicate="born", object_value="10 December 1815", evidence=cited)]
+
+# Recorded answers: "same" in both orders.
+judge = FactJudge(client=RecordedClient([{"match": "Fact 1", "response": {"decision": "same"}}]))
+section, pairs = lenient([("extract", said)], gold, [doc], judge)
+(row,) = section.rows
+assert (row.candidates, row.same, row.counted) == (1, 1, 1)
+assert (row.strict.recall.value, row.lenient.recall.value) == (0.0, 1.0)
+assert pairs[0].passage == "Ada Lovelace was born in London on 10 December 1815."
+```
+
+How far the judge can be trusted is measured on label set F: 300 pairs the
+pre-filter made from the published comparison, labelled blind by a person
+(`bench/labels/README.md`). Until its calibration card exists, the lenient
+score is printed, not trusted. The same pre-filter feeds the miss diagnosis's
+surface-form bucket, through `FactJudge.equivalent`, which takes the passage
+rather than the whole document.
+
 ## Labelling by hand
 
 `odke label` writes rows out as markdown sheets that a person ticks wherever a
 markdown file opens, Obsidian on a tablet included. It then reads the ticks
-back as `GroundingLabel` or `PairLabel` rows.
+back as `GroundingLabel`, `PairLabel` or `FactPairLabel` rows.
 
 ```bash
 odke label make grounding to-check.jsonl -o sheets/ --per-sheet 50
 odke label make pair pairs.jsonl -o pair-sheets/
+odke label make fact fact-pairs.jsonl -o fact-sheets/
 odke label read sheets/ -o ground.jsonl        # or one sheet: sheets/sheet-03.md
 odke eval ground --labels ground.jsonl --predictions out/facts.jsonl
 ```
@@ -1081,11 +1150,14 @@ odke eval ground --labels ground.jsonl --predictions out/facts.jsonl
   `aliases`, shown as "also known as". The [pair judge's](resolution-and-corroboration.md#the-pair-judge)
   review queue is a file of them, each with the judge's answers under
   `judge`, which the sheet does not show.
+- **A fact row** is a `FactPair`: an `id`, the `relation` and its
+  `description`, two facts `first` and `second`, and the `passage`. Nothing in
+  it says which fact is gold; keep that apart, as `bench/labels/F` does.
 - **Sheets** are `sheet-01.md`, `sheet-02.md` and so on, and one sheet is one
-  sitting. Item ids run across the sheets (`G-0001`, `P-0001`). Beside each
-  sheet, `sheet-NN.items.jsonl` keeps its rows, so the markdown only has to
-  carry the ticks and the notes. The same rows give byte-identical sheets.
-  `make` refuses a directory that already holds sheets.
+  sitting. Item ids run across the sheets (`G-0001`, `P-0001`, `F-0001`).
+  Beside each sheet, `sheet-NN.items.jsonl` keeps its rows, so the markdown
+  only has to carry the ticks and the notes. The same rows give byte-identical
+  sheets. `make` refuses a directory that already holds sheets.
 
 A grounding item, as written:
 
@@ -1109,8 +1181,10 @@ whole text of a fact that cited nothing, is no citation and stays plain.
 Passage text is escaped, so markdown cannot hide or restyle it: `$` would
 otherwise open a formula and `%%` a comment. A pair item shows `A:` and `B:`,
 each a name and its type with its context quoted, then the boxes `same`,
-`different` and `unsure`. Each sheet opens with two lines that explain the
-answers and asks for exactly one tick.
+`different` and `unsure`. A fact item shows the relation, `Fact 1:` and
+`Fact 2:` as `render_claim` puts them to the fact-equivalence judge, and the
+passage, with the same three boxes. Each sheet opens with two lines that
+explain the answers and asks for exactly one tick.
 
 Reading back:
 
@@ -1121,10 +1195,10 @@ Reading back:
   box's own line. Every problem in every sheet is listed at once, and nothing is
   written.
 - **Labels** go to `-o` in input order: the row as given plus `verdict`, or
-  `PairLabel(a, b, same)` on the two keys. Pairs ticked `unsure` never become a
-  `PairLabel`. They go to `<out>.unsure.jsonl` in the input shape, ready to be
-  made into a sheet again. Text after `note:` goes to `<out>.notes.jsonl` with
-  the item's id, sheet and answer.
+  `PairLabel(a, b, same)` on the two keys, or a fact row as given plus `same`.
+  Pairs ticked `unsure` never become a label. They go to `<out>.unsure.jsonl`
+  in the input shape, ready to be made into a sheet again. Text after `note:`
+  goes to `<out>.notes.jsonl` with the item's id, sheet and answer.
 - **The summary** gives the sheets and items, how many are labelled and
   unlabelled, and the count for each answer.
 
@@ -1146,6 +1220,8 @@ odke eval extract --labels gold.jsonl --predictions facts.jsonl --report report.
 odke eval precision --facts out/facts.jsonl --labels labels.jsonl   # no gold: judge + sample
 odke eval pool runs/a runs/b --documents texts/     # no gold: recall relative to a pool
 odke eval compare a.items.jsonl b.items.jsonl --applied offer-relations   # record what B measured
+odke eval pipeline --labels gold.jsonl --documents texts/ --predictions out.jsonl \
+    --lenient pairs.jsonl                           # near misses judged; strict stays
 ```
 
 - The CLI covers route, extract, ground, resolve, score and validate, and the
