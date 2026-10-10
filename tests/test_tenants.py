@@ -20,12 +20,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from openodke import Document, Entity, Evidence, Fact, KnowledgeGraph, Ontology, Span, Validator
 from openodke.cli.main import app
 from openodke.corroborate import MemoryLookup
 from openodke.interop import read_neo4j
+from openodke.manifest import digest
 from openodke.reconcile import Reconciler
 from openodke.sinks import JsonlSink
 from openodke.sinks.neo4j import (
@@ -261,9 +263,12 @@ def test_the_validator_scopes_its_sinks_and_its_lookup_and_reports_each_sinks_wr
     assert report.writes["0:Neo4jSink"]["facts"]["written"] == 2
     assert report.writes["1:JsonlSink"]["facts"] == {"written": 2, "merged": 0, "skipped": 0}
     assert kg.stats["writes"] == report.writes
+    # The run manifest records the write report and the tenant, which is in its hash;
+    # the sink keeps the tenant its directory holds beside it.
     manifest = json.loads((tmp_path / "out" / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["tenant"] == "acme" and manifest["stats"]["writes"] == report.writes
-    assert manifest["stats"]["validation"]["writes"] == report.writes
+    assert manifest["tenant"] == "acme" and manifest["writes"] == report.writes
+    assert manifest["config"]["tenant"] == "acme"
+    assert report.manifest is not None and report.manifest.writes == report.writes
 
     # A rerun merges into what both stores hold, and makes nothing new.
     _, again = validator.validate(_claims("d1"), [Document(id="d1", text=TEXT)])
@@ -294,6 +299,59 @@ def test_the_commands_take_a_tenant(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert result.exit_code == 2 and "holds tenant 'acme'" in result.output
     result = CliRunner().invoke(app, [*reconcile, "--tenant", "acme"])
     assert result.exit_code == 0 and "retired       2 facts" in result.output
+
+
+def test_a_tenant_holds_through_a_streamed_job_and_its_write_report_is_the_runs() -> None:
+    """Every micro-batch writes the tenant's keys, and the report counts all of them once."""
+    driver = FakeDriver()
+    rows = [
+        {"doc": "a", "subject": "Ada Lovelace", "subject_type": "Person", "predicate": "employer",
+         "object": "Acme", "object_type": "Company", "quote": "Ada Lovelace works at Acme."},
+        {"doc": "b", "subject": "Acme", "subject_type": "Company", "predicate": "hq",
+         "object": "Leeds", "quote": "Acme is based in Leeds."},
+    ]  # fmt: skip
+    texts = [Document(id="a", text=TEXT), Document(id="b", text=TEXT)]
+    validator = Validator(
+        grounder=PassThroughGrounder(),
+        gate=PassThroughGate(),
+        sinks=[Neo4jSink(driver=driver)],
+        tenant="acme",
+    )
+    _, report = validator.validate(rows, texts, batch_size=1)
+    assert report.batches == 2 and report.tenant == "acme"
+    keys = {row["key"] for cypher, p in driver.writes if "MERGE (n:" in cypher for row in p["rows"]}
+    assert keys and all(key.startswith("acme/") for key in keys)
+    assert report.writes is not None
+    wrote = report.writes["0:Neo4jSink"]
+    # Ada, Acme and Leeds: Acme is in both micro-batches, made by one and merged by the next.
+    assert wrote["entities"] == {"written": 3, "merged": 1, "skipped": 0}
+    assert wrote["facts"]["written"] == 2 and wrote["transactions"] == 2
+    assert report.manifest is not None and report.manifest.writes == report.writes
+    assert report.manifest.config["tenant"] == "acme"
+
+
+def test_a_tenant_is_in_the_hashed_config_and_survives_a_streamed_replay(example: Path) -> None:
+    runner = CliRunner()
+    data = yaml.safe_load((example / "odke.yaml").read_text(encoding="utf-8"))
+    config = example / "tenant.yaml"
+    config.write_text(yaml.safe_dump({**data, "tenant": "acme", "batch_size": 2}))
+    result = runner.invoke(app, ["run", str(config)])
+    assert result.exit_code == 0, result.output
+    assert "tenant        acme" in result.output
+    first = json.loads((example / "out" / "manifest.json").read_text(encoding="utf-8"))
+    assert first["config"]["tenant"] == "acme" and first["tenant"] == "acme"
+    assert first["config_hash"] != digest({**first["config"], "tenant": None})
+    (jsonl,) = first["writes"].values()
+    assert jsonl["facts"]["written"] == first["counts"]["facts"]
+
+    result = runner.invoke(app, ["run", "--from-manifest", str(example / "out")])
+    assert result.exit_code == 0, result.output
+    assert "tenant        acme" in result.output and "micro-batches" in result.output
+    again = json.loads((example / "out" / "manifest.json").read_text(encoding="utf-8"))
+    assert (again["config_hash"], again["tenant"]) == (first["config_hash"], "acme")
+    # Another tenant would be another run.
+    result = runner.invoke(app, ["run", "--from-manifest", str(example / "out"), "--tenant", "b"])
+    assert result.exit_code == 2 and "--tenant" in result.output
 
 
 # --------------------------------------------------------------------------- #

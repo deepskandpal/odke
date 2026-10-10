@@ -1340,7 +1340,11 @@ is a few transactions, and each one commits whole. Each statement returns the
 rows that reached its `MERGE`, and the database's counters say what was made.
 So every sink reports, per kind, the rows it wrote new (`written`), wrote into
 what it held (`merged`) and could not write (`skipped`), and a rerun's report
-says it made nothing new.
+says it made nothing new. A sink's counts run on across its writes, so a job's
+report is the difference from a snapshot taken before it writes, before the
+first micro-batch of a streamed run (#45). The run manifest (#40) and the
+`job.end` event (#41) carry it, and the manifest hashes the tenant with the
+rest of the config, so a replay is the same tenant's.
 
 *Cost:* a stored key is not the key a person types: finding Ada by hand
 means `acme/p:ada`. The sink now owns `tenant`, so an entity attribute or a

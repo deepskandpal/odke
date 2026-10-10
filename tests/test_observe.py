@@ -178,6 +178,9 @@ def test_the_manifest_records_what_the_logs_report(
         assert manifest.counts["documents" if manifest.command != "ground" else "rows"] == (
             end["documents"] if manifest.command != "ground" else end["counts"]["facts_in"]
         )
+        # What each sink wrote, merged and skipped (#159); odke ground has no sink.
+        assert manifest.writes == (end.get("writes") or {})
+        assert bool(manifest.writes) == (manifest.command != "ground")
 
 
 def test_odke_validate_and_odke_ground_log_the_counts_they_print(

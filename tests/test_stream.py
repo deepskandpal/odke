@@ -491,6 +491,11 @@ def test_a_streamed_jobs_manifest_and_its_log_events_say_the_same(
         # One write a micro-batch, each its own event.
         writes = [e for e in events if e["event"] == "stage" and e["stage"] == "write"]
         assert len(writes) == manifest.counts["batches"] > 1
+        # And one write report for the run: the JSONL sink's every appended line.
+        assert manifest.writes == end["writes"]
+        (jsonl,) = manifest.writes.values()
+        facts = manifest.counts["facts" if manifest.command == "run" else "facts_out"]
+        assert jsonl["facts"] == {"written": facts, "merged": 0, "skipped": 0}
 
 
 # --------------------------------------------------------------------------- #
