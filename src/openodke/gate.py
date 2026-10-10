@@ -12,6 +12,8 @@ with a warning, until 1.0.0 (DECISIONS #26).
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from openodke.ground.checks import schema_problem
@@ -75,4 +77,43 @@ class VerdictGate:
         return {"accepted": self._accepted, "refused": dict(self._refused)}
 
 
-__all__ = ["VerdictGate"]
+# What `odke validate -o` writes beside the graph: `Kept.write`.
+REFUSED_FILE = "refused.jsonl"
+
+
+class Kept:
+    """A gate that keeps a record: each fact its inner gate refuses, and why.
+
+    It decides nothing itself, and its `stats` are the inner gate's, so a
+    report that counts refusals by reason reads them as before. `refused` is
+    what `odke validate -o` writes as `refused.jsonl` (`write`), what `odke
+    eval refusals` reads, and what the diagnosis reads as the gate's record.
+    """
+
+    def __init__(self, gate: Any) -> None:
+        self.gate = gate
+        self.refused: list[tuple[Fact, str]] = []
+
+    def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
+        verdict: ValidationVerdict = self.gate.validate(fact, ontology)
+        if verdict.action == "refuse":
+            self.refused.append((fact, verdict.reason or ""))
+        return verdict
+
+    @property
+    def stats(self) -> Any:
+        return getattr(self.gate, "stats", None)
+
+    def write(self, path: str | Path) -> Path:
+        """What was refused, one JSON line each: the gate's `reason` and the `fact`."""
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        rows = (
+            json.dumps({"reason": reason, "fact": fact.model_dump(mode="json")}, ensure_ascii=False)
+            for fact, reason in self.refused
+        )
+        target.write_text("".join(row + "\n" for row in rows), encoding="utf-8", newline="\n")
+        return target
+
+
+__all__ = ["REFUSED_FILE", "Kept", "VerdictGate"]
