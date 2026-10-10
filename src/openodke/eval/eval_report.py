@@ -21,7 +21,8 @@ knowing which stage made the report. So an Evaluator run also writes an
   bucket, and its false positives split by what the gate did
   (`openodke.eval.diagnosis`, #140);
 - **fixes**: what should change, ranked by the recall gain the arithmetic
-  expects (`openodke.eval.fixes`, #141);
+  expects, each with its track record of predicted against measured
+  (`openodke.eval.fixes`, `openodke.eval.track`, #141);
 - **comparison**: this run against a baseline (#142); **calibration**: empty,
   and typed, until #135 fills it.
 
@@ -373,7 +374,7 @@ class EvalReport(Frozen):
     notes: tuple[str, ...] = ()
     # Every miss of the final row in one cause bucket, then its false positives (#140),
     diagnosis: tuple[Bucket, ...] = ()
-    # ranked fixes with their expected gain (#141),
+    # ranked fixes with their expected gain and track record (#141),
     fixes: tuple[Fix, ...] = ()
     # this run against a baseline: `odke eval compare`'s block, as `--json` prints it (#142),
     comparison: Comparison | None = None

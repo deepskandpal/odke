@@ -52,11 +52,12 @@ from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from pydantic import ValidationError
 
 from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED
+from openodke.eval.compare import ItemRow
 from openodke.eval.cost import CallRecord
 from openodke.eval.diagnosis import (
     EXAMPLES,
@@ -76,7 +77,7 @@ from openodke.eval.eval_report import (
     extraction_rows,
     models_called,
 )
-from openodke.eval.extraction import evaluate_extraction
+from openodke.eval.extraction import document_counts, evaluate_extraction
 from openodke.eval.fixes import Fix
 from openodke.eval.fixes import fixes as rank_fixes
 from openodke.eval.formats import GoldFact, load_jsonl
@@ -519,6 +520,20 @@ def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = Non
 # --------------------------------------------------------------------------- #
 
 
+class Evaluation(NamedTuple):
+    """A pipeline scored: the report, its last row's outcome per document, and its run config.
+
+    `items` are what `--items` writes and the track record names the run by;
+    empty for a benchmark whose scorer counts no hits per document. `config` is
+    the run config that produced the predictions (a `trace` that is one), else
+    the Validator's, as data: what the track record diffs between runs.
+    """
+
+    report: EvalReport
+    items: list[ItemRow]
+    config: dict[str, Any] | None = None
+
+
 def score(
     corpus: Corpus,
     facts: Sequence[Fact],
@@ -549,7 +564,7 @@ def score(
         offered=offered,
         examples=examples,
         reference=reference,
-    )
+    ).report
 
 
 def _score(
@@ -564,7 +579,7 @@ def _score(
     offered: Offered | None,
     examples: int,
     reference: Sequence[Fact] | None = None,
-) -> EvalReport:
+) -> Evaluation:
     configurations: list[Configuration] = [(PIPELINE, facts, None)]
     if checked is not None:
         configurations.append((VALIDATOR, checked.facts, checked.calls))
@@ -596,6 +611,8 @@ def _score(
         view = gold_view(corpus.gold, final, refused=refused, texts=texts, row=last)
         if reference is not None:
             other = gold_view(corpus.gold, reference)
+        counts = document_counts(corpus.gold, final).by_doc.items()
+        items = [ItemRow(id=doc, tp=tp, fp=fp, fn=fn) for doc, (tp, fp, fn) in counts]
     else:
         from openodke.eval.datasets._common import (
             doc_names,
@@ -614,6 +631,7 @@ def _score(
         rows = scored.rows
         how = Bootstrap(units=n, resamples=resamples, seed=seed, level=level)
         predicted = scored.predictions[last]
+        items = [r for unit in scoring.units(predicted) if (r := _unit_row(unit)) is not None]
         if scoring.view is None:
             lines.append(f"no diagnosis: {scoring.stage}'s scorer has no view for one yet")
         else:
@@ -635,7 +653,7 @@ def _score(
         found = diagnose(view, offered=offered, inverses=inverses, examples=examples)
         caught = None if other is None else {g.id for g in other.gold if g.found}
         diagnosed, ranked = found.buckets, tuple(rank_fixes(found, reference=caught))
-    return EvalReport(
+    report_ = EvalReport(
         title=TITLE,
         n=n,
         run=run,
@@ -646,6 +664,21 @@ def _score(
         diagnosis=diagnosed,
         fixes=ranked,
     )
+    return Evaluation(report_, items)
+
+
+def _unit_row(unit: Mapping[str, Any]) -> ItemRow | None:
+    """A benchmark's per-document unit as an `--items` row, when it counts hits."""
+    if {"tp", "predicted", "gold"} <= unit.keys():
+        tp = int(unit["tp"])
+        return ItemRow(
+            id=str(unit["id"]), tp=tp, fp=int(unit["predicted"]) - tp, fn=int(unit["gold"]) - tp
+        )
+    if {"hits", "over", "under"} <= unit.keys():
+        return ItemRow(
+            id=str(unit["id"]), tp=int(unit["hits"]), fp=int(unit["over"]), fn=int(unit["under"])
+        )
+    return None
 
 
 def evaluate_pipeline(
@@ -680,6 +713,44 @@ def evaluate_pipeline(
     system's output on the same documents, triples or facts, for each fix's
     gain at that system's rate.
     """
+    return evaluate(
+        command=command,
+        function=function,
+        predictions=predictions,
+        adapter=adapter,
+        labels=labels,
+        documents=documents,
+        bench=bench,
+        ontology=ontology,
+        validator=validator,
+        config=config,
+        timeout=timeout,
+        adjudicate=adjudicate,
+        trace=trace,
+        examples=examples,
+        reference=reference,
+    ).report
+
+
+def evaluate(
+    *,
+    command: str | None = None,
+    function: str | Callable[..., Any] | None = None,
+    predictions: str | Path | None = None,
+    adapter: str = "triples",
+    labels: str | Path | None = None,
+    documents: str | Path | None = None,
+    bench: str | Path | None = None,
+    ontology: str | Path | None = None,
+    validator: bool = False,
+    config: str | Path | None = None,
+    timeout: float = TIMEOUT,
+    adjudicate: str | Path | None = None,
+    trace: str | Path | None = None,
+    examples: int = EXAMPLES,
+    reference: str | Path | None = None,
+) -> Evaluation:
+    """`evaluate_pipeline`, with the last row's items and the run config beside the report."""
     modes = [m for m in (command, function, predictions) if m is not None]
     if len(modes) != 1:
         raise ValueError("pipeline takes exactly one of --cmd, --run and --predictions")
@@ -701,7 +772,7 @@ def evaluate_pipeline(
             "--adjudicate needs --labels: it lists the predictions your gold facts lack, by "
             "openodke's matching, and a --bench set is scored by its benchmark's own"
         )
-    offered, _ = read_trace(trace) if trace is not None else (None, None)
+    offered, produced = read_trace(trace) if trace is not None else (None, None)
     if labels is not None:
         if documents is None:
             raise ValueError("--labels needs --documents: the texts the pipeline reads")
@@ -725,7 +796,7 @@ def evaluate_pipeline(
     notes.insert(0, f"{output.how}: {len(output.items)} row(s){ran}, {len(facts)} fact(s)")
     checked = check(facts, corpus, config) if validator else None
     others = None if reference is None else as_facts(read_output(reference), corpus)[0]
-    report = _score(
+    found = _score(
         corpus,
         facts,
         checked=checked,
@@ -737,10 +808,13 @@ def evaluate_pipeline(
         examples=examples,
         reference=others,
     )
+    report = found.report
     if adjudicate is not None:
         rows = [(PIPELINE, facts)] + ([(VALIDATOR, checked.facts)] if checked else [])
         report = adjudicated(report, corpus, rows, Path(adjudicate), config)
-    return report
+    if produced is None and validator and config is not None:
+        produced = _data(config)
+    return Evaluation(report, found.items, produced)
 
 
 def adjudicated(
@@ -882,6 +956,18 @@ def _ontology(source: str | Path | Ontology | None) -> Ontology | None:
     return Ontology.model_validate_json(path.read_text(encoding="utf-8"))
 
 
+def _data(path: str | Path) -> dict[str, Any]:
+    """A run config as plain data, JSON or YAML: what the track record keeps of it."""
+    text = Path(path).read_text(encoding="utf-8")
+    if Path(path).suffix.lower() in {".yaml", ".yml"}:
+        import yaml
+
+        loaded = yaml.safe_load(text)
+    else:
+        loaded = json.loads(text)
+    return dict(loaded) if isinstance(loaded, dict) else {}
+
+
 def _bench_module(meta: Mapping[str, Any]) -> Any:
     from openodke.eval.datasets import DATASETS
 
@@ -902,10 +988,12 @@ __all__ = [
     "TIMEOUT",
     "Checked",
     "Corpus",
+    "Evaluation",
     "Output",
     "PipelineError",
     "as_facts",
     "check",
+    "evaluate",
     "evaluate_pipeline",
     "labelled",
     "load_callable",

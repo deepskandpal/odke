@@ -379,8 +379,9 @@ def test_odke_eval_pipeline_from_the_shell(tmp_path: Path) -> None:
 def test_odke_eval_pipeline_runs_the_bench_set_s_own_checks(tmp_path: Path, bench: Path) -> None:
     rows = tmp_path / "rows.jsonl"
     rows.write_text("".join(json.dumps(r) + "\n" for r in BENCH_ROWS))
+    items = tmp_path / "items.jsonl"
     args = ["eval", "pipeline", "--bench", str(bench), "--predictions", str(rows)]
-    result = runner.invoke(app, args)
+    result = runner.invoke(app, [*args, "--items", str(items)])
     assert result.exit_code == 0, result.output
     assert "pipeline  0.500 [" in result.output
     # Text2KGBench's scorer has no view for the diagnosis yet, and says so.
@@ -388,6 +389,8 @@ def test_odke_eval_pipeline_runs_the_bench_set_s_own_checks(tmp_path: Path, benc
         result.output
     )
     assert "where it loses facts" not in result.output
+    written = [json.loads(line) for line in items.read_text().splitlines()]
+    assert [(r["tp"], r["fp"], r["fn"]) for r in written] == [(1, 0, 1), (0, 1, 1)]
 
 
 @pytest.mark.parametrize(
@@ -396,7 +399,6 @@ def test_odke_eval_pipeline_runs_the_bench_set_s_own_checks(tmp_path: Path, benc
         ([], "exactly one of --cmd, --run and --predictions", 2),
         (["--predictions", "p.jsonl", "--cmd", "x {in} {out}"], "exactly one of", 2),
         (["--predictions", str(TRIPLES / "triples.jsonl"), "--config", "x.yaml"], "--config", 2),
-        (["--predictions", str(TRIPLES / "triples.jsonl"), "--items", "i.jsonl"], "--items", 2),
         (["--cmd", f"{sys.executable} -c pass {{in}} {{out}}"], "wrote nothing at {out}", 1),
     ],
 )

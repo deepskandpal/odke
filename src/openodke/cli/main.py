@@ -19,7 +19,8 @@ from openodke import __version__
 from openodke.ontology import Ontology, OntologyLoadError
 
 if TYPE_CHECKING:
-    from openodke.eval.compare import Comparison
+    from openodke.eval.compare import Comparison, ItemRow
+    from openodke.eval.eval_report import EvalReport
     from openodke.run import RunConfig
 
 app = typer.Typer(
@@ -1126,7 +1127,7 @@ def eval_stage(
         None,
         "--items",
         help="Also write each labelled item's outcome here, as JSONL, for `compare`: "
-        "extract, ground, validate and route.",
+        "extract, ground, validate, route, and pipeline's last row.",
     ),
     metric: str | None = typer.Option(
         None,
@@ -1219,6 +1220,12 @@ def eval_stage(
         help="pipeline: another system's triples on the same documents, for each fix's gain "
         "at the rate that system finds the same facts.",
     ),
+    track_record: Path | None = typer.Option(
+        None,
+        "--track-record",
+        help="extract and pipeline: append this run's predicted fixes here (default "
+        "track-record.jsonl beside --report).",
+    ),
 ) -> None:
     """Score one stage against your own labelled data.
 
@@ -1260,7 +1267,8 @@ def eval_stage(
 
     `extract` and `pipeline` also say where the facts went, every miss in one
     cause bucket, and what to change, each fix with the recall gain the
-    arithmetic expects; `--trace` says what the extractor was offered.
+    arithmetic expects; `--trace` says what the extractor was offered. With
+    `--report`, the predicted fixes go to a track record.
 
     Extraction, the ablation and pipeline print precision, recall and F1 with
     95% ranges over your documents. `--report` writes the versioned eval
@@ -1315,6 +1323,8 @@ def eval_stage(
         if stage not in ("extract", "pipeline") and any(diagnosed.values()):
             named = ", ".join(flag for flag, given in diagnosed.items() if given)
             raise ValueError(f"{named}: for extract and pipeline")
+        if stage not in ("extract", "pipeline") and track_record is not None:
+            raise ValueError("--track-record: for extract and pipeline")
         if stage == "compare":
             if any(v is not None for v in inputs):
                 raise ValueError("compare reads two --items files and takes no other inputs")
@@ -1349,21 +1359,20 @@ def eval_stage(
                     f"{flag}: for {owners.get(flag, 'compare')} only" for flag in compare_flags
                 )
             )
+        record: list[str] = []
         if stage == "pipeline":
-            from openodke.eval.harness import DESCRIPTION, evaluate_pipeline
+            from openodke.eval.harness import DESCRIPTION, evaluate
 
             if describe:
                 typer.echo(DESCRIPTION)
                 return
             if facts is not None:
                 raise ValueError("--facts is for spans")
-            if items is not None:
-                raise ValueError("--items is written for extract, ground, validate and route")
             if config is not None and not (validator or adjudicate is not None):
                 raise ValueError(
                     "--config is for ablation, and for pipeline with --validator or --adjudicate"
                 )
-            report = evaluate_pipeline(
+            evaluated = evaluate(
                 command=cmd,
                 function=run,
                 predictions=predictions,
@@ -1379,6 +1388,12 @@ def eval_stage(
                 trace=trace,
                 examples=examples,
                 reference=reference,
+            )
+            report = evaluated.report
+            if items is not None:
+                _write_rows(items, evaluated.items)
+            report, record = _record_fixes(
+                report, evaluated.items, evaluated.config, track_record, report_to
             )
         elif stage == "pool":
             report = _eval_pool(
@@ -1458,9 +1473,10 @@ def eval_stage(
                 stage, labels, predictions, run=run, ontology=ontology, documents=documents
             )
             if stage == "extract":
+                from openodke.eval.compare import item_rows
                 from openodke.eval.diagnosis import read_trace
 
-                offered, _ = read_trace(trace) if trace is not None else (None, None)
+                offered, produced = read_trace(trace) if trace is not None else (None, None)
                 report = report_inputs(
                     stage,
                     rows,
@@ -1471,6 +1487,8 @@ def eval_stage(
                     texts=_texts(documents),
                     examples=examples,
                 )
+                outcomes, _ = item_rows(stage, rows, predicted)
+                report, record = _record_fixes(report, outcomes, produced, track_record, report_to)
             else:
                 report = report_inputs(stage, rows, predicted, labels=labels, ontology=ontology)
             if items is not None:
@@ -1489,6 +1507,8 @@ def eval_stage(
         typer.echo(shown.model_dump_json(indent=2))
         return
     typer.echo(report.render())
+    if record:
+        typer.echo("\n" + "\n".join(record))
     if report_to is not None:
         typer.echo(f"wrote {report_to}")
 
@@ -1619,6 +1639,36 @@ def _texts(documents: Path | None) -> dict[str, str] | None:
     from openodke.eval.harness import load_documents
 
     return {doc.id: doc.text for doc in load_documents(documents)}
+
+
+def _record_fixes(
+    report: EvalReport,
+    outcomes: list[ItemRow],
+    config: dict[str, Any] | None,
+    track_record: Path | None,
+    report_to: Path | None,
+) -> tuple[EvalReport, list[str]]:
+    """Append the run's predicted fixes to its track record, and carry what was measured.
+
+    The record is `--track-record`, or `track-record.jsonl` beside `--report`;
+    with neither, nothing is recorded.
+    """
+    from openodke.eval.track import TRACK_RECORD, measured, read, record_run, run_id, summary
+
+    path = track_record or (report_to.parent / TRACK_RECORD if report_to is not None else None)
+    if path is None or not outcomes:
+        return report, []
+    record_run(path, run_id(outcomes), report.fixes, report=report_to, config=config)
+    lines = read(path)
+    fixes = tuple(f.model_copy(update={"record": measured(lines, f.id)}) for f in report.fixes)
+    return report.model_copy(update={"fixes": fixes}), summary(lines, path)
+
+
+def _write_rows(path: Path, rows: list[ItemRow]) -> None:
+    from openodke.eval.compare import write_items
+
+    write_items(path, rows)
+    typer.echo(f"wrote {path}: {_count(len(rows), 'document')}", err=True)
 
 
 def _write_items(path: Path, stage: str, rows: Any, predicted: Any) -> None:

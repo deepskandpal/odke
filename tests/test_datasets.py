@@ -351,8 +351,9 @@ def test_a_prepared_redocred_set_is_diagnosed_from_the_shell(tmp_path: Path) -> 
         },
     ]
     rows.write_text("".join(json.dumps(r) + "\n" for r in said))
+    items = tmp_path / "items.jsonl"
     args = ["eval", "pipeline", "--bench", str(out), "--predictions", str(rows)]
-    args += ["--trace", str(out / "odke.json"), "--json"]
+    args += ["--trace", str(out / "odke.json"), "--items", str(items), "--json"]
     result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.output
     report = EvalReport.model_validate_json(result.output[result.output.index("{") :])
@@ -360,6 +361,9 @@ def test_a_prepared_redocred_set_is_diagnosed_from_the_shell(tmp_path: Path) -> 
     # Every relation was offered; the country fact was written the other way round.
     assert (found["never_offered"], found["inverse"]) == (0, 1)
     assert sum(n or 0 for n in found.values()) == report.rows[0].counts.under_extraction == 1
+    assert [json.loads(line) for line in items.read_text().splitlines()] == [
+        {"id": gold["id"], "tp": 1, "fp": 1, "fn": 1}
+    ]
 
 
 def test_the_cli_names_the_datasets_and_refuses_an_unknown_one(tmp_path: Path) -> None:
