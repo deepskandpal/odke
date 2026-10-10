@@ -518,6 +518,13 @@ JSON Lines, with the stage counts in `manifest.json`, to which a run adds its
 predictions file for [`odke eval`](evaluation.md). With `merge=True` the files
 are a store, and a write [merges with it](#merge-with-the-store).
 
+`append(kg)` adds a graph after what the files hold and its counts to the
+manifest's, reading nothing back: a [streamed run](run.md#streaming) writes its
+first micro-batch and appends the rest, so a fact two micro-batches state is a
+line in each, and a reader keeps the last. With `merge=True` it merges.
+RDF, `cypher_file` and `neo4j_admin_csv` write the whole graph on every write
+(`streams = False`), so a streamed run refuses them.
+
 ## Your own sink
 
 Anything with `write(kg)` is a sink ([DECISIONS #5](decisions.md#5)).

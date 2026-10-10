@@ -1296,6 +1296,60 @@ only `embed` can catch the name score's mistakes, and its `context_floor` of
 the end-to-end example's is, scores a right merge as a miss, so that example
 pins the option off.
 
+### 45. A large run is micro-batches, and the store joins them
+
+A batch is held whole. The pipeline runs each phase over all of it, every
+chunk extracted and then every document grounded, so that the model calls run
+concurrently, and resolution and corroboration compare the batch with itself.
+A run of a million rows then holds a million rows' facts at once, and the
+graph they become (#158).
+
+So a run can be cut into micro-batches: `batch_size` documents for `odke run`,
+or triples rows for the Validator and `odke validate`, read, run through every
+stage and written, then the next. The inputs are iterators (`read_triples`,
+the JSON Lines loader), the JSONL sink appends, and `openodke.stream.Totals`
+sums each micro-batch's counts into the report and the manifest. One ledger
+counts every call (#32), the cache answers across micro-batches (#30), and one
+document's failure stays its own (#162). Left out, a run is one batch.
+
+Three calls come with it.
+
+**The store joins micro-batches, not memory.** A fact two micro-batches both
+state is merged when the second is written, by the corroborator's store merge,
+through a sink that says what it holds (#35), before the score. Keeping every
+signature seen so far in memory would grow with the run, a load by another
+name (#31). Without such a sink the two stay two: a JSONL file that only
+appends holds a line for each, and a reader keeps the last. Entities are
+resolved within a micro-batch, and against the store with a lookup (#31).
+
+**A micro-batch of rows ends where its text changes.** Rows are read
+`batch_size` at a time, and a micro-batch is closed only where the next row
+cites another text, so one text's rows, sorted together, are grounded,
+measured and written once. A text with more than twice `batch_size` rows in a
+row is split there, so no micro-batch outgrows it. The texts are held,
+because a row may cite any of them; the rows, the facts and the graph are not.
+
+**A sink that writes the whole graph is refused.** RDF, a Cypher script and
+neo4j-admin CSV rewrite their files on every write, so a streamed run would
+leave the last micro-batch. They say so (`streams = False`), and a streamed
+run refuses them before anything runs. JSONL appends after its first
+micro-batch, Neo4j merges each one, and a sink of your own is written once a
+micro-batch.
+
+*Cost:* a micro-batch sees less than the run.
+- A contest is decided among the claims in hand: a rival value stated in
+  another micro-batch is never weighed against it, and `check()` finds the
+  pair in the store.
+- Near-duplicate texts are compared within a micro-batch, and the coverage
+  report knows the names its micro-batch knows.
+- Counts are summed, so an entity two micro-batches mention counts in each,
+  and the coverage report keeps the records of the first 100 documents with a
+  gap.
+
+What comes back holds the run's stats and no facts; the sinks hold those.
+Measured with every default stage and a scripted client, 50,000 rows peak at
+the RSS of 25,000, about 66 MB, against 141 MB for 5,000 rows in one batch.
+
 ### 46. Corroboration is scored on the graph, by support, with checked alignments as sources
 
 Corroboration had never been measured (#24): Text2KGBench and Re-DocRED state

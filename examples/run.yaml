@@ -112,3 +112,10 @@ coverage: true
 # resolver when none is named. Options: tenant, tenant_property, limit, and the
 # sink's connection keys to read another store. Or package.module:Name.
 # store_lookup: {use: neo4j, tenant: acme}
+
+# Stream the run (DECISIONS #45): load this many documents, run them through
+# every stage and write them, then the next, so memory follows the micro-batch
+# and not the run. A fact two micro-batches state is joined by the store, not in
+# memory. Needs sinks that can take a micro-batch at a time: jsonl, neo4j,
+# networkx or your own. Off unless named; --batch-size overrides it.
+# batch_size: 500
