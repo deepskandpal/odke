@@ -24,7 +24,7 @@ import json
 import os
 import sys
 import threading
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from pathlib import Path
@@ -649,18 +649,25 @@ class SinkPlan:
     """A sink as configured: described without connecting, opened only to write.
 
     A dry run describes what would be written and never opens a sink, so it
-    needs neither a database nor its password.
+    needs neither a database nor its password. `streams` says whether a run in
+    micro-batches can write to it (#158): a sink that writes a file of the
+    whole graph would keep the last one.
     """
 
     name: str = "sink"
     profile: PlatformProfile | None = None
     can_bootstrap: bool = False
+    streams: bool = True
 
     def open(self) -> Sink:  # pragma: no cover - every plan overrides it
         raise NotImplementedError
 
     def describe(self, kg: KnowledgeGraph) -> list[str]:  # pragma: no cover
         raise NotImplementedError
+
+    def streamed(self, graph: Mapping[str, Any], batches: int) -> list[str]:
+        """What a streamed run wrote, from the run's counts: `describe` reads one graph."""
+        return [f"{self.name}: {_counted(graph)}, in {_batches(batches)}"]
 
     def ddl(self, ontology: Ontology, constrainer: Constrainer | None) -> list[str]:
         return []
@@ -689,6 +696,15 @@ class _JsonlPlan(SinkPlan):
         return [
             f"jsonl → {self.directory}: entities.jsonl {len(kg.entities)}, facts.jsonl "
             f"{len(kg.facts)}, links.jsonl {len(kg.links)}, manifest.json"
+        ]
+
+    def streamed(self, graph: Mapping[str, Any], batches: int) -> list[str]:
+        how = "merged" if self.merge else "appended"
+        links = sum(graph.get("links", {}).values())
+        return [
+            f"jsonl → {self.directory}: entities.jsonl {graph.get('entities', 0)}, facts.jsonl "
+            f"{graph.get('facts', 0)}, links.jsonl {links}, manifest.json; "
+            f"{how} in {_batches(batches)}"
         ]
 
 
@@ -767,6 +783,9 @@ class _Neo4jPlan(SinkPlan):
         compiled = (constrainer or Neo4jConstrainer()).constrain(ontology)
         return [s for s in compiled if not is_check(s)]
 
+    def streamed(self, graph: Mapping[str, Any], batches: int) -> list[str]:
+        return [f"neo4j → {self.target}: {_counted(graph)}, in {_batches(batches)}"]
+
 
 class _WriterPlan(SinkPlan):
     """A built-in sink that connects to nothing: it writes a file, a directory, or memory.
@@ -817,6 +836,7 @@ class _WriterPlan(SinkPlan):
 
 class _CypherFilePlan(_WriterPlan):
     name = "cypher_file"
+    streams = False
     profile = CypherFileSink.profile
     what = "CypherFileSink"
 
@@ -836,6 +856,7 @@ class _CypherFilePlan(_WriterPlan):
 
 class _Neo4jAdminCsvPlan(_WriterPlan):
     name = "neo4j_admin_csv"
+    streams = False
     profile = Neo4jAdminCsvSink.profile
     target_key = "directory"
     what = "Neo4jAdminCsvSink"
@@ -857,6 +878,7 @@ class _Neo4jAdminCsvPlan(_WriterPlan):
 
 class _RdfPlan(_WriterPlan):
     name = "rdf"
+    streams = False
     needs = RDFLIB
     what = "RdfSink"
 
@@ -895,6 +917,10 @@ class _NetworkXPlan(_WriterPlan):
         return [
             f"networkx → {where}: {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges"
         ]
+
+    def streamed(self, graph: Mapping[str, Any], batches: int) -> list[str]:
+        where = f"{self.target} (node-link JSON)" if self.target else "a MultiDiGraph"
+        return [f"networkx → {where}: {_counted(graph)}, in {_batches(batches)}"]
 
 
 class NodeLinkFile:
@@ -957,6 +983,37 @@ class _CustomPlan(SinkPlan):
 
     def describe(self, kg: KnowledgeGraph) -> list[str]:
         return [f"{self.spec.use} → write() with {len(kg.facts)} facts, {len(kg.links)} links"]
+
+    def streamed(self, graph: Mapping[str, Any], batches: int) -> list[str]:
+        links = sum(graph.get("links", {}).values())
+        return [
+            f"{self.spec.use} → write() once a micro-batch, {batches} in all: "
+            f"{graph.get('facts', 0)} facts, {links} links"
+        ]
+
+
+def _counted(graph: Mapping[str, Any]) -> str:
+    links = sum(graph.get("links", {}).values())
+    return (
+        f"{graph.get('facts', 0)} facts ({graph.get('edges', 0)} edges, "
+        f"{graph.get('properties', 0)} properties), {graph.get('entities', 0)} entities, "
+        f"{links} links"
+    )
+
+
+def _batches(count: int) -> str:
+    return f"{count} micro-batch{'' if count == 1 else 'es'}"
+
+
+def check_streams(plans: Sequence[SinkPlan], where: str = "batch_size") -> None:
+    """Refuse a streamed run a sink that writes the whole graph on every write (#158)."""
+    whole = [plan.name for plan in plans if not plan.streams]
+    if whole:
+        raise ConfigError(
+            f"{where}: {', '.join(whole)} writes a file of the whole graph on every write, so "
+            "a run in micro-batches would keep only the last; stream to jsonl or neo4j, or "
+            "leave batch_size out"
+        )
 
 
 SINKS: dict[str, Callable[[dict[str, Any], Context, str], SinkPlan]] = {
@@ -1163,6 +1220,23 @@ class Built:
             observer=self.context.observer,
         )
 
+    def iter_documents(self) -> Iterator[Document]:
+        """`documents()`, one at a time as they are asked for: what a streamed run reads (#158).
+
+        Every input is checked before the first is read, so a missing one
+        stops the run before anything is written. A loader that reads lazily,
+        as the directory and JSON Lines loaders do, holds one file at a time.
+        """
+        sources: list[tuple[Any, Path]] = []
+        for i, item in enumerate(self.config.inputs):
+            spec, where = input_loader(self.config, i, item)
+            loader = build_stage("loader", spec, self.context, where)
+            path = self.config.resolve(item.path)
+            if not path.exists():
+                raise ConfigError(f"inputs[{i}].path: {path} does not exist")
+            sources.append((loader, path))
+        return iter_path_ids((loader.load(path) for loader, path in sources), self.config.base_dir)
+
     def documents(self) -> list[Document]:
         """Every input through its loader, with ids you can label and query by.
 
@@ -1216,7 +1290,45 @@ def with_path_ids(docs: Sequence[Document], base: Path) -> list[Document]:
     return out
 
 
+def iter_path_ids(inputs: Iterable[Iterable[Document]], base: Path) -> Iterator[Document]:
+    """`with_path_ids` over each input's documents in turn, one at a time.
+
+    It counts per file rather than per document, so a streamed run holds a
+    number for each file, not an id for each record. A record's line or row
+    already sets it apart within its file, so within one input only a
+    whole-file name is counted; across inputs, a file read again counts on
+    from the highest count an earlier input gave it, which is the id
+    `with_path_ids` gives it.
+    """
+    top: dict[str, int] = {}
+    for docs in inputs:
+        whole: dict[str, int] = {}
+        reached: dict[str, int] = {}
+        for doc in docs:
+            parts = _path_parts(doc, base)
+            if parts is None:
+                yield doc
+                continue
+            file, suffix = parts
+            name = file + suffix
+            if suffix:
+                count = top.get(file, 0) + 1
+            else:
+                whole[name] = whole.get(name, 0) + 1
+                count = top.get(file, 0) + whole[name]
+            reached[file] = max(reached.get(file, 0), count)
+            yield doc.model_copy(update={"id": name if count == 1 else f"{name}~{count}"})
+        for file, count in reached.items():
+            top[file] = max(top.get(file, 0), count)
+
+
 def _path_id(doc: Document, base: Path) -> str | None:
+    parts = _path_parts(doc, base)
+    return None if parts is None else "".join(parts)
+
+
+def _path_parts(doc: Document, base: Path) -> tuple[str, str] | None:
+    """A document's file, relative to `base`, and the `#L<line>` or `#<row>` of its record."""
     if not doc.uri or not doc.uri.startswith("file:"):
         return None
     path = Path(unquote(urlsplit(doc.uri).path))
@@ -1226,10 +1338,10 @@ def _path_id(doc: Document, base: Path) -> str | None:
         name = path.as_posix()
     line, row = doc.metadata.get("line"), doc.metadata.get("row_index")
     if isinstance(line, int):
-        return f"{name}#L{line}"
+        return name, f"#L{line}"
     if isinstance(row, int):
-        return f"{name}#{row}"
-    return name
+        return name, f"#{row}"
+    return name, ""
 
 
 def build(config: RunConfig) -> Built:
@@ -1273,6 +1385,8 @@ def build(config: RunConfig) -> Built:
         for i, spec in enumerate(config.stages.sink)
     ]
     reextract_policy(config, stages["extractor"])
+    if config.batch_size is not None:
+        check_streams(sinks)
     if config.bootstrap and not any(p.can_bootstrap for p in sinks):
         raise ConfigError(
             "bootstrap: true needs a sink that applies constraints (neo4j); "
@@ -1325,10 +1439,12 @@ __all__ = [
     "SinkPlan",
     "build",
     "build_stage",
+    "check_streams",
     "construct",
     "input_loader",
     "require_extra",
     "response_cache",
+    "iter_path_ids",
     "sink_plan",
     "with_path_ids",
 ]

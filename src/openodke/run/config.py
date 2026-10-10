@@ -29,6 +29,7 @@ rather than a stage silently left as the pass-through.
     reextract: {windows: 3}          # hand those gaps back; off unless named
     store_lookup: neo4j              # resolve against the store; off unless named
     manifest: run.manifest.json      # the run manifest here too; see below
+    batch_size: 500                  # stream: documents a micro-batch; off unless named
 
 A stage is a built-in's short name, or `package.module:Name` for your own, and
 either may take options: `{use: name, option: value, ...}`. A stage left out is
@@ -44,6 +45,10 @@ store, or one named by its own `uri`, and `package.module:Name` is a
 Every run writes a manifest (`openodke.manifest`): into each JSONL sink's
 `manifest.json`, and to `manifest`, relative to this file, when it is named.
 A run with neither writes it beside this file as `<name>.manifest.json`.
+
+`batch_size` streams the run (#158, DECISIONS #45): that many documents are
+loaded, run through every stage and written, then the next, so the run's
+memory is one micro-batch's. Left out, the run is one batch.
 
 `gate` was `validator` in 0.2 (DECISIONS #26). The old key still works, with a
 warning, until 1.0.0.
@@ -293,6 +298,8 @@ class RunConfig(_Strict):
     store_lookup: StageSpec | None = None
     # Where the run manifest is written, besides each JSONL sink's manifest.json.
     manifest: str | None = None
+    # Documents a micro-batch: the run streams (#158). Left out, it is one batch.
+    batch_size: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="before")
     @classmethod
@@ -368,6 +375,17 @@ class RunConfig(_Strict):
         """This config with these limits on top of its own: what `--budget-usd` and
         `--budget-calls` apply."""
         return self.model_copy(update={"models": self.models.with_budget(usd=usd, calls=calls)})
+
+    def with_batch_size(self, size: int | None) -> RunConfig:
+        """This config streamed in micro-batches of `size`: what `--batch-size` applies.
+
+        None keeps the config's own.
+        """
+        if size is None:
+            return self
+        if size < 1:
+            raise ConfigError("--batch-size: at least 1")
+        return self.model_copy(update={"batch_size": size})
 
     def with_widen(self) -> RunConfig:
         """This config with the model grounder's widen-and-retry on: what `--widen` applies."""

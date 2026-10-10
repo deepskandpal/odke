@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import warnings
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -264,6 +265,11 @@ BUDGET_CALLS_HELP = (
     "Stop the run cleanly before it makes more than this many model calls, keeping what is "
     "done. Overrides models.budget.calls. Exit 3 when it stops."
 )
+BATCH_SIZE_HELP = (
+    "Stream: read, run and write this many documents (odke run) or triples rows (odke "
+    "validate) at a time, so a batch of any size runs in the memory of one. Overrides "
+    "batch_size."
+)
 # The exit status of a run a budget stopped: what it kept was written.
 EXIT_BUDGET = 3
 LOG_FORMAT_HELP = (
@@ -343,6 +349,7 @@ def run_command(
     budget_calls: int | None = typer.Option(None, "--budget-calls", min=0, help=BUDGET_CALLS_HELP),
     log_format: str = typer.Option("text", "--log-format", help=LOG_FORMAT_HELP),
     log_text: bool = typer.Option(False, "--log-text", help=LOG_TEXT_HELP),
+    batch_size: int | None = typer.Option(None, "--batch-size", min=1, help=BATCH_SIZE_HELP),
 ) -> None:
     """Run the whole pipeline from a config file.
 
@@ -369,14 +376,14 @@ def run_command(
 
     chosen = _qualified(model, model_provider)
     _logs(ctx, log_format, log_text)
-    overrides = chosen is not None or widen or cache is not None
+    overrides = chosen is not None or widen or cache is not None or batch_size is not None
     if (config is None) == (from_manifest is None):
         typer.echo("error: give a config, or --from-manifest, and not both", err=True)
         raise typer.Exit(2)
     if from_manifest is not None and (overrides or (budget_usd, budget_calls) != (None, None)):
         typer.echo(
-            "error: --from-manifest runs the config it recorded; --model, --widen, --cache and "
-            "the budget flags would make it another run",
+            "error: --from-manifest runs the config it recorded; --model, --widen, --cache, "
+            "--batch-size and the budget flags would make it another run",
             err=True,
         )
         raise typer.Exit(2)
@@ -396,6 +403,7 @@ def run_command(
         if cache is not None:
             loaded = loaded.with_cache(cache)
         loaded = loaded.with_budget(usd=budget_usd, calls=budget_calls)
+        loaded = loaded.with_batch_size(batch_size)
         result = execute(loaded, dry_run=dry_run, replaying=replaying)
     except (ConfigError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
@@ -468,8 +476,10 @@ class _Store:
 
 def _read_facts(
     adapter: str, facts: str, texts: Path | None, store: _Store
-) -> tuple[list[Any], list[Any], Any]:
+) -> tuple[Iterable[Any], list[Any], Any]:
     """The rows `--facts` holds, the texts they cite, and the driver if a store was read.
+
+    A triples file's rows are an iterator, read as they are asked for.
 
     Raises ValueError for input that does not fit the adapter: a usage error.
     """
@@ -494,7 +504,8 @@ def _read_facts(
     if adapter == "triples":
         if texts is None:
             raise ValueError("triples cite texts by name: give them as --texts")
-        return list(interop.read_triples(facts)), docs, None
+        # An iterator: a streamed job reads it a micro-batch at a time.
+        return interop.read_triples(facts), docs, None
     if adapter == "langchain":
         rows, docs = interop.from_graph_documents(facts)
         return rows, docs, None
@@ -729,6 +740,7 @@ def ground_command(
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             rows, docs, driver = _read_facts(adapter, facts, texts, store)
+            rows = list(rows)
     except (ValueError, ConfigError, OntologyLoadError, ImportError, OSError) as exc:
         _data_error(exc)
     except ProviderError as exc:
@@ -836,6 +848,7 @@ def validate_command(
     budget_calls: int | None = typer.Option(None, "--budget-calls", min=0, help=BUDGET_CALLS_HELP),
     log_format: str = typer.Option("text", "--log-format", help=LOG_FORMAT_HELP),
     log_text: bool = typer.Option(False, "--log-text", help=LOG_TEXT_HELP),
+    batch_size: int | None = typer.Option(None, "--batch-size", min=1, help=BATCH_SIZE_HELP),
 ) -> None:
     """Validate another extractor's facts: ground, resolve, corroborate, gate and write.
 
@@ -860,13 +873,16 @@ def validate_command(
     and is retired when it has none. To retract a text that is gone, use
     `odke reconcile --delete`.
 
+    With --batch-size (or a config's `batch_size`) the triples are read, run
+    and written that many rows at a time, and the texts are held.
+
     Exit 2 is input or a config that cannot be read, exit 1 a run that failed,
     exit 3 a run its budget stopped, which still wrote what it kept.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
     from openodke import Retractable, SignatureCorroborator, Validator
     from openodke.gate import REFUSED_FILE, Kept, VerdictGate
-    from openodke.interop import TriplesExtractor
+    from openodke.interop import TriplesExtractor, read_triples
     from openodke.llm.base import ProviderError
     from openodke.manifest import FILE, Recorder
     from openodke.observe import Observer
@@ -893,6 +909,7 @@ def validate_command(
         "database": database,
         "user": user,
         "password_env": password_env,
+        "batch_size": batch_size,
     }
     recorder = Recorder("validate", options)
     driver: Any = None
@@ -934,6 +951,8 @@ def validate_command(
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
                 rows, docs, driver = _read_facts(adapter, facts, texts, store)
+            if batch_size is None:
+                rows = list(rows)
             validator = Validator(schema, grounder=grounder, locate=locate and grounder is None)
             named: dict[str, Any] = {}
         else:
@@ -951,6 +970,8 @@ def validate_command(
             if cache is not None:
                 loaded = loaded.with_cache(cache)
             loaded = loaded.with_budget(usd=budget_usd, calls=budget_calls)
+            loaded = loaded.with_batch_size(batch_size)
+            batch_size = loaded.batch_size
             if locate:
                 raise ValueError("with a run config, the locator is the grounder's: locate: true")
             built = build(loaded)
@@ -974,7 +995,10 @@ def validate_command(
                     "wrote, so it takes {use: triples, path: ...}; to extract, use odke run"
                 )
             docs = built.documents()
-            rows = [row for group in extractor.rows.values() for row in group]
+            # In the file's order, read as they are needed when the job streams.
+            rows = read_triples(extractor.source)
+            if batch_size is None:
+                rows = list(rows)
             named = {"extractor": extractor.extractor, "confidence": extractor.confidence}
             stage = built.stages
             plans = built.sinks
@@ -1040,8 +1064,12 @@ def validate_command(
                 update=update,
                 recorder=recorder,
                 observer=observer,
+                batch_size=batch_size,
                 **named,
             )
+    except ValueError as exc:
+        # A streamed job reads its rows as it goes, so a bad one is met here.
+        _data_error(exc)
     except (ProviderError, OSError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -1054,12 +1082,24 @@ def validate_command(
     if applied:
         done = "would apply" if dry_run else "applied"
         typer.echo(f"{'bootstrap':<13} {done} {_count(len(applied), 'statement')}")
-    written = [line for plan in plans for line in plan.describe(kg)]
+    if report.batches is None:
+        written = [line for plan in plans for line in plan.describe(kg)]
+        counts = (len(kg.entities), len(kg.facts), len(kg.links))
+        streamed = ""
+    else:
+        # A streamed job keeps no graph: what it wrote is the run's counts.
+        graph = kg.stats["graph"]
+        written = [line for plan in plans for line in plan.streamed(graph, report.batches)]
+        counts = (graph["entities"], graph["facts"], sum(graph["links"].values()))
+        how = "merged" if merge else "appended"
+        many = "" if report.batches == 1 else "es"
+        streamed = f"; {how} in {report.batches} micro-batch{many}"
     if out is not None:
         written.append(
-            f"jsonl → {out}: entities.jsonl {len(kg.entities)}, facts.jsonl {len(kg.facts)}, "
-            f"links.jsonl {len(kg.links)}, manifest.json"
+            f"jsonl → {out}: entities.jsonl {counts[0]}, facts.jsonl {counts[1]}, "
+            f"links.jsonl {counts[2]}, manifest.json"
             + (f", {refused.name} {len(kept.refused)}" if refused is not None else "")
+            + streamed
         )
     for line in written or ["nothing: give -o, or name a sink in the config"]:
         typer.echo(f"{verb:<13} {line}")
