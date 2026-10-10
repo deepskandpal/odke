@@ -25,7 +25,8 @@ names the whole verification layer (DECISIONS #26); `Validator` and
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
 
 from openodke._renamed import Renamed, module_getattr
@@ -190,6 +191,22 @@ class FactLookup(Protocol):
     """
 
     def stored(self, facts: Sequence[Fact]) -> Mapping[tuple[Any, ...], Fact]: ...
+
+
+@runtime_checkable
+class Retractable(Protocol):
+    """A store that can retract a source: take its documents out of every fact they back.
+
+    Not a stage: what the reconciler runs a change on (#116). Each fact citing
+    one of `doc_ids` loses that document's evidence and its place in the
+    support list. A fact left with no source is retired at `at` and kept, or
+    removed when `hard`. Returns the counts `openodke.reconcile.COUNTS` names.
+    Retracting the same documents again changes nothing.
+    """
+
+    def retract(
+        self, doc_ids: Collection[str], *, at: datetime, hard: bool = False
+    ) -> Mapping[str, int]: ...
 
 
 @runtime_checkable
@@ -492,6 +509,7 @@ __all__ = [
     "PassThroughValidator",
     "PlatformProfile",
     "Resolver",
+    "Retractable",
     "Retriever",
     "Router",
     "Scorer",
