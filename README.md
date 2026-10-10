@@ -164,6 +164,7 @@ missing one is named in the error.
 | `rdf` | rdflib | `RdfSink`, `Ontology.from_owl` |
 | `networkx` | networkx | `NetworkXSink` |
 | `docs` | pypdf, python-docx | The document readers together |
+| `otel` | the OpenTelemetry API | Spans per job, stage and model call |
 | `all` | all of the above | |
 
 Python 3.11–3.14.

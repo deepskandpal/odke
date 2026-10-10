@@ -33,6 +33,7 @@ on it except what the extras below add.
 | `yaml` | `pyyaml>=6,<7` | `Ontology.from_yaml`; YAML run configs |
 | `parquet` | `pyarrow>=15` | `ParquetLoader` |
 | `bench` | `nltk>=3.8,<4` | `odke bench` on Text2KGBench (its hallucination metrics) |
+| `otel` | `opentelemetry-api>=1.24,<2` | [Spans](run.md#logs-and-traces) per job, stage and model call |
 | `all` | every extra above | |
 
 Nothing fails at import. A feature used without its extra raises an error that

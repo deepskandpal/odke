@@ -14,6 +14,7 @@ odke run examples/e2e/odke.yaml --dry-run                # load, extract and gro
 odke run examples/e2e/odke.yaml --model ollama/llama3.1  # every role on one model, whatever the config says
 odke run examples/e2e/odke.yaml --budget-usd 1.50        # stop cleanly before spending more, keeping what is done
 odke run --from-manifest examples/e2e/out                # run again what a run's manifest recorded
+odke run examples/e2e/odke.yaml --log-format json        # every stage, document and model call as a JSON line
 ```
 
 | Exit status | Means |
@@ -326,6 +327,7 @@ stage:
 | Key in `stats` | Holds |
 |---|---|
 | `documents`, `chunks`, `skipped`, `deferred`, `refused` | the pipeline's own counts |
+| `candidates` | the facts that reached resolution: extracted, grounded and normalised, from the documents that did not fail. The job's facts in ([Logs and traces](#logs-and-traces)) |
 | `graph` | `facts`, `edges`, `properties`, `entities`, and `links` by kind |
 | `stages.extractor` | `paths` (the hybrid's `PathReport` totals), `rejections` by reason, or `model_calls`; `prompts`, the keys of the [registered prompts](models.md#prompts) the model sent; for `triples`, rows by how their evidence was made (`cited`, `quoted`, `quote_not_found`, `context`), `unmatched_rows` and `ambiguous_rows` |
 | `stages.grounder` | calls, retries, failures, a count per verdict, tokens, `cost_usd`, `prompts`, `unasked` (facts a budget stop reached before their call), the span check's own counts, with `locate` the locator's, and with `widen`, under `widen`: `retried`, `recovered` and the retries' own calls, tokens and cost, which `cost` meters as their own row, `ground.widen` |
@@ -412,6 +414,84 @@ assert manifest.counts["facts"] == 25 and len(manifest.inputs.documents) == 8
 `read_manifest(path)` reads one back, from the file or the directory holding
 it, and `from_manifest(path)` gives the `RunConfig` to run again with
 `execute(config, replaying=manifest)`.
+
+## Logs and traces
+
+`--log-format json` on `odke run`, `odke validate` and `odke ground` writes
+every event as one JSON object a line on standard error, while the report
+still prints to standard output ([DECISIONS #41](decisions.md#41)). Every
+event has the same keys, `null` where they do not apply: `ts` (UTC), `level`,
+`event`, `run` (one id for all of a job's events), `command`, `stage`,
+`document`, `counts`, `latency_s` and `cost`.
+
+| `event` | When | Its own |
+|---|---|---|
+| `job.start` | once, first | `dry_run` |
+| `stage` | once per stage: `chunk`, `extract`, `ground`, `reextract`, `normalize`, `resolve`, `derive`, `corroborate`, `gate`, `write` | `counts`: the stage's, such as `facts`, a count per verdict, `failed`; `cost`: its model calls' |
+| `document` | once per document grounded | `counts`: its `chunks`, `facts` and a count per verdict |
+| `document.failed` | once per document left out (a warning) | `reason`, as the report gives it |
+| `model.call` | once per model call; a failed one is a warning | `model`, asked for, and `served`, both provider-qualified; `cost`: `input_tokens`, `output_tokens`, `usd`, `cached`; `error`, by type alone |
+| `job.end` | once, last | `counts`, the job's; `cost`: `calls`, `cached_calls`, `input_tokens`, `output_tokens`, `usd`; `documents`, `failed`, `stopped` (the limit, or `null`) |
+| `log` | any other record a stage logs | `logger`, and `template`, the message before its arguments |
+
+```text
+{"ts":"2026-10-10T11:14:00.808Z","level":"info","event":"job.end","run":"259bdbe59782","command":"run","stage":null,"document":null,"counts":{"facts_in":36,"facts_out":25,"refused":1,"merged":10,"linked":4,"review":0},"latency_s":0.132401,"cost":{"calls":39,"cached_calls":0,"input_tokens":4764,"output_tokens":216,"usd":null},"documents":8,"failed":0,"stopped":null}
+```
+
+**A job's counts are its report's.** `job.end` counts facts `in` and `out`,
+`refused`, `merged`, `linked` and sent to `review`, read from the same numbers
+the report prints (`JobCounts`; `RunResult.job`, `ValidationReport.job`,
+`GroundSummary.job`):
+
+| | `odke run` | `odke validate` | `odke ground` |
+|---|---|---|---|
+| `facts_in` | `candidates` | `facts_in` | `rows` |
+| `facts_out` | `graph.facts` | `facts_out` | `facts` |
+| `refused` | `refused` | `refused` | the free checks' refusals: nothing is dropped |
+| `merged` | in, plus `derived`, less refused and out | `merged` | 0 |
+| `linked` | the links, of every kind | `linked` | 0 |
+| `review` | the pairs the [pair judge](resolution-and-corroboration.md) queued | `judge.queued` | 0 |
+
+**No text, no secret.** An event holds ids, names, counts, times and costs:
+never a passage, a quote, an entity's name, a prompt or a reply, and no
+config. A stage's own warning can quote a model's reply, so as JSON it keeps
+its `template` and drops its arguments; `--log-text` keeps a `message` too. A
+model call is named by its stage, not its document: a batch's calls run
+concurrently. A stage with a client of its own, a pair judge handed to the
+Validator say, sends no `model.call` events, though its spend is in `job.end`.
+
+**From Python**, `configure_logs("json", stream=...)` installs the handler on
+the `openodke` logger, and `configure_logs("text")` takes it off. Without a
+handler, an event goes nowhere.
+
+```python
+import io
+import json
+
+from openodke.observe import configure_logs
+from openodke.run import execute, load_config
+
+stream = io.StringIO()
+configure_logs("json", stream=stream)
+result = execute(load_config("examples/e2e/odke.yaml"), dry_run=True)
+configure_logs("text")
+events = [json.loads(line) for line in stream.getvalue().splitlines()]
+end = next(event for event in events if event["event"] == "job.end")
+print(end["counts"])
+# {'facts_in': 36, 'facts_out': 25, 'refused': 1, 'merged': 10, 'linked': 4, 'review': 0}
+assert end["counts"] == result.job.model_dump()
+assert [e["stage"] for e in events if e["event"] == "stage"][:3] == ["chunk", "extract", "ground"]
+```
+
+**OpenTelemetry**, with `pip install "openodke[otel]"`: each job is a span,
+`odke run`, each stage a child of it, `stage ground`, and each model call a
+child of its stage, `model ground`, with the events' counts and costs as
+`odke.*` attributes. The extra is the API alone, imported on first use: the
+spans go to the tracer provider your application configures, with the SDK and
+the exporter of its choosing, and with none they go nowhere and cost next to
+nothing. From the command line, `opentelemetry-instrument odke run ...` with
+`opentelemetry-distro` and an exporter configures one from the environment.
+`openodke.observe.TRACER_PROVIDER` overrides the global provider.
 
 ## When one document fails
 
