@@ -69,6 +69,8 @@ REDACTED = "<redacted>"
 SINK_KEYS = ("ontology", "created_at", "entities", "facts", "edges", "properties", "links", "stats")
 
 Command = Literal["run", "validate", "ground"]
+# The graph's counts a streamed run takes from its totals, not its (empty) graph.
+_SHAPE = ("entities", "facts", "edges", "properties")
 
 # A key that names a secret, as a word of its own: `api_key`, `neo4j_password`,
 # `token`, but not `max_tokens` or `password_env`, which says where one is read.
@@ -201,20 +203,37 @@ class RunManifest(Frozen):
     stopped: dict[str, Any] | None = None
     failed: dict[str, str] = Field(default_factory=dict)
 
-    def document(self, kg: KnowledgeGraph | None = None) -> dict[str, Any]:
-        """The manifest as `manifest.json` holds it; with `kg`, the graph's fields beside it."""
+    def document(
+        self, kg: KnowledgeGraph | None = None, *, shape: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """The manifest as `manifest.json` holds it; with `kg`, the graph's fields beside it.
+
+        `shape` is the graph's counts when `kg` holds none of its facts, as a
+        streamed run's does (`openodke.stream.Totals.graph`).
+        """
         own = self.model_dump(mode="json")
         if kg is None:
             return own
         from openodke.sinks.jsonl import manifest_of
 
-        return {**own, **manifest_of(kg, kg.entities, kg.facts, kg.links)}
+        fields = manifest_of(kg, kg.entities, kg.facts, kg.links)
+        if shape is not None:
+            fields.update({key: int(shape.get(key, 0)) for key in _SHAPE})
+            fields["links"] = sum(int(v) for v in (shape.get("links") or {}).values())
+        return {**own, **fields}
 
-    def write(self, path: str | Path, kg: KnowledgeGraph | None = None) -> Path:
+    def write(
+        self,
+        path: str | Path,
+        kg: KnowledgeGraph | None = None,
+        *,
+        shape: Mapping[str, Any] | None = None,
+    ) -> Path:
         """A manifest of its own at `path`: this run's fields, and the graph's beside them."""
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(self.document(kg), indent=2) + "\n", encoding="utf-8")
+        text = json.dumps(self.document(kg, shape=shape), indent=2)
+        target.write_text(text + "\n", encoding="utf-8")
         return target
 
     def write_into(self, path: str | Path) -> Path:
@@ -285,15 +304,51 @@ def read_manifest(path: str | Path) -> RunManifest:
 # --------------------------------------------------------------------------- #
 
 
-def inputs_of(documents: Iterable[Document], facts: Sequence[Any] | None = None) -> Inputs:
+def inputs_of(documents: Iterable[Document], facts: Iterable[Any] | None = None) -> Inputs:
     """Each document's text by hash, the facts handed in by count and hash, and one hash."""
-    hashes = {doc.id: text_hash(doc.text) for doc in documents}
-    handed = None
-    if facts is not None:
-        rows = [_row(item) for item in facts]
-        handed = FactsIn(rows=len(rows), hash=digest(rows))
-    rollup = digest({"documents": hashes, "facts": handed.hash if handed else None})
-    return Inputs(documents=hashes, facts=handed, hash=rollup)
+    hashing = InputsHash(facts=facts is not None)
+    hashing.add_documents(documents)
+    hashing.add_facts(facts or ())
+    return hashing.inputs()
+
+
+class InputsHash:
+    """`inputs_of`, a document and a fact at a time: what a streamed run hashes as it reads.
+
+    A run in micro-batches (#158) never holds its facts at once, so each is
+    hashed as it is read, into the same digest `inputs_of` takes of the list:
+    the same documents and facts, in the same order, give the same `Inputs`
+    whatever the micro-batches were. A document seen twice counts once.
+    `facts=False` is a run that was handed none, as `inputs_of(docs)` is.
+    """
+
+    def __init__(self, *, facts: bool) -> None:
+        self.documents: dict[str, str] = {}
+        self._facts = hashlib.sha256(b"[") if facts else None
+        self._rows = 0
+
+    def add_documents(self, documents: Iterable[Document]) -> None:
+        for doc in documents:
+            self.documents[doc.id] = text_hash(doc.text)
+
+    def add_facts(self, facts: Iterable[Any]) -> None:
+        if self._facts is None:
+            return
+        for item in facts:
+            text = json.dumps(
+                _row(item), sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
+            )
+            self._facts.update((("," if self._rows else "") + text).encode("utf-8"))
+            self._rows += 1
+
+    def inputs(self) -> Inputs:
+        handed = None
+        if self._facts is not None:
+            done = self._facts.copy()
+            done.update(b"]")
+            handed = FactsIn(rows=self._rows, hash=done.hexdigest())
+        rollup = digest({"documents": self.documents, "facts": handed.hash if handed else None})
+        return Inputs(documents=dict(self.documents), facts=handed, hash=rollup)
 
 
 def _row(item: Any) -> Any:
@@ -483,6 +538,7 @@ __all__ = [
     "SINK_KEYS",
     "FactsIn",
     "Inputs",
+    "InputsHash",
     "ModelUse",
     "Recorder",
     "RunManifest",

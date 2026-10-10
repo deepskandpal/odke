@@ -30,6 +30,7 @@ from openodke._batch import failed_summary
 from openodke.corroborate.judge import judge_stop
 from openodke.corroborate.provenance import CONFLICT
 from openodke.coverage import summary as coverage_summary
+from openodke.interop.triples import TriplesExtractor, read_triples
 from openodke.llm.budget import budget_summary, stopped_summary
 from openodke.manifest import FILE, Inputs, Recorder, RunManifest, inputs_of, package, spent_of
 from openodke.observe import JobCounts, Observer, job_counts_of_run, spend
@@ -237,10 +238,20 @@ def manifest_path(config: RunConfig, *, jsonl: bool) -> Path | None:
 
 
 def handed_in(extractor: Any) -> list[Any] | None:
-    """The rows an extractor replays rather than extracts, a triples file's say; None otherwise."""
+    """The rows an extractor replays rather than extracts, a triples file's say; None otherwise.
+
+    In the order they were handed in, when the stage still has them that way
+    (a file, or a list), so a run that reads them a micro-batch at a time
+    hashes them as one that reads them all (#158); else by the text they cite.
+    """
     rows = getattr(extractor, "rows", None)
     if not isinstance(rows, Mapping):
         return None
+    source = getattr(extractor, "source", None)
+    if isinstance(extractor, TriplesExtractor) and isinstance(source, str | Path | list | tuple):
+        return list(read_triples(source))
+    if isinstance(source, list | tuple):
+        return list(source)
     return [row for group in rows.values() for row in group]
 
 
@@ -297,15 +308,19 @@ def _bootstrap(built: Built, opened: list[Sink]) -> list[str]:
     return applied
 
 
-def register_documents(stage: Any, docs: list[Document]) -> None:
+def register_documents(stage: Any, docs: list[Document], *, replace: bool = False) -> None:
     """Hand the loaded documents to a stage that looks them up by id (DECISIONS #19).
 
     An extractor reads a document's URI and tier; the corroborator reads its
     text, to count a near-duplicate copy once; the resolver's pair judge reads
-    the sentences around a mention.
+    the sentences around a mention. With `replace`, the stage holds these
+    alone: what a streamed run hands each micro-batch, so no stage keeps every
+    text of the run (#158).
     """
     lookup = getattr(stage, "documents", None)
     if isinstance(lookup, dict):
+        if replace:
+            lookup.clear()
         lookup.update({doc.id: doc for doc in docs})
 
 
