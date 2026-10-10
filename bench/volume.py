@@ -571,12 +571,13 @@ def measure(
         args += ["--batch-size", str(batch_size)]
     took = spawn(folder, args, latency=latency, facts=facts)
     calls = took["calls"]
+    manifest = _read(folder / "out" / "manifest.json")
     row = {
         "command": f"odke {command}",
         "concurrency": level,
         "batch_size": batch_size,
         "documents": len(docs),
-        "facts": _read(folder / "out" / "manifest.json").get("facts"),
+        "facts": manifest.get("facts"),
         "calls": calls,
         "seconds": took["seconds"],
         "bound_s": round(sum(n * latency.get(r, 0.0) for r, n in calls.items()) / level, 1),
@@ -584,6 +585,8 @@ def measure(
         "calls_per_s": round(sum(calls.values()) / took["seconds"], 1),
         "peak_rss_mb": took["peak_rss_mb"],
         "stages_s": took["stages_s"],
+        # The sinks' write report: rows written new, merged and skipped, by kind.
+        "writes": manifest.get("writes"),
         "load": took["load"],
     }
     print(json.dumps(row), flush=True)
