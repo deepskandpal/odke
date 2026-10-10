@@ -1958,7 +1958,7 @@ def _dataset(name: str) -> Any:
 
 @bench_app.command("fetch")
 def bench_fetch(
-    dataset: str = typer.Argument(..., help="text2kgbench or redocred."),
+    dataset: str = typer.Argument(..., help="text2kgbench, redocred or trex."),
     dest: Path = typer.Argument(..., help="Directory to download into."),
     source: str = typer.Option(
         "wikidata_tekgen", help="text2kgbench only: wikidata_tekgen or dbpedia_webnlg."
@@ -1975,6 +1975,8 @@ def bench_fetch(
     try:
         if dataset == "text2kgbench":
             module.fetch(dest, source=source, ontologies=ontology or None)
+        elif dataset == "trex":
+            module.fetch(dest)
         else:
             module.fetch(dest, splits=tuple(split or ("dev", "test")))
     except (ValueError, OSError) as exc:
@@ -1985,7 +1987,7 @@ def bench_fetch(
 
 @bench_app.command("prepare")
 def bench_prepare(
-    dataset: str = typer.Argument(..., help="text2kgbench or redocred."),
+    dataset: str = typer.Argument(..., help="text2kgbench, redocred or trex."),
     root: Path = typer.Argument(..., help="Where `odke bench fetch` downloaded it."),
     out: Path = typer.Option(..., "--out", help="Directory to write the runnable set into."),
     ontology: str | None = typer.Option(
@@ -2012,6 +2014,13 @@ def bench_prepare(
         "--paper",
         help="ODKE+'s own grounder and gate: the whole context, True/False, affirmed facts only.",
     ),
+    documents: int = typer.Option(
+        80, "--documents", help="trex only: how many abstracts the set is built from."
+    ),
+    seed: int = typer.Option(0, "--seed", help="trex only: the seed the facts are drawn with."),
+    judge: bool = typer.Option(
+        False, "--judge", help="trex only: the resolver's pair judge too (ground-model calls)."
+    ),
 ) -> None:
     """Write documents, ontology, gold and an `odke.json` run config. Calls no model."""
     module = _dataset(dataset)
@@ -2026,6 +2035,17 @@ def bench_prepare(
             if ontology is None:
                 raise ValueError("text2kgbench needs --ontology, e.g. ont_1_movie")
             module.prepare(root, ontology, out, source=source, limit=limit, **models)
+        elif dataset == "trex":
+            chosen = {"documents": documents, "seed": seed, "judge": judge}
+            module.prepare(root, out, limit=limit, **chosen, **models)
+            meta = json.loads((out / "dataset.json").read_text(encoding="utf-8"))
+            facts, share = meta["gold_facts"], meta["share"]
+            typer.echo(
+                "gold facts by sources in the set: "
+                + ", ".join(f"{b}: {n}" for b, n in facts.items())
+                + "; in the whole file, aligned in two or more abstracts: "
+                + ", ".join(f"{k} {v['multi_share']:.1%}" for k, v in share.items())
+            )
         else:
             module.prepare(root, out, split=split, limit=limit, **models)
     except (ValueError, OSError) as exc:
@@ -2036,7 +2056,7 @@ def bench_prepare(
 
 @bench_app.command("run")
 def bench_run(
-    dataset: str = typer.Argument(..., help="text2kgbench or redocred."),
+    dataset: str = typer.Argument(..., help="text2kgbench, redocred or trex."),
     prepared: Path = typer.Argument(..., help="A directory `odke bench prepare` wrote."),
     as_json: bool = typer.Option(False, "--json", help="The dataset's own report as JSON."),
     report_to: Path | None = typer.Option(

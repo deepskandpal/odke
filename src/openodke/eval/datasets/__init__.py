@@ -18,8 +18,12 @@ from __future__ import annotations
 
 from types import ModuleType
 
-from openodke.eval.datasets import redocred, text2kgbench
+from openodke.eval.datasets import redocred, text2kgbench, trex
 
-DATASETS: dict[str, ModuleType] = {"text2kgbench": text2kgbench, "redocred": redocred}
+DATASETS: dict[str, ModuleType] = {
+    "text2kgbench": text2kgbench,
+    "redocred": redocred,
+    "trex": trex,
+}
 
-__all__ = ["DATASETS", "redocred", "text2kgbench"]
+__all__ = ["DATASETS", "redocred", "text2kgbench", "trex"]
