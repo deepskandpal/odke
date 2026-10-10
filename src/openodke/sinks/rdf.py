@@ -17,6 +17,7 @@ from openodke.ontology import Ontology
 from openodke.sinks.neo4j import (
     entities_of,
     is_outvoted,
+    is_retired,
     is_scoped,
     provenance_of,
     signature_of,
@@ -61,6 +62,7 @@ _FACT_PROVENANCE = (
     "valid_to",
     "retrieved_at",
     "extracted_at",
+    "retired_at",
 )
 # An ontology literal range as the XSD datatype it is written as.
 XSD_RANGES = {
@@ -105,8 +107,9 @@ class RdfSink:
       in Neo4j and carries the same property names. The IRI is the fact's
       signature, so a rerun with new ids and clocks addresses the same node.
     - The plain triple `<s> <schema><predicate> <o>` is written **only** for
-      an asserted, unscoped fact the corroborator did not vote down — the same
-      rule that decides the Neo4j projection. It is what a SPARQL query reaches
+      an asserted, unscoped fact the corroborator did not vote down and the
+      reconciler did not retire — the same rule that decides the Neo4j
+      projection. It is what a SPARQL query reaches
       for first, and it is a claim of truth: a denial written that way would
       say the opposite of its source, "uptime 99.9%" without its percentile
       says something no source said, and a value that lost its contest is the
@@ -319,6 +322,7 @@ class _Builder:
             and fact.polarity is Polarity.ASSERTED
             and not is_scoped(fact)
             and not is_outvoted(fact)
+            and not is_retired(fact)
         ):
             self.g.add((subject, predicate, obj))
 

@@ -176,7 +176,7 @@ has an identifier, the package cannot know that, and a stage is how it says so.
 
 ```cypher
 MATCH (s)-[r:`headquarters`]->(o)
-WHERE r.polarity = 'asserted' AND r.valid_to IS NULL
+WHERE r.polarity = 'asserted' AND r.valid_to IS NULL AND r.retired_at IS NULL
 WITH s, collect(DISTINCT coalesce(o.key, o.value)) AS objects
 WHERE size(objects) > 1
 RETURN labels(s) AS labels, s.key AS subject, objects
