@@ -67,17 +67,20 @@ from openodke.eval.cost import CallRecord
 from openodke.eval.diagnosis import (
     EXAMPLES,
     Bucket,
+    EquivalenceJudge,
     Offered,
     View,
     diagnose,
     gold_view,
     read_trace,
 )
+from openodke.eval.equivalence import Decided, Pairing
 from openodke.eval.eval_report import (
     Bootstrap,
     Configuration,
     Dataset,
     EvalReport,
+    Lenient,
     Run,
     extraction_rows,
     models_called,
@@ -591,6 +594,7 @@ def _score(
     offered: Offered | None,
     examples: int,
     reference: Sequence[Fact] | None = None,
+    judge: EquivalenceJudge | None = None,
 ) -> Evaluation:
     configurations: list[Configuration] = [(PIPELINE, facts, None)]
     if checked is not None:
@@ -662,7 +666,7 @@ def _score(
     ranked: tuple[Fix, ...] = ()
     if view is not None:
         inverses = corpus.ontology.inverses if corpus.ontology is not None else {}
-        found = diagnose(view, offered=offered, inverses=inverses, examples=examples)
+        found = diagnose(view, offered=offered, inverses=inverses, examples=examples, judge=judge)
         caught = None if other is None else {g.id for g in other.gold if g.found}
         diagnosed, ranked = found.buckets, tuple(rank_fixes(found, reference=caught))
     report_ = EvalReport(
@@ -818,6 +822,10 @@ def evaluate(
     notes.insert(0, f"{output.how}: {len(output.items)} row(s){ran}, {len(facts)} fact(s)")
     checked = check(facts, corpus, config) if validator else None
     others = None if reference is None else as_facts(read_output(reference), corpus)[0]
+    judged = None
+    if lenient is not None:
+        rows = [(PIPELINE, facts)] + ([(VALIDATOR, checked.facts)] if checked else [])
+        judged = judged_leniently(corpus, rows, Path(lenient), config)
     found = _score(
         corpus,
         facts,
@@ -829,14 +837,14 @@ def evaluate(
         offered=offered,
         examples=examples,
         reference=others,
+        judge=Decided(judged.pairs) if judged is not None else None,
     )
     report = found.report
     if adjudicate is not None:
         rows = [(PIPELINE, facts)] + ([(VALIDATOR, checked.facts)] if checked else [])
         report = adjudicated(report, corpus, rows, Path(adjudicate), config)
-    if lenient is not None:
-        rows = [(PIPELINE, facts)] + ([(VALIDATOR, checked.facts)] if checked else [])
-        report = leniently(report, corpus, rows, Path(lenient), config)
+    if judged is not None:
+        report = judged.attach(report)
     if produced is None and validator and config is not None:
         produced = _data(config)
     return Evaluation(report, found.items, produced)
@@ -904,19 +912,41 @@ def adjudicated(
     )
 
 
-def leniently(
-    report: EvalReport,
+@dataclass(frozen=True)
+class Judged:
+    """What `--lenient` found: the section, every pair asked, and what the report says of it."""
+
+    section: Lenient
+    pairs: list[Pairing]
+    note: str
+    models: dict[str, str]
+    prompts: tuple[str, ...]
+
+    def attach(self, report: EvalReport) -> EvalReport:
+        """`report` with the lenient section, its note, and the judge's model and prompts."""
+        run = report.run.model_copy(
+            update={
+                "models": {**self.models, **report.run.models},
+                "prompts": tuple(dict.fromkeys([*report.run.prompts, *self.prompts])),
+            }
+        )
+        return report.model_copy(
+            update={"lenient": self.section, "notes": (*report.notes, self.note), "run": run}
+        )
+
+
+def judged_leniently(
     corpus: Corpus,
     rows: Sequence[tuple[str, Sequence[Fact]]],
     pairs: Path,
     config: str | Path | None = None,
-) -> EvalReport:
-    """`report` with its lenient section, after writing every pair asked to `pairs`.
+) -> Judged:
+    """The lenient section over `rows`, after writing every pair asked to `pairs`.
 
     The judge is `FactJudge` on `config`'s ground model, recorded responses
     and all, or the default one; metered under the stage `judge` either way,
     so the report names the model it called. The ontology describes each
-    relation to it.
+    relation to it. The diagnosis reads the same decisions (`Decided`).
     """
     from openodke.eval.cost import CostMeter
     from openodke.eval.equivalence import FactJudge, lenient, write_pairs
@@ -949,15 +979,12 @@ def leniently(
         f"lenient: {len(entries)} pair(s) the pre-filter let through, asked in both orders; "
         f"{same} judged the same fact (every one, with both answers, in {pairs})"
     )
-    called = models_called(meter.records, {"judge": roles.ground.model})
-    run = report.run.model_copy(
-        update={
-            "models": {**called, **report.run.models},
-            "prompts": tuple(dict.fromkeys([*report.run.prompts, *judge.stats["prompts"]])),
-        }
-    )
-    return report.model_copy(
-        update={"lenient": section, "notes": (*report.notes, note), "run": run}
+    return Judged(
+        section=section,
+        pairs=entries,
+        note=note,
+        models=models_called(meter.records, {"judge": roles.ground.model}),
+        prompts=tuple(judge.stats["prompts"]),
     )
 
 

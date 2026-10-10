@@ -169,11 +169,16 @@ def test_a_judge_confirms_or_sends_a_candidate_on() -> None:
     confirmed = diagnose(view, inverses=ONTOLOGY.inverses, judge=yes)
     assert assigned(confirmed)[3] == "surface_form"
     paris = ("Paris", "located_in", "France"), ("Paris", "located_in", "France (country)")
-    assert yes.asked == [paris]
+    # With a judge every pair the pre-filter makes is asked, a near name or not:
+    # Ivy works for Hal shares the relation and the object with Gina's.
+    gina = ("Gina", "works_for", "Hal"), ("Ivy", "works_for", "Hal")
+    assert yes.asked == [paris, gina]
+    assert assigned(confirmed)[7] == "surface_form"
     label = next(b.label for b in confirmed.buckets if b.bucket == "surface_form")
     assert label == "surface form"
     # Rejected, the miss goes on: France is in no prediction under its own key.
-    assert assigned(diagnose(view, inverses=ONTOLOGY.inverses, judge=no))[3] == "entity_missing"
+    rejected = assigned(diagnose(view, inverses=ONTOLOGY.inverses, judge=no))
+    assert (rejected[3], rejected[7]) == ("entity_missing", "not_linked")
 
 
 def test_near_names() -> None:

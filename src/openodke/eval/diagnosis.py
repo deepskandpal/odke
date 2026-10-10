@@ -34,10 +34,13 @@ never linked.
 - **Predictions** are everything the pipeline produced: the facts it wrote and,
   where the gate's record is given, the ones it refused. An entity in a refused
   fact was extracted.
-- **Surface form** needs the fact-equivalence judge (#143). Here is the
-  deterministic pre-filter that makes its candidates, and an `EquivalenceJudge`
-  hook. With no judge the bucket is *surface form (unconfirmed)*; with one, a
-  candidate it rejects falls through to the buckets after.
+- **Surface form** needs the fact-equivalence judge (#143, DECISIONS #39). Its
+  candidates are the judge's pre-filter: a prediction that is no hit, with the
+  relation and exactly one end equal as the scorer compares them. With a judge
+  (`EquivalenceJudge`, `FactJudge` or the decisions of `--lenient`) each is
+  asked, and a candidate it does not call the same falls through to the
+  buckets after. With none the bucket is *surface form (unconfirmed)*, and
+  only a candidate whose other end is a near name lands in it.
 - **Cross-sentence** reads the dataset's evidence sentences where it gives them,
   Re-DocRED's; otherwise the two ends are named in the text, by the span
   locator's rules, and never in one sentence together.
@@ -292,7 +295,9 @@ class EquivalenceJudge(Protocol):
     """Is the prediction the gold fact in other words? (#143)
 
     Asked about each surface-form candidate: True puts the miss in *surface
-    form*, False or None sends it on to the buckets after.
+    form*, False or None sends it on to the buckets after. `text` is the gold
+    fact's document; `FactJudge.equivalent` narrows it to the sentences naming
+    both of the gold fact's ends.
     """
 
     def equivalent(self, gold: Claim, predicted: Claim, text: str | None) -> bool | None: ...
@@ -531,7 +536,7 @@ def _bucket(
     inverse = [p for p in backward if p.relation in turned]
     if inverse:
         return "inverse", example(inverse[0], "the other way round")
-    for p in _near(g, made):
+    for p in _near(g, made, judged=judge is not None):
         if judge is None:
             return "surface_form", example(p, "a near name")
         text = out.view.texts.get(g.doc_id) if out.view.texts else None
@@ -559,17 +564,28 @@ def _matches(g: GoldItem, p: Said) -> bool:
     )
 
 
-def _near(g: GoldItem, made: Sequence[Said]) -> list[Said]:
-    """The surface-form candidates: the relation, one end equal, the other a near name."""
+def _near(g: GoldItem, made: Sequence[Said], *, judged: bool) -> list[Said]:
+    """The surface-form candidates: the fact-equivalence judge's pre-filter.
+
+    A prediction that is no hit, with the relation and exactly one end equal
+    as the scorer compares them (`openodke.eval.equivalence.candidate`, on the
+    scorer's keys). With no judge to ask, the other end must also be a near
+    name, so a plain wrong value is not counted as wording.
+    """
     out = []
     for p in made:
-        if p.relation != g.relation:
+        if p.relation != g.relation or p.hit:
             continue
         subject, obj = p.subject in g.subject.keys, p.object in g.object.keys
-        near_object = subject and not obj and _close(p.forms[1] or p.object, g.object.forms)
-        near_subject = obj and not subject and _close(p.forms[0] or p.subject, g.subject.forms)
-        if near_object or near_subject:
-            out.append(p)
+        if subject == obj:
+            continue
+        if not judged:
+            other, forms = (p.forms[1] or p.object, g.object.forms)
+            if obj:
+                other, forms = (p.forms[0] or p.subject, g.subject.forms)
+            if not _close(other, forms):
+                continue
+        out.append(p)
     return out
 
 
