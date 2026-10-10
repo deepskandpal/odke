@@ -300,6 +300,27 @@ def name_key(text: str, *, person: bool = False) -> str:
     return " ".join(tokens)
 
 
+# One spelling per legal form, for telling two forms apart: "Ltd" is "Limited".
+_LEGAL_FORMS = {
+    "incorporated": "inc", "corporation": "corp", "company": "co", "limited": "ltd",
+    "private": "pvt",
+}  # fmt: skip
+
+
+def legal_form(text: str) -> str | None:
+    """The legal form an organisation's name ends in, one spelling per form, or `None`.
+
+    The part `name_key` drops: `"Acme Corporation Ltd"` is `ltd` and `"ACME
+    Limited"` is too, where `"Acme"` has none. A name of one word has none.
+    """
+    s = unicodedata.normalize("NFKD", text)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch)).casefold()
+    tokens = re.findall(r"[^\W_]+", _DOTTED.sub(lambda m: m[1].replace(".", ""), s))
+    if len(tokens) > 1 and tokens[-1] in _LEGAL_SUFFIXES:
+        return _LEGAL_FORMS.get(tokens[-1], tokens[-1])
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # The stage
 # --------------------------------------------------------------------------- #
@@ -415,6 +436,7 @@ def _record(forms: dict[str, tuple[str, ...]], field: str, original: Any) -> Non
 
 __all__ = [
     "ValueNormalizer",
+    "legal_form",
     "name_key",
     "normalize_date",
     "normalize_quantity",

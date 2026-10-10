@@ -16,17 +16,12 @@ which entities are compared, never what counts as a match.
 
 from __future__ import annotations
 
-import math
 from collections import defaultdict
-from collections.abc import Callable, Mapping, Sequence
-from typing import TypeAlias
+from collections.abc import Mapping, Sequence
 
-from openodke.corroborate.resolve import _profile, block_keys, name_similarity
+from openodke.corroborate.resolve import Embed, _profile, _unit, block_keys, name_similarity
 from openodke.stages import EntityIndex
 from openodke.types import Entity
-
-# Texts in, one vector per text out, in order. Any embedding model fits.
-Embed: TypeAlias = Callable[[Sequence[str]], Sequence[Sequence[float]]]
 
 
 def embedding_text(entity: Entity) -> str:
@@ -143,11 +138,6 @@ class MemoryLookup:
             ]
             out[entity.key] = [key for _, key in sorted(scored)[: self.vector_k]]
         return out
-
-
-def _unit(vector: Sequence[float]) -> list[float]:
-    norm = math.sqrt(sum(float(x) * float(x) for x in vector))
-    return [float(x) / norm for x in vector] if norm else [0.0 for _ in vector]
 
 
 __all__ = ["Embed", "MemoryLookup", "embedding_text", "in_tenant"]

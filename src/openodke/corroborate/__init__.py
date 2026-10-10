@@ -23,6 +23,7 @@ from openodke.corroborate.merge import (
 )
 from openodke.corroborate.normalize import (
     ValueNormalizer,
+    legal_form,
     name_key,
     normalize_date,
     normalize_quantity,
@@ -77,6 +78,7 @@ __all__ = [
     "derived_from",
     "domain_of",
     "independent_sources",
+    "legal_form",
     "name_key",
     "name_similarity",
     "normalize_date",
