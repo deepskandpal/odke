@@ -265,6 +265,16 @@ def render_question(
     return _FIELD.sub(lambda m: values[m[1]], FRAME.text)
 
 
+def _claim_fact(claim: Claim) -> Fact:
+    """A claim's strings as a fact, for finding where a text names its ends."""
+    subject, relation, obj = claim
+    return Fact(
+        subject=Entity(key=subject, type="Thing", label=subject),
+        predicate=relation,
+        object_value=obj,
+    )
+
+
 def render_plain(claim: Claim) -> str:
     """A claim with no types, as the grounder would render it: `s — relation — o.`"""
     subject, relation, obj = claim
@@ -425,13 +435,15 @@ class FactJudge:
     def equivalent(self, gold: Claim, predicted: Claim, text: str | None) -> bool | None:
         """The diagnosis's hook: True when both orders say same, False when both say different.
 
-        `text` is the passage: the gold fact's evidence sentences, not its
-        whole document. None, unsure, a failed call, or no text at all, is
+        `text` is the gold fact's document, or its passage already; either is
+        narrowed to the sentences naming both of the gold claim's ends
+        (`passage_for`). None, unsure, a failed call, or no text at all, is
         None: the miss goes on to the buckets after.
         """
         if not text:
             return None
         relation = gold[1]
+        passage = passage_for(_claim_fact(gold), Document(id="passage", text=text))
         (decided,) = self._decide_all(
             [
                 (
@@ -439,7 +451,7 @@ class FactJudge:
                     self.description(relation),
                     render_plain(gold),
                     render_plain(predicted),
-                    text,
+                    passage,
                 )
             ]
         )
@@ -714,6 +726,48 @@ def _performance(
     return performance(statistic(units), ranges)
 
 
+class Decided:
+    """The judge's decisions on the lenient score's pairs, as the diagnosis's hook.
+
+    `odke eval pipeline --lenient` asks about each pair once. The diagnosis
+    reads the same decisions rather than asking again, by the claims as it
+    writes them (`label or key`, the predicate, `label or key` or the value):
+    True when a pair with those claims was judged the same, False when every
+    one was judged different, and None for a pair the lenient score never
+    asked about.
+    """
+
+    def __init__(self, entries: Iterable[Pairing]) -> None:
+        self._found: dict[tuple[Claim, Claim], set[str]] = defaultdict(set)
+        for entry in entries:
+            if entry.decision is not None:
+                key = (_claim(entry.gold, gold=True), _claim(entry.predicted))
+                self._found[key].add(entry.decision.decision)
+
+    def equivalent(self, gold: Claim, predicted: Claim, text: str | None) -> bool | None:
+        found = self._found.get((gold, predicted))
+        if not found:
+            return None
+        if "same" in found:
+            return True
+        return False if found == {"different"} else None
+
+
+def _claim(fact: Fact, *, gold: bool = False) -> Claim:
+    """A fact as the diagnosis writes its claim: a gold end by its first name, a prediction's
+    by its label or key (`diagnosis.gold_view`)."""
+
+    def shown(entity: Entity) -> str:
+        return names(entity)[0] if gold else entity.label or entity.key
+
+    obj = fact.object_entity
+    return (
+        shown(fact.subject),
+        fact.predicate,
+        shown(obj) if obj is not None else str(fact.object_value),
+    )
+
+
 def write_pairs(path: str | Path, entries: Sequence[Pairing]) -> Path:
     """Every pair the judge was asked about, one JSON line each, the ones judged same first."""
     target = Path(path)
@@ -733,6 +787,7 @@ __all__ = [
     "FRAME",
     "MAX_PASSAGE",
     "PROMPT",
+    "Decided",
     "Equivalence",
     "FactJudge",
     "Pairing",

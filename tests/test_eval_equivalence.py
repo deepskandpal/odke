@@ -21,7 +21,10 @@ from openodke.eval.equivalence import (
     FRAME,
     MAX_PASSAGE,
     PROMPT,
+    Decided,
+    Equivalence,
     FactJudge,
+    Pairing,
     candidate,
     lenient,
     passage_for,
@@ -461,16 +464,15 @@ def test_the_schema_names_every_field_of_the_section() -> None:
 TRIPLES = Path(__file__).parent.parent / "examples" / "triples"
 
 
-@pytest.fixture
-def recorded(tmp_path: Path) -> Path:
+def _recorded(tmp_path: Path, decision: str) -> Path:
     """The triples example's config, its ground model answering the judge from a cassette."""
     copy = tmp_path / "triples"
     shutil.copytree(TRIPLES, copy, ignore=shutil.ignore_patterns("out"))
-    # founded 2012 against the gold's 2014: different, in both orders.
+    # founded 2012 against the gold's 2014: `decision`, in both orders.
     asked = [
         {
             "match": {"contains": ["Fact 1", "founded"]},
-            "response": {"text": json.dumps({"decision": "different"})},
+            "response": {"text": json.dumps({"decision": decision})},
         }
     ] * 2
     (copy / "recorded" / "equivalence.json").write_text(json.dumps({"interactions": asked}))
@@ -479,6 +481,11 @@ def recorded(tmp_path: Path) -> Path:
     path = copy / "lenient.yaml"
     path.write_text(yaml.safe_dump(config))
     return path
+
+
+@pytest.fixture
+def recorded(tmp_path: Path) -> Path:
+    return _recorded(tmp_path, "different")
 
 
 def test_odke_eval_pipeline_lenient_from_the_shell(recorded: Path, tmp_path: Path) -> None:
@@ -502,6 +509,47 @@ def test_odke_eval_pipeline_lenient_from_the_shell(recorded: Path, tmp_path: Pat
     assert pair["predicted"] == "Halden Robotics (Company) — founded — 2012."
     wrong = CliRunner().invoke(app, ["eval", "extract", "--labels", "x", "--lenient", "y"])
     assert wrong.exit_code == 2 and "--lenient: these are for pipeline" in wrong.output
+
+
+def test_the_diagnosis_reads_the_lenient_decisions_and_asks_nothing_more(tmp_path: Path) -> None:
+    labels = {"labels": TRIPLES / "gold.jsonl", "documents": TRIPLES / "texts"}
+    unjudged = evaluate_pipeline(predictions=TRIPLES / "triples.jsonl", **labels)
+    bucket = {b.bucket: b for b in unjudged.diagnosis}["surface_form"]
+    assert bucket.label == "surface form (unconfirmed)" and bucket.count == 0
+    config = _recorded(tmp_path, "same")
+    report = evaluate_pipeline(
+        predictions=TRIPLES / "triples.jsonl", config=config, lenient=tmp_path / "p", **labels
+    )
+    assert report.lenient is not None and report.lenient.rows[0].counted == 1
+    bucket = {b.bucket: b for b in report.diagnosis}["surface_form"]
+    # The same pair, the same answer: two calls in all, and the miss is a surface form.
+    assert (bucket.label, bucket.count) == ("surface form", 1)
+    assert bucket.examples[0].why == "judged the same fact"
+    assert report.lenient.questions == 1
+
+
+def test_decided_answers_by_the_claims_as_the_diagnosis_writes_them() -> None:
+    def pairing(decision: str, value: str) -> Pairing:
+        said = ada("born", value)
+        decided = Equivalence(decision=decision)  # type: ignore[arg-type]
+        return Pairing("a1", ada("born", "1815"), said, "object", "p", ["x"], decided)
+
+    decided = Decided([pairing("same", "10 Dec 1815"), pairing("different", "1816")])
+    gold = ("Ada Lovelace", "born", "1815")
+    assert decided.equivalent(gold, ("Ada Lovelace", "born", "10 Dec 1815"), None) is True
+    assert decided.equivalent(gold, ("Ada Lovelace", "born", "1816"), None) is False
+    assert decided.equivalent(gold, ("Ada Lovelace", "born", "1817"), None) is None
+
+
+def test_the_hook_narrows_a_whole_document_to_the_gold_claim_s_sentences() -> None:
+    gold = ("Gabrielle Nicole Logan", "place of birth", "Leeds")
+    client = RecordedClient([{"match": "Fact 1", "response": answer("same")}])
+    assert judge(client).equivalent(gold, ("Gabby Logan", "place of birth", "Leeds"), TEXT)
+    user = client.calls[0][0][1].content
+    assert user.endswith(
+        "Passage:\nGabrielle Nicole Logan is a British television presenter. "
+        "She was born in Leeds on 25 April 1973."
+    )
 
 
 def test_lenient_needs_labels(tmp_path: Path) -> None:
