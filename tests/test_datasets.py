@@ -374,7 +374,7 @@ def test_a_prepared_redocred_set_is_diagnosed_from_the_shell(tmp_path: Path) -> 
 
 
 def test_the_cli_names_the_datasets_and_refuses_an_unknown_one(tmp_path: Path) -> None:
-    assert set(DATASETS) == {"text2kgbench", "redocred"}
+    assert set(DATASETS) == {"text2kgbench", "redocred", "trex"}
     result = CliRunner().invoke(app, ["bench", "prepare", "nothing", str(tmp_path), "--out", "x"])
     assert result.exit_code == 2
     assert "unknown dataset" in result.output
