@@ -434,6 +434,8 @@ class Validator:
             stopped=report.stopped,
             failed=report.failed,
             dry_run=dry_run,
+            run=observer.run,
+            job=report.job.model_dump(),
         )
         if not dry_run:
             for sink in self.sinks:

@@ -188,6 +188,8 @@ def run_built(
         stopped=stats.get("stopped"),
         failed=stats.get("failed"),
         dry_run=dry_run,
+        run=observer.run,
+        job=job_counts_of_run(stats).model_dump(),
     )
     manifests = [] if dry_run else write_manifest(built, manifest, kg)
     finish(observer, job_counts_of_run(stats), stats)

@@ -43,7 +43,8 @@ from openodke.validator import Validator
 runner = CliRunner()
 REPO = Path(__file__).parent.parent
 TRIPLES = REPO / "examples" / "triples"
-TIMES = ("started_at", "ended_at", "created_at")
+# What differs between two runs of one config: the clocks, and the id the run's logs carry.
+TIMES = ("started_at", "ended_at", "created_at", "run")
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -52,7 +53,7 @@ def _read(path: Path) -> dict[str, Any]:
 
 
 def _timeless(value: Any) -> Any:
-    """A manifest without its clocks: the two times, the graph's, and the meter's latencies."""
+    """A manifest without its clocks and its run id: the times, and the meter's latencies."""
     if isinstance(value, dict):
         return {k: _timeless(v) for k, v in value.items() if k not in TIMES and "latency" not in k}
     if isinstance(value, list):

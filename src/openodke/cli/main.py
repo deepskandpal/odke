@@ -684,7 +684,7 @@ def ground_command(
             written = write_verdicts(driver, grounded.facts, database=database)
         paths = grounded.write(out)
         manifest = ground_manifest(
-            recorder, grounded, rows, docs, ontology=schema, grounder=grounder
+            recorder, grounded, rows, docs, ontology=schema, grounder=grounder, run=observer.run
         )
         paths.append(manifest.write(out / FILE))
         observer.end(begun, {"facts": len(grounded.facts)})

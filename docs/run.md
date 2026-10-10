@@ -370,6 +370,7 @@ run that wrote it and the run made again.
 | `counts` | the command's own: the pipeline's and the graph's for `odke run`, the report's for `odke validate`, the summary's for `odke ground` |
 | `spent` | `calls`, `cached_calls`, `input_tokens`, `output_tokens`, and `usd`, `None` when any call went unpriced |
 | `stopped`, `failed` | where a [budget](#budgets) stopped the run, and the documents left out with why |
+| `run`, `job` | the id every [log event](#logs-and-traces) of the run carries, and the counts its `job.end` logs: a manifest and its log stream join on `run`, and say the same |
 
 **Where it goes.** Into each JSONL sink's `manifest.json`, beside the keys the
 sink has always written there: `ontology`, `created_at`, the counts and
@@ -385,7 +386,7 @@ report's `manifest` line names each file.
 secret is read, `password_env` or `api_key_env`, is kept.
 
 **Two runs of one config write the same manifest**, but for `started_at`,
-`ended_at`, the graph's `created_at` and the meter's latencies.
+`ended_at`, the graph's `created_at`, the meter's latencies and the `run` id.
 `odke run --from-manifest PATH` runs one again: the config as it was resolved,
 from where it was read. It is refused, exit 2 and nothing written, when the
 ontology's fingerprint or any document's hash is not what the manifest
