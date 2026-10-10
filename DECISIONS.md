@@ -1049,3 +1049,74 @@ fix has yet been measured against. The order is a choice too: a cross-sentence
 fact whose entity was never extracted counts as cross-sentence. Gains overlap,
 so they never add. And the inverse replay matches a partner on the triple,
 which is what Re-DocRED scores but not every detail a labelled `Fact` carries.
+
+### 43. A batch's own look-alikes are one entity unless something keeps them apart
+
+#16 let only a proof re-key, and #34 made the judge's "same" a link. Issue
+#148 asks for more: mentions in one batch that look alike and mean the same
+thing in context become one entity, with every name kept. That is consistent
+with #16 once it is said where it happens. #16 refused to replace a stored
+node, because a merged node cannot be re-run at a new threshold. A batch's
+mentions are not nodes yet. Re-keying them onto one key before anything is
+written replaces nothing, and running the batch again, with the option off,
+undoes it.
+
+**Only what the batch introduces.** A merge joins two entities that facts of
+the batch state, by keys the store does not hold. A pair with a store entity
+is still a link (#31), so a stored node changes on proof alone. A group of
+mentions proven to be a stored entity takes that entity as stored, as one
+mention would.
+
+**Evidence against wins, through any chain.** `NativeResolver` blocks as it
+always has, by type (an ontology type's aliases being that type) and a shared
+token, id or domain. A pair above the `SIMILAR` bar merges unless something
+keeps it apart. The judge's "same", or a person's, merges a pair in its band.
+What keeps a pair apart:
+- a disagreeing id or domain, or the judge's "different";
+- names that both carry numbers or legal forms, and differ in them;
+- given `embed`, sentences whose cosine is below `context_floor`.
+
+Merges are made strongest first, and one that would put a pair kept apart, two
+caller keys or two ids that disagree in one entity is refused. A mention alike
+to two entities kept apart could be either, so it merges with neither.
+
+**A merge is a `SAME_AS`, and says what it rests on.** `SAME_AS` now means "one
+entity, re-keyed", not only "proven". A proof has score 1.0 and an id or
+domain in its reason; a batch merge has the name score and a reason starting
+`in-batch merge:`. The entity's `resolution` is `linker` with the weakest score
+its group was joined at, so a group the judge joined is a query (#18). The
+embedding is the caller's function, as the lookup's is (#31): no dependency
+and no model. A pair kept apart keeps its `SIMILAR`, with why in its reason.
+
+**Off by default: the rule passed, and the supplement overrode it.** The rule,
+stated before measuring: on only if, on label set R's gate split, the
+judge-free batch's precision of merged pairs is at least the resolver's as it
+was, at equal or better recall. R has no ids, so the resolver as it was merges
+nothing there, and its `SIMILAR` links stood in as its merges. The batch
+merged 4 gate pairs, 2 right (50.0%, recall 1.0%), against 7, 2 right (28.6%,
+1.0%), so the rule passed. It was not enough. Four pairs against seven is
+little to stand on, and R leaves out names with one key, which are most of
+what the option merges. Re-DocRED's test documents as they come said more: of
+the 103 pairs the batch merged, 52 are one entity by the dataset's clusters
+(50.5%). About half the rest are one entity the dataset splits, and the others
+are the name score's own mistakes: "South Africa" and "South African", "West
+Germany" and "East Germany", "Borderlands" and "Borderlands 2", "José Maria"
+and "María José". They score above the judge's band, so no judge sees them. A
+wrong merge is the worst error #16 names, and a default that re-keys needs
+stronger evidence than a link does. So `normalize_batch` is off in
+`NativeResolver`, the Validator and `odke run`, and a caller turns it on.
+
+**What would turn it on.** The calibration pass on R with the real judge's
+card (#151), together with `embed`'s context check measured against the
+mistakes above the band; or the owner's audit labels on R, read back, showing
+the merges hold. Either is a measurement, run by this decision's rule again.
+With R's own labels as a perfect judge, the band takes gate precision to 93.8%
+at recall 15.0%: the ceiling a judge can reach, not a number it has reached.
+
+*Cost:* a caller who wants a batch's look-alikes as one entity must ask, and a
+run that does not ask keeps `SIMILAR` links where an obvious spelling variant
+("Acme Corp." and "ACME Corporation") could have been one node. Above the band
+only `embed` can catch the name score's mistakes, and its `context_floor` of
+0.5 was set before anything was measured. A gold keyed by each text's names, as
+the end-to-end example's is, scores a right merge as a miss, so that example
+pins the option off.
