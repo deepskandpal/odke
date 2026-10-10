@@ -1170,3 +1170,49 @@ only `embed` can catch the name score's mistakes, and its `context_floor` of
 0.5 was set before anything was measured. A gold keyed by each text's names, as
 the end-to-end example's is, scores a right merge as a miss, so that example
 pins the option off.
+
+### 46. Corroboration is scored on the graph, by support, with checked alignments as sources
+
+Corroboration had never been measured (#24): Text2KGBench and Re-DocRED state
+each fact once. T-REx aligns Wikidata triples to Wikipedia abstracts, and a fact
+can be aligned in more than one, so it has facts with a number of independent
+sources (#117). Four calls come with measuring it.
+
+**A source is an abstract a checked aligner placed the fact in.** T-REx's
+Simple-Aligner aligns any two linked entities in a sentence to a triple Wikidata
+holds between them, and most of its multi-abstract alignments are co-mentions:
+Indonesia and the United States in a list of countries, aligned to "diplomatic
+relation". With every aligner, 20.4% of the sample's entity facts are in two or
+more abstracts; with the two aligners that check the sentence, 4.6%. The gold
+and its source counts use those two. A corpus at 4.6% would barely move a
+number, so the set is drawn around multi-source facts: 78 of its 513. It
+measures what agreement is worth, not how often a corpus has it.
+
+**Precision is factual, and closed-world.** Every T-REx alignment is a Wikidata
+triple whatever its sentence says, so a predicted triple is right when T-REx
+aligns it anywhere in the sample, by any aligner. A true fact the 2017 slice
+never aligned counts as wrong, so the number is a lower bound. The precision
+against each abstract's own gold is printed beside it, as Re-DocRED's is.
+
+**On is the edges two or more sources back, scored edge by edge.** The third
+row of the ablation merges claims and counts their sources, but the gate
+refuses nothing a verdict did not, so its precision barely moves. The paper's
+98.8% is after ranking. Once the gate keeps only supported facts and the
+extractor gives one confidence, `EvidenceScorer` rises with support alone, so
+ranking by the score and keeping support of two or more are the same cut.
+Support belongs to an edge, not to a document, so the graph is scored one edge
+per distinct claim.
+
+**One entity type.** The resolver matches within a type (#24), and a fact told
+by two abstracts must not stay two claims because the extractor typed France as
+a Country once and a Location once. The extractor loses the types' hint, which
+none of T-REx's gold needs.
+
+*Cost:* the support cut's precision is measured on a set built to contain
+agreement, and a corpus with less would lose more recall to the same cut. A
+name stands for every id T-REx linked it to anywhere in the sample, so an
+ambiguous name matches any of them. The sample is the first 10,000 of about 3
+million abstracts, so a fact's sources in it undercount its sources in the full
+set, which figshare would not serve to the bench machine. And sources are
+counted on name keys: a fact stated under two names is two claims of one source
+each, which the run reports beside what ids would have pooled.

@@ -337,9 +337,13 @@ Of the 38 wrong links at 0.9, 16 join two entities Re-DocRED gives one name
 key ("the United States" and "United States"); the rest are near names that
 differ by a number or a suffix ("1900" and "1903 County Championship", "South
 Africa" and "South African"). The misses are surnames, abbreviations and
-demonyms ("Lovelace", "UK", "German"). Identity across documents, and the
-proof path, are measured on T-REx with Wikidata ids in 0.6.0 (#117). In a run
-config the option is [`store_lookup`](run.md#store_lookup).
+demonyms ("Lovelace", "UK", "German"). Across documents, on T-REx with
+Wikidata ids as gold identity (#117), the extractors named an entity the same
+way in nearly every abstract, so most entities met the store as one node by key
+and too few pairs were left to link for a rate: the counts are in
+[Benchmarks](benchmarks.md#corroboration-on-t-rex). No extractor there gives
+ids, so the proof path is still exact by construction only. In a run config the
+option is [`store_lookup`](run.md#store_lookup).
 
 ### The pair judge
 
