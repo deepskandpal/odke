@@ -56,6 +56,10 @@ fact's relation and one end but the other end named another way, goes to the
 fact-equivalence judge (`FactJudge`, `openodke.eval.equivalence`), asked in
 both orders; one judged the same fact counts in a lenient score printed beside
 the strict one.
+
+What a grounder threw away is `openodke.eval.refusals`: a stratified sample of
+a run's refusals as sheets for a person, read back as the refusal precision
+with its Wilson interval (`read_refusals`, `report_refusals`).
 """
 
 from openodke.eval.ablation import per_document, report_ablation, run_ablation
@@ -83,6 +87,8 @@ from openodke.eval.formats import (
     GroundingLabel,
     LinkRow,
     PairLabel,
+    Refusal,
+    RefusalLabel,
     RouteLabel,
     RoutePrediction,
     ValidationLabel,
@@ -95,6 +101,7 @@ from openodke.eval.grounding import evaluate_grounding, grounding_ablation, kept
 from openodke.eval.harness import evaluate_pipeline
 from openodke.eval.pooling import pool, report_pool
 from openodke.eval.ppi import judged_precision, report_precision
+from openodke.eval.refusals import read_refusals, report_refusals
 from openodke.eval.report import StageReport
 from openodke.eval.resolution import as_triples, evaluate_resolution, links_from_clusters
 from openodke.eval.routing import evaluate_routing, run_route
@@ -130,6 +137,8 @@ __all__ = [
     "MeteredClient",
     "PairLabel",
     "Paired",
+    "Refusal",
+    "RefusalLabel",
     "RouteLabel",
     "RoutePrediction",
     "StageCost",
@@ -169,10 +178,12 @@ __all__ = [
     "paired_bootstrap",
     "per_document",
     "pool",
+    "read_refusals",
     "read_report",
     "report_ablation",
     "report_pool",
     "report_precision",
+    "report_refusals",
     "run_ablation",
     "run_extract",
     "run_ground",

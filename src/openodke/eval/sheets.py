@@ -8,8 +8,9 @@ sitting. Everything an item needs to become a label row is kept in a sidecar,
 person adds to it, which is one tick per item and an optional note.
 
 Three kinds: `grounding` sheets read back as `GroundingLabel` rows, `pair`
-sheets as `PairLabel` rows, and `fact` sheets as `FactPairLabel` rows, with
-every pair answered `unsure` kept out of them. The pair judge's review queue is
+sheets as `PairLabel` rows, `fact` sheets as `FactPairLabel` rows, with
+every pair answered `unsure` kept out of them, and `refusal` sheets as
+`RefusalLabel` rows (`odke eval refusals`). The pair judge's review queue is
 a pair items file as it stands.
 
 The sheet shows a grounding claim exactly as `render_claim` puts it to the
@@ -38,7 +39,14 @@ from typing import Any
 from pydantic import BaseModel
 
 from openodke.corroborate.judge import Mention
-from openodke.eval.formats import FactPair, FactPairLabel, GroundingLabel, PairLabel
+from openodke.eval.formats import (
+    FactPair,
+    FactPairLabel,
+    GroundingLabel,
+    PairLabel,
+    Refusal,
+    RefusalLabel,
+)
 from openodke.ground.llm import render_claim
 from openodke.ground.span import located
 from openodke.types import Document, Fact, Frozen, SpanOrigin
@@ -237,7 +245,37 @@ FACT = Kind(
     label=lambda row, answer: {**row, "same": answer == "same"},
     apart="unsure",
 )
-KINDS = {kind.name: kind for kind in (GROUNDING, PAIR, FACT)}
+
+
+def _refused(item: Refusal) -> list[str]:
+    lines = [plain(f"Claim: {item.claim}"), "", plain(f"Refused: {item.verdict}, {item.reason}")]
+    if item.gold is not None:
+        lines += ["", plain("Gold: lists this fact" if item.gold else "Gold: does not list it")]
+    start, end = item.bold if item.bold is not None else (None, None)
+    return [*lines, "", *quote(item.text, start, end)]
+
+
+REFUSAL = Kind(
+    name="refusal",
+    prefix="X",
+    title="Refusal sheet",
+    item=Refusal,
+    question="was the grounder right to refuse the claim?",
+    explain=(
+        "refusal correct: the text does not state it. refusal wrong: the text states it.",
+        "gold wrong: the gold lists it, and the text does not state it. unsure: cannot tell.",
+    ),
+    boxes={
+        "refusal correct": "refusal_correct",
+        "refusal wrong": "refusal_wrong",
+        "gold wrong": "gold_wrong",
+        "unsure": "unsure",
+    },
+    render=_refused,
+    output=RefusalLabel,
+    label=lambda row, answer: {**row, "judgement": answer},
+)
+KINDS = {kind.name: kind for kind in (GROUNDING, PAIR, FACT, REFUSAL)}
 
 
 def _kind(name: str) -> Kind:
@@ -532,6 +570,7 @@ __all__ = [
     "GROUNDING",
     "KINDS",
     "PAIR",
+    "REFUSAL",
     "GroundingItem",
     "Kind",
     "Made",
