@@ -121,8 +121,7 @@ These rules hold for every graph sink.
   accumulate (`SET n +=`), and nothing is ever deleted. Through the Validator,
   a fact the store already holds is first [merged with the store](#merge-with-the-store),
   so what replaces the properties carries every source. Retracting a source is
-  the reconciler's job, which is not built yet
-  ([#116](https://github.com/deepskandpal/odke/issues/116)).
+  the [reconciler's](#reconcile) job.
 
 ## Merge with the store
 
@@ -184,6 +183,75 @@ _, report = validator.validate(
 print(report.restated, held.support, [s.source for s in held.supported_by])
 # 1 2 ['doc:ar-2025', 'doc:ar-2026']
 ```
+
+## Reconcile
+
+Sources change, and a store that only adds keeps facts whose text no longer
+exists. The reconciler retracts a source from the store
+([DECISIONS #37](decisions.md#37)):
+
+- **Delete.** Every fact a document backed loses that document: its evidence,
+  and its place in the [support list](resolution-and-corroboration.md#support-lists).
+  A source entry left with no document goes, and `support` is what is left.
+- **Update.** The same, then the new version validated, so the facts it still
+  states [merge with the store](#merge-with-the-store) again and regain it.
+- **Retire.** A fact left with no source is kept, with `Fact.retired_at` set
+  to the transaction time it lost its last one, no evidence and `support` 0.
+  It was not proven false, so its valid clock is left alone. It is never the
+  value: not projected, not counted by [`check()`](#check), not asserted as a
+  plain RDF triple. A source that states it again brings it back.
+  `hard_delete=True` (`--hard-delete`) deletes it instead.
+- **Derived facts** cite their parent's evidence, so the same retraction
+  reaches them, and one whose parent is retired is retired with it.
+- **Idempotent.** A fact that no longer cites a document is not touched, and a
+  retired fact keeps the time it was first retired.
+
+| | Python | Command line |
+|---|---|---|
+| a document is gone | `Reconciler(sinks).delete(doc_ids)` | `odke reconcile --sink <dir or bolt://…> --delete <doc-id>` |
+| a document changed | `Validator(..., sinks=...).validate(facts, [new], update=True)` | `odke validate ... --update` |
+
+A store that can retract is `Retractable`. `JsonlSink.retract` rewrites
+`facts.jsonl`. `Neo4jSink.retract` runs in one write transaction:
+- it finds the facts through the per-predicate full-text index over
+  `evidence_doc_ids` that `bootstrap()` creates, with the keyword analyzer,
+  never by a scan; a relationship type without one is not read, and warns;
+- it rewrites each fact's evidence and support lists, `support` and
+  `retired_at` by element id;
+- it projects each value again from the claims left, removing it when none
+  is.
+
+Neither rescores, so a fact keeps its confidence until it is next validated.
+An update retracts first. A run that fails before it writes leaves the old
+version retracted; running it again finishes it.
+
+```python
+from datetime import UTC, datetime
+
+from openodke import Reconciler
+
+report = Reconciler([store]).delete("ar-2025", at=datetime(2026, 10, 9, tzinfo=UTC))
+print(report.render())
+# odke reconcile
+# retracted     ar-2025
+# cited         1 fact
+# lost support  1 fact, still backed
+# retired       0 facts left with no source, kept
+(held,) = store.stored([employed("any")]).values()
+assert [s.source for s in held.supported_by] == ["doc:ar-2026"]
+
+Reconciler([store]).delete("ar-2026")
+(gone,) = store.stored([employed("any")]).values()
+assert (gone.support, gone.retired_at is not None) == (0, True)
+assert Reconciler([store]).delete("ar-2026").cited == 0  # again: nothing moves
+```
+
+`odke reconcile` reads a JSONL directory odke wrote, or a Neo4j URI with
+`--user`, `--password-env` and `--database` as `odke validate` takes them, and
+`--ontology` so a multi-valued value is projected again as a list. To update
+a document, give the new version to `odke validate --update`: it retracts
+every text it is given from the config's sinks, or from `-o`, which it then
+merges into, before it writes.
 
 ## Choose a sink
 
@@ -253,7 +321,9 @@ not raise a `DoubleStageWarning`.
 | domain and range | not enforced by Neo4j; `VerdictGate(schema=True)` refuses a fact outside them |
 
 Bootstrap also creates indexes on `external_id` per type, a full-text index over
-`label` and `aliases` per type, and an index on `key` for `:Entity`. A type or
+`label` and `aliases` per type, an index on `key` for `:Entity`, and a
+full-text index over `evidence_doc_ids` per predicate, which the
+[reconciler](#reconcile) finds a document's facts through. A type or
 predicate the ontology does not name gets no constraint or index. The key
 constraint and these indexes are what `Neo4jSink.lookup()` reads through to
 resolve a new batch against the graph without loading it
@@ -274,7 +344,7 @@ from openodke.sinks.neo4j import Neo4jConstrainer
 print(check)
 # // odke:check hq
 # MATCH (s)-[r:`hq`]->(o)
-# WHERE r.polarity = 'asserted' AND r.valid_to IS NULL
+# WHERE r.polarity = 'asserted' AND r.valid_to IS NULL AND r.retired_at IS NULL
 # WITH s, collect(DISTINCT coalesce(o.key, o.value)) AS objects
 # WHERE size(objects) > 1
 # RETURN labels(s) AS labels, s.key AS subject, objects
@@ -290,6 +360,7 @@ print(check)
 | `support_doc_ids`, `support_doc_sources` | each source's documents, flattened: a document, and the source it belongs to. `support_from(props)` reads the list back ([DECISIONS #33](decisions.md#33)) |
 | `valid_from`, `valid_to` | when the claim was true |
 | `retrieved_at` | the newest evidence's retrieval time |
+| `retired_at` | when the [reconciler](#reconcile) took the fact's last source away; absent on a live fact |
 | `extracted_at` | `KnowledgeGraph.created_at` |
 | `evidence_doc_ids`, `evidence_uris`, `evidence_starts`, `evidence_ends`, `evidence_tiers`, `evidence_retrieved_at` | parallel lists, one position per piece of evidence; a missing uri is `""` and a missing span `-1` |
 | `evidence_span_origins` | who chose each span: `cited`, `located` or `context` ([DECISIONS #25](decisions.md#25)) |

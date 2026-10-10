@@ -21,6 +21,7 @@ literal, makes it a **property**. Set exactly one
 | `extractor`, `confidence` | Who extracted it; the scorer's number |
 | `verdict`, `support` | The grounder's verdict; how many sources agree |
 | `supported_by` | Which sources: one `Support` per independent source, the corroborator's [support list](resolution-and-corroboration.md#support-lists) |
+| `retired_at` | When the [reconciler](stores.md#reconcile) took its last source away; `None` on a live fact |
 | `id` | A fresh id per extraction. Identity is `signature` |
 
 ## `Evidence` { #spans-evidence-and-trust }
