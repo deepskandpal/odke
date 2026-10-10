@@ -1778,7 +1778,7 @@ def _data_error(exc: Exception) -> NoReturn:
 
 @label_app.command("make")
 def label_make(
-    kind: str = typer.Argument(..., help="grounding or pair."),
+    kind: str = typer.Argument(..., help="grounding, pair or fact."),
     items: Path = typer.Argument(..., help="The rows to label, as JSONL."),
     out: Path = typer.Option(..., "--out", "-o", help="A directory with no sheets in it yet."),
     per_sheet: int = typer.Option(
@@ -1789,7 +1789,9 @@ def label_make(
 
     A grounding row is a GroundingLabel without its verdict: the fact and the
     text it cites. A pair row is two mentions, `a` and `b`, each a key and a
-    type with an optional label and context. Each item gets a heading, what to
+    type with an optional label and context. A fact row is a FactPair: an
+    `id`, a relation and its description, two facts and their passage, with
+    nothing that says which is gold. Each item gets a heading, what to
     judge and one box per answer; sheet-NN.items.jsonl keeps its rows. The same
     rows write the same sheets, byte for byte, and a directory that already
     holds sheets is refused. Exit 2 is a row or a directory it cannot use.
@@ -1811,12 +1813,13 @@ def label_read(
     path: Path = typer.Argument(..., help="A sheet, or the directory `odke label make` wrote."),
     out: Path = typer.Option(..., "--out", "-o", help="Where to write the labels, as JSONL."),
 ) -> None:
-    """Read ticked sheets back as GroundingLabel or PairLabel rows.
+    """Read ticked sheets back as GroundingLabel, PairLabel or FactPairLabel rows.
 
     One tick is a label. No tick leaves the item unlabelled, and it is counted.
     Two ticks, or a heading the sidecar does not know, exits 2 with the file and
     the line of the item's heading, and nothing is written. Notes go beside the
-    labels as <out>.notes.jsonl; pairs answered unsure as <out>.unsure.jsonl.
+    labels as <out>.notes.jsonl; pairs and fact pairs answered unsure as
+    <out>.unsure.jsonl.
     """
     from openodke.eval.sheets import read_sheets
 

@@ -7,13 +7,15 @@ sitting. Everything an item needs to become a label row is kept in a sidecar,
 `<sheet>.items.jsonl`, beside the sheet; the markdown carries only what a
 person adds to it, which is one tick per item and an optional note.
 
-Two kinds: `grounding` sheets read back as `GroundingLabel` rows, and `pair`
-sheets as `PairLabel` rows, with every pair answered `unsure` kept out of them.
-The pair judge's review queue is a pair items file as it stands.
+Three kinds: `grounding` sheets read back as `GroundingLabel` rows, `pair`
+sheets as `PairLabel` rows, and `fact` sheets as `FactPairLabel` rows, with
+every pair answered `unsure` kept out of them. The pair judge's review queue is
+a pair items file as it stands.
 
 The sheet shows a grounding claim exactly as `render_claim` puts it to the
-grounder, and a pair's two mentions as the pair judge reads them (`Mention`),
-so the person judges what the model judged. Passage text is escaped
+grounder, a pair's two mentions as the pair judge reads them (`Mention`), and
+a fact pair's two facts as the fact-equivalence judge reads them, so the person
+judges what the model judged. Passage text is escaped
 so that markdown cannot hide or restyle it: a `$` stays a dollar sign rather
 than opening a formula.
 
@@ -36,7 +38,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from openodke.corroborate.judge import Mention
-from openodke.eval.formats import GroundingLabel, PairLabel
+from openodke.eval.formats import FactPair, FactPairLabel, GroundingLabel, PairLabel
 from openodke.ground.llm import render_claim
 from openodke.ground.span import located
 from openodke.types import Document, Fact, Frozen, SpanOrigin
@@ -203,7 +205,39 @@ PAIR = Kind(
     },
     apart="unsure",
 )
-KINDS = {kind.name: kind for kind in (GROUNDING, PAIR)}
+
+
+def _facts(item: FactPair) -> list[str]:
+    relation = item.relation.replace("_", " ")
+    head = f"Relation: {relation}" + (f": {item.description}" if item.description else "")
+    return [
+        plain(head),
+        "",
+        plain(f"Fact 1: {render_claim(item.first)}"),
+        "",
+        plain(f"Fact 2: {render_claim(item.second)}"),
+        "",
+        *quote(item.passage),
+    ]
+
+
+FACT = Kind(
+    name="fact",
+    prefix="F",
+    title="Fact sheet",
+    item=FactPair,
+    question="do Fact 1 and Fact 2 state the same fact?",
+    explain=(
+        "same: one subject, relation and object in other words; a date or number, one value.",
+        "different: any part differs. unsure: the passage cannot settle it. Kept apart.",
+    ),
+    boxes={"same": "same", "different": "different", "unsure": "unsure"},
+    render=_facts,
+    output=FactPairLabel,
+    label=lambda row, answer: {**row, "same": answer == "same"},
+    apart="unsure",
+)
+KINDS = {kind.name: kind for kind in (GROUNDING, PAIR, FACT)}
 
 
 def _kind(name: str) -> Kind:
@@ -494,6 +528,7 @@ def read_sheets(path: Path) -> Reading:
 
 
 __all__ = [
+    "FACT",
     "GROUNDING",
     "KINDS",
     "PAIR",
