@@ -15,6 +15,8 @@ then on it is handed to exactly the same code.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -418,6 +420,22 @@ class Ontology(BaseModel):
         which v2 replaced with `model_validate`; the ignore is for that override.
         """
         return diagnose(self)
+
+    @property
+    def fingerprint(self) -> str:
+        """The SHA-256 of the schema's content: its types and predicates, as canonical JSON.
+
+        The schema's identity: two ontologies with one fingerprint check every
+        fact alike, whatever they are called. Content only:
+        `name` and `version` are labels a person gives, and `inferred`,
+        `frozen_at` and `frozen_by` record a review. A schema relabelled or
+        frozen again keeps its fingerprint; any change to a type or a predicate
+        gives a new one. Inverses are filled in before it is taken, so
+        declaring one on one side or on both is the same schema.
+        """
+        content = self.model_dump(mode="json", include={"types", "predicates"})
+        canonical = json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def diff(self, new: Ontology) -> list[SchemaChange]:
         """What changed from this schema to `new`, each change marked breaking or not.

@@ -255,6 +255,16 @@ frozen = ontology.freeze(by="Ada Lovelace")
 assert (frozen.inferred, frozen.frozen_by) == (False, "Ada Lovelace")
 ```
 
+`ontology.fingerprint` is the SHA-256 of the schema's content: its types and
+predicates as canonical JSON. `name`, `version` and the review fields are not in
+it, so a frozen or relabelled copy keeps it, and any change to a type or a
+predicate gives a new one. Two ontologies with one fingerprint check every fact
+alike.
+
+```python
+assert frozen.fingerprint == ontology.fingerprint and len(ontology.fingerprint) == 64
+```
+
 ## Drafting one (parked)
 
 For a corpus with no schema, `odke ontology infer` drafts one. Record shapes,
