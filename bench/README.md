@@ -137,6 +137,38 @@ each, every pair labelled.
 python bench/batch_normalize.py --redocred data/redocred/test_revised.json --out out/batch
 ```
 
+## T-REx: corroboration and identity across documents
+
+`odke bench prepare trex` builds a set of Wikipedia abstracts in which each gold
+fact has a known number of independent sources (#117, and
+[docs/benchmarks.md](../docs/benchmarks.md#t-rex)). Both extractors run on it
+as on any prepared set, and each run writes `corroboration.json` (the graph,
+corroboration off and on, and the resolver's links against the Wikidata ids)
+and its facts under `facts/`.
+
+```bash
+odke bench prepare trex data/trex --out "$CMP/trex" --documents 80 --judge \
+    --extract-model anthropic/claude-sonnet-5-5 \
+    --ground-model anthropic/claude-haiku-4-5-20251001 --paper
+odke bench run trex "$CMP/trex"
+bench/.venv/bin/python bench/competitors.py extract lgt "$CMP/trex" --budget-usd 2.5
+odke bench run trex "$CMP/trex/competitors/lgt"
+
+python bench/trex.py lookup "$CMP/trex"                               # no model
+python bench/trex.py lookup "$CMP/trex" --judge --budget-usd 0.10     # + the pair judge
+python bench/trex.py tables "$CMP/trex" "$CMP/trex/competitors/lgt"   # the published tables
+```
+
+`trex.py lookup` measures what a run never exercises: resolving against a store.
+Every other abstract's entities go in a `MemoryLookup` and the rest are resolved
+against it, with Wikidata ids as gold identity across documents, which
+`store_lookup.py` could not have on Re-DocRED.
+
+`competitors.py --budget-usd` stops calling the model once the extraction has
+spent that much. The spend is known after a call returns, so up to three calls
+in flight can pass it; a document refused counts as failed, and the set is not
+scored until it is run again.
+
 ## Gold adjudication on label set G
 
 `adjudication.py` measures how often `odke eval pipeline --adjudicate` (#145)
