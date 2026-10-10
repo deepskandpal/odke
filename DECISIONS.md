@@ -1216,3 +1216,46 @@ million abstracts, so a fact's sources in it undercount its sources in the full
 set, which figshare would not serve to the bench machine. And sources are
 counted on name keys: a fact stated under two names is two claims of one source
 each, which the run reports beside what ids would have pooled.
+
+### 40. A run writes its manifest after the sinks, and a replay refuses what changed
+
+A graph says what it holds, not how it was made. When a number moves, the
+first questions are which model, which prompt, which schema and which texts.
+Prompts are versioned (#27) and an ontology has a fingerprint, so a run can
+name each one. Every run now writes a manifest (#160): `odke run`,
+`odke validate`, `odke ground` and `Validator.validate`.
+
+Four calls come with it.
+
+**The JSONL manifest is the run manifest.** `manifest.json` already held the
+graph's counts and stats. The run adds its own fields beside them, after the
+sinks have written, and never replaces a key the sink wrote. An older reader
+finds what it found. In a store that merges, the counts stay the files', and
+the run's own counts sit apart under `counts`. Written after the sinks, the end
+time is the real end, and the JSONL sink still knows nothing about runs. A run
+with no JSONL sink writes the same document beside its config, so every run
+writes one.
+
+**The config hash is of the resolved config, without its secrets.** Every key
+is filled in and each model role is the spec `ModelRoles` resolves it to, so a
+config that leaves a default out and one that names it hash alike. A value
+under a key that names a secret, and the password in a URL, is redacted
+before the hash. The hash then identifies the run, not the credential, and a
+manifest can be passed around.
+
+**Asked for and served, both.** A config may name an alias. The provider's
+answer names the model that served it, so the manifest records both, by role.
+A replay runs the config as written. If the alias has moved, the next manifest
+says so.
+
+**A replay is the same run or no run.** `odke run --from-manifest` refuses,
+before anything is written, when the ontology's fingerprint or any document's
+hash differs, and it takes no override. Otherwise it would be another run
+under an old name. A different openodke only warns: an upgrade is not a
+reason to refuse. `odke validate` and `odke ground` record their options
+instead, and are run again by hand.
+
+*Cost:* one hash per document, so the manifest grows with the corpus, and
+every text is hashed once more. A secret under a name the pattern
+does not know is written as it is. A run with no JSONL sink leaves a file
+beside its config.
