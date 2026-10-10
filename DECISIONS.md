@@ -1457,3 +1457,114 @@ million abstracts, so a fact's sources in it undercount its sources in the full
 set, which figshare would not serve to the bench machine. And sources are
 counted on name keys: a fact stated under two names is two claims of one source
 each, which the run reports beside what ids would have pooled.
+
+### 48. The public API is a pinned list, and an old name warns until the next major
+
+1.0 freezes the API under semver (#166). A promise needs a boundary, so the
+boundary is a list, not a reading of the source.
+
+**What semver covers.** Every name in a public module's `__all__`; the names
+and kinds of those callables' parameters; `odke`'s commands, flags and exit
+statuses; the run config's keys and the short names `use:` takes; and the
+versioned formats. A module is public unless a part of its dotted path starts
+with `_`; `openodke.cli` is the command, not a Python API. What a public
+module leaves out of `__all__` is private, whatever its spelling.
+`tests/public_api.json` pins all of it, and `tests/test_public_api.py` fails on
+any change, naming it. A patch release fixes. A minor adds: a name, an
+optional parameter, a flag, a key, or an optional field (a format's minor
+version). A major removes, renames or changes a meaning.
+
+**A deprecated name warns through every 1.x release and goes in 2.0.0.** The
+old spelling keeps working, as the new object where it can be. Each use
+raises one `DeprecationWarning` at the caller's line, naming the new spelling
+and the removal (`openodke._renamed.deprecated`). A config key or a flag also
+prints its warning on standard error, because Python hides a library's
+`DeprecationWarning` from the person at the terminal (#26). A name deprecated
+later in 1.x is removed at the first major after a minor that warned. Every
+deprecation is listed in the guard test, which checks that it warns.
+
+**A provisional API may change in a minor release, with a CHANGELOG line.** It
+is public and documented, but held outside the promise until its reason is
+gone. Its module says so in its docstring, and the guard test lists it with
+the reason. Freezing it is a minor release too.
+
+**A format carries its version, and ships its schema.** The triples input
+format, the run report and the eval report each have a `schema_version`,
+`major.minor`, and a JSON Schema in the package beside the model that reads
+it (`interop/triples.schema.json`, `validation_report.schema.json`,
+`eval/eval_report.schema.json`). A minor adds optional fields; a major changes
+them; a reader refuses another major by name. A test holds each schema and
+its model to the same fields.
+
+*The review, for 1.0.0 (#166).* Of 923 exported names in 124 public modules,
+806 are frozen and 117 provisional.
+
+- **Frozen:** the Validator (`openodke.validator`, `odke validate`); the
+  Evaluator (`openodke.eval`, `odke eval`, `odke bench`); `Fact`, `Evidence`,
+  `Entity` and the rest of `openodke.types`; `Ontology` and its I/O; the
+  thirteen stage Protocols, `Initiator`, `Retriever`, the store lookups
+  (`StoreLookup`, `FactLookup`), `Retractable` and `LLMClient`; the reference
+  extractors and ontology inference, which are parked and so do not move
+  (#24). Also every format: the triples input
+  (schema 1.0), the run report (`ValidationReport`, 1.0), the eval report
+  (1.2), the run manifest (`manifest_version` 1), the label formats and sheets,
+  the JSONL sink's files, the Neo4j graph shape and the RDF vocabulary (#22,
+  #33, #42, #44), the JSON log events (#41), and the registered prompt keys,
+  which are never edited or removed (#27). The CLI's 17 commands in 3 groups
+  and their flags, exit statuses 0, 1, 2 and 3, and the config's 95 keys.
+- **Provisional:** the pair judge, `openodke.corroborate.judge`, and the
+  resolver's `normalize_batch` and `embed`, off by default until their
+  calibration card (#34, #43). The fact-equivalence judge,
+  `openodke.eval.equivalence`, unvalidated until label set F's card (#39).
+  The benchmark adapters, `openodke.eval.datasets`, which follow the datasets'
+  releases and the published numbers (#104). The LangChain, LangExtract and
+  neo4j-graphrag adapters, which follow those libraries' objects. The
+  re-extract hook, `openodke.reextract`, off by default with one extractor
+  behind it. Which version of a prompt a stage sends; the old one stays
+  registered. The OpenTelemetry spans' names and attributes, whose GenAI
+  conventions are themselves experimental upstream.
+- **Private:** `openodke._batch`, `_renamed` and `_text`,
+  `extract._common`, `eval.datasets._common`, and `openodke.cli`'s Python.
+  `openodke.types` and `openodke.sinks.jsonl` had no `__all__`, so now they
+  do; `Frozen`, the models' shared base, stays out.
+
+*0.2.1's names, against 1.0.0.* Nothing in a 0.2.1 `__all__`, no command, no
+flag and no class member is gone. These warn, until 2.0.0:
+`openodke.VerdictValidator`, `openodke.validators.VerdictValidator`,
+`stages.Validator`, `stages.PassThroughValidator`, `pipeline.Validator` and
+`pipeline.PassThroughValidator` (module `__getattr__`); `Pipeline(validator=)`,
+`Pipeline.validator`, `Built.pipeline(validator=)` and
+`StagesConfig.validator` (the old parameter or attribute, passed through); the
+config key `stages.validator` (also on stderr); and
+`sinks.neo4j.cardinality_scope()`, for `Predicate.scope_keys`. These changed
+without a warning:
+- **`openodke.Validator` is the layer, not the gate** (#26, #129). A warning
+  would fire on every correct use, and the gate's method now raises a
+  `TypeError` naming `openodke.Gate`.
+- **`JsonlLoader.load` returns an iterator, not a list** (#45). The `Loader`
+  Protocol has always promised an iterable, and a list that warned on
+  indexing would hold every record, which is what streaming removes.
+  `list(...)` restores the old value.
+- **`run.execute.register_documents(extractor, docs)` names its first
+  parameter `stage`.** A positional call, the only kind in the docs, is
+  unchanged.
+- **A `tenant` attribute or qualifier is stored as `attribute_tenant` or
+  `qualifier_tenant` in Neo4j** (#44), as a key the sink owns already was. It
+  is a store's format, and Python cannot warn a Cypher query.
+- **The RDF vocabulary moved to `https://openodke.dev/vocab#`**, as the
+  CHANGELOG says. An IRI is an identifier, not a name a warning reaches.
+- `openodke.cli.main`'s functions, `extract._common.best_type` and
+  `run.build.Context._replays` changed shape: private.
+
+What changed within the 1.0 cycle and never reached PyPI needs no warning,
+and goes in the CHANGELOG: `read_triples` returns an iterator;
+`TriplesExtractor.rows` is a property, fed a micro-batch at a time;
+`Neo4jLookup(tenant_property=)` and `store_lookup.tenant_property` are gone;
+an untenanted lookup or retraction reads only untenanted data; with
+`batch_size`, `Validator.validate` returns a graph of stats with no facts;
+every Neo4j write statement ends in `RETURN count(*)`; and the gate's name
+`openodke.Validator` warned for a while, then named the layer.
+
+*Cost:* a pinned list is one more file to edit, and an addition fails CI until
+it is. That is the point: an export is a promise, so it should take a line in
+a diff to make one. The old names stay, warning, for the whole of 1.x.

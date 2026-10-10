@@ -25,9 +25,12 @@ other libraries' output.
 | `confidence` | no | 0 to 1. Unset: the stage's `confidence` |
 | `extractor` | no | Unset: the stage's `extractor` |
 | `id` | no | The fact's id, to join it to labels or another run |
+| `schema_version` | no | The format version the row was written to, such as `"1.0"`. Unset: the reader's own. Another major version is refused |
 
 Any other field is an error, so a misspelt `objet` is caught. A row that cannot
-be read is an error naming its line.
+be read is an error naming its line. The format's JSON Schema ships in the
+package, as `openodke/interop/triples.schema.json` (`SCHEMA_PATH` in
+`openodke.interop.triples`); see [Stability](stability.md#formats).
 
 ## Offsets, a quote, or neither
 

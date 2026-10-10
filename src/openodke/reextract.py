@@ -1,5 +1,9 @@
 """The re-extract hook: hand a coverage gap back to the extractor, ground what returns (#102).
 
+Provisional (DECISIONS #48): the hook is off by default and has one extractor
+behind it, so its shape is not settled. It may change in a minor release, with
+a CHANGELOG line.
+
 A validator cannot invent facts (DECISIONS #24), but the coverage report
 (`openodke.coverage`) says where the extractor left some behind: a sentence
 naming two known entities that no fact cites, or a known entity no fact names.

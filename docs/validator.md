@@ -215,7 +215,9 @@ the relation and the types have nothing to check.
 
 The graph's `stats` carry the same report under `"validation"`, beside each
 stage's own counts under `"stages"`, so a JSONL sink's `manifest.json` keeps
-it too.
+it too. Its JSON is versioned, `schema_version` (`"1.0"`), and
+`openodke/validation_report.schema.json` is its schema
+([Stability](stability.md#formats)).
 
 `report.manifest` is the job's [run manifest](run.md#the-run-manifest): the
 Validator's stages, the models and prompts, the ontology's fingerprint, the

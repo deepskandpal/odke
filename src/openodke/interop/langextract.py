@@ -1,5 +1,9 @@
 """LangExtract's annotated documents as triples rows (#96).
 
+Provisional (DECISIONS #48): it reads LangExtract's objects, whose shape
+changes with that library. It may change in a minor release, with a CHANGELOG
+line.
+
 LangExtract (google/langextract) locates every extraction in its text and
 records where as `char_interval`, which is a citation: the offsets become the
 row's `start` and `end`, and `extraction_text` its `quote` unless the alignment

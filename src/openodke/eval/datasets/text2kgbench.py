@@ -1,5 +1,8 @@
 """Text2KGBench (Mihindukulasooriya et al., ISWC 2023): ontology-guided extraction from sentences.
 
+Provisional (DECISIONS #48): a benchmark adapter, as `openodke.eval.datasets`
+says. It may change in a minor release, with a CHANGELOG line.
+
 Given an ontology and a sentence, extract the facts the sentence states, using
 only the ontology's relations. Two sources: Wikidata-TekGen (10 ontologies,
 13,474 sentences) and DBpedia-WebNLG (19 ontologies, 4,860 sentences).

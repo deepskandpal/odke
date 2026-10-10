@@ -1,5 +1,8 @@
 """LangChain's `GraphDocument`s as triples rows (#97).
 
+Provisional (DECISIONS #48): it reads LangChain's objects, whose shape changes
+with that library. It may change in a minor release, with a CHANGELOG line.
+
 `LLMGraphTransformer` reads a whole `Document` and returns nodes and
 relationships with no offsets and no quote: its finest provenance is the
 document. So every row it gives is grounded against that document's whole text,

@@ -1,5 +1,8 @@
 """T-REx (Elsahar et al., LREC 2018): one Wikidata fact, told by several abstracts.
 
+Provisional (DECISIONS #48): a benchmark adapter, as `openodke.eval.datasets`
+says. It may change in a minor release, with a CHANGELOG line.
+
 T-REx aligns Wikidata triples to sentences of Wikipedia abstracts, and a fact
 about two entities can be aligned in more than one abstract: "Bavaria is in
 Germany" in Bavaria's own abstract and in Abensberg's. So it gives what
