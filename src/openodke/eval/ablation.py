@@ -149,6 +149,9 @@ class AblationRun:
     # The registered prompt keys the stages sent, and role -> model as configured.
     prompts: tuple[str, ...] = ()
     models: dict[str, str] = field(default_factory=dict)
+    # What the extractor refused before anything was grounded (`Rejection`s,
+    # #109); None for an extractor that keeps no record of them.
+    rejections: list[Any] | None = None
 
     def configurations(self) -> list[tuple[str, list[Fact], list[CallRecord]]]:
         """Each configuration's name, its facts, and the calls it took to get them."""
@@ -157,6 +160,21 @@ class AblationRun:
             (GROUNDING, self.gated, self.all_calls),
             (CORROBORATION, self.corroborated, self.all_calls),
         ]
+
+
+def rejections_of(extractor: Any) -> list[Any] | None:
+    """What an extractor refused, as it records it: its `rejections`, and its model path's.
+
+    None when neither keeps a list, so "none rejected" and "no record" stay apart.
+    """
+    found: list[Any] | None = None
+    for source in dict.fromkeys(
+        s for s in (extractor, getattr(extractor, "llm", None)) if s is not None
+    ):
+        kept = getattr(source, "rejections", None)
+        if isinstance(kept, list):
+            found = [*(found or []), *kept]
+    return found
 
 
 def ablate(config: RunConfig) -> AblationRun:
@@ -187,6 +205,7 @@ def ablate(config: RunConfig) -> AblationRun:
     recording = _Recording(stages["extractor"])
     extracted = Pipeline(ontology, recording, coverage=True, **route).run(docs)
     candidates = list(extracted.facts)
+    rejections = rejections_of(stages["extractor"])
     extraction_calls = list(meter.records)
 
     grounder = stages["grounder"]
@@ -217,6 +236,7 @@ def ablate(config: RunConfig) -> AblationRun:
         notes=notes,
         coverage=extracted.stats.get("coverage"),
         prompts=tuple(prompts_sent(stages)),
+        rejections=rejections,
         models={
             role: spec.model
             for role in ("extract", "ground", "infer")
