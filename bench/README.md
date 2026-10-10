@@ -184,3 +184,23 @@ sheets, it says so and exits 0.
 python bench/adjudication.py --model anthropic/claude-haiku-4-5-20251001 --out out/adjudication
 python bench/adjudication.py --verdicts out/adjudication/G.verdicts.jsonl   # no calls
 ```
+
+## The conflict order on EnterpriseRAG-Bench
+
+`conflicts.py` runs EnterpriseRAG-Bench's 20 conflicting-information cases
+(#155) through openodke and asks whether the corroborator's conflict order puts
+the newer document's value first. `fetch` downloads only those questions and
+the 39 documents they cite, from the repository at a pinned commit, and stores
+them with the benchmark's canary. `run` runs each case as its own small run, one
+predicate described by the question, each document with its source type's tier
+and its own latest timestamp, under one USD budget across the cases and the
+response cache; it writes `results.json`. `table` prints the cases. The results
+and the tier mapping are in [docs/benchmarks.md](../docs/benchmarks.md#the-conflict-order-on-enterpriserag-bench).
+
+```bash
+python bench/conflicts.py fetch data/erb
+python bench/conflicts.py run data/erb --out runs/erb --budget-usd 1.00 \
+    --extract-model anthropic/claude-sonnet-5-5 \
+    --ground-model anthropic/claude-haiku-4-5-20251001 --cache .odke-cache
+python bench/conflicts.py table runs/erb
+```
