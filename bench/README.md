@@ -121,6 +121,21 @@ multi-source benchmark (#117) measures proofs and identity across documents.
 python bench/store_lookup.py data/redocred/test_revised.json --out out/store-lookup
 ```
 
+## Normalising mentions in a batch
+
+`batch_normalize.py` measures `NativeResolver(normalize_batch=True)` (#148) on
+label set R, offline and free: each R document is one batch, and each labelled
+pair is scored by whether it ended in one entity. It reports precision and
+recall of merged pairs on R's dev and gate splits for the resolver as it was
+(its `SIMILAR` counted as merged), the batch judge-free, the batch with its
+name rules off, and both with a perfect judge (R's labels as `reviewed`, never
+called). `--redocred` adds Re-DocRED's test documents as they come, one batch
+each, every pair labelled.
+
+```bash
+python bench/batch_normalize.py --redocred data/redocred/test_revised.json --out out/batch
+```
+
 ## Gold adjudication on label set G
 
 `adjudication.py` measures how often `odke eval pipeline --adjudicate` (#145)
