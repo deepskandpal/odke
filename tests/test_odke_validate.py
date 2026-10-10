@@ -278,6 +278,26 @@ def test_input_that_cannot_be_read_exits_2(here: Path, args: list[str], message:
     assert message in result.output
 
 
+def test_o_keeps_what_the_gate_refused_and_why(here: Path) -> None:
+    """Nothing reads what a gate throws away unless it is kept: -o writes refused.jsonl."""
+    config = yaml.safe_load((here / "triples" / "odke.yaml").read_text(encoding="utf-8"))
+    config["stages"]["gate"] = {"use": "verdict", "refuse_not_found": True}
+    del config["stages"]["sink"]
+    (here / "triples" / "strict.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    result = _validate("--config", "triples/strict.yaml", "-o", "out")
+    assert result.exit_code == 0, result.output
+    assert "manifest.json, refused.jsonl 2" in result.output
+    rows = [json.loads(line) for line in (here / "out" / "refused.jsonl").read_text().splitlines()]
+    assert sorted((r["fact"]["predicate"], r["reason"]) for r in rows) == [
+        ("founded", "grounding verdict not_found: the passage does not settle it"),
+        ("office_in", "grounding verdict not_found: the passage does not settle it"),
+    ]
+    # A dry run writes nothing, refused.jsonl included.
+    dry = _validate("--config", "triples/strict.yaml", "-o", "dry", "--dry-run")
+    assert dry.exit_code == 0, dry.output
+    assert not (here / "dry").exists()
+
+
 def test_the_documented_example_prints_what_the_page_shows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

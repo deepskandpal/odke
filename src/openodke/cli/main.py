@@ -667,6 +667,7 @@ def validate_command(
     """
     # Imported here so `odke --version` and the ontology commands stay light.
     from openodke import Retractable, SignatureCorroborator, Validator
+    from openodke.gate import REFUSED_FILE, Kept, VerdictGate
     from openodke.interop import TriplesExtractor
     from openodke.llm.base import ProviderError
     from openodke.run import ConfigError, build
@@ -773,6 +774,9 @@ def validate_command(
         if out is not None and not dry_run:
             sinks.append(JsonlSink(out, merge=merge))
         validator.sinks = tuple(sinks)
+        # A record of what the gate refuses, and why: -o writes it as refused.jsonl.
+        kept = Kept(validator.gate if validator.gate is not None else VerdictGate(schema=True))
+        validator.gate = kept
         if update and not dry_run and not any(isinstance(s, Retractable) for s in sinks):
             raise ValueError(
                 "--update retracts the old versions from the store: give -o, or a config "
@@ -800,6 +804,7 @@ def validate_command(
     finally:
         _close(driver, [*lookups, *sinks])
     _echo_warnings(caught)
+    refused = kept.write(out / REFUSED_FILE) if out is not None and not dry_run else None
     typer.echo(report.render())
     verb = "would write" if dry_run else "wrote"
     if applied:
@@ -810,6 +815,7 @@ def validate_command(
         written.append(
             f"jsonl → {out}: entities.jsonl {len(kg.entities)}, facts.jsonl {len(kg.facts)}, "
             f"links.jsonl {len(kg.links)}, manifest.json"
+            + (f", {refused.name} {len(kept.refused)}" if refused is not None else "")
         )
     for line in written or ["nothing: give -o, or name a sink in the config"]:
         typer.echo(f"{verb:<13} {line}")

@@ -96,7 +96,7 @@ from openodke.interop.langchain import from_graph_documents
 from openodke.interop.langextract import from_langextract
 from openodke.interop.triples import TripleRow, _file_name, read_triples, to_fact
 from openodke.ontology import Ontology
-from openodke.types import Document, Fact, ValidationVerdict
+from openodke.types import Document, Fact
 
 TITLE = "pipeline"
 PIPELINE, VALIDATOR = "pipeline", "+ validator"
@@ -443,24 +443,6 @@ class Checked:
     refused: list[tuple[Fact, str]] = field(default_factory=list)
 
 
-class _Kept:
-    """A gate that keeps a record: each fact it refuses, and why. It decides nothing itself."""
-
-    def __init__(self, gate: Any) -> None:
-        self.gate = gate
-        self.refused: list[tuple[Fact, str]] = []
-
-    def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
-        verdict: ValidationVerdict = self.gate.validate(fact, ontology)
-        if verdict.action == "refuse":
-            self.refused.append((fact, verdict.reason or ""))
-        return verdict
-
-    @property
-    def stats(self) -> Any:
-        return getattr(self.gate, "stats", None)
-
-
 def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = None) -> Checked:
     """`openodke.Validator` over the pipeline's facts and the documents they cite (#129).
 
@@ -471,7 +453,7 @@ def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = Non
     way, so the row has its calls, tokens, cost and latency.
     """
     from openodke.eval.cost import CostMeter
-    from openodke.gate import VerdictGate
+    from openodke.gate import Kept, VerdictGate
     from openodke.llm.roles import ModelRoles
     from openodke.validator import Validator
 
@@ -486,7 +468,7 @@ def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = Non
         meter = built.context.meter
         assert meter is not None
         stage = built.stages
-        kept = _Kept(stage["gate"] if stage.get("gate") is not None else VerdictGate(schema=True))
+        kept = Kept(stage["gate"] if stage.get("gate") is not None else VerdictGate(schema=True))
         validator = Validator(
             corpus.ontology or built.ontology,
             grounder=stage["grounder"],
@@ -506,7 +488,7 @@ def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = Non
         roles = ModelRoles()
         meter = CostMeter()
         client = meter.client(roles.client_for("ground"), "ground")
-        kept = _Kept(VerdictGate(schema=True))
+        kept = Kept(VerdictGate(schema=True))
         validator = Validator(corpus.ontology, roles=roles, client=client, gate=kept)
         configured = {"ground": roles.ground.model}
         source = "its defaults"
