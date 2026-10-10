@@ -379,6 +379,12 @@ def sentence(i, k):
 
 
 def peak():
+    # Linux keeps the forking process's peak in ru_maxrss across exec; VmHWM is this one's.
+    status = Path("/proc/self/status")
+    if status.is_file():
+        for line in status.read_text().splitlines():
+            if line.startswith("VmHWM:"):
+                return int(line.split()[1]) / 2**10
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return rss / 2**20 if sys.platform == "darwin" else rss / 2**10
 
@@ -426,7 +432,7 @@ print(json.dumps({"base": base, "streamed": streamed, "whole": whole}))
 def test_a_large_synthetic_input_runs_in_bounded_memory(tmp_path: Path) -> None:
     """Twice the rows, the same peak: 25,000 and 50,000 triples rows, a scripted client.
 
-    Peak RSS in a fresh interpreter, after the same 5,000 texts are loaded,
+    Peak RSS (VmHWM) in a fresh interpreter, after the same 5,000 texts are loaded,
     which a streamed job holds whatever its size. Every stage is the
     Validator's default but the client, and the graph goes to JSONL a
     micro-batch at a time. Linear growth would double what the run adds to the
