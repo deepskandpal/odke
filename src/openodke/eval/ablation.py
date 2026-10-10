@@ -52,7 +52,7 @@ from openodke.eval.grounding import DROPPED, grounding_ablation
 from openodke.eval.report import Metric, StageReport
 from openodke.ontology import Ontology
 from openodke.pipeline import Pipeline
-from openodke.types import Chunk, Document, Fact, GroundingVerdict
+from openodke.types import Chunk, Document, EntityLink, Fact, GroundingVerdict
 
 if TYPE_CHECKING:
     from openodke.run.config import RunConfig
@@ -131,7 +131,9 @@ class AblationRun:
     `run_ablation` scores them against your `GoldFact` labels; a public benchmark
     scores the same three sets with its own metrics (`openodke.eval.datasets`).
     `grounded` is every candidate with its verdict; `gated` is what the gate let
-    through, which is the "+ grounding" row.
+    through, which is the "+ grounding" row. `links` are the resolver's, from the
+    "+ corroboration" row, and `final_calls` every call the run made, a pair
+    judge's included.
     """
 
     documents: list[Document]
@@ -152,13 +154,17 @@ class AblationRun:
     # What the extractor refused before anything was grounded (`Rejection`s,
     # #109); None for an extractor that keeps no record of them.
     rejections: list[Any] | None = None
+    links: tuple[EntityLink, ...] = ()
+    # None: no calls after grounding were recorded apart, so `all_calls` stands.
+    final_calls: list[CallRecord] | None = None
 
     def configurations(self) -> list[tuple[str, list[Fact], list[CallRecord]]]:
         """Each configuration's name, its facts, and the calls it took to get them."""
+        final = self.final_calls if self.final_calls is not None else self.all_calls
         return [
             (EXTRACTION, self.candidates, self.extraction_calls),
             (GROUNDING, self.gated, self.all_calls),
-            (CORROBORATION, self.corroborated, self.all_calls),
+            (CORROBORATION, self.corroborated, final),
         ]
 
 
@@ -222,14 +228,14 @@ def ablate(config: RunConfig) -> AblationRun:
     full = built.pipeline(
         extractor=_Replaying(recording.found), grounder=_Stamped(grounded), gate=gate
     )
-    corroborated = list(full.run(docs).facts)
+    graph = full.run(docs)
     return AblationRun(
         documents=list(docs),
         ontology=ontology,
         candidates=candidates,
         grounded=grounded,
         gated=gated,
-        corroborated=corroborated,
+        corroborated=list(graph.facts),
         extraction_calls=extraction_calls,
         all_calls=all_calls,
         gate=gate,
@@ -242,6 +248,9 @@ def ablate(config: RunConfig) -> AblationRun:
             for role in ("extract", "ground", "infer")
             if (spec := getattr(config.models, role)) is not None
         },
+        links=graph.links,
+        # A pair judge in the resolver calls a model in the last row alone.
+        final_calls=list(meter.records),
     )
 
 

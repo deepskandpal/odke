@@ -25,7 +25,10 @@ from typer.testing import CliRunner
 from openodke import Entity, Evidence, Fact, Span
 from openodke.cli.main import app
 from openodke.eval import StageReport, load_jsonl, per_document, report_ablation, run_ablation
+from openodke.eval.ablation import CONFIGURATIONS, AblationRun
+from openodke.eval.cost import CallRecord
 from openodke.eval.formats import GoldFact
+from openodke.ontology import Ontology
 from openodke.run import load_config, parse_config
 from test_eval_report import expected_cells, rendered_rows
 
@@ -220,3 +223,23 @@ def test_the_ablation_renders_its_rows_once_and_keeps_its_notes(example: Path) -
     assert text.count("+ corroboration") == 1
     assert all(note in text for note in report.stages[0].notes)
     assert "prompts  extract@1, ground.span@1" in text
+
+
+def test_the_last_row_carries_the_calls_a_pair_judge_made() -> None:
+    def call(stage: str) -> CallRecord:
+        return CallRecord(stage=stage, model="m", prompt_tokens=1, completion_tokens=1)
+
+    run = AblationRun(
+        documents=[],
+        ontology=Ontology(),
+        candidates=[],
+        grounded=[],
+        gated=[],
+        corroborated=[],
+        extraction_calls=[call("extract")],
+        all_calls=[call("extract"), call("ground")],
+        gate=None,
+        final_calls=[call("extract"), call("ground"), call("judge")],
+    )
+    calls = {name: len(c) for name, _, c in run.configurations()}
+    assert calls == {CONFIGURATIONS[0]: 1, CONFIGURATIONS[1]: 2, CONFIGURATIONS[2]: 3}
