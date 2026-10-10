@@ -1080,13 +1080,15 @@ def eval_stage(
         help="route, extract, ground, resolve, score, validate, ablation (with --config), "
         "spans (with --facts, and no labels at all), compare (two runs' --items files), "
         "pipeline (your own, run with --cmd, --run or --predictions), precision (--facts "
-        "a judge graded, corrected by --labels on a random sample; no gold), or pool (two "
-        "or more grounded runs: recall relative to what they found together; no gold).",
+        "a judge graded, corrected by --labels on a random sample; no gold), pool (two "
+        "or more grounded runs: recall relative to what they found together; no gold), or "
+        "refusals (what a grounder refused, sampled for a person to judge).",
     ),
     runs: list[Path] | None = typer.Argument(
         None,
         help="compare: run A's --items file, then run B's. pool: two or more runs' facts "
-        "after grounding, each a facts.jsonl or the directory a sink wrote.",
+        "after grounding, each a facts.jsonl or the directory a sink wrote. refusals: odke "
+        "ground or odke validate -o output, or bench sets.",
         show_default=False,
     ),
     labels: Path | None = typer.Option(None, "--labels", help="Your labelled rows, as JSONL."),
@@ -1194,10 +1196,14 @@ def eval_stage(
         None,
         "--make-sheet",
         help="precision: draw a random sample of --facts and write it here as `odke label` "
-        "grounding sheets, with the texts from --documents.",
+        "grounding sheets, with the texts from --documents. refusals: draw a stratified "
+        "sample of the runs' refusals and write it here as refusal sheets.",
     ),
     sample_size: int = typer.Option(
-        150, "--n", min=1, help="precision --make-sheet: how many facts to draw."
+        150,
+        "--n",
+        min=1,
+        help="precision and refusals --make-sheet: how many to draw (150 facts; 100 refusals).",
     ),
     by_predicate: bool = typer.Option(
         False,
@@ -1287,6 +1293,11 @@ def eval_stage(
     run's recall relative to the pool is printed with its range, beside the
     caveat that it overstates true recall.
 
+    `refusals RUN ...` reads what a grounder refused in `odke ground` or
+    `odke validate -o` output, or in bench sets: `--make-sheet DIR` draws a
+    stratified sample as sheets for a person to tick, and `--labels` reads them
+    back as the refusal precision with its Wilson 95% interval.
+
     `extract` and `pipeline` also say where the facts went, every miss in one
     cause bucket, and what to change, each fix with the recall gain the
     arithmetic expects; `--trace` says what the extractor was offered. With
@@ -1334,16 +1345,18 @@ def eval_stage(
         "--by-predicate": by_predicate,
     }
     # The flags compare shares with another stage, which takes them as its own.
-    shared = {"precision": ("--seed",), "pool": ("--seed", "--resamples")}
+    shared = {"precision": ("--seed",), "pool": ("--seed", "--resamples"), "refusals": ("--seed",)}
     compare_flags = [flag for flag in compare_flags if flag not in shared.get(stage, ())]
     diagnosed = {"--trace": trace is not None, "--examples": examples != 3}
     try:
         if stage != "pipeline" and any(piped.values()):
             named = ", ".join(flag for flag, given in piped.items() if given)
             raise ValueError(f"{named}: these are for pipeline")
-        if stage != "precision" and any(sampled.values()):
+        if stage not in ("precision", "refusals") and any(sampled.values()):
             named = ", ".join(flag for flag, given in sampled.items() if given)
-            raise ValueError(f"{named}: these are for precision")
+            raise ValueError(f"{named}: these are for precision and refusals")
+        if stage == "refusals" and by_predicate:
+            raise ValueError("--by-predicate is for precision: a refusal sample always spreads")
         if stage not in ("extract", "pipeline") and any(diagnosed.values()):
             named = ", ".join(flag for flag, given in diagnosed.items() if given)
             raise ValueError(f"{named}: for extract and pipeline")
@@ -1375,12 +1388,15 @@ def eval_stage(
             if reasons:
                 raise typer.Exit(1)
             return
-        if runs and stage != "pool":
+        if runs and stage not in ("pool", "refusals"):
             raise ValueError(
-                f"unexpected argument {str(runs[0])!r}: only compare and pool take runs"
+                f"unexpected argument {str(runs[0])!r}: only compare, pool and refusals take runs"
             )
         if compare_flags:
-            owners = {"--seed": "compare, precision and pool", "--resamples": "compare and pool"}
+            owners = {
+                "--seed": "compare, precision, pool and refusals",
+                "--resamples": "compare and pool",
+            }
             raise ValueError(
                 "; ".join(
                     f"{flag}: for {owners.get(flag, 'compare')} only" for flag in compare_flags
@@ -1432,6 +1448,19 @@ def eval_stage(
                 describe=describe,
                 others=(labels, predictions, run, config, facts, items),
                 resamples=resamples,
+                seed=seed,
+            )
+            if report is None:
+                return
+        elif stage == "refusals":
+            report = _eval_refusals(
+                runs or [],
+                labels,
+                documents,
+                describe=describe,
+                others=(predictions, run, ontology, config, facts, items),
+                make_sheet=make_sheet,
+                sample_size=sample_size,
                 seed=seed,
             )
             if report is None:
@@ -1532,7 +1561,9 @@ def eval_stage(
         raise typer.Exit(1) from exc
     if as_json:
         # The 0.x stages print their own report, as they did; the newer ones have no 0.x form.
-        shown = report if stage in ("pipeline", "precision", "pool") else report.stages[0]
+        shown = (
+            report if stage in ("pipeline", "precision", "pool", "refusals") else report.stages[0]
+        )
         typer.echo(shown.model_dump_json(indent=2))
         return
     typer.echo(report.render())
@@ -1612,6 +1643,72 @@ def _eval_precision(
             labels=len(rows) if labels is not None else None,
         ),
     )
+
+
+def _eval_refusals(
+    runs: list[Path],
+    labels: Path | None,
+    documents: Path | None,
+    *,
+    describe: bool,
+    others: tuple[Any, ...],
+    make_sheet: Path | None,
+    sample_size: int,
+    seed: int,
+) -> Any:
+    """`odke eval refusals`: the sample as sheets (None), or the labels' report."""
+    from collections import Counter
+
+    from openodke.eval.formats import RefusalLabel, load_jsonl
+    from openodke.eval.harness import load_documents
+    from openodke.eval.refusals import (
+        DESCRIPTION,
+        SAMPLE,
+        SAMPLE_FILE,
+        read_refusals,
+        report_refusals,
+        strata,
+        write_sample,
+    )
+
+    if describe:
+        typer.echo(DESCRIPTION)
+        return None
+    if any(v is not None for v in others):
+        raise ValueError(
+            "refusals reads runs, with --documents and --make-sheet, or --labels; nothing else"
+        )
+    if labels is not None:
+        if runs or make_sheet is not None or documents is not None:
+            raise ValueError("--labels reads the ticked sample back, on its own")
+        return report_refusals(load_jsonl(labels, RefusalLabel), path=str(labels))
+    if not runs:
+        raise ValueError(
+            "refusals needs a run to draw from (odke ground or odke validate -o output, or a "
+            "bench set), or --labels to read the ticks back"
+        )
+    if make_sheet is None:
+        raise ValueError("refusals writes its sample with --make-sheet DIR")
+    docs = load_documents(documents) if documents is not None else None
+    found = [refusal for path in runs for refusal in read_refusals(path, docs)]
+    n = sample_size if sample_size != 150 else SAMPLE
+    drawn, made = write_sample(found, make_sheet, n=n, seed=seed)
+    picked = Counter((r.dataset or "", r.extractor or "", r.verdict) for r in drawn)
+    typer.echo(
+        f"drew {len(drawn)} of {_count(len(found), 'refusal')} (seed {seed}) into "
+        f"{make_sheet / SAMPLE_FILE}",
+        err=True,
+    )
+    for (dataset, extractor, verdict), count in strata(found):
+        where = " / ".join(part for part in (dataset, extractor, verdict) if part)
+        typer.echo(f"  {where}: {picked[(dataset, extractor, verdict)]} of {count}", err=True)
+    typer.echo(
+        f"wrote {_count(len(made.sheets), 'sheet')} to {make_sheet}: {made.first} to "
+        f"{made.last}; tick them, read them back with `odke label read {make_sheet} -o "
+        "labels.jsonl`, and pass that file as --labels",
+        err=True,
+    )
+    return None
 
 
 def _eval_pool(

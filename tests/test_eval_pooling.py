@@ -198,7 +198,10 @@ def test_odke_eval_pool_from_the_shell(tmp_path: Path) -> None:
     [
         (["eval", "pool", "a.jsonl"], "pool takes two or more runs' facts"),
         (["eval", "pool", "a.jsonl", "b.jsonl", "--labels", "x"], "nothing else"),
-        (["eval", "extract", "a.jsonl", "--labels", "x"], "only compare and pool take runs"),
+        (
+            ["eval", "extract", "a.jsonl", "--labels", "x"],
+            "only compare, pool and refusals take runs",
+        ),
         (
             ["eval", "extract", "--labels", "x", "--resamples", "300"],
             "--resamples: for compare and pool only",

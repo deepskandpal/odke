@@ -277,6 +277,27 @@ def bootstrap_interval(
     return _percentile(values, alpha) if len(values) > 1 else None
 
 
+def wilson(successes: int, n: int, level: float = 1 - ALPHA) -> tuple[float, float] | None:
+    """The Wilson score interval for a share: `successes` of `n`, at `level`.
+
+    Arithmetic, so no dependency. Unlike the normal approximation it stays
+    inside [0, 1] and is not empty at 0 or `n` successes, which is where a
+    small hand-labelled sample tends to land. None with nothing labelled.
+    """
+    if n < 0 or not 0 <= successes <= n:
+        raise ValueError(f"successes must be between 0 and n, got {successes} of {n}")
+    if not n:
+        return None
+    z = NormalDist().inv_cdf((1 + level) / 2)
+    share = successes / n
+    centre = share + z * z / (2 * n)
+    half = z * math.sqrt(share * (1 - share) / n + z * z / (4 * n * n))
+    scale = 1 + z * z / n
+    low = 0.0 if successes == 0 else max(0.0, (centre - half) / scale)
+    high = 1.0 if successes == n else min(1.0, (centre + half) / scale)
+    return low, high
+
+
 def mcnemar(a_items: Sequence[bool], b_items: Sequence[bool]) -> McNemar:
     """The exact two-sided McNemar test on pass/fail outcomes of the same items.
 
@@ -440,4 +461,5 @@ __all__ = [
     "precision",
     "recall",
     "share",
+    "wilson",
 ]

@@ -134,6 +134,44 @@ class GroundingLabel(Frozen):
         return Document(id=self.doc_id or cited or self.fact.id, text=self.text)
 
 
+class Refusal(Frozen):
+    """One fact a grounder refused, as `odke eval refusals` puts it to a person (#113).
+
+    `claim` is the fact as the grounder read it; `text` the passage it read,
+    and `bold`, where in it the claim's names are, or the cited span. `verdict`
+    and `reason` say why it was refused. `gold` is whether the run's gold lists
+    the fact, and None with no gold. `predicate`, `extractor` and `dataset` are
+    what a sample is stratified on, and `source` the output it came from.
+    """
+
+    id: str
+    claim: str
+    text: str
+    bold: tuple[int, int] | None = None
+    verdict: str
+    reason: str
+    gold: bool | None = None
+    predicate: str
+    extractor: str | None = None
+    dataset: str | None = None
+    doc_id: str | None = None
+    source: str | None = None
+
+
+class RefusalLabel(Refusal):
+    """A `Refusal` and what a person made of it.
+
+    `refusal_correct`: the text does not state the fact, so refusing it was
+    right. `refusal_wrong`: the text states it, and a true fact was lost.
+    `gold_wrong`: the gold lists the fact and the text does not state it, so
+    the refusal was right and the gold is not. `unsure`: the text does not
+    settle it. Refusal precision is the right refusals, correct and gold wrong,
+    over every judgement but unsure.
+    """
+
+    judgement: Literal["refusal_correct", "refusal_wrong", "gold_wrong", "unsure"]
+
+
 # --------------------------------------------------------------------------- #
 # resolve
 # --------------------------------------------------------------------------- #
@@ -350,6 +388,8 @@ __all__ = [
     "GroundingLabel",
     "LinkRow",
     "PairLabel",
+    "Refusal",
+    "RefusalLabel",
     "RouteLabel",
     "RoutePrediction",
     "ValidationLabel",
