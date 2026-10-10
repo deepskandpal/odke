@@ -319,6 +319,11 @@ class Fact(Frozen):
     # whenever it is filled. Empty on a fact no corroborator merged, on one
     # whose sources it could not name, and on a fact serialised by 0.2.x.
     supported_by: tuple[Support, ...] = ()
+    # The transaction time the reconciler took away the fact's last source.
+    # A retired fact was not proven false: it lost its evidence, so the valid
+    # clock is left alone, and the fact is kept with no support. Not part of
+    # `signature`: a source that states it again brings it back.
+    retired_at: datetime | None = None
 
     @property
     def is_edge(self) -> bool:

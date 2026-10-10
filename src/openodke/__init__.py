@@ -31,6 +31,7 @@ from openodke.ontology import (
     Qualifier,
 )
 from openodke.pipeline import DoubleStageWarning, Pipeline
+from openodke.reconcile import Reconciler, ReconcileReport
 from openodke.stages import (
     Chunker,
     Constrainer,
@@ -45,6 +46,7 @@ from openodke.stages import (
     Normalizer,
     PlatformProfile,
     Resolver,
+    Retractable,
     Router,
     Scorer,
     Sink,
@@ -124,8 +126,11 @@ __all__ = [
     "Polarity",
     "Predicate",
     "Qualifier",
+    "ReconcileReport",
+    "Reconciler",
     "Resolution",
     "Resolver",
+    "Retractable",
     "RouteVerdict",
     "Router",
     "Scorer",

@@ -118,8 +118,11 @@ def independent_sources(fact: Fact, source: SourceKey = source_of) -> set[str]:
     The documents in one `odke.near_duplicates` group count as one source
     between them, under the least of their keys. A fact with no evidence has
     no receipts to tell its sources apart, so it counts as many as its
-    `support` already claims, and never fewer than one.
+    `support` already claims, and never fewer than one. A retired fact has
+    none: the reconciler took its last one away (#116).
     """
+    if fact.retired_at is not None:
+        return set()
     if not fact.evidence:
         return {f"fact:{fact.id}:{i}" for i in range(max(1, fact.support))}
     found = {source(e) for e in fact.evidence}
@@ -379,13 +382,16 @@ class SignatureCorroborator:
         merges only with a derived one, because a statement of the claim wins
         (DECISIONS #28): a derived twin of a stored statement is dropped, and a
         statement replaces a stored derived twin. Each derived fact then takes
-        its parent's evidence and list, so the two stay shared.
+        its parent's evidence and list, so the two stay shared. A retired twin
+        is nothing to merge with: the batch states the claim again, and it is
+        written as new (#116).
         """
         counts = self.stats["store"]
         twins: dict[tuple[Any, ...], list[Fact]] = defaultdict(list)
         for store in self.store:
             for signature, stored in store.stored(facts).items():
-                twins[signature].append(unstamped(stored))
+                if stored.retired_at is None:
+                    twins[signature].append(unstamped(stored))
             counts["read"] += len(facts)
         out: list[Fact] = []
         for fact in facts:
