@@ -688,9 +688,10 @@ class _JsonlPlan(SinkPlan):
             raise ConfigError(f"{where}.merge: true or false")
         self.directory = ctx.config.resolve(options["directory"])
         self.merge = bool(options.get("merge", False))
+        self.tenant = ctx.config.tenant
 
     def open(self) -> Sink:
-        return JsonlSink(self.directory, merge=self.merge)
+        return JsonlSink(self.directory, merge=self.merge, tenant=self.tenant)
 
     def describe(self, kg: KnowledgeGraph) -> list[str]:
         return [
@@ -741,6 +742,7 @@ class _Neo4jPlan(SinkPlan):
             raise ConfigError(f"{where}: neo4j needs uri or uri_env")
         self.ontology = ctx.ontology
         self.where = where
+        self.tenant = ctx.config.tenant
 
     @property
     def target(self) -> str:
@@ -761,10 +763,11 @@ class _Neo4jPlan(SinkPlan):
             database=opts.database,
             batch_size=opts.batch_size,
             ontology=self.ontology,
+            tenant=self.tenant,
         )
 
     def describe(self, kg: KnowledgeGraph) -> list[str]:
-        statements = plan(kg, ontology=self.ontology)
+        statements = plan(kg, ontology=self.ontology, tenant=self.tenant)
         rows = sum(len(s.rows) for s in statements)
         lines = [f"neo4j → {self.target}: {len(statements)} statements, {rows} rows"]
         for statement in statements:
@@ -1050,7 +1053,9 @@ class _LookupOptions(BaseModel):
     """`store_lookup: {use: neo4j, ...}`: where to read, and how widely.
 
     The connection keys are the neo4j sink's. Left out, the lookup reads the
-    store the run's one neo4j sink writes to, on that sink's connection.
+    store the run's one neo4j sink writes to, on that sink's connection. Its
+    tenant is the run's (`tenant`): giving it another is refused, because a run
+    looks up the tenant it writes (#159).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -1062,7 +1067,6 @@ class _LookupOptions(BaseModel):
     password_env: str = "NEO4J_PASSWORD"
     database: str | None = None
     tenant: str | None = None
-    tenant_property: str = "tenant"
     limit: int = 100
 
 
@@ -1084,6 +1088,7 @@ class LookupPlan:
         self.custom: StoreLookup | None = None
         self.sink: int | None = None
         self._opened: Any = None
+        self.tenant = ctx.config.tenant
         if spec.is_custom:
             built = _custom(spec, where)
             if not isinstance(built, StoreLookup):
@@ -1110,6 +1115,12 @@ class LookupPlan:
             first = exc.errors()[0]
             key = ".".join(str(part) for part in first["loc"])
             raise ConfigError(f"{where}.{key}: {first['msg']}") from None
+        given = self.options.tenant
+        if given is not None and given != ctx.config.tenant:
+            raise ConfigError(
+                f"{where}.tenant: the run writes tenant {ctx.config.tenant!r}, and a run looks "
+                "up the tenant it writes; set the run's `tenant` instead"
+            )
         if not self.options.uri and not self.options.uri_env:
             stores = [i for i, plan in enumerate(sinks) if plan.name == "neo4j"]
             if len(stores) != 1:
@@ -1121,15 +1132,18 @@ class LookupPlan:
             self.sink = stores[0]
 
     def open(self, sinks: Sequence[Sink]) -> StoreLookup:
-        """The lookup to resolve with: on the opened sink's connection, or its own."""
+        """The lookup to resolve with: on the opened sink's connection, or its own.
+
+        One of your own is scoped to the run's tenant when it can be (`scoped`).
+        """
         if self.custom is not None:
+            to_tenant = getattr(self.custom, "scoped", None)
+            if self.tenant is not None and callable(to_tenant):
+                scoped_lookup: StoreLookup = to_tenant(self.tenant)
+                return scoped_lookup
             return self.custom
         opts = self.options
-        scope: dict[str, Any] = {
-            "tenant": opts.tenant,
-            "tenant_property": opts.tenant_property,
-            "limit": opts.limit,
-        }
+        scope: dict[str, Any] = {"tenant": self.tenant, "limit": opts.limit}
         if self.sink is not None:
             sink = sinks[self.sink]
             if not isinstance(sink, Neo4jSink):  # pragma: no cover - the plan said neo4j

@@ -43,8 +43,9 @@ class MemoryLookup:
     external id, a domain, or the first or last token of a name with it.
 
     `tenant` scopes the store to the entities whose `attributes[tenant_property]`
-    is `tenant`. Tenant keys arrive with #159; until then the tenant is a
-    property like any other, and an entity without it is in no tenant.
+    is `tenant`, and an entity without it is in no tenant. In memory the tenant
+    stays an attribute; a store keys its tenants itself (#159, DECISIONS #44).
+    `scoped(tenant)` is the same entities scoped to one.
 
     `limit` caps the entities one name token returns. A token shared by more
     than that, a first word like "bank", returns the `limit` whose names are
@@ -70,6 +71,7 @@ class MemoryLookup:
         self.limit = limit
         self.embed = embed
         self.vector_k = vector_k
+        self._index = index
         self._entities = {e.key: e for e in index.values() if in_tenant(e, tenant, tenant_property)}
         self._blocks: dict[tuple[str, ...], list[str]] = defaultdict(list)
         for key in sorted(self._entities):
@@ -82,6 +84,21 @@ class MemoryLookup:
             for scheme, value in keys.ids:
                 self._blocks[("id", entity.type, scheme, value)].append(key)
         self._vectors: list[tuple[Entity, list[float]]] | None = None
+
+    def scoped(self, tenant: str | None) -> MemoryLookup:
+        """These entities scoped to `tenant`: this lookup when it is already; another refused."""
+        if tenant == self.tenant:
+            return self
+        if self.tenant is not None:
+            raise ValueError(f"this lookup reads tenant {self.tenant!r}, not {tenant!r}")
+        return MemoryLookup(
+            self._index,
+            tenant=tenant,
+            tenant_property=self.tenant_property,
+            limit=self.limit,
+            embed=self.embed,
+            vector_k=self.vector_k,
+        )
 
     def candidates(self, entities: Sequence[Entity]) -> Mapping[str, Sequence[Entity]]:
         entities = list(entities)

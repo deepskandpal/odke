@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -39,6 +40,7 @@ from openodke import (
 from openodke.corroborate import CONFLICT, SignatureCorroborator
 from openodke.eval.sinks import assert_idempotent
 from openodke.sinks.neo4j import (
+    COUNTED,
     EXTRA_HINT,
     Neo4jSink,
     Statement,
@@ -53,14 +55,19 @@ from openodke.sinks.neo4j import (
 
 
 class _Result:
-    def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
+    def __init__(self, rows: list[dict[str, Any]] | None = None, counters: Any = None) -> None:
         self.rows = rows or []
+        self.counters = counters or SimpleNamespace(nodes_created=0, relationships_created=0)
 
-    def consume(self) -> None:
-        return None
+    def consume(self) -> Any:
+        return SimpleNamespace(counters=self.counters)
 
     def data(self) -> list[dict[str, Any]]:
         return self.rows
+
+
+# What makes a row the same node or relationship again: its MERGE keys.
+IDENTITY = ("key", "signature", "subject_key", "object_key", "source_key", "target_key")
 
 
 class _Tx:
@@ -71,7 +78,22 @@ class _Tx:
     def run(self, cypher: str, parameters: dict[str, Any] | None = None, **kw: Any) -> _Result:
         params = {**(parameters or {}), **kw}
         self.driver.calls.append((self.mode, cypher, params))
-        return _Result(self.driver.answer(cypher))
+        if not cypher.endswith(COUNTED) or any(n in cypher for n in self.driver.answers):
+            return _Result(self.driver.answer(cypher))
+        # A counted write: every row reaches its MERGE, and one never seen is made, as a
+        # store that honours MERGE would make it.
+        rows = params.get("rows", [])
+        made = 0
+        for row in rows:
+            identity = (cypher, tuple(row.get(k) for k in IDENTITY))
+            made += identity not in self.driver.seen
+            self.driver.seen.add(identity)
+        node = "MERGE (n:" in cypher
+        counters = SimpleNamespace(
+            nodes_created=made if node else 0,
+            relationships_created=0 if node or "SET s." in cypher else made,
+        )
+        return _Result([{"reached": len(rows)}], counters)
 
 
 class _Session:
@@ -108,6 +130,7 @@ class FakeDriver:
         self.fail_on: int | None = None
         self.closed = False
         self.answers = answers or {}
+        self.seen: set[tuple[str, tuple[Any, ...]]] = set()
 
     def session(self, **config: Any) -> _Session:
         return _Session(self, config)
@@ -120,7 +143,12 @@ class FakeDriver:
 
     @property
     def writes(self) -> list[tuple[str, dict[str, Any]]]:
-        return [(cypher, params) for mode, cypher, params in self.calls if mode == "write"]
+        """Each statement written, as planned: the sink adds `COUNTED` to count its rows."""
+        return [
+            (cypher.removesuffix(COUNTED), params)
+            for mode, cypher, params in self.calls
+            if mode == "write"
+        ]
 
 
 # --------------------------------------------------------------------------- #
@@ -574,21 +602,30 @@ def test_links_are_relationships_with_score_and_reason_and_never_merge_nodes() -
 # --------------------------------------------------------------------------- #
 
 
-def test_rows_are_written_in_batches_one_transaction_each() -> None:
+def test_rows_are_packed_into_transactions_of_at_most_the_batch_size() -> None:
+    """In write order, across statements: the node, then five claims, then the projection."""
     acme = Entity(key="c:acme", type="Company")
     facts = tuple(Fact(subject=acme, predicate="product", object_value=f"p{i}") for i in range(5))
     driver = _written(KnowledgeGraph(facts=facts), batch_size=2)
     claim_batches = [len(p["rows"]) for c, p in driver.writes if "MERGE (c:`Claim`" in c]
-    assert claim_batches == [2, 2, 1]
-    assert driver.transactions == len(driver.writes)
+    assert claim_batches == [1, 2, 2]
+    # Seven rows, two to a transaction: the node and a claim share the first.
+    assert driver.transactions == 4
+    by_transaction = [len(p["rows"]) for _, p in driver.writes]
+    assert sum(by_transaction) == 7 and max(by_transaction) <= 2
+    # One transaction for the lot when it fits.
+    assert _written(KnowledgeGraph(facts=facts)).transactions == 1
 
 
 def test_a_failed_transaction_propagates_and_stops_the_write() -> None:
     driver = FakeDriver()
     driver.fail_on = 2
+    sink = Neo4jSink(driver=driver, batch_size=3)
     with pytest.raises(RuntimeError, match="transaction failed"):
-        Neo4jSink(driver=driver).write(_graph())
-    assert len(driver.writes) == 1
+        sink.write(_graph())
+    # The first transaction's rows were written and counted; nothing after it.
+    assert sum(len(p["rows"]) for _, p in driver.writes) == 3
+    assert sink.writes.transactions == 1
 
 
 def test_names_from_the_ontology_are_quoted_so_they_cannot_inject_cypher() -> None:

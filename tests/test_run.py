@@ -448,7 +448,9 @@ def test_store_lookup_reads_the_neo4j_sinks_store_before_it_writes(
 
     monkeypatch.setattr(neo4j_module, "_connect", connect)
     monkeypatch.setenv("ODKE_TEST_SECRET", "not-a-real-password")
-    config = _config(store_lookup={"use": "neo4j", "tenant": "t1", "limit": 7})
+    config = _config(store_lookup={"use": "neo4j", "limit": 7})
+    # The run's tenant is the lookup's: a run looks up the tenant it writes (#159).
+    config["tenant"] = "t1"
     config["stages"]["sink"] = _neo4j_sink()
     result = execute(parse_config(config, base_dir=project))
 
@@ -489,6 +491,7 @@ def test_a_dry_run_opens_no_store_and_says_so(
         ("neo", {"sink": _neo4j_sink()}, "did you mean 'neo4j'?"),
         ({"use": "neo4j", "password": "x"}, {"sink": _neo4j_sink()}, "store_lookup.password"),
         ({"use": "neo4j", "tenant_id": "x"}, {"sink": _neo4j_sink()}, "store_lookup.tenant_id"),
+        ({"use": "neo4j", "tenant": "t2"}, {"sink": _neo4j_sink()}, "store_lookup.tenant: the run"),
         ("neo4j", {"sink": _neo4j_sink(), "resolver": "passthrough"}, "takes no lookup"),
     ],
 )

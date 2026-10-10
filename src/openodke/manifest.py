@@ -66,7 +66,18 @@ REDACTED = "<redacted>"
 
 # What a `JsonlSink` writes into `manifest.json`. A run adds its own fields
 # beside these and never replaces them: the sink's counts are the files'.
-SINK_KEYS = ("ontology", "created_at", "entities", "facts", "edges", "properties", "links", "stats")
+# `tenant` is the store's: a JSONL directory holds one tenant (#159).
+SINK_KEYS = (
+    "ontology",
+    "created_at",
+    "entities",
+    "facts",
+    "edges",
+    "properties",
+    "links",
+    "stats",
+    "tenant",
+)
 
 Command = Literal["run", "validate", "ground"]
 # The graph's counts a streamed run takes from its totals, not its (empty) graph.

@@ -8,7 +8,7 @@ against without a database.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Collection, Hashable, Iterable, Sequence
+from collections.abc import Callable, Collection, Hashable, Iterable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TypeVar
@@ -16,6 +16,8 @@ from typing import Any, TypeVar
 from pydantic import BaseModel
 
 from openodke.reconcile import reconciled, tally
+from openodke.sinks.report import WriteReport
+from openodke.tenants import tenant_name
 from openodke.types import Entity, EntityLink, Fact, KnowledgeGraph
 
 M = TypeVar("M", bound=BaseModel)
@@ -39,16 +41,37 @@ class JsonlSink:
 
     `append(kg)` adds a micro-batch to what the files hold (#158): a streamed
     run writes its first micro-batch and appends the rest.
+
+    A directory holds one tenant (#159). `tenant` is written to the manifest,
+    and a sink that merges, reads or retracts refuses a directory another
+    tenant wrote, so two tenants' facts never merge in one store. `writes` is
+    the sink's write report: each line written or appended is `written`, and
+    with `merge` one that replaced a line held is `merged` instead
+    (`openodke.sinks.report`).
     """
 
-    def __init__(self, directory: str | Path, *, merge: bool = False) -> None:
+    def __init__(
+        self, directory: str | Path, *, merge: bool = False, tenant: str | None = None
+    ) -> None:
         self.directory = Path(directory)
         self.merge = merge
+        self.tenant = tenant_name(tenant)
+        self.writes = WriteReport()
+
+    def scoped(self, tenant: str | None) -> JsonlSink:
+        """This directory written for `tenant`; the sink itself when it is that tenant's."""
+        tenant = tenant_name(tenant)
+        if tenant == self.tenant:
+            return self
+        if self.tenant is not None:
+            raise ValueError(f"this sink writes tenant {self.tenant!r}, not {tenant!r}")
+        return JsonlSink(self.directory, merge=self.merge, tenant=tenant)
 
     def stored(self, facts: Sequence[Fact]) -> dict[tuple[Any, ...], Fact]:
         """The facts `facts.jsonl` holds under these facts' signatures; none unless merging."""
         if not self.merge:
             return {}
+        self._own_tenant()
         held = {fact.signature: fact for fact in self._read("facts.jsonl", Fact)}
         return {f.signature: held[f.signature] for f in facts if f.signature in held}
 
@@ -56,13 +79,22 @@ class JsonlSink:
         self.directory.mkdir(parents=True, exist_ok=True)
         entities, facts, links = list(kg.entities), list(kg.facts), list(kg.links)
         if self.merge:
-            entities = _upsert(self._read("entities.jsonl", Entity), entities, _entity_key)
-            facts = _upsert(self._read("facts.jsonl", Fact), facts, _fact_key)
-            links = _upsert(self._read("links.jsonl", EntityLink), links, _link_key)
+            self._own_tenant()
+            entities = self._upsert("entities", "entities.jsonl", Entity, entities, _entity_key)
+            facts = self._upsert("facts", "facts.jsonl", Fact, facts, _fact_key)
+            links = self._upsert("links", "links.jsonl", EntityLink, links, _link_key)
+        else:
+            # The files are replaced: every line is written.
+            self.writes.add("entities", written=len(entities))
+            self.writes.add("facts", written=len(facts))
+            self.writes.add("links", written=len(links))
         self._write("entities.jsonl", entities)
         self._write("facts.jsonl", facts)
         self._write("links.jsonl", links)
-        self._manifest(manifest_of(kg, entities, facts, links))
+        manifest = manifest_of(kg, entities, facts, links)
+        if self.tenant is not None:
+            manifest["tenant"] = self.tenant
+        self._manifest(manifest)
 
     def append(self, kg: KnowledgeGraph) -> None:
         """One micro-batch more: its lines after the files' own, and its counts on the manifest's.
@@ -70,8 +102,9 @@ class JsonlSink:
         Nothing is read back, so an entity, fact or link two micro-batches both
         state is a line in each, and a reader keeps the last, as `merge` does.
         The manifest's counts are the files' lines, and its `stats` are the
-        graph's: a streamed run hands each micro-batch the run's so far. A
-        sink that merges merges, as `write` does.
+        graph's: a streamed run hands each micro-batch the run's so far. Every
+        line appended counts as `written` in the write report. A sink that
+        merges merges, as `write` does.
         """
         if self.merge:
             self.write(kg)
@@ -80,6 +113,9 @@ class JsonlSink:
         self._write("entities.jsonl", kg.entities, mode="a")
         self._write("facts.jsonl", kg.facts, mode="a")
         self._write("links.jsonl", kg.links, mode="a")
+        self.writes.add("entities", written=len(kg.entities))
+        self.writes.add("facts", written=len(kg.facts))
+        self.writes.add("links", written=len(kg.links))
         path = self.directory / "manifest.json"
         held: dict[str, Any] = (
             json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
@@ -89,12 +125,40 @@ class JsonlSink:
             added[key] += int(held.get(key, 0))
         added["ontology"] = held.get("ontology", added["ontology"])
         added["created_at"] = held.get("created_at", added["created_at"])
+        if self.tenant is not None:
+            added["tenant"] = self.tenant
         self._manifest(added)
 
-    def _manifest(self, manifest: dict[str, Any]) -> None:
+    def _manifest(self, manifest: Mapping[str, Any]) -> None:
         (self.directory / "manifest.json").write_text(
             json.dumps(manifest, indent=2), encoding="utf-8"
         )
+
+    def _own_tenant(self) -> None:
+        """Refuse a directory another tenant wrote: a store holds one tenant (#159)."""
+        path = self.directory / "manifest.json"
+        if not path.is_file():
+            return
+        held = json.loads(path.read_text(encoding="utf-8")).get("tenant")
+        if held != self.tenant:
+            raise ValueError(
+                f"{self.directory} holds tenant {held!r}, and this sink writes {self.tenant!r}; "
+                "give each tenant its own directory"
+            )
+
+    def _upsert(
+        self,
+        kind: str,
+        name: str,
+        model: type[M],
+        incoming: list[M],
+        key: Callable[[M], Hashable],
+    ) -> list[M]:
+        held = self._read(name, model)
+        known = {key(item) for item in held}
+        new = {key(item) for item in incoming}
+        self.writes.add(kind, written=len(new - known), merged=len(new & known))
+        return _upsert(held, incoming, key)
 
     def retract(
         self, doc_ids: Collection[str], *, at: datetime, hard: bool = False
@@ -106,6 +170,7 @@ class JsonlSink:
         retired with its parent. The manifest's counts follow. Retracting the
         same documents again leaves the files as they are.
         """
+        self._own_tenant()
         before = self._read("facts.jsonl", Fact)
         after = reconciled(before, set(doc_ids), at)
         counts = tally(before, after, hard=hard)

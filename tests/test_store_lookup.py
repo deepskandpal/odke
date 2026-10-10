@@ -571,8 +571,10 @@ def test_a_batch_resolves_against_a_live_neo4j() -> None:
         for s in Neo4jConstrainer().schema(ontology)
     ]
     auth = (os.environ.get("NEO4J_USER", "neo4j"), os.environ.get("NEO4J_PASSWORD", ""))
-    with Neo4jSink(os.environ["NEO4J_URI"], auth) as sink:
-        driver = sink._driver
+    with Neo4jSink(os.environ["NEO4J_URI"], auth) as store:
+        driver = store._driver
+        # Tenant t1's sink: its keys are t1's (#159).
+        sink = store.scoped("t1")
         try:
             sink.bootstrap(ontology)
             driver.execute_query("CALL db.awaitIndexes(300)")
@@ -581,11 +583,14 @@ def test_a_batch_resolves_against_a_live_neo4j() -> None:
                 Fact(subject=ada, predicate=employer, object_entity=widgets),
             ]
             Pipeline(ontology, _Replay(first), sinks=[sink]).run([Document(text="run 1")])
-            stored = f"MATCH (n:`{company}`) RETURN n.key AS key, properties(n) AS props"
+            stored = (
+                f"MATCH (n:`{company}`) RETURN substring(n.key, 3) AS key, properties(n) AS props"
+            )
             before = {r["key"]: r["props"] for r in driver.execute_query(stored).records}
             assert set(before) == {acme.key, widgets.key}
 
-            lookup = sink.lookup(tenant="t1")
+            lookup = sink.lookup()
+            assert lookup.tenant == "t1"
             second = [
                 Fact(subject=grace, predicate=employer, object_entity=incoming),
                 Fact(subject=grace, predicate=employer, object_entity=widget),
@@ -601,15 +606,16 @@ def test_a_batch_resolves_against_a_live_neo4j() -> None:
 
             # Grace's employer is the node run 1 wrote; no node was made for the alias.
             employers = driver.execute_query(
-                f"MATCH (:`{person}` {{key: $key}})-[:`{employer}`]->(c) RETURN c.key AS key",
-                key=grace.key,
+                f"MATCH (:`{person}` {{key: $key}})-[:`{employer}`]->(c) "
+                "RETURN substring(c.key, 3) AS key",
+                key=f"t1/{grace.key}",
             ).records
             assert sorted(r["key"] for r in employers) == sorted([acme.key, widget.key])
             similar = driver.execute_query(
                 f"MATCH (:`{company}` {{key: $a}})-[l:SIMILAR]->(:`{company}` {{key: $b}}) "
                 "RETURN l.score AS score",
-                a=widget.key,
-                b=widgets.key,
+                a=f"t1/{widget.key}",
+                b=f"t1/{widgets.key}",
             ).records
             assert len(similar) == 1
             # And the stored nodes hold exactly what they held.
@@ -623,8 +629,9 @@ def test_a_batch_resolves_against_a_live_neo4j() -> None:
                     plan = session.run("EXPLAIN " + query.cypher, query.params).consume().plan
                 operators = _operators(plan)
                 assert not {"AllNodesScan", "NodeByLabelScan"} & set(operators), operators
-            # Another tenant's lookup sees none of it.
-            assert sink.lookup(tenant="t2").candidates([incoming]) == {incoming.key: []}
+            # Another tenant's lookup sees none of it, and nor does one with no tenant.
+            assert store.lookup(tenant="t2").candidates([incoming]) == {incoming.key: []}
+            assert store.lookup().candidates([incoming]) == {incoming.key: []}
         finally:
             driver.execute_query(f"MATCH (n) WHERE n:`{company}` OR n:`{person}` DETACH DELETE n")
             for match in created:
