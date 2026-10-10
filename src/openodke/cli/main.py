@@ -197,6 +197,33 @@ BUDGET_CALLS_HELP = (
 )
 # The exit status of a run a budget stopped: what it kept was written.
 EXIT_BUDGET = 3
+LOG_FORMAT_HELP = (
+    "json: every event (the job, each stage, each document, each model call) as one JSON "
+    "object a line on standard error, with its counts, latency and cost. text: as before."
+)
+LOG_TEXT_HELP = (
+    "With --log-format json, keep the arguments of the stages' own warnings, which can quote a "
+    "passage or a model's reply. Off by default."
+)
+
+
+def _logs(ctx: typer.Context, log_format: str, log_text: bool) -> None:
+    """`--log-format` and `--log-text`, applied before anything is read; a bad one exits 2.
+
+    The JSON handler is taken off again when the command ends, however it
+    ends, so a command run in-process leaves logging as it found it.
+    """
+    from openodke.observe import configure_logs
+
+    if log_format not in ("json", "text"):
+        typer.echo(f"error: --log-format is json or text, not {log_format!r}", err=True)
+        raise typer.Exit(2)
+    if log_text and log_format != "json":
+        typer.echo("error: --log-text is for --log-format json", err=True)
+        raise typer.Exit(2)
+    if log_format == "json":
+        configure_logs("json", text=log_text)
+        ctx.call_on_close(lambda: configure_logs("text"))
 
 
 @app.command("models")
@@ -219,6 +246,7 @@ def models_command() -> None:
 
 @app.command("run")
 def run_command(
+    ctx: typer.Context,
     config: Path | None = typer.Argument(
         None, help="Run config, YAML or JSON. See examples/run.yaml."
     ),
@@ -244,6 +272,8 @@ def run_command(
     cache: Path | None = typer.Option(None, "--cache", help=CACHE_HELP),
     budget_usd: float | None = typer.Option(None, "--budget-usd", min=0, help=BUDGET_USD_HELP),
     budget_calls: int | None = typer.Option(None, "--budget-calls", min=0, help=BUDGET_CALLS_HELP),
+    log_format: str = typer.Option("text", "--log-format", help=LOG_FORMAT_HELP),
+    log_text: bool = typer.Option(False, "--log-text", help=LOG_TEXT_HELP),
 ) -> None:
     """Run the whole pipeline from a config file.
 
@@ -269,6 +299,7 @@ def run_command(
     from openodke.run import from_manifest as read_run
 
     chosen = _qualified(model, model_provider)
+    _logs(ctx, log_format, log_text)
     overrides = chosen is not None or widen or cache is not None
     if (config is None) == (from_manifest is None):
         typer.echo("error: give a config, or --from-manifest, and not both", err=True)

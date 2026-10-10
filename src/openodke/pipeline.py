@@ -37,6 +37,12 @@ sinks write, and `stats["stopped"]` says where and why. An error in a stage
 that runs over the whole batch (resolving, corroborating, scoring, the gate)
 still fails the run.
 
+Each stage is an event and a span on the pipeline's `Observer`
+(`openodke.observe`, #161): its counts, its latency and what its model calls
+cost; each document grounded is an event with its own counts, and each one
+left out an event with why. With no handler and no tracer configured, they go
+nowhere.
+
 Two of the thirteen stages are not on the `run()` path. `Constrainer` compiles
 the ontology into the store's own constraints and is exposed as `constraints()`
 for a sink to apply before its first write. `Inferrer` is a bootstrap, not a
@@ -48,6 +54,7 @@ from __future__ import annotations
 
 import logging
 import warnings
+from collections import Counter
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -57,6 +64,7 @@ from openodke.corroborate.inverses import partners
 from openodke.coverage import measure as measure_coverage
 from openodke.coverage import offered_by
 from openodke.llm.budget import BudgetExceeded
+from openodke.observe import Observer
 from openodke.ontology import Ontology
 from openodke.reextract import Reextract, hook_for
 from openodke.reextract import reextract as reextract_gaps
@@ -117,6 +125,9 @@ class Pipeline:
 
     `validator=` is the 0.2 name of `gate=`, and works with a warning until
     1.0.0 (DECISIONS #26).
+
+    `observer` is the job's `Observer`, whose events and spans each stage
+    reports to; a run without one reports to a fresh one.
     """
 
     def __init__(
@@ -139,6 +150,7 @@ class Pipeline:
         validator: Gate | None = None,
         coverage: bool = False,
         reextract: Reextract | None = None,
+        observer: Observer | None = None,
     ) -> None:
         if validator is not None:
             if gate is not None:
@@ -166,6 +178,7 @@ class Pipeline:
         self.inverses = bool(ontology.inverses) if inverses is None else inverses
         self.coverage = coverage
         self.reextract = reextract
+        self.observer = observer
         # Checked here, so a pipeline that cannot re-extract fails before a call is made.
         self._hook = None if reextract is None else hook_for(reextract, extractor)
 
@@ -230,12 +243,15 @@ class Pipeline:
         }
         # Documents left out because something raised for them alone, with why.
         failed: dict[str, str] = {}
+        observer = self.observer if self.observer is not None else Observer()
 
         def fail(doc: Document, stage: str, exc: Exception) -> None:
             if doc.id not in failed:
                 failed[doc.id] = reason(stage, exc)
                 log.warning("document %s failed and is left out: %s", doc.id, failed[doc.id])
+                observer.failed(stage, doc.id, failed[doc.id])
 
+        begun = observer.begin("chunk")
         routed: list[tuple[Document, list[Chunk]]] = []
         for doc in docs:
             chunks: list[Chunk] = []
@@ -257,8 +273,16 @@ class Pipeline:
                 fail(doc, "chunk", exc)
                 continue
             routed.append((doc, chunks))
+        observer.end(
+            begun,
+            {
+                **{k: stats[k] for k in ("documents", "chunks", "skipped", "deferred")},
+                "failed": len(failed),
+            },
+        )
 
         # Every chunk of the run at once, so the model calls are not one at a time.
+        begun, before = observer.begin("extract"), len(failed)
         everything = [c for _, cs in routed for c in cs]
         stop: BudgetExceeded | None = None
         stage = ""
@@ -288,8 +312,19 @@ class Pipeline:
                     stats["empty_extractions"] += 1
                 candidates.extend(extracted)
             batches.append((candidates, doc))
+        observer.end(
+            begun,
+            {
+                "chunks": len(everything),
+                "facts": sum(len(facts) for facts, _ in batches),
+                "empty": stats["empty_extractions"],
+                "unextracted": unextracted,
+                "failed": len(failed) - before,
+            },
+        )
         # After a stop too: the free checks cost nothing, a cached answer is
         # free, and every other call is refused without being made.
+        begun, before = observer.begin("ground"), len(failed)
         try:
             grounded, errors = _ground_each(self.grounder, batches)
         except BudgetExceeded as exc:
@@ -306,6 +341,20 @@ class Pipeline:
         ]
         routed = [(doc, chunks) for doc, chunks, _ in kept_rows]
         grounded = [row for _, _, row in kept_rows]
+        for (doc, chunks), row in zip(routed, grounded, strict=True):
+            stamped = Counter(fact.verdict.value for fact in row)
+            observer.document(
+                "ground", doc.id, {"chunks": len(chunks), "facts": len(row), **stamped}
+            )
+        verdicts = Counter(fact.verdict.value for row in grounded for fact in row)
+        observer.end(
+            begun,
+            {
+                "facts": sum(verdicts.values()),
+                **dict(sorted(verdicts.items())),
+                "failed": len(failed) - before,
+            },
+        )
         if self.coverage or self._hook is not None:
             # What extraction left behind, before anything merges or refuses.
             report = measure_coverage(
@@ -319,6 +368,7 @@ class Pipeline:
                 stats["coverage"] = report.stats()
             if self.reextract is not None and self._hook is not None and stop is None:
                 # The gaps go back to the extractor; what returns is grounded here.
+                begun = observer.begin("reextract")
                 try:
                     grounded, stats["reextract"] = reextract_gaps(
                         self.reextract,
@@ -332,6 +382,7 @@ class Pipeline:
                 except BudgetExceeded as exc:
                     # What the first pass grounded stands; the gap pass is dropped.
                     stop, stage = exc, "reextract"
+                observer.end(begun, stats.get("reextract"))
         if stop is not None:
             unchecked = sum(
                 f.verdict is GroundingVerdict.UNCHECKED for row in grounded for f in row
@@ -350,6 +401,7 @@ class Pipeline:
                 unchecked,
             )
         facts: list[Fact] = []
+        begun, before = observer.begin("normalize"), len(failed)
         for (doc, _), row in zip(routed, grounded, strict=True):
             try:
                 facts.extend([self.normalizer.normalize(fact) for fact in row])
@@ -357,22 +409,34 @@ class Pipeline:
                 if is_config_error(exc) or isinstance(exc, BudgetExceeded):
                     raise
                 fail(doc, "normalize", exc)
+        observer.end(begun, {"facts": len(facts), "failed": len(failed) - before})
         if failed:
             stats["failed"] = dict(failed)
+        # The facts the batch stages take in: the job's "in" (`JobCounts`).
+        stats["candidates"] = len(facts)
 
-        resolved, links = self.resolver.resolve(facts, _entities_of(facts))
+        begun = observer.begin("resolve")
+        found_facts, found_links = self.resolver.resolve(facts, _entities_of(facts))
+        resolved, links = list(found_facts), list(found_links)
+        observer.end(begun, {"facts": len(resolved), "links": len(links)})
         if self.inverses:
+            begun = observer.begin("derive")
             batch = list(resolved)
             derived = partners(batch, self.ontology)
             stats["derived"] = len(derived)
             resolved = [*batch, *derived]
+            observer.end(begun, {"derived": len(derived)})
+        begun = observer.begin("corroborate")
         scored = [self.scorer.score(f) for f in self.corroborator.corroborate(resolved)]
+        observer.end(begun, {"facts_in": len(resolved), "facts_out": len(scored)})
+        begun = observer.begin("gate")
         kept: list[Fact] = []
         for fact in scored:
             if self.gate.validate(fact, self.ontology).action == "refuse":
                 stats["refused"] += 1
             else:
                 kept.append(fact)
+        observer.end(begun, {"accepted": len(kept), "refused": stats["refused"]})
 
         kg = KnowledgeGraph(
             entities=tuple(_entities_of(kept).values()),
