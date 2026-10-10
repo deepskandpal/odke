@@ -13,6 +13,7 @@ odke run examples/e2e/odke.yaml                          # run it and write the 
 odke run examples/e2e/odke.yaml --dry-run                # load, extract and ground; print what would be written
 odke run examples/e2e/odke.yaml --model ollama/llama3.1  # every role on one model, whatever the config says
 odke run examples/e2e/odke.yaml --budget-usd 1.50        # stop cleanly before spending more, keeping what is done
+odke run --from-manifest examples/e2e/out                # run again what a run's manifest recorded
 ```
 
 | Exit status | Means |
@@ -58,6 +59,7 @@ bootstrap: false
 coverage: true
 reextract: {windows: 3}            # off unless named
 store_lookup: {use: neo4j, tenant: acme}   # off unless named
+manifest: runs/last.json           # the run manifest here too
 ```
 
 | Key | Required | What it is |
@@ -71,6 +73,7 @@ store_lookup: {use: neo4j, tenant: acme}   # off unless named
 | `coverage` | no, default `true` | Count what extraction left behind in each document, with no model ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)). |
 | `reextract` | no, off by default | Hand those gaps back to the extractor and ground what returns: `true`, or `{windows: N}`, the most windows per document (default 3). The extractor must have a `reextract` method (`llm` and `hybrid` do). Not part of `odke eval ablation` ([the re-extract hook](grounding.md#handing-a-gap-back-the-re-extract-hook)). |
 | `store_lookup` | no, off by default | Resolve each batch against what the store already holds, without loading it: `neo4j`, or `package.module:Name` for a `StoreLookup` of your own ([below](#store_lookup)). |
+| `manifest` | no | Where the [run manifest](#the-run-manifest) is written, besides each JSONL sink's `manifest.json`. |
 
 Every relative path (the ontology, each input, `pythonpath`, replay files, a sink's
 output) resolves against the directory the config file is in, so a config runs the
@@ -342,6 +345,74 @@ stage:
 A `DoubleStageWarning` raised while the pipeline is built is printed as a
 `warning:` line on standard error.
 
+## The run manifest
+
+Every run writes one manifest: `odke run`, `odke validate`, `odke ground` and
+`Validator.validate` ([DECISIONS #40](decisions.md#40)). It says what the run
+was asked, what answered, and what it made, so a graph can be traced to the
+run that wrote it and the run made again.
+
+| Field | Holds |
+|---|---|
+| `manifest_version` | `1`, the format of the fields below |
+| `command`, `dry_run` | `run`, `validate` or `ground`; a dry run has a manifest and writes none |
+| `config`, `config_hash` | the config resolved, and the SHA-256 of it as canonical JSON. `odke run`'s is the run config with every key filled in and each model role as `ModelRoles` resolves it, so leaving a default out and naming it hash alike. `odke validate` and `odke ground` record their options and the `models` block; the Validator, its stages by class. No secret is in either |
+| `config_file`, `base_dir` | the config file, and the directory its relative paths resolve against |
+| `models` | per role: `model`, the provider-qualified id asked for, and `served`, the ids the provider said answered, provider-qualified. When the config names an alias, `served` is the pinned id |
+| `prompts` | each [registered prompt](models.md#prompts) key sent, with its SHA-256 |
+| `ontology_version`, `ontology_hash` | the ontology's label and its [`fingerprint`](ontology.md#freezing); `None` with no ontology |
+| `package` | `openodke`'s version, `python`'s and the `platform` |
+| `inputs` | `documents`, each id with the SHA-256 of its text; `facts`, the triples handed in (`rows`, `hash`); `hash`, one over both |
+| `cache`, `budget` | the response cache's directory and the budget's limits, or `None` |
+| `started_at`, `ended_at` | UTC; the end is after the sinks wrote |
+| `counts` | the command's own: the pipeline's and the graph's for `odke run`, the report's for `odke validate`, the summary's for `odke ground` |
+| `spent` | `calls`, `cached_calls`, `input_tokens`, `output_tokens`, and `usd`, `None` when any call went unpriced |
+| `stopped`, `failed` | where a [budget](#budgets) stopped the run, and the documents left out with why |
+
+**Where it goes.** Into each JSONL sink's `manifest.json`, beside the keys the
+sink has always written there: `ontology`, `created_at`, the counts and
+`stats`. An older reader finds what it found, and in a store that merges, those
+counts stay the files'. With `manifest:` in the config, there too; with neither,
+beside the config as `<name>.manifest.json`, so every run writes one.
+`odke validate` writes it into `-o`, and `odke ground` beside its summary. The
+report's `manifest` line names each file.
+
+**Secrets.** A value under a key that names one (`password`, `token`,
+`api_key`, `secret`, `authorization`) and the password in a URL are
+`<redacted>` before anything is hashed or written. A key that names where a
+secret is read, `password_env` or `api_key_env`, is kept.
+
+**Two runs of one config write the same manifest**, but for `started_at`,
+`ended_at`, the graph's `created_at` and the meter's latencies.
+`odke run --from-manifest PATH` runs one again: the config as it was resolved,
+from where it was read. It is refused, exit 2 and nothing written, when the
+ontology's fingerprint or any document's hash is not what the manifest
+recorded, naming each document that changed, and it takes none of `--model`,
+`--widen`, `--cache` or the budget flags, which would make it another run.
+A different openodke is a warning. With `models.cache`, the replay answers from
+the cache and calls nothing it called before.
+
+A manifest of `odke validate` or `odke ground` is run again the same way by
+hand: its `config` holds every option, so write `config.models` to a file as
+`{"models": ...}`, pass it as `--config`, and pass the rest as flags.
+
+```python
+from openodke.manifest import digest
+from openodke.run import execute, load_config
+
+manifest = execute(load_config("examples/e2e/odke.yaml"), dry_run=True).manifest
+assert manifest is not None and manifest.dry_run
+print(manifest.models["ground"])
+# model='anthropic/claude-haiku-4-5-20251001' served=('anthropic/claude-haiku-4-5-20251001',)
+assert list(manifest.prompts) == ["extract@1", "ground.span@1"]
+assert manifest.config_hash == digest(manifest.config)
+assert manifest.counts["facts"] == 25 and len(manifest.inputs.documents) == 8
+```
+
+`read_manifest(path)` reads one back, from the file or the directory holding
+it, and `from_manifest(path)` gives the `RunConfig` to run again with
+`execute(config, replaying=manifest)`.
+
 ## When one document fails
 
 A document whose chunking, extraction, grounding or normalising raises is left
@@ -398,6 +469,7 @@ grounder      facts 6, calls 2, prompt_tokens 254, completion_tokens 12, support
 cost          3 model calls, 886 tokens, USD unknown
 budget        calls 3 of 3
 wrote         jsonl → …/out: entities.jsonl 3, facts.jsonl 6, links.jsonl 0, manifest.json
+manifest      …/out/manifest.json
 ```
 
 From Python, `Ledger(budget).client(inner)` holds any client to a budget, and
@@ -518,6 +590,7 @@ coverage      0 of 5 sentences naming two known entities uncovered, 0 entities i
 graph         25 facts (8 edges, 17 properties), 7 entities, 4 links (different 1, similar 3)
 cost          39 model calls, 4980 tokens, USD unknown
 wrote         jsonl → …/examples/e2e/out: entities.jsonl 7, facts.jsonl 25, links.jsonl 4, manifest.json
+manifest      …/examples/e2e/out/manifest.json
 ```
 
 Line by line:
@@ -551,6 +624,9 @@ Line by line:
   Nothing was merged away.
 - **cost.** The recorded responses carry no price, so the cost is unknown rather
   than zero.
+- **manifest.** The [run manifest](#the-run-manifest), added to the JSONL sink's
+  `manifest.json`: the config and its hash, the two models, the two prompts,
+  the ontology's fingerprint and each document's hash.
 
 `odke.neo4j.yaml` is the same run with a Neo4j sink, `constrainer: neo4j` and
 `bootstrap: true`. Its dry run connects to nothing and prints the 15 statements the

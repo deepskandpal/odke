@@ -71,7 +71,9 @@ because they are fixed in different places:
 
 `out/facts.jsonl` is the same facts with their verdicts, in the format a run
 writes, so `odke eval spans --facts out` reads it. `out/summary.json` is the
-summary, with the ids of every fact of each failure shape.
+summary, with the ids of every fact of each failure shape. `out/manifest.json`
+is the [run manifest](run.md#the-run-manifest): the options, the model, the
+prompt, the ontology's fingerprint and the hash of every text and of the rows.
 
 | Option | |
 |---|---|

@@ -453,7 +453,8 @@ assert inspector.graph.nodes["c:acme"]["hq"] == "Munich"
 ## JSONL
 
 `JsonlSink(directory, *, merge=False)` writes every entity, fact and link as
-JSON Lines, with the stage counts in `manifest.json`. `facts.jsonl` is a
+JSON Lines, with the stage counts in `manifest.json`, to which a run adds its
+[run manifest](run.md#the-run-manifest). `facts.jsonl` is a
 predictions file for [`odke eval`](evaluation.md). With `merge=True` the files
 are a store, and a write [merges with it](#merge-with-the-store).
 
