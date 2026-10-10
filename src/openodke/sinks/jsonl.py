@@ -36,6 +36,9 @@ class JsonlSink:
     or went: `facts.jsonl` is read, every fact citing the documents is
     retracted and retired when left with none, and the file is written back
     (#116).
+
+    `append(kg)` adds a micro-batch to what the files hold (#158): a streamed
+    run writes its first micro-batch and appends the rest.
     """
 
     def __init__(self, directory: str | Path, *, merge: bool = False) -> None:
@@ -59,8 +62,38 @@ class JsonlSink:
         self._write("entities.jsonl", entities)
         self._write("facts.jsonl", facts)
         self._write("links.jsonl", links)
+        self._manifest(manifest_of(kg, entities, facts, links))
+
+    def append(self, kg: KnowledgeGraph) -> None:
+        """One micro-batch more: its lines after the files' own, and its counts on the manifest's.
+
+        Nothing is read back, so an entity, fact or link two micro-batches both
+        state is a line in each, and a reader keeps the last, as `merge` does.
+        The manifest's counts are the files' lines, and its `stats` are the
+        graph's: a streamed run hands each micro-batch the run's so far. A
+        sink that merges merges, as `write` does.
+        """
+        if self.merge:
+            self.write(kg)
+            return
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self._write("entities.jsonl", kg.entities, mode="a")
+        self._write("facts.jsonl", kg.facts, mode="a")
+        self._write("links.jsonl", kg.links, mode="a")
+        path = self.directory / "manifest.json"
+        held: dict[str, Any] = (
+            json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        )
+        added = manifest_of(kg, kg.entities, kg.facts, kg.links)
+        for key in ("entities", "facts", "edges", "properties", "links"):
+            added[key] += int(held.get(key, 0))
+        added["ontology"] = held.get("ontology", added["ontology"])
+        added["created_at"] = held.get("created_at", added["created_at"])
+        self._manifest(added)
+
+    def _manifest(self, manifest: dict[str, Any]) -> None:
         (self.directory / "manifest.json").write_text(
-            json.dumps(manifest_of(kg, entities, facts, links), indent=2), encoding="utf-8"
+            json.dumps(manifest, indent=2), encoding="utf-8"
         )
 
     def retract(
@@ -99,8 +132,8 @@ class JsonlSink:
         with path.open(encoding="utf-8") as fh:
             return [model.model_validate_json(line) for line in fh if line.strip()]
 
-    def _write(self, name: str, rows: Iterable[BaseModel]) -> None:
-        with (self.directory / name).open("w", encoding="utf-8") as fh:
+    def _write(self, name: str, rows: Iterable[BaseModel], *, mode: str = "w") -> None:
+        with (self.directory / name).open(mode, encoding="utf-8") as fh:
             for row in rows:
                 fh.write(row.model_dump_json() + "\n")
 

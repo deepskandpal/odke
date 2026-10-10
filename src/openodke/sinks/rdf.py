@@ -150,8 +150,11 @@ class RdfSink:
 
     Two facts with one signature are one statement node, carrying the later
     fact, as successive `SET r = props` would leave a Neo4j relationship.
-    The file is rewritten on every `write`.
+    The file is rewritten on every `write`, so it does not stream.
     """
+
+    # Each write is the whole graph (`openodke.stream.streams`).
+    streams = False
 
     def __init__(
         self,
