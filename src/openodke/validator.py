@@ -49,6 +49,12 @@ orders (DECISIONS #34): a `PairJudge`, handed to the default resolver, which
 reads its contexts from the texts given. Off unless given, and never asked in
 a dry run.
 
+`normalize_batch=True` has the default resolver normalise the batch
+(DECISIONS #43): look-alikes the batch introduces become one entity when
+nothing in their names or context keeps them apart. Off unless asked for.
+`embed`, a function from texts to vectors, compares the sentences of
+look-alikes the names alone would merge.
+
 `validate()` returns the graph and a `ValidationReport` of the job: facts in,
 refused, merged, linked and derived; what the pair judge decided; the model
 calls, tokens and cost; the registered prompts sent; and the coverage report. A
@@ -77,6 +83,7 @@ from openodke.corroborate import (
     ValueNormalizer,
 )
 from openodke.corroborate.judge import judge_stop
+from openodke.corroborate.resolve import Embed
 from openodke.coverage import summary as coverage_summary
 from openodke.gate import VerdictGate
 from openodke.ground import LLMGrounder
@@ -135,6 +142,9 @@ class ValidationReport(Frozen):
     # The pair judge (DECISIONS #34): pairs handed in and asked, calls, calls in
     # the swapped order, order disagreements, and each decision's count.
     judge: dict[str, int] | None = None
+    # The batch normalised (DECISIONS #43): look-alike pairs, those merged, the
+    # entities and mentions they made, and those kept apart, and why.
+    batch: dict[str, int] | None = None
     # Inverse and symmetric partners the ontology implied (DECISIONS #28).
     derived: int = 0
     facts_out: int = 0
@@ -186,6 +196,8 @@ class ValidationReport(Frozen):
             lines.append(_row("store", _store_line(self.store)))
         if self.judge is not None:
             lines.append(_row("judge", _judge_line(self.judge)))
+        if self.batch is not None:
+            lines.append(_row("batch", _batch_line(self.batch)))
         lines.append(_row("derived", f"{self.derived} inverse and symmetric partners"))
         lines.append(
             _row(
@@ -249,6 +261,8 @@ class Validator:
         sinks: Sequence[Sink] = (),
         lookup: StoreLookup | None = None,
         judge: PairJudge | None = None,
+        normalize_batch: bool | None = None,
+        embed: Embed | None = None,
     ) -> None:
         if grounder is not None and locate:
             raise ValueError("with a grounder of your own, it locates: LLMGrounder(locate=True)")
@@ -259,6 +273,11 @@ class Validator:
         if resolver is not None and judge is not None:
             raise ValueError(
                 "with a resolver of your own, it asks the judge: NativeResolver(judge=...)"
+            )
+        if resolver is not None and (normalize_batch is not None or embed is not None):
+            raise ValueError(
+                "with a resolver of your own, it normalises the batch: "
+                "NativeResolver(normalize_batch=..., embed=...)"
             )
         self.ontology = ontology if ontology is not None else Ontology()
         self.grounder = grounder
@@ -275,6 +294,8 @@ class Validator:
         self.sinks = tuple(sinks)
         self.lookup = lookup
         self.judge = judge
+        self.normalize_batch = normalize_batch
+        self.embed = embed
 
     def validate(
         self,
@@ -364,7 +385,12 @@ class Validator:
             grounder = CheckedGrounder(inner, ontology=ontology)
         resolver = self.resolver
         if resolver is None:
-            resolver = NativeResolver(lookup=self.lookup, judge=self.judge)
+            batch: dict[str, Any] = {"embed": self.embed}
+            if self.normalize_batch is not None:
+                batch["normalize_batch"] = self.normalize_batch
+            resolver = NativeResolver(
+                lookup=self.lookup, judge=self.judge, ontology=ontology, **batch
+            )
         if dry_run and isinstance(resolver, NativeResolver) and resolver.judge is not None:
             # A dry run asks no model: the rules alone, on a copy.
             resolver = copy.copy(resolver)
@@ -401,6 +427,7 @@ class Validator:
         coverage = kg.stats.get("coverage")
         resolved = getattr(stages["resolver"], "stats", None)
         store = resolved.get("store") if isinstance(resolved, Mapping) else None
+        batch = resolved.get("batch") if isinstance(resolved, Mapping) else None
         stopped = kg.stats.get("stopped")
         if not isinstance(stopped, Mapping):
             stopped = judge_stop(resolved)
@@ -428,6 +455,9 @@ class Validator:
                 {str(k): int(v) for k, v in store.items()} if isinstance(store, Mapping) else None
             ),
             judge=judge,
+            batch=(
+                {str(k): int(v) for k, v in batch.items()} if isinstance(batch, Mapping) else None
+            ),
             derived=derived,
             facts_out=len(kg.facts),
             edges=len(kg.edges),
@@ -628,6 +658,26 @@ def _judge_line(judged: Mapping[str, int]) -> str:
         if judged.get(k)
     ]
     return line + (f"; {', '.join(extra)}" if extra else "")
+
+
+def _batch_line(batch: Mapping[str, int]) -> str:
+    merged = batch.get("mentions", 0)
+    line = (
+        f"{_n(merged, 'mention')} merged into {_n(batch.get('groups', 0), 'entity')}, "
+        f"from {_n(batch.get('alike', 0), 'look-alike pair')}"
+    )
+    why = [
+        f"{batch[k]} {label}"
+        for k, label in (
+            ("numbers", "by a number"),
+            ("forms", "by a legal form"),
+            ("context", "by context"),
+            ("ambiguous", "alike to two"),
+            ("refused", "by a chain"),
+        )
+        if batch.get(k)
+    ]
+    return line + (f"; kept apart: {', '.join(why)}" if why else "")
 
 
 def _n(count: int, noun: str) -> str:

@@ -7,8 +7,10 @@ is a scripted function and every judge answer a recorded one: no model.
 
 from __future__ import annotations
 
+import json
 import random
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -26,6 +28,8 @@ from openodke import (
 )
 from openodke.corroborate import MemoryLookup, NativeResolver, PairJudge, legal_form
 from openodke.llm import RecordedClient
+from openodke.run import build, execute, parse_config
+from openodke.validator import Validator
 
 TEXT = (
     "Mercury is the planet closest to the Sun. "
@@ -389,5 +393,67 @@ def test_an_embedding_needs_the_batch_normalised_and_a_floor_is_a_cosine() -> No
         NativeResolver(normalize_batch=False, embed=Embed())
     with pytest.raises(ValueError, match="context_floor is a cosine"):
         NativeResolver(context_floor=1.5)
-    assert NativeResolver(normalize_batch=True).documents is None
+    assert NativeResolver().documents is None and not NativeResolver().normalize_batch
     assert NativeResolver(normalize_batch=True, embed=Embed()).documents == {}
+
+
+ROWS = [
+    {"doc": "d1", "subject": name, "subject_type": "Company", "predicate": "hq", "object": "Leeds"}
+    for name in ("Acme Corp.", "ACME Corporation")
+]
+TYPES = Ontology.from_dict({"types": {"Company": {}}, "predicates": {"hq": {"range": "string"}}})
+HQ = Document(id="d1", text="Acme Corp. is in Leeds. ACME Corporation has its office in Leeds.")
+
+
+def test_the_validator_normalises_the_batch_when_asked_and_reports_it() -> None:
+    kg, report = Validator(TYPES, normalize_batch=True).validate(ROWS, [HQ], dry_run=True)
+    assert len(kg.entities) == 1 and report.facts_out == 1
+    assert report.batch == {
+        "alike": 1,
+        "merged": 1,
+        "groups": 1,
+        "mentions": 2,
+        "numbers": 0,
+        "forms": 0,
+        "context": 0,
+        "ambiguous": 0,
+        "refused": 0,
+        "embedded": 0,
+    }
+    assert "batch         2 mentions merged into 1 entity" in report.render()
+
+    # Off by default (DECISIONS #43): the two spellings stay two entities.
+    kg, report = Validator(TYPES).validate(ROWS, [HQ], dry_run=True)
+    assert len(kg.entities) == 2 and report.batch is None
+    with pytest.raises(ValueError, match=r"NativeResolver\(normalize_batch=..., embed=...\)"):
+        Validator(resolver=NativeResolver(), normalize_batch=True)
+
+
+def test_a_run_config_turns_it_on_and_hands_the_resolver_the_ontology(tmp_path: Path) -> None:
+    (tmp_path / "ontology.json").write_text(TYPES.model_dump_json(), encoding="utf-8")
+    (tmp_path / "corpus").mkdir()
+    (tmp_path / "corpus" / "d1.txt").write_text(HQ.text, encoding="utf-8")
+    rows = [{**row, "doc": "d1"} for row in ROWS]
+    (tmp_path / "rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    def config(resolver: Any) -> dict[str, Any]:
+        return {
+            "ontology": "ontology.json",
+            "inputs": ["corpus"],
+            "stages": {
+                "extractor": {"use": "triples", "path": "rows.jsonl"},
+                "grounder": "passthrough",
+                "resolver": resolver,
+            },
+        }
+
+    on = {"use": "native", "normalize_batch": True}
+    built = build(parse_config(config(on), base_dir=tmp_path))
+    resolver = built.stages["resolver"]
+    assert resolver.normalize_batch and resolver.ontology is built.ontology
+    result = execute(parse_config(config(on), base_dir=tmp_path), dry_run=True)
+    assert result.stats["stages"]["resolver"]["batch"]["merged"] == 1
+    assert len(result.graph.entities) == 1
+
+    off = execute(parse_config(config("native"), base_dir=tmp_path), dry_run=True)
+    assert len(off.graph.entities) == 2

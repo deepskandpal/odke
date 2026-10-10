@@ -448,6 +448,9 @@ def _native_resolver(options: dict[str, Any], ctx: Context, where: str) -> Nativ
     `judge: true` takes its defaults; a mapping sets `low`, `queue` and
     `reviewed` (paths relative to the config), `max_workers` and `retry`. It
     asks the `ground` role's model, metered as the stage `judge`.
+    `normalize_batch: true` normalises the batch (DECISIONS #43), with the
+    run's ontology for its types' aliases; `embed` is a function, so Python
+    only.
     """
     opts = dict(options)
     judge = opts.pop("judge", None)
@@ -457,7 +460,9 @@ def _native_resolver(options: dict[str, Any], ctx: Context, where: str) -> Nativ
         if not isinstance(judge, Mapping):
             raise ConfigError(f"{where}.judge: true, or the judge's options")
         opts["judge"] = _pair_judge(dict(judge), ctx, f"{where}.judge")
-    resolver: NativeResolver = construct(NativeResolver, opts, where)
+    resolver: NativeResolver = construct(
+        NativeResolver, opts, where, injected={"ontology": ctx.ontology}, reserved=("embed",)
+    )
     return resolver
 
 
