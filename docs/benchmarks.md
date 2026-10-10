@@ -190,6 +190,11 @@ Five extractors on the three datasets above, each run three ways:
 | + grounding | the [Validator](validator.md)'s ground job and its gate: each triple checked against its document, and only affirmed ones kept |
 | + resolution and corroboration | the whole Validator: grounding, resolution, inverse partners, corroboration, scoring and the gate |
 
+The grounder is ODKE+'s [paper mode](grounding.md#paper-mode-the-odke-grounder-as-written),
+not the Validator's default span prompt: it reads each triple's whole document
+and answers True or False, and the gate keeps only affirmed triples. The value
+normaliser is off, because the gold keeps the source's words.
+
 The extractors are openodke's reference extractor, LangChain's
 LLMGraphTransformer, neo4j-graphrag, LangExtract and openodke's
 `PatternExtractor`. Sonnet 5.5 (`anthropic/claude-sonnet-5-5`) extracts and
