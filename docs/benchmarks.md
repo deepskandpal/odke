@@ -47,6 +47,15 @@ odke bench run text2kgbench runs/movie
   drops nothing must say whether the grounder confirmed everything or failed.
   It writes the [eval report](evaluation.md#the-eval-report) as `report.json`
   beside the predictions; `--report` puts it elsewhere.
+- Beside `predictions/`, `run` writes `rejections.jsonl`: every candidate the
+  extractor refused before anything was grounded, one row each, with the
+  document, the chunk, the reason (a predicate not in the snippet, a quote not
+  in the passage, ...) and the candidate as the model wrote it (`subject`,
+  `predicate`, `value`, `quote`), as far as it got. The report counts them by
+  reason, in its notes and as `rejected` and `rejected: <reason>` metrics, so a
+  missing fact can be told from one the model never wrote. The file is written
+  every run, empty when nothing was refused; an extractor that keeps no record
+  of what it refuses is said to.
 
 The prepared config extracts with `structured: false` — no response schema, as
 the paper prompts — gives the extractor 16,000 tokens of room for a

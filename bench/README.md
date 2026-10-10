@@ -83,7 +83,8 @@ cross-model comparison.
 
 Each competitor directory keeps its triples (`facts.jsonl`), its model, token
 usage and library versions (`usage.json`) and its report; every run keeps its
-predictions per configuration (`predictions/`), which is what an audit reads. A
+predictions per configuration (`predictions/`), which is what an audit reads,
+and what its extractor refused before grounding (`rejections.jsonl`). A
 document a competitor fails on (a bad key fails them all) would score as an
 empty answer, so `competitors.py` exits non-zero when any did, and `tables.py`
 leaves that set out of the averages and says so.
