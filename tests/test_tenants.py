@@ -410,6 +410,8 @@ def test_two_tenants_share_a_live_neo4j_and_never_merge_rerun_or_retract_across(
             run(b, "doc-3", town="York")
             assert hq in store.scoped(b).check(ontology)
             assert hq not in store.scoped(a).check(ontology)
+            b_employer = (2, ["doc:doc-1", "doc:doc-3"], False)
+            assert held(b)[employer] == b_employer and held(a) == {employer: both, hq: both}
 
             # read_neo4j reads one tenant's facts, under its keys.
             rows, _ = read_neo4j(driver, tenant=a, predicates=[employer, hq])
@@ -421,9 +423,12 @@ def test_two_tenants_share_a_live_neo4j_and_never_merge_rerun_or_retract_across(
             assert (report.cited, report.lost, report.retired) == (2, 2, 0)
             after = (1, ["doc:doc-2"], False)
             assert held(a) == {employer: after, hq: after}
-            assert held(b)[employer] == one
-            Reconciler([store.scoped(b)]).delete(["doc-1"])
-            assert held(b)[employer][2] is True and held(a) == {employer: after, hq: after}
+            assert held(b)[employer] == b_employer
+            # b's turn: its employer keeps doc-3, its Leeds head office is retired.
+            report = Reconciler([store.scoped(b)]).delete(["doc-1"])
+            assert (report.cited, report.lost, report.retired) == (2, 1, 1)
+            assert held(b)[employer] == (1, ["doc:doc-3"], False)
+            assert held(a) == {employer: after, hq: after}
         finally:
             driver.execute_query(mine + "DETACH DELETE n")
             for match in created:

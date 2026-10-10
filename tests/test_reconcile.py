@@ -426,7 +426,7 @@ def _operators(plan: Mapping[str, Any] | None) -> list[str]:
 def test_the_reconciler_against_a_live_neo4j() -> None:
     """The done-when in Neo4j. Names are suffixed, so a shared server is left as found."""
     pytest.importorskip("neo4j")
-    from openodke.sinks.neo4j import _CITING, _retract_cypher
+    from openodke.sinks.neo4j import _citing, _retract_cypher
 
     suffix = uuid.uuid4().hex[:8]
     names = {
@@ -498,7 +498,10 @@ def test_the_reconciler_against_a_live_neo4j() -> None:
 
             # Found through the evidence index and rewritten by signature: no scan.
             for cypher, params in (
-                (_CITING, {"indexes": [f"odke_evidence_{names['hq']}"], "terms": '"doc-a"'}),
+                (
+                    _citing(None),
+                    {"indexes": [f"odke_evidence_{names['hq']}"], "terms": '"doc-a"'},
+                ),
                 (_retract_cypher(names["hq"]), {"rows": [{"signature": "x", "props": {}}]}),
             ):
                 with driver.session() as session:
