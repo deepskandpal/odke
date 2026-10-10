@@ -117,8 +117,8 @@ and `odke bench run` also write an `EvalReport`: one JSON document, versioned by
 check the major version first.
 
 - `odke eval <stage> --report report.json` writes it. `--json` still prints the
-  stage's `StageReport`, as before; for `pipeline`, `precision` and `pool` it
-  prints the eval report.
+  stage's `StageReport`, as before; for `pipeline`, `precision`, `pool` and
+  `refusals` it prints the eval report.
 - `odke bench run` writes it as `report.json` beside the predictions; `--report`
   puts it elsewhere.
 - 1.1 added `judged_precision`, `adjudication` and `pooled_recall`, and 1.2
@@ -1135,11 +1135,81 @@ decisions rather than asking again (`Decided`), so the bucket and the lenient
 score agree. `FactJudge.equivalent` is the diagnosis's hook for a judge of its
 own, and narrows the document it is given to the gold claim's sentences.
 
+## What the grounder refused
+
+Nobody reads what a grounder throws away. A refusal rate says how many, not
+whether they were right, and against distantly supervised gold a refused
+"right" fact may be one the text never stated. `odke eval refusals` draws a
+sample of the refusals for a person to read, and scores what they tick.
+
+```bash
+odke eval refusals out/ --documents texts/ --make-sheet refusal-sheets/ --n 100
+odke label read refusal-sheets/ -o refusal-labels.jsonl
+odke eval refusals --labels refusal-labels.jsonl
+```
+
+- **What it reads**, any of: an `odke ground` output (its directory, or
+  `facts.jsonl`), where a refusal is a fact the free checks stamped, or one
+  whose verdict is `contradicted` or `not_found`; an `odke validate -o`
+  directory, whose `refused.jsonl` holds each fact the gate refused and the
+  gate's reason ([The Validator](validator.md#one-command)); or an
+  `odke bench run` set, or a directory of them, competitors' sets included.
+  A ground or validate run keeps facts and not texts, so give `--documents`.
+- **A bench set keeps triples, not verdicts**, so its refusals are each
+  extractor's triples before grounding that the gated row lacks. The verdict
+  is the one its config refuses: the paper's binary grounder answers only
+  "False", which is `not_found`. The text is the document, which is what a
+  grounder reading the whole document read, and whether the gold lists the
+  fact is the dataset's own scoring.
+- **The sample** gives each stratum, a dataset, extractor and verdict, an
+  equal share as its size allows, and within one the predicates take turns,
+  so no predicate takes the stratum. It is seeded (`--seed`, default 0), and
+  `--n` is 100 unless given. `refusals.jsonl` beside the sheets holds the
+  drawn rows, in sheet order.
+- **An item** shows the claim as the grounder read it, `Refused:` with the
+  verdict and the reason, `Gold:` where there is gold, and the text, with the
+  cited span in bold, or else where the claim's names are, as the span
+  locator finds them. A text over 3,000 characters is cut to the sentences
+  around what is bold. The boxes are `refusal correct` (the text does not
+  state the fact), `refusal wrong` (it does), `gold wrong` (the gold lists it
+  and the text does not state it) and `unsure`.
+- **The refusal precision** is the right refusals, correct and gold wrong,
+  over every judgement but unsure, with its Wilson 95% interval beside it:
+  arithmetic, no dependency, and inside [0, 1] even at 0 or n. It is reported
+  overall and per dataset, extractor and verdict where there are two or more,
+  with each judgement's count and, of the refusals the gold lists, the share
+  the gold was wrong on.
+
+```python
+from openodke.eval import RefusalLabel, report_refusals
+
+
+def label(judgement: str, gold: bool) -> RefusalLabel:
+    return RefusalLabel(
+        id=judgement,
+        claim="Loud — performer — Rihanna.",
+        text="…",
+        verdict="not_found",
+        reason="the passage does not settle it",
+        predicate="performer",
+        gold=gold,
+        judgement=judgement,
+    )
+
+
+labels = [label("refusal_correct", False)] * 6 + [label("gold_wrong", True)] * 2
+labels += [label("refusal_wrong", True)] * 2 + [label("unsure", False)]
+report = report_refusals(labels)
+assert "refusal precision 0.800 [0.490, 0.943] (Wilson 95%), 10 judged, 1 unsure" in report.render()
+```
+
 ## Labelling by hand
 
 `odke label` writes rows out as markdown sheets that a person ticks wherever a
 markdown file opens, Obsidian on a tablet included. It then reads the ticks
 back as `GroundingLabel`, `PairLabel` or `FactPairLabel` rows.
+
+back as `GroundingLabel`, `PairLabel` or `RefusalLabel` rows.
 
 ```bash
 odke label make grounding to-check.jsonl -o sheets/ --per-sheet 50
@@ -1162,6 +1232,12 @@ odke eval ground --labels ground.jsonl --predictions out/facts.jsonl
   it says which fact is gold; keep that apart, as `bench/labels/F` does.
 - **Sheets** are `sheet-01.md`, `sheet-02.md` and so on, and one sheet is one
   sitting. Item ids run across the sheets (`G-0001`, `P-0001`, `F-0001`).
+
+- **A refusal row** is a `Refusal`, as `odke eval refusals --make-sheet`
+  writes it: `id`, `claim`, `text`, `bold`, `verdict`, `reason`, `gold`, and
+  what it was stratified on. Its label adds `judgement`.
+- **Sheets** are `sheet-01.md`, `sheet-02.md` and so on, and one sheet is one
+  sitting. Item ids run across the sheets (`G-0001`, `P-0001`, `X-0001`).
   Beside each sheet, `sheet-NN.items.jsonl` keeps its rows, so the markdown
   only has to carry the ticks and the notes. The same rows give byte-identical
   sheets. `make` refuses a directory that already holds sheets.
@@ -1206,6 +1282,11 @@ Reading back:
   Pairs ticked `unsure` never become a label. They go to `<out>.unsure.jsonl`
   in the input shape, ready to be made into a sheet again. Text after `note:`
   goes to `<out>.notes.jsonl` with the item's id, sheet and answer.
+
+  `PairLabel(a, b, same)` on the two keys, or a refusal row plus `judgement`. Pairs ticked `unsure` never become a
+  `PairLabel`. They go to `<out>.unsure.jsonl` in the input shape, ready to be
+  made into a sheet again. Text after `note:` goes to `<out>.notes.jsonl` with
+  the item's id, sheet and answer.
 - **The summary** gives the sheets and items, how many are labelled and
   unlabelled, and the count for each answer.
 
@@ -1229,6 +1310,9 @@ odke eval pool runs/a runs/b --documents texts/     # no gold: recall relative t
 odke eval compare a.items.jsonl b.items.jsonl --applied offer-relations   # record what B measured
 odke eval pipeline --labels gold.jsonl --documents texts/ --predictions out.jsonl \
     --lenient pairs.jsonl                           # near misses judged; strict stays
+
+odke eval refusals runs/cmp --make-sheet sheets/ --n 100   # what the grounder refused, to tick
+odke eval refusals --labels refusal-labels.jsonl    # refusal precision, Wilson 95%
 ```
 
 - The CLI covers route, extract, ground, resolve, score and validate, and the
@@ -1249,5 +1333,7 @@ odke eval pipeline --labels gold.jsonl --documents texts/ --predictions out.json
 - `precision` takes `--facts` a judge graded, and `--labels` or
   `--make-sheet`; `pool` takes two or more runs
   ([Your data, no gold](#your-data-no-gold)).
+- `refusals` takes runs and `--make-sheet`, or `--labels` alone
+  ([What the grounder refused](#what-the-grounder-refused)).
 - `--report PATH` writes the [eval report](#the-eval-report) for any stage.
 - Errors exit with status 2.
