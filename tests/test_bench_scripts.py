@@ -27,6 +27,7 @@ def _load(name: str) -> ModuleType:
     return module
 
 
+batch_normalize = _load("batch_normalize")
 competitors = _load("competitors")
 inverses = _load("inverses")
 locator = _load("locator")
@@ -337,3 +338,71 @@ def test_the_store_lookup_bench_scores_links_into_each_documents_own_store(
     # With no tenant, each document's mentions also link to the other's twin.
     assert result["unscoped"]["links"] == 8 and result["unscoped"]["cross_document"] == 4
     assert "| 0.9 (default) | 4 | 50.0 | 50.0 |" in store_lookup.table(result)
+
+
+# --------------------------------------------------------------------------- #
+# batch_normalize.py
+# --------------------------------------------------------------------------- #
+
+
+def _pair(doc: str, split: str, a: tuple[str, int], b: tuple[str, int]) -> dict[str, Any]:
+    """One R item, its label and its private row: two mentions with their clusters."""
+    sides = {
+        side: {"key": f"{doc}:{name}", "type": "Person", "label": name, "context": f"{name} ran."}
+        for side, (name, _) in (("a", a), ("b", b))
+    }
+    return {
+        "item": sides,
+        "label": {"a": sides["a"]["key"], "b": sides["b"]["key"], "same": a[1] == b[1]},
+        "private": {"doc": doc, "split": split, "clusters": [a[1], b[1]]},
+    }
+
+
+def test_the_batch_bench_scores_merged_pairs_on_each_split(tmp_path: Path) -> None:
+    """Two kings kept apart by their numbers; a surname only the perfect judge joins."""
+    rows = [
+        _pair("test_0001", "dev", ("Robert II", 1), ("Robert III", 2)),
+        _pair("test_0001", "dev", ("Ada Lovelace", 3), ("Lovelace", 3)),
+        _pair("test_0002", "gate", ("Velislaus Bible", 1), ("Velislav's Bible", 1)),
+    ]
+    for name, field in (
+        ("items.jsonl", "item"),
+        ("labels.jsonl", "label"),
+        ("items.private.jsonl", "private"),
+    ):
+        lines = "".join(json.dumps(row[field]) + "\n" for row in rows)
+        (tmp_path / name).write_text(lines, encoding="utf-8")
+    result = batch_normalize.run(tmp_path)
+    by = {row["setting"]: row for row in result["settings"]}
+
+    # The resolver as it was links the kings, counted as a merge, and a wrong one.
+    assert (by["current"]["dev"]["merged"], by["current"]["dev"]["right"]) == (1, 0)
+    assert (
+        by["batch, judge-free"]["dev"]["merged"],
+        by["batch, names alone"]["dev"]["merged"],
+    ) == (
+        0,
+        1,
+    )
+    assert by["batch + perfect judge"]["dev"]["right"] == 1
+    assert by["batch + perfect judge"]["stats"]["judge_calls"] == 0
+    assert all(row["gate"]["precision"] == 1.0 for row in result["settings"])
+    assert "| batch, judge-free | 0 (0 right) | — | 0.0% | 1 (1 right) | 100.0% | 100.0% |" in (
+        batch_normalize.table(result)
+    )
+
+    raw = [
+        {
+            "sents": [["x"]],
+            "vertexSet": [
+                [_mention("Acme Corp", 0, "ORG"), _mention("ACME Corporation", 0, "ORG")],
+                [_mention("Acme Corp.", 0, "ORG")],
+                [_mention("1906", 0, "TIME")],
+            ],
+        }
+    ]
+    natural = batch_normalize.natural(raw)
+    assert (natural["mentions"], natural["pairs"], natural["same"]) == (3, 3, 1)
+    rows_by = {row["setting"]: row for row in natural["settings"]}
+    # Three names with one key: the dataset's clusters call one pair of them one entity.
+    assert (rows_by["batch, judge-free"]["merged"], rows_by["batch, judge-free"]["right"]) == (3, 1)
