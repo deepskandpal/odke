@@ -710,7 +710,7 @@ Line by line:
   the ontology's fingerprint and each document's hash.
 
 `odke.neo4j.yaml` is the same run with a Neo4j sink, `constrainer: neo4j` and
-`bootstrap: true`. Its dry run connects to nothing and prints the 15 statements the
+`bootstrap: true`. Its dry run connects to nothing and prints the 29 statements the
 bootstrap would apply and the 16 `UNWIND … MERGE` statements the sink would send;
 the example's README goes on to the Cypher that shows where each fact came from.
 The recorded responses were written by hand to exercise every path of the

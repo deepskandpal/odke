@@ -229,6 +229,12 @@ for change in old.diff(new):
 # breaking   changed predicates.employer.cardinality: 'multi' → 'single' (subjects already holding several values now conflict)
 ```
 
+Every fact a pipeline writes names the ontology that checked it, by its
+`fingerprint` (`odke.ontology`). `odke ontology diff old.json new.json --store
+out` follows the changes with how many stored facts each ontology checked,
+and the first the old one did: the facts a breaking change may no longer fit
+([Which ontology checked a fact](stores.md#which-ontology-checked-a-fact)).
+
 ## Cardinality and its scope
 
 `cardinality` says how many values a subject may hold; `cardinality_scope` says
@@ -259,7 +265,8 @@ assert (frozen.inferred, frozen.frozen_by) == (False, "Ada Lovelace")
 predicates as canonical JSON. `name`, `version` and the review fields are not in
 it, so a frozen or relabelled copy keeps it, and any change to a type or a
 predicate gives a new one. Two ontologies with one fingerprint check every fact
-alike.
+alike. `ontology.snippet(name).fingerprint` is the same for the schema slice a
+model extractor is shown for one type.
 
 ```python
 assert frozen.fingerprint == ontology.fingerprint and len(ontology.fingerprint) == 64

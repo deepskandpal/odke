@@ -90,16 +90,16 @@ odke run examples/e2e/odke.neo4j.yaml --dry-run
 odke run examples/e2e/odke.neo4j.yaml
 ```
 
-The dry run connects to nothing. It prints the 15 statements `bootstrap: true`
+The dry run connects to nothing. It prints the 29 statements `bootstrap: true`
 will apply and the 16 `UNWIND … MERGE` statements the sink will send:
 
 ```text
-bootstrap     would apply 15 statements
+bootstrap     would apply 29 statements
   CREATE INDEX odke_entity_key IF NOT EXISTS FOR (n:`Entity`) ON (n.key)
   CREATE CONSTRAINT odke_claim_signature IF NOT EXISTS FOR (c:`Claim`) REQUIRE c.signature IS UNIQUE
   CREATE CONSTRAINT odke_key_Company IF NOT EXISTS FOR (n:`Company`) REQUIRE n.key IS UNIQUE
   …
-  CREATE CONSTRAINT odke_signature_headquarters IF NOT EXISTS FOR ()-[r:`headquarters`]-() REQUIRE r.signature IS UNIQUE
+  CREATE INDEX odke_ontology_registration_number IF NOT EXISTS FOR ()-[r:`registration_number`]-() ON (r.`odke.ontology`)
 would write   neo4j → $NEO4J_URI: 16 statements, 52 rows
        5 × MERGE (n:`Company` {key: row.key})
        2 × MERGE (n:`Person` {key: row.key})

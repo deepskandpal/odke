@@ -323,7 +323,9 @@ not raise a `DoubleStageWarning`.
 Bootstrap also creates indexes on `external_id` per type, a full-text index over
 `label` and `aliases` per type, an index on `key` for `:Entity`, and a
 full-text index over `evidence_doc_ids` per predicate, which the
-[reconciler](#reconcile) finds a document's facts through. A type or
+[reconciler](#reconcile) finds a document's facts through, and an index on
+`odke.ontology` per predicate, which the facts one ontology checked are found
+through ([below](#which-ontology-checked-a-fact)). A type or
 predicate the ontology does not name gets no constraint or index. The key
 constraint and these indexes are what `Neo4jSink.lookup()` reads through to
 resolve a new batch against the graph without loading it
@@ -379,6 +381,64 @@ RETURN s.key, type(r) AS predicate, coalesce(o.key, o.value) AS object, r.polari
 MATCH (s:Entity)-[r]->(o) WHERE r.`odke.conflict` CONTAINS '"status": "lost"'
 RETURN s.key, type(r) AS predicate, coalesce(o.key, o.value) AS object, r.`odke.conflict`;
 ```
+
+### Which ontology checked a fact
+
+Every fact the gate lets through carries `odke.ontology`, the
+[`fingerprint`](ontology.md#freezing) of the ontology the pipeline checked it
+under ([DECISIONS #42](decisions.md#42)). A fact checked again is stamped
+again, so it names the last ontology that checked it; an ontology with no
+types and no predicates checks nothing and stamps nothing. A fact the model
+extracted also carries `odke.schema_slice`, the fingerprint of the
+`OntologySnippet` it was shown for its subject's type. Both are qualifiers,
+so every sink writes them where it writes qualifiers: in `facts.jsonl`, as
+relationship properties in Neo4j, the Cypher file and the CSV, as edge
+attributes in NetworkX, and under `<schema>qualifier/` in RDF. Neither is in
+`Fact.signature`: the same claim is one fact whatever checked it.
+
+`bootstrap()` gives each predicate a range index on `odke.ontology`, so after a
+schema change the facts the old one checked are found through it, never by a
+scan:
+
+```cypher
+// The employer facts one ontology checked, by its fingerprint.
+MATCH (s)-[r:employer]->(o) USING INDEX r:employer(`odke.ontology`)
+WHERE r.`odke.ontology` = $fingerprint
+RETURN s.key, coalesce(o.key, o.value) AS object, r.fact_id;
+```
+
+`Neo4jSink.checked_under(ontology)` runs that per predicate in one read
+transaction and returns the facts, reading no relationship type without the
+index and warning instead. `checked_under(facts, ontology)` and
+`checked_by(fact)` in `openodke.corroborate` do the same for facts in hand, a
+JSONL store's say; either takes the ontology or its fingerprint.
+
+```python
+from openodke import Document, Entity, Evidence, Fact, Ontology, Pipeline, Span
+from openodke.corroborate import ONTOLOGY, checked_by, checked_under
+
+
+class OneClaim:
+    def extract(self, chunk, ontology):
+        acme = Entity(key="c:acme", type="Company")
+        cited = Evidence(doc_id="d1", span=Span(doc_id="d1", start=0, end=21))
+        return [Fact(subject=acme, predicate="hq", object_value="London", evidence=(cited,))]
+
+
+companies = Ontology.from_dict(
+    {"types": {"Company": {}}, "predicates": {"hq": {"domain": ["Company"]}}}
+)
+checked = Pipeline(companies, OneClaim()).run([Document(id="d1", text="Acme is in London now.")])
+fact = checked.facts[0]
+assert checked_by(fact) == fact.qualifiers[ONTOLOGY] == companies.fingerprint
+assert checked_under(checked.facts, companies) == [fact]
+```
+
+`odke ontology diff old.json new.json --store out` puts the two together:
+the changes, then how many stored facts each ontology checked, and the first
+of those the old one did, to validate again. `--store` takes a directory odke
+wrote as JSONL, or a Neo4j URI with `--user`, `--password-env` and
+`--database`.
 
 ## Cypher file
 
