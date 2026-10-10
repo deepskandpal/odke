@@ -81,9 +81,15 @@ labelled facts:
 The responses and the labels were written for the example, so the table shows
 what the harness reports, not how well any model does. On that fixture,
 grounding caught one of four wrong candidates, and normalisation did more for
-precision than grounding. Real-model numbers from public datasets are in
-[DECISIONS #24](DECISIONS.md), and [#104](https://github.com/deepskandpal/odke/issues/104) will publish them in full. The paper's
-98.8% is neither reproduced nor claimed. [What the example shows, and does not](examples/e2e/README.md#5-the-ablation-on-this-example).
+precision than grounding. The paper's 98.8% is neither reproduced nor claimed.
+[What the example shows, and does not](examples/e2e/README.md#5-the-ablation-on-this-example).
+
+On public data, [five extractors run with and without the layer](https://openodke.dev/benchmarks/#every-extractor-with-and-without-the-layer)
+(Claude models, grounding uncalibrated). On Re-DocRED's documents the grounder
+raised precision for all four model-based extractors, by 1.8 to 4.3 points, for
+one Haiku call per triple ($4.23 to $9.01 per 1,000 documents), with F1 unchanged
+within its interval. On Text2KGBench's single sentences it lowered precision for
+every extractor, by 0.6 to 2.2 points. The pattern extractor found nothing in prose.
 
 The harness is the point: run the same command on a slice of your own corpus
 that you have labelled, and it tells you whether grounding earns its calls there.

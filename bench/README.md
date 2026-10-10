@@ -6,7 +6,7 @@ openodke on the public datasets `odke bench` prepares.
 
 ## The comparison
 
-Three extractors on the same prepared sets — the same documents, whole; the same
+Four extractors on the same prepared sets — the same documents, whole; the same
 schema, every relation shown to every system; and the same model with the same
 output room, whichever LiteLLM model string the sets were prepared with — and
 each one run three ways:
@@ -24,10 +24,15 @@ The extractors:
   and `(head type, RELATION, tail type)` patterns from the ontology, strict mode.
 - **neo4j-graphrag** — `LLMEntityRelationExtractor` with a `GraphSchema` of the
   same node types and patterns, no lexical graph.
+- **LangExtract** (`langextract`) — `lx.extract` with every relation and its types
+  in the prompt description, each document whole as one chunk, and one example
+  that shows the output's shape and names none of a dataset's relations. Each
+  attribute naming a relation is a triple, read by `openodke.interop.from_langextract`.
 
-Both competitors are held to the schema the way LLMGraphTransformer's strict mode
+Every competitor is held to the schema the way LLMGraphTransformer's strict mode
 does it. Their triples reach openodke in its [triples format](../docs/inputs.md),
-through the `triples` extract stage. They quote nothing, so each is grounded
+through the `triples` extract stage. LLMGraphTransformer and neo4j-graphrag quote
+nothing, and LangExtract cites only the subject's mention, so each is grounded
 against its whole document, which is the paper's own mode: the whole context,
 True or False, affirmed facts kept (`odke bench prepare --paper`; the set's
 ground model grounds).
@@ -36,15 +41,15 @@ Microsoft GraphRAG is not here: its extraction writes free-text entity and
 relationship descriptions for community summaries, with no ontology, so it cannot
 be scored against a dataset's relations without inventing a mapping.
 
-### One model string for all three
+### One model string for all of them
 
 openodke calls its model through LiteLLM, and so do the competitors here:
 LLMGraphTransformer gets a runnable that calls LiteLLM, neo4j-graphrag an
-`LLMInterface` that does. So any provider LiteLLM supports runs the whole
+`LLMInterface` that does, and LangExtract a `BaseLanguageModel` that does. So any provider LiteLLM supports runs the whole
 comparison — `openai/…`, `anthropic/…`, `gemini/…`, `ollama/…` — and a reasoning
 model's thinking never reaches either library's parser: LiteLLM returns the
-reply's text. Nothing about what the model is asked changes. Both libraries run
-their prompt-and-parse paths, not their structured ones, which force a tool choice
+reply's text. Nothing about what the model is asked changes. Each library runs
+its prompt-and-parse path, not its structured one, which forces a tool choice
 some reasoning models refuse.
 
 ## Running it
@@ -52,7 +57,7 @@ some reasoning models refuse.
 ```bash
 uv venv --python 3.12 bench/.venv
 uv pip install --python bench/.venv/bin/python -e ".[llm,bench]" \
-    langchain-experimental json-repair neo4j-graphrag
+    langchain-experimental json-repair neo4j-graphrag langextract
 
 # prepare the sets under $CMP/t2k/ont_* and $CMP/redocred, naming the models once:
 odke bench prepare text2kgbench data/t2k --ontology ont_1_movie --out "$CMP/t2k/ont_1_movie" \
@@ -92,6 +97,37 @@ leaves that set out of the averages and says so.
 The published comparison (PR #105) ran on `anthropic/claude-sonnet-5-5`
 extracting and `anthropic/claude-haiku-4-5` grounding. No other provider has run
 it end to end yet.
+
+## Every extractor, with and without the layer
+
+`layer.py` makes the table in
+[docs/benchmarks.md](../docs/benchmarks.md#every-extractor-with-and-without-the-layer)
+(#104) from the saved extractions, without extracting again: each extractor raw,
++ grounding (the Validator's ground job and the set's gate), and + resolution
+and corroboration (the whole `openodke.Validator`), on every set given.
+
+```bash
+python bench/layer.py prepare "$CMP"/t2k/ont_* "$CMP/redocred" "$CMP/trex" --out runs/layer
+python bench/layer.py ground runs/layer --estimate          # the price; no call
+python bench/layer.py ground runs/layer --budget-usd 1.00 --spend-log spend.jsonl
+python bench/layer.py table runs/layer                      # no call
+```
+
+| Step | Calls a model | Writes, under `OUT/<set>/<system>/` |
+|---|---|---|
+| `prepare` | no | the raw triples, a run config that validates them (the set's own, with the Validator's defaults for what it leaves out), and the extraction's metered cost |
+| `ground --estimate` | no | nothing: prints what grounding would cost, the cache's answers free and the rest priced by length |
+| `ground` | yes, through the response cache (`--cache`, default `OUT/cache`), under one `--budget-usd`; exit 3 when it stops | `ground/`: each fact with its verdict, the summary, and the cost, both now and at list price |
+| `table` | no: a question the cache lacks stops it | `removed.jsonl`, and `OUT/layer.json` with every number the Markdown prints |
+
+`prepare` reads openodke's triples from the run's `facts/grounded.jsonl`, or
+back from `predictions/extraction-alone.jsonl`; each competitor's from
+`competitors/<system>/facts.jsonl`, unless it ran on fewer documents than the
+set; and it runs `PatternExtractor` itself. The value normaliser is off, since
+the gold keeps the source's words; `--value-normalizer` keeps it on.
+
+When the grounder's default prompt or model changes, `ground` and `table` on the
+same `OUT` refresh the tables, and only grounding is paid for again.
 
 ## The span locator
 
