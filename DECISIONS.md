@@ -852,7 +852,9 @@ dev split. An unsure pair costs a person's time, and is queued once. A pair
 with a side that has no text is not asked, since the prompt forbids deciding on
 names, and goes to the queue. A stored entity has text only through
 `store_context`, because the store keeps offsets and not passages, so against
-a store without it every pair in the band waits for a person.
+a store without it every pair in the band waits for a person. A budget stop
+ends the judge's calls and not the resolver: a pair it reached is unasked, no
+link and no queue, and the next run asks it.
 
 ### 35. A write merges with the store, in the corroborator, before the score
 

@@ -370,7 +370,10 @@ stand, below it nothing is asked, and a pair whose ids disagree is never asked.
   starts `person:`. A person's same is a `SIMILAR` too.
 - **The model** is the `ground` role's, the same size of question, asked for
   `{"because": …, "decision": …}`. A call is retried as the grounder's are; a
-  missing key raises rather than failing every pair.
+  missing key raises rather than failing every pair. A budget stop ends the
+  calls and not the resolver: a pair it reached is `unasked`, makes no link,
+  is not queued and is asked by the next run, and a stop the judge reached
+  first is the run's `stopped`, during resolve.
 
 ```python
 from openodke import Document, Span
@@ -431,8 +434,9 @@ Context B: She worked with Charles Babbage. Lovelace died in London in 1852.
 `resolver.stats["judge"]` counts the pairs handed in and `asked`, the `calls`,
 the `swapped` ones (the (B, A) calls), the pairs whose orders `disagreed`,
 each decision, `person`, `queued`, `no_context`, `failed` calls,
-`unparseable` answers, tokens and cost; `stats["prompts"]` names the two
-keys. `judge.decisions` keeps every `PairDecision`, with both answers. In a run
+`unparseable` answers, tokens and cost; with a response cache, the `cached`
+calls; after a budget stop, the `unasked` calls and the stop as `stopped`.
+`stats["prompts"]` names the two keys. `judge.decisions` keeps every `PairDecision`, with both answers. In a run
 config the judge is an option of the native resolver,
 [`resolver: {use: native, judge: …}`](run.md#the-pair-judge). The band's 0.7
 was read off Re-DocRED's dev split, where 533 of 2,076 blocked pairs fall in
