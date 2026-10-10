@@ -1,7 +1,8 @@
 # bench/labels — sets a person labels by hand
 
 Labels for what no public benchmark scores: whether a passage supports a fact
-(G), and whether two mentions name one entity (R). Each set keeps the script that drew it, so it can be drawn again, and
+(G), whether two mentions name one entity (R), and whether two facts state one
+fact (F). Each set keeps the script that drew it, so it can be drawn again, and
 quotes public data only, under its sources' licences ([LICENSES.md](LICENSES.md)).
 
 ## G: grounding (#133)
@@ -220,3 +221,96 @@ bench/labels/R/audit.labels.jsonl`, which writes each labelled pair as a
 `PairLabel`, the unsure ones beside it. An audit label joins
 `items.private.jsonl` on `audit` = its sheet id, and the dataset's label on the
 two keys.
+
+## F: fact pairs (#143)
+
+300 pairs of facts from one passage, for the
+[fact-equivalence judge](../../docs/evaluation.md#surface-forms-the-lenient-score):
+do they state the same fact? One is a gold fact an extractor missed and the
+other a triple of that extractor's the scoring left, so each pair is a miss
+that might be the gold fact in other words. The owner labels all 300: 100 to
+tune on (dev) and 200 to gate the release on (gate).
+
+### Where the pairs come from
+
+The published comparison, as G's (PR #105, `bench/run_all.sh`): Text2KGBench's
+Wikidata-TekGen test sentences and 50 Re-DocRED test documents, each extractor's
+own triples before any grounding (`extraction-alone.jsonl`), and Re-DocRED's
+`test_revised.json` for its entity clusters and evidence sentences.
+
+```bash
+uv run python bench/labels/make_f.py "$CMP" data/redocred/test_revised.json   # seed 143
+```
+
+No model is called, and the same inputs and seed write the same bytes.
+
+### How they were drawn
+
+- **A miss and a near triple.** For each extractor, a gold fact it missed, by
+  the dataset's own scoring, and a triple of its that the scoring matched to
+  no gold fact. The pair is kept when the judge's pre-filter lets it through
+  (`openodke.eval.equivalence.surface_pair`): the same relation, one end the
+  same name after `name_key` (any mention of the Re-DocRED entity, or the
+  Text2KGBench string as written or as the text spells it), and the other end
+  not exactly equal to any of those names. A triple that only undoes the
+  dataset's tokenised name or padded date ("2010" for "01 January 2010") is
+  exactly one of them, and makes no pair. That leaves 852 pairs, 555 of them
+  distinct (107 from Text2KGBench, 448 from Re-DocRED).
+- **Strata**: 150 per dataset, a third per extractor, the extractors drawing
+  in turn, so a pair two of them wrote goes to one and `also_written_by` names
+  the other. No pair twice, and no gold fact or triple in more than two pairs
+  (`Plan.reuse`; once each gives only 243). Text2KGBench has 103 to give; the
+  other 47 come from Re-DocRED.
+- **Text**: the gold fact's evidence, which is what the judge reads. A
+  Text2KGBench sentence whole; a Re-DocRED fact's evidence sentences, with `…`
+  between ones that are not adjacent, or with none listed, where both its ends
+  are named, or else where the less mentioned one is (`sentences` records which).
+- **Names and types**: the gold fact is spelled as the text spells it
+  (`make_g.surface`), and both facts are typed the same way (`make_g._type`),
+  so a spelling or a type never marks the gold side.
+- **Splits**: 100 dev and 200 gate, in whole documents, each dataset's dev in
+  proportion to its pairs (34 and 66), each extractor and differing end near
+  its share. 41 documents are dev and 83 gate.
+- **Blinding**: all 300 are shuffled together, and each item's order (gold
+  first or second) is drawn from its id: gold is Fact 1 in 143 and Fact 2 in
+  157. A sheet shows an opaque id (`F-0001`), the relation and its
+  description, the two facts as the judge reads them and the passage, nothing
+  more. The sidecar beside each sheet holds the row as given, which names
+  neither the gold side nor the extractor.
+
+| Dataset | openodke | LGT | neo4j-graphrag | Total | dev | gate | Candidates |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| text2kgbench | 34 | 35 | 34 | 103 | 34 | 69 | 234 |
+| redocred | 41 | 79 | 77 | 197 | 66 | 131 | 618 |
+| **all** | 75 | 114 | 111 | 300 | 100 | 200 | 852 |
+
+| Differs | text2kgbench | redocred | Total |
+|---|---:|---:|---:|
+| subject | 58 | 99 | 157 |
+| object | 45 | 98 | 143 |
+
+### Files in `F/`
+
+- `items.jsonl`: the 300 `FactPair` rows `odke label make fact` reads, in sheet
+  order, so row n is item `F-n`: an opaque `id`, the `relation` and its
+  `description`, `first` and `second`, and the `passage`.
+- `items.private.jsonl`: per item id, its `fact_id` (the row's `id`),
+  `dataset`, `set`, `doc`, `extractor`, `also_written_by`, `gold` (as the
+  dataset writes it), `gold_shown`, `predicted`, `gold_side`, `differs`,
+  `split` and `sentences`. No sheet shows it.
+- `gate.jsonl`: each gate document's whole text, so the prompt-leakage test in
+  `tests/test_prompts.py` checks every gate passage.
+
+### Labelling
+
+The sheets are not in this repository. They live in the owner's vault at
+`deepanshu-kandpal/openodke.dev/labels/F/`: six sheets of 50, made with
+
+```bash
+odke label make fact bench/labels/F/items.jsonl -o <vault>/labels/F --per-sheet 50
+```
+
+Once ticked, they are read back with `odke label read <vault>/labels/F -o
+bench/labels/F/labels.jsonl`, which writes each labelled row as given plus
+`same`, the unsure ones beside it. A label joins `items.private.jsonl` on `id`
+= `fact_id`.
