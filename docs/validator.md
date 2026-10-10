@@ -172,8 +172,9 @@ the relation and the types have nothing to check.
 - **Judge.** With a judge, `judge` counts the pairs in the band and those
   asked, the calls and the swapped ones, the pairs whose two orders disagreed,
   each decision, and those decided by a person, queued, without context or
-  failed. Its calls, tokens and cost are in the totals, and its two prompt
-  keys in `prompts`.
+  failed, and the calls a budget refused (`unasked`). Its calls, tokens and
+  cost are in the totals, and its two prompt keys in `prompts`. A budget the
+  judge reaches first is the report's `stopped`, during resolve.
 
 The graph's `stats` carry the same report under `"validation"`, beside each
 stage's own counts under `"stages"`, so a JSONL sink's `manifest.json` keeps
