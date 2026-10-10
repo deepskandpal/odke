@@ -25,6 +25,7 @@ from openodke import (
     Polarity,
     SourceTier,
 )
+from openodke.corroborate import SCHEMA_SLICE
 from openodke.extract import LLMExtractor, response_schema
 from openodke.ground import LLMGrounder, RetryPolicy
 from openodke.llm import (
@@ -155,7 +156,9 @@ def test_edges_qualifiers_and_identity_keys_come_from_the_ontology(people: Ontol
     # The edge's object is keyed exactly as the company's own facts are.
     assert worked.object_entity is not None and worked.object_entity.key == company.subject.key
     # Undeclared qualifiers are dropped; start_date is reconcilable, so no identity keys.
-    assert worked.qualifiers == {"start_date": "1833"}
+    # Beside it, the slice of the schema the model was shown for a Person (#163).
+    shown = people.snippet("Person").fingerprint
+    assert worked.qualifiers == {"start_date": "1833", SCHEMA_SLICE: shown}
     assert worked.identity_keys == ()
 
 

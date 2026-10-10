@@ -43,6 +43,11 @@ cost; each document grounded is an event with its own counts, and each one
 left out an event with why. With no handler and no tracer configured, they go
 nowhere.
 
+Every fact the gate lets through is stamped with the fingerprint of the
+ontology it was checked under, `odke.ontology` (#163), so a reader can find
+the facts an older schema checked. An ontology with no types and no
+predicates checks nothing, and stamps nothing.
+
 Two of the thirteen stages are not on the `run()` path. `Constrainer` compiles
 the ontology into the store's own constraints and is exposed as `constraints()`
 for a sink to apply before its first write. `Inferrer` is a bootstrap, not a
@@ -61,6 +66,7 @@ from typing import TYPE_CHECKING, Any
 from openodke._batch import incomplete, is_config_error, reason, told
 from openodke._renamed import Renamed, deprecated, module_getattr
 from openodke.corroborate.inverses import partners
+from openodke.corroborate.provenance import stamp_checked
 from openodke.coverage import measure as measure_coverage
 from openodke.coverage import offered_by
 from openodke.llm.budget import BudgetExceeded
@@ -430,12 +436,14 @@ class Pipeline:
         scored = [self.scorer.score(f) for f in self.corroborator.corroborate(resolved)]
         observer.end(begun, {"facts_in": len(resolved), "facts_out": len(scored)})
         begun = observer.begin("gate")
+        schema = self.ontology
+        checked = schema.fingerprint if schema.types or schema.predicates else None
         kept: list[Fact] = []
         for fact in scored:
             if self.gate.validate(fact, self.ontology).action == "refuse":
                 stats["refused"] += 1
             else:
-                kept.append(fact)
+                kept.append(stamp_checked(fact, checked))
         observer.end(begun, {"accepted": len(kept), "refused": stats["refused"]})
 
         kg = KnowledgeGraph(

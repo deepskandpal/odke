@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from openodke._batch import incomplete, is_config_error
+from openodke.corroborate.provenance import SCHEMA_SLICE
 from openodke.extract._common import (
     ChunkContext,
     Documents,
@@ -581,11 +582,13 @@ class LLMExtractor:
             return []
         subject = subject_entity(snippet.type_name, name.strip())
         allowed = {p.name: p for p in snippet.predicates}
+        # The slice the model was shown for this type, by its fingerprint (#163).
+        shown = {SCHEMA_SLICE: snippet.fingerprint}
         facts: list[Fact] = []
         for item in items:
             fact = self._fact(ctx, ontology, subject, allowed, item)
             if fact is not None:
-                facts.append(fact)
+                facts.append(fact.model_copy(update={"qualifiers": {**fact.qualifiers, **shown}}))
         return facts
 
     def _fact(
