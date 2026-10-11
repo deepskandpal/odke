@@ -623,7 +623,10 @@ pass/fail verdicts only, not a corpus F1 resampled by document, and needs Python
 
 *Cost:* an inconclusive result passes CI, so a real regression smaller than the
 limit can ship. The limit printed beside it says how big that could be, and the
-A/A test holds the false-alarm rate near 5%.
+A/A test holds the false-alarm rate near 5%. In `tests/test_eval_aa.py`, 300
+seeded comparisons of the same system came back 96.7% inconclusive. Offline,
+at 1,500 comparisons each, 95.2% to 95.3% came back inconclusive for pass/fail
+items and 94.7% to 94.9% for corpus F1.
 
 ### 30. A cached answer is keyed on everything that changes it, and costs 0.0
 
@@ -922,8 +925,22 @@ prints all three numbers: judge only, corrected and labels only.
   share a document.
 - **Under 100 labels it is an "uncalibrated estimate".** In simulation a judge
   that misses one true fact in ten covers the truth 94.8% of the time at 300
-  labels and 90.8% at 50.
+  labels and 90.8% at 50 (below).
 - **Recall is never claimed.** The coverage report stands in for it.
+
+The simulation is `tests/test_eval_ppi.py`, run offline at 5,000 seeded sets
+each: 2,000 judged facts at a true precision of 80%, which the lenient judge
+reads as 84.6% and the strict judge as 72.4%. The ± columns are the 95%
+interval's half-width, in points.
+
+| Judge, labels | PPI covers 80% | PPI ± | Labels only ± |
+|---|---|---|---|
+| lenient, 300 | 95.2% | 4.1 | 4.5 |
+| strict, 300 | 94.8% | 3.4 | 4.5 |
+| lenient, 150 | 95.0% | 5.7 | 6.4 |
+| strict, 150 | 94.0% | 4.6 | 6.4 |
+| lenient, 50 | 94.3% | 9.7 | 11.0 |
+| strict, 50 | 90.8% | 7.6 | 11.0 |
 
 **The strict precision never changes.** Adjudication lists a prediction the
 gold lacks as possibly missing from gold when the grounder supports it in 2 of
