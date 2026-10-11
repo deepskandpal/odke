@@ -1,9 +1,9 @@
 # Inputs
 
-openodke reads any extractor's output in one format: one triple per JSON Lines
-row, next to the texts the triples came from. The [quickstart](quickstart.md)
-runs it end to end, and four [adapters](#from-other-libraries) write it from
-other libraries' output.
+openodke reads any extractor's output as one triple per JSON Lines row, beside
+the texts the triples came from. The [quickstart](quickstart.md) runs it end to
+end, and four [adapters](#from-other-libraries) write it from other libraries'
+output.
 
 ## The row
 
@@ -27,10 +27,9 @@ other libraries' output.
 | `id` | no | The fact's id, to join it to labels or another run |
 | `schema_version` | no | The format version the row was written to, such as `"1.0"`. Unset: the reader's own. Another major version is refused |
 
-Any other field is an error, so a misspelt `objet` is caught. A row that cannot
-be read is an error naming its line. The format's JSON Schema ships in the
-package, as `openodke/interop/triples.schema.json` (`SCHEMA_PATH` in
-`openodke.interop.triples`); see [Stability](stability.md#formats).
+Any other field, or a row that cannot be read, is an error naming its line. The
+JSON Schema ships as `openodke/interop/triples.schema.json` (`SCHEMA_PATH` in
+`openodke.interop.triples`; [Stability](stability.md#formats)).
 
 ## Offsets, a quote, or neither
 
@@ -40,10 +39,8 @@ package, as `openodke/interop/triples.schema.json` (`SCHEMA_PATH` in
 | `quote` only | A citation, found by exact match | As above. A quote not in the text is refused as `not_found`, with no model call |
 | neither | The whole text, with `span_origin` `context` | The model reads the whole text |
 
-A `context` span is not a citation, and `odke eval spans` counts it as none
-([DECISIONS #25](decisions.md#25)). `LLMGrounder(locate=True)` finds the sentence
-naming both subject and object, with no model call, for the model to read
-instead ([Grounding](grounding.md#locating-spans)).
+A `context` span is not a citation ([DECISIONS #25](decisions.md#25)).
+[`locate=True`](grounding.md#locating-spans) finds a narrower one for free.
 
 ## Types and keys { #types }
 
@@ -74,58 +71,44 @@ entity.
 
 - A row finds its text by `Document.id`, then by file name. When two documents
   share a file name (`2023/report.txt`, `2024/report.txt`), the first gets the
-  rows and the other a warning. Give such texts ids.
+  rows and the other a warning; give such texts ids.
 - A document's triples all arrive with its first chunk, so leave the chunker
   out.
-- `read_triples(path)` reads a file into `TripleRow`s, a line at a time as
-  they are asked for (an iterator: `list(...)` reads it all);
+- `read_triples(path)` is an iterator of `TripleRow`s, read a line at a time;
   `to_fact(row, doc, ontology)` makes one `Fact`.
-- A stage made from a file checks every row when it is made and holds none
-  until they are asked for; `feed(rows)` swaps in the next micro-batch's,
-  which is how the Validator [streams](run.md#streaming) a file.
+- A stage made from a file checks every row up front and holds none;
+  `feed(rows)` swaps in the next micro-batch's, as the Validator
+  [streams](run.md#streaming) a file.
 
-When a graph comes back smaller than the file, check `TriplesExtractor.stats`.
-It counts `rows` by evidence (`cited`, `quoted`, `quote_not_found`, `context`),
-`unmatched_rows` whose `doc` matched no document, and `ambiguous_rows` whose
-file name matched two; `unmatched_docs` and `ambiguous_docs` name up to 20.
+`TriplesExtractor.stats` counts `rows` by evidence (`cited`, `quoted`,
+`quote_not_found`, `context`), `unmatched_rows` whose `doc` matched no
+document, and `ambiguous_rows` whose file name matched two; `unmatched_docs`
+and `ambiguous_docs` name up to 20.
 
 ## From `odke run`
 
-```yaml
-ontology: ontology.json
-inputs:
-  - path: texts                     # texts/halden.txt is the text the rows call "halden"
-    loader: {use: directory}
-models:
-  ground: anthropic/claude-haiku-4-5-20251001
-stages:
-  extractor: {use: triples, path: triples.jsonl, extractor: my-extractor}
-  grounder: llm
-  gate: verdict
-  sink: {use: jsonl, directory: out}
-```
-
-The `triples` extractor takes `path` (required), `extractor` and `confidence`;
-the run's inputs are the documents ([`odke run`](run.md)). `examples/triples/`
-runs this config on five rows, one of each kind, with recorded answers and no
-key:
+The `triples` extractor takes `path` (required), `extractor` and `confidence`,
+and the run's inputs are its texts. [The smallest run config](run.md#the-config),
+`examples/triples/odke.yaml`, runs five rows, one of each kind, on recorded
+answers:
 
 ```bash
 odke run examples/triples/odke.yaml
 odke eval spans --facts examples/triples/out
 ```
 
-`odke eval spans` then counts three of the five facts as citing no span: the two
-rows with neither, and the quote that is not in the text.
-
-Without a config, `odke validate` takes the file, the texts and any adapter
-([The Validator](validator.md)), and `odke ground` grounds them alone
-([Grounding](grounding.md#a-graph-from-somewhere-else-odke-ground)).
+`odke eval spans` counts three of the five as citing no span: the two rows with
+neither, and the quote not in the text. Without a config,
+[`odke validate`](validator.md) and
+[`odke ground`](grounding.md#a-graph-from-somewhere-else-odke-ground) take the
+file, the texts and any adapter.
 
 ## From other libraries
 
 Each adapter returns `(rows, texts)`, the rows and the `Document`s they cite,
-without importing the library it reads. The examples share this setup:
+without importing the library it reads. The LangChain, LangExtract and
+neo4j-graphrag adapters are [provisional](stability.md#provisional). The
+examples share this setup:
 
 ```python
 from openodke import Ontology, Pipeline
@@ -242,9 +225,8 @@ print(kg.facts[0].verdict.value, kg.facts[0].evidence[0].doc_id)  # supported c0
 
 `read_neo4j(driver)` reads a graph back to ground it where it stands. On a
 graph `Neo4jSink` wrote, each row cites what the run cited; pass `documents=`
-the texts it was built from. On any other graph, `text_property=` names the
-relationship property holding the source text. Reading never writes;
-`write_verdicts` does, when called.
+its texts. On any other graph, `text_property=` names the relationship property
+holding the text. Only `write_verdicts` writes.
 
 | Neo4j | Row |
 |---|---|

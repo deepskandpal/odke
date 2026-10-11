@@ -1,27 +1,14 @@
 # Grounding
 
-Grounding asks whether the cited span supports the claim. It asks two questions,
-in this order, and the order is the point:
-
-1. **Does the span exist, and does it say what the fact claims it says?** This is
-   `SpanGrounder`. It is pure and free, and it always runs first. An offset that
-   does not resolve to its quote is rejected before a token is spent.
-2. **Does that text actually support the claim?** This is `LLMGrounder`, a second,
-   small model reading one claim against one passage. Locatability alone cannot
-   answer this, because a model can cite a span that genuinely exists and does not
-   support the fact it was attached to.
-
-Both **stamp** `Fact.verdict` (`supported`, `contradicted` or `not_found`), and
-neither drops a fact. The gate decides what is written, and because nothing is
-dropped early, the ablation can count what grounding *would* have removed
-([DECISIONS #20](decisions.md#20)). Grounding is one step of the verification
-layer; [the Validator](validator.md) runs all of it.
+Grounding checks each fact against its text: a free span check, then a small
+second model. Both stamp a [verdict](concepts.md#verdicts) and drop nothing;
+[the gate](#the-gate-verdictgate) decides what is written
+([DECISIONS #20](decisions.md#20)). [The Validator](validator.md) runs it with
+every other stage.
 
 ## A graph from somewhere else: `odke ground`
 
-You have a graph from somewhere else. Here is what one command tells you about
-it. `examples/triples/` is five triples someone else wrote about one short
-text, with the model's answers recorded, so this runs with no key:
+On `examples/triples/`, five triples with the model's answers recorded:
 
 ```bash
 odke ground --facts examples/triples/triples.jsonl --texts examples/triples/texts \
@@ -45,51 +32,36 @@ spans  (n=5)
 wrote out/facts.jsonl, out/summary.json, out/manifest.json
 ```
 
-Each fact goes through three steps, cheapest first, and a fact one step settles
-never reaches the next:
+Each fact passes the [free checks](#the-free-check-spangrounder), the span
+locator (`--locate`) and the model (unless `--dry-run`), stopping where it is
+settled. `--ontology` adds checks on the predicate and types, recorded under
+`qualifiers["odke.check"]`.
 
-1. **The free checks.** The mention is in the text: the span check below. With
-   `--ontology`, the relation is one of its predicates, and the types fit its
-   domain and range. One row here quotes text the passage does not hold, so it
-   is `not_found` without a call. A fact the ontology has no room for keeps
-   its verdict and is stamped with why, under `qualifiers["odke.check"]`.
-2. **The span locator**, with `--locate`, for facts that cited nothing.
-3. **The model**, unless `--dry-run`. A dry run is steps 1 and 2: no model, no
-   key, no cost.
+The summary splits `not_found` by where the fix belongs. **The evidence does
+not support the fact**: Berlin is never mentioned. **The citation is too narrow
+for its claim**: the span does not name both ends, so the fact may be true
+([Evidence](concepts.md#spans-evidence-and-trust)); `--paper` counts none.
 
-Two facts came back `not_found`, and the summary tells their failures apart,
-because they are fixed in different places:
-
-- **The evidence does not support the fact.** The model read the passage, and it
-  does not say this, or says otherwise. Berlin is never mentioned: the fact is
-  wrong.
-- **The citation is too narrow for its claim.** The model read a citation that
-  does not name both the subject and the object, so it could not state the
-  claim (DECISIONS #23). The fact may be true; the extractor's citation lost
-  it. With `--paper` the model reads the whole document instead, so none is
-  counted.
-
-`out/facts.jsonl` is the same facts with their verdicts, in the format a run
-writes, so `odke eval spans --facts out` reads it. `out/summary.json` is the
-summary, with the ids of every fact of each failure shape. `out/manifest.json`
-is the [run manifest](run.md#the-run-manifest): the options, the model, the
-prompt, the ontology's fingerprint and the hash of every text and of the rows.
+It writes the facts with their verdicts (`facts.jsonl`, for `odke eval spans`),
+the summary (`summary.json`) and the [run manifest](run.md#the-run-manifest).
 
 | Option | |
 |---|---|
 | `--facts` | A triples file, an adapter's output, or a Neo4j URI |
-| `--adapter` | `triples` (the default), `langchain`, `langextract`, `graphrag` or `neo4j` ([Inputs](inputs.md#from-other-libraries)) |
-| `--texts` | The texts the facts cite, a file or a directory. Triples need them, and so does a Neo4j graph openodke wrote; the other adapters' output carries its own |
+| `--adapter` | `triples` (default), `langchain`, `langextract`, `graphrag` or `neo4j` ([Inputs](inputs.md#from-other-libraries)) |
+| `--texts` | The cited texts, a file or a directory: for triples, and a Neo4j graph openodke wrote |
 | `--ontology` | Adds the free checks on the relation and the types |
-| `--config`, `--model`, `--model-provider` | The model, as `odke run` takes it: a file's `models` block, `replay` included |
-| `--locate`, `--paper`, `--dry-run` | The span locator; ODKE+'s whole-document True/False grounder; no model |
-| `--text-property` | `neo4j`: the relationship property holding each one's text, for a graph openodke did not write |
-| `--user`, `--password-env`, `--database` | Neo4j, as the sink takes them: the password from an environment variable (`NEO4J_PASSWORD`), never a flag or a file |
-| `--write-verdicts` | `neo4j`: set `odke_verdict` on each relationship read. Off unless asked |
+| `--config`, `--model`, `--model-provider` | The model: a file's `models` block, `replay` included, as in `odke run` |
+| `--locate`, `--paper`, `--dry-run` | The [span locator](#locating-spans); [paper mode](#paper-mode-the-odke-grounder-as-written); no model |
+| `--text-property` | `neo4j`: the relationship property holding each text |
+| `--user`, `--password-env`, `--database` | Neo4j; the password's variable defaults to `NEO4J_PASSWORD` |
+| `--write-verdicts` | `neo4j`: set `odke_verdict` on each relationship read |
+| `--cache`, `--budget-usd`, `--budget-calls`, `--log-format`, `--log-text` | As [`odke run`](run.md) takes them |
 | `-o` | The directory to write into |
 
-Exit 2 is input that cannot be read, exit 1 a run that failed. In Python it is
-`ground_graph`, over any adapter's rows and texts:
+Exit 2 is unreadable input, exit 1 a failed run, exit 3 a run its budget
+stopped, which still writes what it grounded. In Python it is `ground_graph`,
+over any adapter's rows and texts:
 
 ```python
 from openodke import Document
@@ -110,7 +82,8 @@ print(grounded.summary.unsupported.examples[0])
 # Halden Robotics —office_in→ Berlin  [not_found, halden]
 ```
 
-`grounder=None` is the dry run. `grounded.write("out")` writes the two files.
+`grounder=None` is the dry run. `grounded.write("out")` writes `facts.jsonl` and
+`summary.json`.
 
 ## The free check: `SpanGrounder`
 
@@ -118,27 +91,16 @@ print(grounded.summary.unsupported.examples[0])
 
 | Status | Meaning | Rejected? |
 |---|---|---|
-| `located` | the span lies in this document and resolves to its quote (or has no quote) | no |
-| `no_span` | a document-level citation: nothing to check | no |
+| `located` | resolves to its quote, or has none | no |
+| `no_span` | a document-level citation | no |
 | `foreign` | a span into another document | no |
-| `out_of_range` | offsets outside the text, or `start > end` | yes |
+| `out_of_range` | outside the text, or `start > end` | yes |
 | `empty` | `start == end` | yes |
-| `quote_mismatch` | the text at those offsets is not the quote | yes |
+| `quote_mismatch` | the text there is not the quote | yes |
 
-Range is checked before the quote. Python slicing truncates silently, so a span
-running past the end of the text could otherwise "resolve" to its quote while
-citing offsets that do not exist.
-
-For each fact, `SpanGrounder`:
-
-- drops every rejected span, logs the reason at DEBUG and counts it. An offset
-  that does not say what it claims is not provenance.
-- keeps span-less and foreign citations as they are, since nothing showed them
-  wrong. They do not locate the claim in *this* document, though.
-- stamps `NOT_FOUND` when no evidence is `located`, and otherwise leaves the fact
-  `UNCHECKED` for the model. Only a model can say `SUPPORTED`.
-- leaves any verdict already on the fact in place, which is what lets an
-  interrupted run resume.
+`SpanGrounder` drops and counts each rejected span, and stamps `not_found` when
+no evidence is `located`; otherwise the fact stays `unchecked` for the model. A
+verdict already on a fact stands, so an interrupted run resumes.
 
 ```python
 from openodke import Document, Entity, Evidence, Fact, GroundingVerdict, Span
@@ -167,28 +129,26 @@ assert checked.verdict is GroundingVerdict.NOT_FOUND and checked.evidence == ()
 assert spans.stats["located"] == spans.stats["quote_mismatch"] == spans.stats["not_found"] == 1
 ```
 
-A high rejection rate here points at the prompt, not the model.
-
 ## The second model: `LLMGrounder`
 
 ```text
-LLMGrounder(roles=None, *, client=None, max_workers=8, retry=None)
+LLMGrounder(roles=None, *, client=None, max_workers=8, retry=None, context="span",
+            verdicts="three_way", locate=False, widen=False, widen_client=None)
 ```
 
-- `roles.ground` names the model. The default `ModelRoles()` grounds with
-  `anthropic/claude-haiku-4-5-20251001` at `max_tokens=256`, a smaller model than
-  extraction, on purpose. If this pass cost what extraction costs, people would
-  turn it off ([DECISIONS #7a](decisions.md#7a)). Which provider that string names,
-  which key it reads and who serves it are one page:
-  [Models and providers](models.md), or `odke models`.
-- `client` overrides how the model is reached. Pass any `LLMClient`: your
-  gateway, or `ScriptedClient` / `RecordedClient` in tests.
+| Argument | |
+|---|---|
+| `roles` | `roles.ground` is the model ([Roles and defaults](models.md#roles-and-defaults)) |
+| `client` | Any `LLMClient`; `ScriptedClient` or `RecordedClient` in tests |
+| `max_workers` | Model calls in flight |
+| `retry` | A [`RetryPolicy`](#retries) |
+| `context` | `"document"` reads the whole document, not the span |
+| `verdicts` | `"binary"` is [paper mode](#paper-mode-the-odke-grounder-as-written)'s True/False |
+| `locate`, `widen` | [Locating spans](#locating-spans), [widen and retry](#widen-and-retry) |
+| `widen_client` | The client widen's retries go through, so a meter counts them apart |
 
-For each fact the grounder runs the span check first, inside itself. Only a fact
-the span check left `UNCHECKED` reaches the model, which is shown the first
-located span's text and nothing more. Not the whole document: the question is
-whether *this span* supports the claim, and showing more would answer a
-different, dearer question.
+The span check runs first, inside it; only a fact it leaves `unchecked` reaches
+the model, which reads the first located span.
 
 ```python
 from openodke.ground import LLMGrounder
@@ -210,26 +170,10 @@ print(messages[1].content)
 assert schema["properties"]["verdict"]["enum"] == ["supported", "contradicted", "not_found"]
 ```
 
-The claim is rendered the same way on every run, so provider-side prompt caching
-works. Only identity-bearing qualifiers appear in it. Polarity is spelled out
-("It is NOT the case that: …"), because "X sells data" and "X does not sell data"
-are the same triple and opposite claims.
-
-### Reading the answer
-
-The verdict is read from structured output. A model that ignored the schema and
-answered with the bare word (`supported`, `not found`) is still readable. One
-that wrote a sentence is not: "not supported" must never be read as `SUPPORTED`,
-so prose counts as a failed answer rather than a guess.
-
-### When a call fails
-
-`ground` never raises for a provider failure, because one bad call must not lose
-a run of ten thousand. A failed or unreadable call leaves the fact `UNCHECKED`
-and logs a warning. The next run picks it up, since a verdict already on a fact
-stands and costs no call. A missing key (`MissingAPIKey`) or adapter
-(`ProviderNotInstalled`) does raise: it is configuration, it would fail every
-call alike, and the run would otherwise write a graph nothing had checked.
+The verdict is read from structured output or a bare word; a sentence is a
+failed answer. A failed or unreadable call leaves the fact `unchecked`, for the
+next run to ask. A missing key (`MissingAPIKey`) or adapter
+(`ProviderNotInstalled`) raises.
 
 ```python
 chatty = LLMGrounder(
@@ -240,51 +184,32 @@ assert chatty.ground(born, doc).verdict is GroundingVerdict.UNCHECKED
 assert chatty.stats["unparseable"] == 1
 ```
 
-Transient errors are retried under a `RetryPolicy` (`openodke.ground.RetryPolicy`):
+`grounder.stats` counts `facts`, `skipped`, `calls`, `retries`, `failed`,
+`unparseable`, each verdict, tokens, `cached` calls and `unasked` facts, with
+`cost_usd` (`None` until priced), the [`prompts`](models.md#prompts) sent, and
+the `span`, `locate` and `widen` steps' counts.
 
-- 4 attempts in total by default.
-- Exponential backoff from 0.5 s, multiplier 2, capped at 30 s, with full jitter,
-  so threads that hit one rate limit together do not all come back together.
-- A server's `Retry-After` wins when it sends one, still capped at `max_delay`.
-- Transient means an HTTP 408, 409, 425, 429, 500, 502, 503, 504 or 529, a timeout
-  or connection error, or a message that says so. A 401 or a missing adapter is
-  not transient, and is not retried.
+`ground_many(facts, doc)` and `ground_documents([(facts, doc), ...])`, which
+`Pipeline` uses, keep at most `max_workers` calls in flight and return facts in
+order. The client must be thread-safe; `ScriptedClient` is not.
 
-### Stats
+### Retries
 
-`grounder.stats` is the stage's run report:
+`RetryPolicy` (`openodke.ground.RetryPolicy`) retries HTTP 408, 409, 425, 429,
+500, 502, 503, 504 and 529, timeouts and connection errors.
 
-- `facts`, `skipped`, `calls`, `retries`, `failed`, `unparseable`
-- a count for each verdict
-- `prompt_tokens` and `completion_tokens`
-- `cost_usd`, which stays `None` until a provider reports a cost, rather than a
-  misleading `0.0`
-- `prompts`, the key of the [registered prompt](models.md#prompts) the calls
-  sent, such as `ground.span@1`; empty when no call was made
-- the span check's own counts, under `span`
-- with `widen=True`, under `widen`: `retried`, `recovered`, and the retries' own
-  `calls`, `failed`, `unparseable`, tokens and `cost_usd`. Those calls are in the
-  totals above too, and each fact is counted once, under its final verdict
-
-### Batching
-
-`ground_many(facts, doc)` grounds one document's facts with at most `max_workers`
-model calls in flight. `ground_documents([(facts, doc), ...])` does the same for
-many documents with one ceiling across them all, and `Pipeline` uses it
-automatically, so a corpus of one-row documents runs as concurrently as one long
-document. Span checks run first, in order; one fact comes back for each fact that
-went in, in the same order; and a failed call leaves only its own fact
-`UNCHECKED`. The client must be thread-safe. Both built-in clients are.
-`ScriptedClient` answers by position and is not, which is what `RecordedClient`
-(answers by matching the prompt) is for.
+| Field | Default |
+|---|---|
+| `attempts` | `4`, in total |
+| `base_delay` | `0.5` s |
+| `multiplier` | `2` |
+| `max_delay` | `30` s; a server's `Retry-After` wins, capped here |
+| `jitter` | `true`: full jitter |
 
 ### Paper mode: the ODKE+ grounder as written
 
-openodke's default grounder differs from the paper's on purpose: it is shown the
-cited span, answers in three ways, and drops nothing. The paper's (ODKE+ §3.3.1,
-App. B) is shown the whole context, answers True or False, and only affirmed
-facts are kept. Two options and a gate setting reproduce it, so the paper's
-claims can be tested as written (see [Benchmarks](benchmarks.md)):
+The paper's grounder (ODKE+ §3.3.1, App. B) reads the whole context, answers
+True or False, and keeps only affirmed facts ([Benchmarks](benchmarks.md)):
 
 ```yaml
 stages:
@@ -292,37 +217,23 @@ stages:
   gate: {use: verdict, refuse_not_found: true}
 ```
 
-`verdicts: binary` sends the paper's own prompt and its
-`<subject, predicate(qualifier: value), object>` triple. "True" is read as
-`supported` and "False" as `not_found`: the paper's "No" merges a context that
-contradicts the triple with one that is silent about it, so a binary run cannot
-tell them apart. The free span check still runs first, so a fact whose quote is
-not in the document is settled before any call — the one step of openodke's
-that paper mode keeps.
+`verdicts: binary` sends the paper's prompt and reads "True" as `supported`,
+"False" as `not_found`. The span check still runs first. `odke ground --paper`
+sets both grounder options.
 
 ### Widen and retry
 
-The fallback [DECISIONS #23](decisions.md#23) named, off by default:
-`LLMGrounder(widen=True)`, or `odke run --widen` (`grounder: {use: llm, widen:
-true}`). A fact whose answer is `not_found`, and whose span is narrower than its
-sentence, is asked once more against the whole sentence. The sentence is the
-chunker's (`openodke.chunking.sentences`), never one a model names.
-
-- **`supported`** keeps the fact with the sentence as its span. The narrow
-  citation becomes `Evidence.mention`, unless the evidence already had one.
-- **Anything else** keeps `not_found` and the original span. A contradiction
-  read off a wider passage than the one cited is recorded, not acted on.
-- **Either way** `qualifiers["odke.widen"]` records the attempt:
-  `{"from": [start, end], "to": [start, end], "verdict": ...}`. A failed call's
-  verdict is `unchecked`. `span_origin` keeps its value, so split on the
-  qualifier to tell a widened span from a cited one in `odke eval spans`.
-- **Bounded.** One retry per fact, and none for a span that is already its
-  sentence, or one that adds only punctuation. With `context="document"` there is
-  nothing to widen, so the combination is refused.
-
-The extra calls are counted under `stats["widen"]`. They go through
-`widen_client` when one is given, and `odke run` meters them as their own cost
-row, `ground.widen`.
+Off by default ([DECISIONS #23](decisions.md#23)): `widen=True`,
+`grounder: {use: llm, widen: true}` or `odke run --widen`. A `not_found` fact
+whose span is narrower than its sentence (`openodke.chunking.sentences`) is
+asked once more against the sentence, unless the sentence adds only
+punctuation. On `supported` the sentence becomes its span and the narrow
+citation its `Evidence.mention`; otherwise nothing changes. Either way
+`qualifiers["odke.widen"]` records `{"from": [start, end], "to": [start, end],
+"verdict": ...}`, the way to tell a widened span from a cited one.
+`widen=True` with `context="document"` is refused. `stats["widen"]` counts
+`retried`, `recovered` and the retries' own calls, tokens and cost, which `odke
+run` meters as `ground.widen`.
 
 ```python
 from openodke.ground import LLMGrounder
@@ -349,28 +260,21 @@ assert (grounder.stats["widen"]["retried"], grounder.stats["widen"]["recovered"]
 
 ## Locating spans
 
-Most extractors outside openodke cite nothing, so their facts carry the whole
-text they came from as a `context` span ([Inputs](inputs.md)), and the model
-reads all of it. `LLMGrounder(locate=True)` first looks for the support for
-free: `SpanLocator` finds the narrowest window of one sentence, or two adjacent
-ones in a paragraph, that names both the subject and the object. The window
-becomes the fact's span, marked `SpanOrigin.LOCATED`, and the model reads it
-instead. With no window nothing changes. A citation is never touched, and a
-quote that is not in the text is still refused by the free check.
+A fact with no citation carries its whole text as a `context` span
+([Inputs](inputs.md#offsets-a-quote-or-neither)). `LLMGrounder(locate=True)`
+first runs `SpanLocator`, free: the narrowest window of one sentence, or two
+adjacent ones in a paragraph, naming both the subject and the object becomes
+the span, marked `located`, for the model to read. A citation is never touched.
+The match is strict:
 
-A wrong window is worse than none: shown a window that names both and does not
-state the fact, the model refuses a fact the whole text supports. So the match
-is strict:
-
-- a name is the label or an alias, as written or as its name key (`name_key`),
-  in whole words, with case, accents and punctuation ignored. `Ann` is not in
-  `Annapolis`;
-- a capitalised name is found only capitalised, and never inside a longer one:
-  `US` is not `us`, and `Africa` is not in `South Africa`;
-- a literal object is found by its words or, for a date or a quantity, its
-  normalised value: `July 15, 1895` is found as `15 July 1895`;
-- the object must be named apart from the subject's own name. One sentence beats
-  two, then the narrower window wins, then the earlier.
+- a name is a label or alias, as written or as its `name_key`, in whole words,
+  ignoring case, accents and punctuation: `Ann` is not in `Annapolis`;
+- a capitalised name matches only capitalised, never inside a longer one:
+  `Africa` is not in `South Africa`;
+- a literal object matches its words or, for a date or quantity, its
+  normalised value: `July 15, 1895` matches `15 July 1895`;
+- the object must be named apart from the subject. One sentence beats two,
+  then the narrower window, then the earlier.
 
 ```python
 from openodke import SpanOrigin
@@ -402,33 +306,35 @@ assert grounded.evidence[0].span_origin is SpanOrigin.LOCATED
 assert locating.stats["locate"] == {"facts": 1, "located": 1, "not_located": 0}
 ```
 
-In `odke run` it is `grounder: {use: llm, locate: true}`. With
-`context: document` the model still reads the whole text, and the window is kept
-for a reader. `odke eval spans` counts located spans apart from citations.
+In a run config it is `grounder: {use: llm, locate: true}`. With
+`context: document` the model still reads the whole text. It is off by default:
+its verdicts differed from whole-document grounding by more than the bench's
+noise (`bench/locator.py` states the rule and measures it).
 
-It is off by default, because its verdicts differ from whole-document grounding
-by more than the bench's noise. On the published Re-DocRED runs (PR #105) it
-placed 75% of LLMGraphTransformer's facts and 72% of neo4j-graphrag's, in
-windows with a median of 169 characters against documents of 932–984, and cut
-grounding cost by 38% a fact. Precision against gold and the true facts kept did
-not move. But its verdicts matched the whole-document ones on 93% and 92% of
-those facts, where a second whole-document run matched on 99% and 97%.
-`bench/locator.py` is the measurement, and states the rule.
+## The gate: `VerdictGate`
 
-## Grounding is a stamp; the gate decides
+`VerdictGate` (`gate: verdict`) decides what is written:
 
-The pipeline drops only what its gate refuses. To keep ungrounded facts out of
-the graph, pass a gate that refuses them:
+| Verdict | Default | `refuse_not_found=True` |
+|---|---|---|
+| `contradicted` | refused | refused |
+| `not_found` | accepted | refused |
+| `supported`, `unchecked` | accepted | accepted |
+
+`schema=True`, the Validator's default, also refuses an undeclared predicate
+or a type outside the domain or range. `stats` counts accepted and refused
+facts, by reason. Whether to refuse `not_found` on your corpus is a
+measurement: [`odke eval ablation`](evaluation.md#ablation).
 
 ```python
-from openodke import Ontology, Pipeline, ValidationVerdict
+from openodke import Ontology, Pipeline, VerdictGate
 
-
-class RefuseUngrounded:
-    def validate(self, fact, ontology):
-        if fact.verdict in (GroundingVerdict.CONTRADICTED, GroundingVerdict.NOT_FOUND):
-            return ValidationVerdict(action="refuse", reason=f"grounding: {fact.verdict.value}")
-        return ValidationVerdict(action="accept")
+gate = VerdictGate()
+verdicts = [GroundingVerdict.SUPPORTED, GroundingVerdict.NOT_FOUND, GroundingVerdict.CONTRADICTED]
+stamped = [born.model_copy(update={"verdict": v}) for v in verdicts]
+assert [gate.validate(f, Ontology()).action for f in stamped] == ["accept", "accept", "refuse"]
+print(gate.stats)
+# {'accepted': 2, 'refused': {'contradicted': 1}}
 
 
 class Replay:
@@ -445,7 +351,7 @@ pipeline = Pipeline(
         ModelRoles.single("ollama/qwen2.5:3b"),
         client=ScriptedClient([{"verdict": "supported"}]),
     ),
-    gate=RefuseUngrounded(),
+    gate=VerdictGate(refuse_not_found=True),
 )
 kg = pipeline.run([doc])
 
@@ -453,59 +359,32 @@ assert [(f.object_value, f.verdict) for f in kg.facts] == [(1815, GroundingVerdi
 assert kg.stats["refused"] == 1
 ```
 
-Whether grounding earns its cost on *your* corpus is a measurement, not a
-promise: `openodke.eval.grounding_ablation` compares precision with grounding off and
-on against your labels. See [Evaluation](evaluation.md#ground).
-
-## When `not_found` means the citation, not the fact
-
-A true fact cited to a bare mention — `Ireland` rather than the clause that says
-where the company operates — is correctly refused: the grounder is shown the
-span and nothing else, and that span does not support the claim. So a run with
-many `not_found` verdicts may have a citation problem rather than a fact
-problem, and the two are told apart by width: citations too narrow to carry
-their claim cluster in `not_found`, clause-width ones in `supported`.
-
-[`odke eval spans`](evaluation.md#spans) reports that split. It needs no
-labelled data, which makes it the cheapest check on a new extractor or prompt.
-
 ## What extraction left behind: the coverage report
 
-Grounding judges the facts an extractor returned; it cannot see the ones it
-did not. A validator cannot invent those ([DECISIONS #24](decisions.md#24)), but it
-can count where they are missing, with no model. `odke run` does by default
-(`coverage: false` turns it off), `Pipeline(coverage=True)` does in Python, and
-`openodke.coverage.measure(documents, facts, ontology)` does on any facts. Per
-document:
+The coverage report counts, with no model, where an extractor left facts
+behind ([DECISIONS #24](decisions.md#24)). `odke run` and the Validator run it
+by default (`coverage: false`, `coverage=False`); in Python,
+`Pipeline(coverage=True)` or `openodke.coverage.measure(documents, facts,
+ontology)`. Per document:
 
-- **Entities in no fact.** A known name is a label or alias of any subject or
-  edge object in the batch. One the text mentions that no fact of that document
-  names is reported, at its first mention.
-- **Sentences no fact covers.** A sentence naming two or more known entities is
-  one a fact could have come from. It is covered when any fact's evidence span
-  overlaps it; the rest are reported with their text. A sentence naming fewer is
-  not counted, because most of those are narrative. A span nobody chose
-  (`context`) overlaps every sentence, so it covers only the window the
-  [span locator](#locating-spans) finds for its fact, or nothing when there is
-  none. A chunk the router skipped is not a gap.
-- **Relations never offered.** Predicates the extractor was not shown, from its
-  `offered(ontology)` (`LLMExtractor`: its snippets, so a type left out of
-  `types` or a predicate past `snippet_limit`), and the shown predicates no fact
-  used. An extractor without `offered` reports the first as unknown.
+- **Entities in no fact**: a known name (a label or alias of any subject or
+  edge object in the batch) the text mentions and no fact of the document
+  names, at its first mention.
+- **Sentences no fact covers**: a sentence naming two or more known entities
+  that no evidence span overlaps. A `context` span covers only its
+  [located](#locating-spans) window; a chunk the router skipped is no gap.
+- **Relations never offered**: predicates the extractor was not shown, from its
+  `offered(ontology)` (`LLMExtractor`: a type left out of `types`, a predicate
+  past `snippet_limit`), and shown predicates no fact used. Without `offered`,
+  the first is unknown.
 
-Names are found by [the locator's rules](#locating-spans): a label or alias as
-written or as its name key, whole words, and a capitalised name only capitalised
-and never inside a longer one. The locator asks where one fact's two names are;
-the report indexes every known name once and reads each sentence once. `odke
-run` prints one line, and `odke eval ablation` adds the same line to its notes:
+Names match by [the locator's rules](#locating-spans). `odke run` and
+`odke eval ablation` print one line:
 
 ```
 coverage      1 of 3 sentences naming two known entities uncovered, 1 entities in no fact, 2 relations never offered, 0 unused
 ```
 
-These are gaps, not errors: a sentence naming two entities may relate them in
-no way the ontology has. They are what [the re-extract hook](#handing-a-gap-back-the-re-extract-hook)
-hands back.
 
 ```python
 from openodke import Document, Entity, Evidence, Fact, Ontology, Span
@@ -527,37 +406,22 @@ assert [s.quote for s in record.uncovered] == ["Ada Lovelace met Babbage in 1834
 
 ## Handing a gap back: the re-extract hook
 
-The coverage report's gaps can go back to the extractor, and what returns is
-grounded like any other fact. The idea is the "gleaning" pass of Microsoft
-GraphRAG (Edge et al. 2024, [arXiv 2404.16130](https://arxiv.org/abs/2404.16130)),
-which asks the model again what it missed. Here it is scoped to one window,
-aimed by a report that costs no model, and checked by the grounder afterwards.
-Off by default: `Pipeline(reextract=Reextract())`, or `reextract: true` (or
-`{windows: N}`) in an `odke run` config.
+Provisional ([Stability](stability.md#provisional)), off by default:
+`Pipeline(reextract=Reextract())`, or `reextract: true` (or `{windows: N}`) in a
+run config. It hands the coverage report's gaps back to the extractor.
 
-- **Windows.** Each uncovered sentence, then each sentence holding a missed
-  entity, in document order, at most `windows` per document (default 3). Each
-  is asked once per run. A chunk the router skipped holds none.
-- **The hook** is one method, so any extractor can take part:
-  `reextract(window: Chunk, relations: list[str], already: list[Fact], ontology) -> list[Fact]`.
-  `relations` are the predicates whose domain fits an entity the window names
-  and whose range is another one's type or a literal. `already` are the facts
-  cited in the window or naming an entity it names. `Reextract(hook=...)`
-  names a hook; left out, it is the pipeline's extractor, which must have one.
-- **`LLMExtractor`** implements it with the registered prompt
-  [`reextract@1`](models.md#prompts): extract@1's rules unchanged, the flagged
-  properties' snippets (past `snippet_limit` too), the `already` facts rendered
-  as the grounder renders claims, and the window. The reply is parsed and its
-  quotes checked exactly as extraction's are. `HybridExtractor` passes it to its
-  model path.
-- **What returns** repeats nothing already held: a fact with the signature of
-  one the document has is dropped and counted. The rest are stamped
-  `qualifiers["odke.reextract"] = {"window": [start, end]}`, grounded by the
-  pipeline's grounder, and join the document's facts before normalisation.
-- **Counted** in `stats["reextract"]`: `windows` asked, facts `returned`,
-  `duplicates`, `kept`, and `refused` by grounding (`contradicted` or
-  `not_found`), with the `verdicts`. The gate still decides what is written.
-  `odke run` prints one line:
+- **Windows**: uncovered sentences, then ones holding a missed entity, at most
+  `windows` per document (default 3), each once per run.
+- **The hook**: `reextract(window: Chunk, relations: list[str], already:
+  list[Fact], ontology) -> list[Fact]`. `relations` are the predicates that fit
+  the entities the window names; `already` are the facts cited in it or naming
+  them. `Reextract(hook=...)` names a hook; left out, it is the pipeline's
+  extractor. `LLMExtractor` sends [`reextract@1`](models.md#prompts), and
+  `HybridExtractor` passes it to its model path.
+- **What returns** is dropped if the document has its signature; the rest carry
+  `qualifiers["odke.reextract"] = {"window": [start, end]}` and are grounded.
+- `stats["reextract"]` counts `windows`, `returned`, `duplicates`, `kept`, and
+  `refused` by grounding, with the `verdicts`.
 
 ```
 reextract     1 windows asked, 1 facts returned (0 already held), 1 kept and 0 refused by grounding

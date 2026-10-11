@@ -1,22 +1,18 @@
 # Write to a store
 
-A sink takes the finished `KnowledgeGraph` and has one method, `write(kg)`.
-Every graph sink writes the same shape, from one write plan
-(`openodke.sinks.neo4j.plan()`), so a graph in Neo4j, in a Cypher script, in CSV,
-in RDF or in NetworkX is one graph.
+A sink has one method, `write(kg)`. Every graph sink writes one shape, from
+one write plan (`openodke.sinks.neo4j.plan()`).
 
 ## The shape
 
 | openodke | Written as | Matched on a rerun by |
 |---|---|---|
 | `Entity` | a node `(:Type:Entity {key})` with `label`, `aliases`, `external_id`, `resolution_*` and its attributes | type and key |
-| a fact whose object is an entity | a relationship `(s)-[:predicate]->(o)` carrying the [provenance](#provenance-on-every-fact) | the fact's [signature](concepts.md#the-signature-and-what-is-in-it) |
-| a fact whose object is a value | the same relationship to a `(:Claim {signature, value})` node, and the value [projected](#projection-and-reruns) onto the subject as `s.predicate` | the fact's signature |
-| `EntityLink` | a `SAME_AS`, `SIMILAR` or `DIFFERENT` relationship between two nodes already written; nodes are never merged ([DECISIONS #16](decisions.md#16)) | its two keys and its kind |
+| an edge fact | a relationship `(s)-[:predicate]->(o)` with its [provenance](#provenance-on-every-fact) | its [signature](concepts.md#the-signature-and-what-is-in-it) |
+| a property fact | the same, to a `(:Claim {signature, value})`, and the value [projected](#projection-and-reruns) as `s.predicate` | its signature |
+| `EntityLink` | a `SAME_AS`, `SIMILAR` or `DIFFERENT` relationship ([links](concepts.md#entities-and-links)) | its keys and kind |
 
-The examples on this page write this graph: a single-valued `hq` with two
-values, the loser of which has more sources; a denial; a value scoped by an
-identity-bearing qualifier; and a `DIFFERENT` link.
+The examples write this graph:
 
 ```python
 import tempfile
@@ -102,63 +98,30 @@ out = Path(tempfile.mkdtemp())
 
 ## Projection and reruns
 
-These rules hold for every graph sink.
-
-- **Projection.** A value is set on its subject as a plain property only when
-  the fact is asserted, has no identity-bearing qualifier, and did not lose a
-  conflict. A single-valued predicate carries its best-supported claim
-  (highest `support`, then `confidence`). A multi-valued one carries the list
-  when the sink is given the ontology.
-- **Lost conflicts.** A fact the corroborator voted down
-  (`odke.conflict` status `lost`) is never projected, however many sources back
-  it. Its claim and relationship are still written. `odke.conflict` is stored as
-  JSON text, not a map.
-- **Two values for a single predicate** are two relationships;
-  [`check()`](#check) reports them.
-- **A rerun into Neo4j or NetworkX** finds each node, relationship and claim by
-  its key and updates it. `SET r =` replaces a relationship's properties, so a
-  stale qualifier does not survive. Node attributes and projected values
-  accumulate (`SET n +=`), and nothing is ever deleted; the
-  [write report](#the-write-report) counts each row `merged`. Through the Validator,
-  a fact the store already holds is first [merged with the store](#merge-with-the-store),
-  so what replaces the properties carries every source. Retracting a source is
-  the [reconciler's](#reconcile) job.
+- **Projection.** A value is set on its subject only when the fact is asserted,
+  has no identity-bearing qualifier, and did not lose a conflict (`odke.conflict`
+  status `lost`, stored as JSON text). A single-valued predicate carries its
+  best-supported claim (highest `support`, then `confidence`); a multi-valued
+  one a list, when the sink has the ontology.
+- **A rerun** into Neo4j or NetworkX updates each node, relationship and claim
+  found by its key: a relationship's properties are replaced (`SET r =`), node
+  attributes and projected values accumulate (`SET n +=`), and nothing is
+  deleted; that is the [reconciler's](#reconcile) job.
 
 ## Merge with the store
 
-A claim the store already holds, stated again by another source, gains that
-source. It does not gain a second edge, and it does not lose the sources it had
-([DECISIONS #35](decisions.md#35)). Rewriting the relationship alone would
-replace its support list with the batch's.
+A claim the store holds, stated by another source, gains that source and keeps
+its own ([DECISIONS #35](decisions.md#35)). A sink that can say what it holds is
+a `FactLookup`, whose `stored(facts)` returns the stored fact for each
+signature; `SignatureCorroborator(store=...)` merges those in before the scorer
+and the gate, a statement replacing a derived twin
+([DECISIONS #28](decisions.md#28)). `Neo4jSink.stored` reads through each
+predicate's uniqueness index, warning on a predicate without one; `JsonlSink(directory, merge=True)` keeps what the files hold.
 
-- **The sink reads; the corroborator merges.** A sink that can say what it
-  already holds is a `FactLookup`: `stored(facts)` returns, by signature, the
-  stored fact for each one the store holds. `SignatureCorroborator(store=...)`
-  merges each stored fact into its claim as one more member, after the batch
-  merges and before the scorer and the gate. The support list grows by the
-  batch's new sources, and the score counts them all.
-- **`Neo4jSink.stored`** is one read transaction per write: for each
-  predicate, an `UNWIND` of the batch's signature keys through the index its
-  relationship uniqueness constraint brings, which `bootstrap()` creates. A
-  predicate with no index is not read, and it warns rather than scan, so a
-  store never bootstrapped is written as before, without merging. The
-  evidence comes back from the relationship's lists, without quotes or
-  mentions, which it never held.
-- **`JsonlSink(directory, merge=True)`** makes the files a store. A write keeps
-  what they hold, replaces each entity, fact and link the graph restates, and
-  adds the rest; `stored` reads `facts.jsonl`. Without `merge`, each write
-  replaces the files and there is nothing to merge with.
-- **A statement wins** across the store as within a batch
-  ([DECISIONS #28](decisions.md#28)). A derived fact merges only with a derived
-  one. A derived twin of a stored statement is dropped, and a statement
-  replaces a stored derived twin. A derived fact then shares its parent's
-  merged list.
-- **The Validator merges by default.** It hands every sink that is a
-  `FactLookup` to its default corroborator, and `report.restated` counts the
-  facts merged with the store. A corroborator you pass in merges with the
-  `store` you gave it. A dry run reads no sink. `odke validate` merges with a
-  config's sinks, with a `jsonl` sink that has `merge: true`, and with `-o`
-  given `--merge`. `odke run` does not merge yet.
+**The Validator merges by default** with every `FactLookup` sink
+(`report.restated` counts them), as does `odke validate` with a config's sinks
+and `-o --merge`; a dry run reads none. `odke run` does not merge; its `jsonl`
+sink with `merge: true` replaces a restated fact.
 
 ```python
 from openodke import Document, Validator
@@ -187,44 +150,26 @@ print(report.restated, held.support, [s.source for s in held.supported_by])
 
 ## Reconcile
 
-Sources change, and a store that only adds keeps facts whose text no longer
-exists. The reconciler retracts a source from the store
-([DECISIONS #37](decisions.md#37)):
+The reconciler retracts a source ([DECISIONS #37](decisions.md#37)):
 
-- **Delete.** Every fact a document backed loses that document: its evidence,
-  and its place in the [support list](resolution-and-corroboration.md#support-lists).
-  A source entry left with no document goes, and `support` is what is left.
-- **Update.** The same, then the new version validated, so the facts it still
-  states [merge with the store](#merge-with-the-store) again and regain it.
-- **Retire.** A fact left with no source is kept, with `Fact.retired_at` set
-  to the transaction time it lost its last one, no evidence and `support` 0.
-  It was not proven false, so its valid clock is left alone. It is never the
-  value: not projected, not counted by [`check()`](#check), not asserted as a
-  plain RDF triple. A source that states it again brings it back.
-  `hard_delete=True` (`--hard-delete`) deletes it instead.
-- **Derived facts** cite their parent's evidence, so the same retraction
-  reaches them, and one whose parent is retired is retired with it.
-- **Idempotent.** A fact that no longer cites a document is not touched, and a
-  retired fact keeps the time it was first retired.
+- **Delete.** Each fact a document backed loses it from its evidence and
+  [support list](resolution-and-corroboration.md#support-lists), derived facts
+  included.
+- **Update.** The same, then the new version is validated and
+  [merges](#merge-with-the-store) back.
+- **Retire.** A fact left with no source keeps `retired_at`, no evidence and
+  `support` 0, and is not projected, [checked](#check) or asserted in RDF until
+  a source states it again. `hard_delete=True` (`--hard-delete`) deletes it.
+
+Reconciling twice changes nothing.
 
 | | Python | Command line |
 |---|---|---|
 | a document is gone | `Reconciler(sinks).delete(doc_ids)` | `odke reconcile --sink <dir or bolt://…> --delete <doc-id>` |
 | a document changed | `Validator(..., sinks=...).validate(facts, [new], update=True)` | `odke validate ... --update` |
 
-A store that can retract is `Retractable`. `JsonlSink.retract` rewrites
-`facts.jsonl`. `Neo4jSink.retract` runs in one write transaction:
-- it finds the facts through the per-predicate full-text index over
-  `evidence_doc_ids` that `bootstrap()` creates, with the keyword analyzer,
-  never by a scan; a relationship type without one is not read, and warns;
-- it rewrites each fact's evidence and support lists, `support` and
-  `retired_at` by element id;
-- it projects each value again from the claims left, removing it when none
-  is.
-
-Neither rescores, so a fact keeps its confidence until it is next validated.
-An update retracts first. A run that fails before it writes leaves the old
-version retracted; running it again finishes it.
+`JsonlSink` and `Neo4jSink` are `Retractable`; neither rescores. An update
+retracts first, so rerun one that fails before writing.
 
 ```python
 from datetime import UTC, datetime
@@ -247,44 +192,25 @@ assert (gone.support, gone.retired_at is not None) == (0, True)
 assert Reconciler([store]).delete("ar-2026").cited == 0  # again: nothing moves
 ```
 
-`odke reconcile` reads a JSONL directory odke wrote, or a Neo4j URI with
-`--user`, `--password-env` and `--database` as `odke validate` takes them, and
-`--ontology` so a multi-valued value is projected again as a list. To update
-a document, give the new version to `odke validate --update`: it retracts
-every text it is given from the config's sinks, or from `-o`, which it then
-merges into, before it writes.
+`odke reconcile --sink` takes a JSONL directory, or a Neo4j URI with `--user`,
+`--password-env`, `--database` and `--ontology`.
 
 ## Tenants
 
-One store can hold many tenants, and two tenants who state the same claim own
-two facts ([DECISIONS #44](decisions.md#44)). Give the tenant once:
-`Validator(..., tenant="acme")`, `tenant: acme` in a run config, or
-`--tenant acme` on `odke run`, `odke validate` and `odke reconcile`. Every sink
-and lookup that can be scoped to it is scoped (`scoped(tenant)`).
+Two tenants who state the same claim own two facts in one store
+([DECISIONS #44](decisions.md#44)). Give the tenant once:
+`Validator(..., tenant="acme")`, `tenant: acme` in a run config, or `--tenant
+acme` on `odke run`, `validate` and `reconcile`; every sink and lookup with
+`scoped(tenant)` is scoped.
 
-- **Keys carry the tenant in the store.** A tenant's entity is keyed
-  `acme/<key>`, its facts' signatures are hashed with `acme`, and every node and
-  relationship it writes has `tenant: "acme"`. The constraints `bootstrap()`
-  creates serve every tenant at once: one node per key, one relationship per
-  signature. A store with no tenant is written as before.
-- **Every read stays in the tenant.** The [store lookup](resolution-and-corroboration.md#resolving-against-the-store)
-  asks for the tenant's keys, and keeps the tenant's nodes among the ones an
-  id, a name or a vector finds. [Merging with the store](#merge-with-the-store)
-  reads the tenant's signatures. The [reconciler](#reconcile) retracts a
-  document from the tenant's facts, so another tenant's text with the same id
-  is untouched. `check()` reports the tenant's subjects, under the tenant's
-  keys. `read_neo4j(driver, tenant=...)` reads the tenant's facts. A reader
-  with no tenant sees only what no tenant wrote.
-- **What comes back is the tenant's own key.** A stored node is read back
-  under the key its tenant gave it, and `tenant` is the sink's, never an
-  attribute. An entity attribute or a qualifier named `tenant` is written as
-  `attribute_tenant` or `qualifier_tenant`.
-- **A JSONL directory holds one tenant.** `JsonlSink(..., tenant=...)` names it
-  in the manifest. Merging, reading or retracting a directory another tenant
-  wrote is refused.
-
-A tenant is letters, digits, `_`, `.` and `-`, starting with a letter or digit.
-A sink or lookup scoped to one tenant refuses another.
+Its keys are `acme/<key>`, its signatures are hashed with `acme`, and its nodes
+and relationships carry `tenant: "acme"` (an attribute or qualifier named
+`tenant` becomes `attribute_tenant` or `qualifier_tenant`). Lookups, merges,
+the reconciler, `check()` and `read_neo4j(driver, tenant=...)` stay in the
+tenant and give its own keys back; with no tenant they see only what no tenant
+wrote, and one scoped to a tenant refuses another. A JSONL directory holds one
+tenant. A tenant is letters, digits, `_`, `.` and `-`, starting with a letter or
+digit.
 
 ```python
 from openodke.sinks.neo4j import plan
@@ -306,29 +232,11 @@ assert rows("acme", "edge")[0]["signature"] != rows("beta", "edge")[0]["signatur
 
 ## The write report
 
-Every run ends with what each sink did, per kind (entities, facts, links):
-
-- **`written`**: new to the store, a node, relationship or line it did not hold;
-- **`merged`**: written into one it held. A rerun of the same graph merges every
-  row, so its report says it made nothing new;
-- **`skipped`**: rows that wrote nothing, such as a link whose end had no node to
-  `MATCH`;
-- **`transactions`**: for Neo4j, the transactions committed.
-
-`Neo4jSink` counts from the database: each statement it runs ends with
-`RETURN count(*)`, the rows that reached its `MERGE`, and the counters say how
-many nodes and relationships were made. `JsonlSink` counts every line it
-writes or appends as `written`, and with `merge=True` a line that replaced
-one it held as `merged`. A sink that keeps no report is listed with what it
-was `handed`.
-
-A sink's `writes` runs on across its writes, so a job's report is the
-difference from a snapshot taken before it wrote: a
-[streamed run](run.md#streaming) takes it before its first micro-batch and
-reports once after its last. The report is `ValidationReport.writes` and
-`stats["writes"]`, keyed by position and class (`0:Neo4jSink`), the
-[run manifest's](run.md#the-run-manifest) `writes`, and the `job.end` event's.
-It is printed one line per sink:
+Each sink reports, per kind, the rows `written` new, `merged` into one it held,
+and `skipped` (a link with no node to `MATCH`), and Neo4j's `transactions`; a
+sink without a report lists what it was `handed`. It covers the whole job, and
+is `ValidationReport.writes`, `stats["writes"]` (keyed `0:Neo4jSink`), and the
+[run manifest's](run.md#the-run-manifest) and `job.end`'s `writes`:
 
 ```text
 writes        0:Neo4jSink: entities 3 written; facts 2 written, 1 merged; links none; 1 transaction
@@ -338,28 +246,25 @@ writes        0:Neo4jSink: entities 3 written; facts 2 written, 1 merged; links 
 
 | Class | `odke run` name | Extra | Writes | On a second `write` |
 |---|---|---|---|---|
-| `openodke.sinks.JsonlSink` | `jsonl` | — | `entities.jsonl`, `facts.jsonl`, `links.jsonl`, `manifest.json` | rewrites the files; with `merge=True`, merges into them |
+| `openodke.sinks.JsonlSink` | `jsonl` | — | JSON Lines and `manifest.json` | rewrites the files, or merges |
 | `openodke.sinks.neo4j.Neo4jSink` | `neo4j` | `neo4j` | a live Neo4j | updates in place |
-| `openodke.sinks.bulk.CypherFileSink` | `cypher_file` | — | a `.cypher` script | rewrites the file; replaying it updates in place |
-| `openodke.sinks.bulk.Neo4jAdminCsvSink` | `neo4j_admin_csv` | — | CSV files for `neo4j-admin database import` | rewrites the files |
+| `openodke.sinks.bulk.CypherFileSink` | `cypher_file` | — | a `.cypher` script | rewrites the file |
+| `openodke.sinks.bulk.Neo4jAdminCsvSink` | `neo4j_admin_csv` | — | CSV for `neo4j-admin database import` | rewrites the files |
 | `openodke.sinks.rdf.RdfSink` | `rdf` | `rdf` | Turtle, N-Triples or JSON-LD | rewrites the file |
 | `openodke.sinks.networkx.NetworkXSink` | `networkx` | `networkx` | a `networkx.MultiDiGraph` | adds and updates, never removes |
 
-Every module imports on the base install. A missing extra fails with the
-command that installs it. Options per sink are in
-[`odke run`](run.md#sinks).
+A missing extra fails naming its install command. Options in `odke run`:
+[Sinks](run.md#sinks).
 
 ## Neo4j
 
-Needs Neo4j 5.7 or later (relationship uniqueness constraints arrived in 5.7);
-Community Edition is enough. `pip install "openodke[neo4j]"`.
+Neo4j 5.7 or later, Community Edition included: `pip install "openodke[neo4j]"`.
 
 `Neo4jSink(uri, auth, *, database=None, batch_size=500, driver=None, ontology=None, tenant=None)`
-writes batched `UNWIND … MERGE`, packed into transactions of at most
-`batch_size` rows across statements, in write order, each committed whole. Call
-`sink.bootstrap(ontology)` before the first write: it applies the constraints
-and indexes, each `IF NOT EXISTS`, and `dry_run=True` returns them without
-running them. Creating the sink does not connect.
+writes batched `UNWIND … MERGE` in transactions of at most `batch_size` rows.
+Creating it does not connect. `sink.bootstrap(ontology)` applies the
+constraints and indexes (`IF NOT EXISTS`) before the first write;
+`dry_run=True` returns them.
 
 ```python
 from openodke.sinks.neo4j import Neo4jSink
@@ -376,8 +281,6 @@ print(ddl[2])
 # CREATE CONSTRAINT odke_key_Company IF NOT EXISTS FOR (n:`Company`) REQUIRE n.key IS UNIQUE
 ```
 
-Against a server:
-
 <!-- docs: no-run -->
 ```python
 import os
@@ -389,8 +292,8 @@ with Neo4jSink(uri, auth, database="neo4j") as sink:
     print(sink.check(ontology))  # {'hq': [{'subject': 'c:acme', 'objects': [...], ...}]}
 ```
 
-In a `Pipeline`, pass `constrainer=Neo4jConstrainer()` beside the sink; it does
-not raise a `DoubleStageWarning`.
+In a `Pipeline`, pass `constrainer=Neo4jConstrainer()` beside the sink; it
+raises no `DoubleStageWarning`.
 
 ### What Neo4j enforces, and what it cannot
 
@@ -398,27 +301,20 @@ not raise a `DoubleStageWarning`.
 |---|---|
 | one node per (type, key) | a uniqueness constraint per entity type |
 | one relationship per (predicate, signature), one `:Claim` per signature | uniqueness constraints |
-| one value for a `single` predicate | cannot be enforced; a check query instead |
-| existence, property-type and node-key constraints | Enterprise Edition only, so not emitted |
-| domain and range | not enforced by Neo4j; `VerdictGate(schema=True)` refuses a fact outside them |
+| one value for a `single` predicate | not enforceable: [`check()`](#check) |
+| existence, property-type, node-key | Enterprise only: not emitted |
+| domain and range | not enforced: [`VerdictGate(schema=True)`](grounding.md#the-gate-verdictgate) |
 
-Bootstrap also creates indexes on `external_id` per type, a full-text index over
-`label` and `aliases` per type, an index on `key` for `:Entity`, and a
-full-text index over `evidence_doc_ids` per predicate, which the
-[reconciler](#reconcile) finds a document's facts through, and an index on
-`odke.ontology` per predicate, which the facts one ontology checked are found
-through ([below](#which-ontology-checked-a-fact)). A type or
-predicate the ontology does not name gets no constraint or index. The key
-constraint and these indexes are what `Neo4jSink.lookup()` reads through to
-resolve a new batch against the graph without loading it
-([Resolving against the store](resolution-and-corroboration.md#resolving-against-the-store)).
+`bootstrap()` also creates indexes: per type on `external_id`, and full-text on
+`label` and `aliases`; on `key` for `:Entity`; per predicate full-text on
+`evidence_doc_ids`, and on `odke.ontology`. An undeclared type or predicate
+gets none. The [store lookup](resolution-and-corroboration.md#resolving-against-the-store)
+and the reconciler read through them.
 
 ### `check()`
 
-`sink.check(ontology)` runs one check query per `single` predicate, marked
-`// odke:check <predicate>`, and returns `{predicate: [violators]}`. It
-changes nothing. Only asserted relationships with no `valid_to` count, grouped
-by the predicate's
+`sink.check(ontology)` returns `{predicate: [violators]}` for each `single`
+predicate: asserted, live relationships with no `valid_to`, grouped by
 [`scope_keys`](ontology.md#cardinality-and-its-scope).
 
 ```python
@@ -440,15 +336,11 @@ print(check)
 |---|---|
 | `fact_id`, `signature`, `polarity`, `identity_keys` | the fact's own fields; `signature` is a SHA-256 of `Fact.signature` |
 | `extractor`, `verdict`, `confidence`, `support` | what the stages decided |
-| `support_sources`, `support_tiers`, `support_retrieved_at` | the [support list](resolution-and-corroboration.md#support-lists) as parallel lists, one position per independent source; `support` is their length when they are filled |
-| `support_doc_ids`, `support_doc_sources` | each source's documents, flattened: a document, and the source it belongs to. `support_from(props)` reads the list back ([DECISIONS #33](decisions.md#33)) |
-| `valid_from`, `valid_to` | when the claim was true |
-| `retrieved_at` | the newest evidence's retrieval time |
-| `retired_at` | when the [reconciler](#reconcile) took the fact's last source away; absent on a live fact |
-| `extracted_at` | `KnowledgeGraph.created_at` |
-| `evidence_doc_ids`, `evidence_uris`, `evidence_starts`, `evidence_ends`, `evidence_tiers`, `evidence_retrieved_at` | parallel lists, one position per piece of evidence; a missing uri is `""` and a missing span `-1` |
-| `evidence_span_origins` | who chose each span: `cited`, `located` or `context` ([DECISIONS #25](decisions.md#25)) |
-| each qualifier | under its own name, or `qualifier_<name>` if a provenance property has that name; a map or mixed list as JSON text |
+| `support_sources`, `support_tiers`, `support_retrieved_at`, `support_doc_ids`, `support_doc_sources` | the [support list](resolution-and-corroboration.md#support-lists) as parallel lists; `support_from(props)` reads it back ([DECISIONS #33](decisions.md#33)) |
+| `valid_from`, `valid_to`, `retrieved_at`, `retired_at`, `extracted_at` | the valid clock; the newest evidence; when [retired](#reconcile); `KnowledgeGraph.created_at` |
+| `evidence_doc_ids`, `evidence_uris`, `evidence_starts`, `evidence_ends`, `evidence_tiers`, `evidence_retrieved_at` | parallel lists; a missing uri is `""`, a missing span `-1` |
+| `evidence_span_origins` | `cited`, `located` or `context` ([DECISIONS #25](decisions.md#25)) |
+| each qualifier | under its own name, or `qualifier_<name>` if a property above has it; a map or mixed list as JSON text |
 
 ```cypher
 // Why is this edge here?
@@ -466,21 +358,11 @@ RETURN s.key, type(r) AS predicate, coalesce(o.key, o.value) AS object, r.`odke.
 
 ### Which ontology checked a fact
 
-Every fact the gate lets through carries `odke.ontology`, the
-[`fingerprint`](ontology.md#freezing) of the ontology the pipeline checked it
-under ([DECISIONS #42](decisions.md#42)). A fact checked again is stamped
-again, so it names the last ontology that checked it; an ontology with no
-types and no predicates checks nothing and stamps nothing. A fact the model
-extracted also carries `odke.schema_slice`, the fingerprint of the
-`OntologySnippet` it was shown for its subject's type. Both are qualifiers,
-so every sink writes them where it writes qualifiers: in `facts.jsonl`, as
-relationship properties in Neo4j, the Cypher file and the CSV, as edge
-attributes in NetworkX, and under `<schema>qualifier/` in RDF. Neither is in
-`Fact.signature`: the same claim is one fact whatever checked it.
-
-`bootstrap()` gives each predicate a range index on `odke.ontology`, so after a
-schema change the facts the old one checked are found through it, never by a
-scan:
+Every fact the gate passes carries the qualifier `odke.ontology`, the
+[`fingerprint`](ontology.md#freezing) of the last ontology that checked it
+([DECISIONS #42](decisions.md#42)); a model's fact also carries
+`odke.schema_slice`, its snippet's. Neither is in the signature. Find an old
+ontology's facts through the index:
 
 ```cypher
 // The employer facts one ontology checked, by its fingerprint.
@@ -489,11 +371,10 @@ WHERE r.`odke.ontology` = $fingerprint
 RETURN s.key, coalesce(o.key, o.value) AS object, r.fact_id;
 ```
 
-`Neo4jSink.checked_under(ontology)` runs that per predicate in one read
-transaction and returns the facts, reading no relationship type without the
-index and warning instead. `checked_under(facts, ontology)` and
-`checked_by(fact)` in `openodke.corroborate` do the same for facts in hand, a
-JSONL store's say; either takes the ontology or its fingerprint.
+`Neo4jSink.checked_under(ontology)` runs that per predicate in one transaction.
+`checked_under(facts, ontology)` and `checked_by(fact)` in
+`openodke.corroborate` do it for facts in hand. Each takes an ontology or a
+fingerprint.
 
 ```python
 from openodke import Document, Entity, Evidence, Fact, Ontology, Pipeline, Span
@@ -516,19 +397,14 @@ assert checked_by(fact) == fact.qualifiers[ONTOLOGY] == companies.fingerprint
 assert checked_under(checked.facts, companies) == [fact]
 ```
 
-`odke ontology diff old.json new.json --store out` puts the two together:
-the changes, then how many stored facts each ontology checked, and the first
-of those the old one did, to validate again. `--store` takes a directory odke
-wrote as JSONL, or a Neo4j URI with `--user`, `--password-env` and
-`--database`.
+[`odke ontology diff --store`](ontology.md#diff) counts them for a schema change.
 
 ## Cypher file
 
 `CypherFileSink(path, *, ontology=None, batch_size=500)` writes `Neo4jSink`'s
-statements as a script, with each batch's rows inlined. With an ontology it
-opens with the bootstrap DDL. Replay it with
-`cypher-shell -a <uri> -u <user> -f graph.cypher`; replaying twice changes
-nothing.
+statements as a script, opening with the bootstrap DDL when given an ontology.
+Replay it with `cypher-shell -a <uri> -u <user> -f graph.cypher`; replaying
+twice changes nothing.
 
 ```python
 from openodke.sinks.bulk import CypherFileSink
@@ -539,9 +415,8 @@ CypherFileSink(out / "graph.cypher", ontology=ontology).write(kg)
 ## neo4j-admin CSV
 
 `Neo4jAdminCsvSink(directory, *, ontology=None, delimiter=",", array_delimiter=";")`
-writes one CSV file per node or relationship group, typed headers, and an
-`import.args` file. An import builds a new database; to extend a live one, use
-`Neo4jSink` or the Cypher file.
+writes one CSV file per node or relationship group, with typed headers, and an
+`import.args` file. An import builds a new database.
 
 ```python
 from openodke.sinks.bulk import Neo4jAdminCsvSink
@@ -554,17 +429,12 @@ assert (out / "import" / "import.args").is_file()
 ## RDF
 
 `RdfSink(path, *, format=None, base="https://example.org/odke/", schema=None, ontology=None)`
-writes each fact as a reified `rdf:Statement` carrying its provenance, with an
-`odke:evidence` node per piece of evidence and an `odke:supported_by` node per
-independent source (`odke:source`, `odke:doc_id`, `odke:tier`,
-`odke:retrieved_at`). The plain
-triple `<s> <predicate> <o>` is written only for an asserted fact with no
-identity-bearing qualifier that did not lose a conflict, so a denial or a scoped
-value asserts nothing. openodke's own terms
-are in `odke:`, `https://openodke.dev/vocab#`. With an ontology, the file also
-holds the schema as OWL, and a value is typed with its predicate's range, such
-as `xsd:date`, when it parses as one. The suffix picks the format: `.ttl`, `.nt`,
-`.jsonld` or `.json`.
+writes each fact as a reified `rdf:Statement` with its provenance, evidence
+(`odke:evidence`) and sources (`odke:supported_by`), in `odke:`
+(`https://openodke.dev/vocab#`). The plain triple `<s> <predicate> <o>`
+follows the [projection](#projection-and-reruns) rule. An ontology adds the
+schema as OWL and types values by range. The suffix picks the format: `.ttl`,
+`.nt`, `.jsonld` or `.json`.
 
 ```python
 from openodke.sinks.rdf import RdfSink
@@ -578,9 +448,9 @@ assert not graph.query(ASK % "uptime").askAnswer  # a value without its percenti
 
 ## NetworkX
 
-`NetworkXSink(graph=None, *, ontology=None)` fills a `networkx.MultiDiGraph`. A
-node's id is the entity's key, a claim is the node `claim:<signature>`, and
-each edge has a `kind`: `fact` or `link`.
+`NetworkXSink(graph=None, *, ontology=None)` fills a `networkx.MultiDiGraph`: a
+node per entity key, a node `claim:<signature>` per claim, and edges whose
+`kind` is `fact` or `link`.
 
 ```python
 from openodke.sinks.networkx import NetworkXSink
@@ -594,25 +464,20 @@ assert inspector.graph.nodes["c:acme"]["hq"] == "Munich"
 
 ## JSONL
 
-`JsonlSink(directory, *, merge=False)` writes every entity, fact and link as
-JSON Lines, with the stage counts in `manifest.json`, to which a run adds its
-[run manifest](run.md#the-run-manifest). `facts.jsonl` is a
-predictions file for [`odke eval`](evaluation.md). With `merge=True` the files
-are a store, and a write [merges with it](#merge-with-the-store).
-
-`append(kg)` adds a graph after what the files hold and its counts to the
-manifest's, reading nothing back: a [streamed run](run.md#streaming) writes its
-first micro-batch and appends the rest, so a fact two micro-batches state is a
-line in each, and a reader keeps the last. With `merge=True` it merges.
-RDF, `cypher_file` and `neo4j_admin_csv` write the whole graph on every write
-(`streams = False`), so a streamed run refuses them.
+`JsonlSink(directory, *, merge=False, tenant=None)` writes JSON Lines, and the
+stage counts and [run manifest](run.md#the-run-manifest) to `manifest.json`.
+`facts.jsonl` is a predictions file for [`odke eval`](evaluation.md).
+`append(kg)` adds a graph without reading the files (or merges, with
+`merge=True`): a [streamed run](run.md#streaming) appends each micro-batch, and
+a reader keeps a fact's last line. RDF, `cypher_file` and `neo4j_admin_csv`
+rewrite the whole graph (`streams = False`), so a streamed run refuses them.
 
 ## Your own sink
 
 Anything with `write(kg)` is a sink ([DECISIONS #5](decisions.md#5)).
 `plan(kg, ontology=...)` and `provenance_of(fact, extracted_at)` in
-`openodke.sinks.neo4j` give you the shape above. A store that does a stage
-itself declares `profile = PlatformProfile(...)`
+`openodke.sinks.neo4j` give the shape above. A store that does a stage itself
+declares `profile = PlatformProfile(...)`
 ([Concepts](concepts.md#platformprofile-and-delegated)).
-`openodke.eval.assert_idempotent(sink, kg, counts)` writes twice and checks that
-nothing moved.
+`openodke.eval.assert_idempotent(sink, kg, counts)` writes twice and checks
+that nothing moved.
