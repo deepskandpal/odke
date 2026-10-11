@@ -6,12 +6,118 @@ import shutil
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from openodke import EntityType, Ontology, Predicate
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
+
+
+@pytest.fixture(autouse=True)
+def every_eval_report_is_sound(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Every `EvalReport` any test builds fits the schema, and its ranges hold its numbers (#139).
+
+    Collected as they are made and checked when the test ends, so a builder
+    that drifts from the schema fails whichever test reached it first.
+    """
+    from openodke.eval.eval_report import EvalReport, check_report
+
+    made: list[EvalReport] = []
+    build = EvalReport.__init__
+
+    def init(self: EvalReport, /, **data: object) -> None:
+        build(self, **data)
+        made.append(self)
+
+    monkeypatch.setattr(EvalReport, "__init__", init)
+    yield
+    for report in made:
+        problems = check_report(report.model_dump(mode="json"))
+        assert not problems, f"{report.title}: {problems}"
+        for row in report.rows:
+            for name in ("precision", "recall", "f1"):
+                found = getattr(row.performance, name)
+                if found.value is not None and found.low is not None:
+                    assert found.high is not None
+                    assert found.low <= found.value <= found.high, (row.name, name, found)
+
+
+@pytest.fixture(autouse=True)
+def every_run_report_fits_its_schema(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Every `ValidationReport` any test builds fits `validation_report.schema.json` (#166).
+
+    As the eval report's fixture does: collected as they are made and checked
+    when the test ends, so a field the schema does not know fails at once.
+    """
+    import json
+
+    from openodke.eval.eval_report import _problems
+    from openodke.validator import REPORT_SCHEMA_PATH, ValidationReport
+
+    root = json.loads(REPORT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    made: list[ValidationReport] = []
+    build = ValidationReport.__init__
+
+    def init(self: ValidationReport, /, **data: object) -> None:
+        build(self, **data)
+        made.append(self)
+
+    monkeypatch.setattr(ValidationReport, "__init__", init)
+    yield
+    for report in made:
+        problems = list(_problems(report.model_dump(mode="json"), root, root, "$"))
+        assert not problems, problems
+
+
+@pytest.fixture(autouse=True)
+def every_support_list_is_counted(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """`support == len(supported_by)` on every fact any test makes with a support list (#115).
+
+    Checked wherever a fact is made: built, copied with an update, read from
+    JSON on its own or inside a graph. A fact with no list keeps whatever count
+    it was given, as a fact serialised by 0.2.x does.
+    """
+    from openodke import Fact, KnowledgeGraph
+
+    broken: list[Fact] = []
+
+    def check(fact: Fact) -> Fact:
+        if fact.supported_by and fact.support != len(fact.supported_by):
+            broken.append(fact)
+        return fact
+
+    def graph(kg: KnowledgeGraph) -> KnowledgeGraph:
+        for fact in kg.facts:
+            check(fact)
+        return kg
+
+    build, copy = Fact.__init__, Fact.model_copy
+    read, read_json = Fact.model_validate, Fact.model_validate_json
+    build_graph, read_graph = KnowledgeGraph.__init__, KnowledgeGraph.model_validate_json
+
+    def init(self: Fact, /, **data: Any) -> None:
+        build(self, **data)
+        check(self)
+
+    def copied(self: Fact, *, update: Any = None, deep: bool = False) -> Fact:
+        return check(copy(self, update=update, deep=deep))
+
+    def init_graph(self: KnowledgeGraph, /, **data: Any) -> None:
+        build_graph(self, **data)
+        graph(self)
+
+    monkeypatch.setattr(Fact, "__init__", init)
+    monkeypatch.setattr(Fact, "model_copy", copied)
+    monkeypatch.setattr(Fact, "model_validate", lambda *a, **k: check(read(*a, **k)))
+    monkeypatch.setattr(Fact, "model_validate_json", lambda *a, **k: check(read_json(*a, **k)))
+    monkeypatch.setattr(KnowledgeGraph, "__init__", init_graph)
+    monkeypatch.setattr(
+        KnowledgeGraph, "model_validate_json", lambda *a, **k: graph(read_graph(*a, **k))
+    )
+    yield
+    assert not broken, [(f.signature, f.support, f.supported_by) for f in broken]
 
 
 @pytest.fixture

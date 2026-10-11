@@ -23,7 +23,8 @@ import inspect
 import json
 import os
 import sys
-from collections.abc import Callable, Mapping, Sequence
+import threading
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from pathlib import Path
@@ -32,18 +33,24 @@ from urllib.parse import unquote, urlsplit
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from openodke._renamed import deprecated
 from openodke.chunking import SentenceChunker
 from openodke.corroborate import (
     EvidenceScorer,
     NativeResolver,
+    PairJudge,
     SignatureCorroborator,
     ValueNormalizer,
 )
 from openodke.eval.cost import CostMeter
 from openodke.extract import HybridExtractor, LLMExtractor, PatternExtractor, RecordMapping
+from openodke.gate import VerdictGate
 from openodke.ground import LLMGrounder, RetryPolicy, SpanGrounder
 from openodke.interop import TriplesExtractor
-from openodke.llm.base import LLMClient
+from openodke.llm.base import Completion, LLMClient, Message, ModelSpec, ProviderNotInstalled
+from openodke.llm.budget import Ledger
+from openodke.llm.cache import CachedClient, DirectoryCache
+from openodke.llm.limits import PROVIDER_LIMITS, LimitedClient
 from openodke.llm.registry import resolve as resolve_client
 from openodke.llm.roles import ModelRoles
 from openodke.llm.testing import RecordedClient, ReplayClient
@@ -60,12 +67,15 @@ from openodke.loaders import (
     TextLoader,
     TsvLoader,
 )
+from openodke.manifest import Served
+from openodke.observe import Observer
 from openodke.ontology import Ontology, OntologyLoadError
 from openodke.pipeline import Pipeline
+from openodke.reextract import Reextract
 from openodke.run.config import STAGES, ConfigError, InputSpec, RunConfig, StageSpec
 from openodke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink
 from openodke.sinks.jsonl import JsonlSink
-from openodke.sinks.neo4j import Neo4jConstrainer, Neo4jSink, is_check, plan
+from openodke.sinks.neo4j import Neo4jConstrainer, Neo4jLookup, Neo4jSink, is_check, plan
 from openodke.sinks.networkx import NetworkXSink
 from openodke.sinks.rdf import RdfSink
 from openodke.stages import (
@@ -74,6 +84,7 @@ from openodke.stages import (
     Corroborator,
     Delegated,
     Extractor,
+    Gate,
     Grounder,
     Inferrer,
     Loader,
@@ -81,22 +92,21 @@ from openodke.stages import (
     PassThroughChunker,
     PassThroughConstrainer,
     PassThroughCorroborator,
+    PassThroughGate,
     PassThroughGrounder,
     PassThroughInferrer,
     PassThroughNormalizer,
     PassThroughResolver,
     PassThroughRouter,
     PassThroughScorer,
-    PassThroughValidator,
     PlatformProfile,
     Resolver,
     Router,
     Scorer,
     Sink,
-    Validator,
+    StoreLookup,
 )
 from openodke.types import Document, GroundingVerdict, KnowledgeGraph, SourceTier
-from openodke.validators import VerdictValidator
 
 PROTOCOLS: dict[str, type] = {
     "loader": Loader,
@@ -108,7 +118,7 @@ PROTOCOLS: dict[str, type] = {
     "resolver": Resolver,
     "corroborator": Corroborator,
     "scorer": Scorer,
-    "validator": Validator,
+    "gate": Gate,
     "sink": Sink,
     "constrainer": Constrainer,
     "inferrer": Inferrer,
@@ -122,32 +132,126 @@ PROTOCOLS: dict[str, type] = {
 
 @dataclass
 class Context:
-    """What a factory may need beyond its options: the ontology, the models, the meter."""
+    """What a factory may need beyond its options: the ontology, the models, the meter,
+    the response cache, and the ledger every model call is counted on."""
 
     config: RunConfig
     ontology: Ontology
     roles: ModelRoles
     meter: CostMeter | None = None
+    cache: DirectoryCache | None = None
+    # The run's budget and what it has spent: every client is counted here.
+    ledger: Ledger = field(default_factory=Ledger)
     _replays: dict[str, LLMClient] = field(default_factory=dict)
+    # Every cached client handed out, for the run's hit and miss counts.
+    cached: list[CachedClient] = field(default_factory=list)
+    # The model each role asked for and the ids that answered, for the run manifest.
+    served: Served = field(default_factory=Served)
+    # The run's events and spans (`openodke.observe`): every stage and every model call.
+    observer: Observer = field(default_factory=lambda: Observer("run"))
 
-    def client(self, role: str) -> LLMClient | None:
-        """The client a model-backed stage should use for `role`, or None to resolve its own.
+    def client(self, role: str, *, stage: str | None = None) -> LLMClient:
+        """The client a model-backed stage should use for `role`.
 
-        Recorded responses win when the config names them. A meter, when on,
-        wraps whatever the client is, so cost is counted without a stage
-        knowing.
+        Recorded responses win when the config names them; otherwise the
+        provider's client, resolved now, so a missing adapter stops the run
+        before anything is spent. Behind a cache it may be missing until the
+        first miss: a rerun answered from the cache needs no adapter at all.
+
+        Every call that goes out holds a slot of its provider's process-wide
+        limit (`openodke.llm.limits`). The ledger counts every call and stops
+        the run at its budget, before a call queues for a slot. The response
+        cache, when on, answers in front of both, so a
+        repeated call reaches neither a provider nor a recording and costs
+        nothing against the budget. A meter, when on, wraps the lot, so cost is
+        counted without a stage knowing: under `stage` when given, so the
+        grounder's widened retries are a cost row of their own, and under the
+        role otherwise. Every answer's model, a cached one's too, is noted
+        under the role for the run manifest (`served`). Outermost, the run's
+        observer sees every call, a cached one too, as an event and a span
+        under the same name.
         """
-        inner: LLMClient | None = None
+        inner: LLMClient
         replay = self.config.models.replay.get(role)  # type: ignore[call-overload]
         if replay is not None:
             if role not in self._replays:
                 self._replays[role] = _replay_client(self.config.resolve(replay), role)
             inner = self._replays[role]
-        if self.meter is None:
-            return inner
-        if inner is None:
-            inner = resolve_client(getattr(self.roles, role))
-        return self.meter.client(inner, stage=role)
+        else:
+            spec = getattr(self.roles, role)
+            try:
+                inner = resolve_client(spec)
+            except ProviderNotInstalled:
+                if self.cache is None:
+                    raise
+                inner = OnFirstCall(spec)
+        inner = self.ledger.client(LimitedClient(inner))
+        if self.cache is not None:
+            inner = CachedClient(inner, self.cache)
+            self.cached.append(inner)
+        inner = self.served.client(role, getattr(self.roles, role), inner)
+        if self.meter is not None:
+            inner = self.meter.client(inner, stage=stage or role)
+        return self.observer.client(inner, stage or role)
+
+    def cache_stats(self) -> dict[str, Any] | None:
+        """The response cache's directory and its hits, misses and failed calls, or None."""
+        if self.cache is None:
+            return None
+        totals = {"hits": 0, "misses": 0, "failed": 0}
+        for client in self.cached:
+            for key, count in client.stats.items():
+                totals[key] = totals.get(key, 0) + count
+        return {"directory": str(self.cache.directory), **totals}
+
+    def spent(self) -> dict[str, Any]:
+        """Calls, tokens and USD for the run: the ledger's, with the cache's hits among the calls.
+
+        `usd` is None when any call's cost went unreported: unknown, never a
+        partial sum.
+        """
+        spent = self.ledger.spent
+        cache = self.cache_stats()
+        hits = int(cache["hits"]) if cache is not None else 0
+        return {
+            "calls": spent.calls + hits,
+            "cached_calls": hits,
+            "input_tokens": spent.input_tokens,
+            "output_tokens": spent.output_tokens,
+            "usd": spent.usd,
+            "priced_usd": spent.priced_usd,
+            "unpriced_calls": spent.unpriced_calls,
+        }
+
+
+class OnFirstCall:
+    """The client `resolve(spec)` picks, picked on the first call rather than now."""
+
+    def __init__(self, spec: ModelSpec) -> None:
+        self.spec = spec
+        self._client: LLMClient | None = None
+        self._lock = threading.Lock()
+
+    def complete(
+        self,
+        messages: Sequence[Message],
+        *,
+        spec: ModelSpec,
+        schema: dict[str, Any] | None = None,
+    ) -> Completion:
+        with self._lock:
+            if self._client is None:
+                self._client = resolve_client(self.spec)
+            client = self._client
+        return client.complete(messages, spec=spec, schema=schema)
+
+
+def response_cache(directory: Path, where: str = "models.cache") -> DirectoryCache:
+    """The cache in `directory`, created now, so a path that cannot be one is a config error."""
+    try:
+        return DirectoryCache(directory)
+    except OSError as exc:
+        raise ConfigError(f"{where}: cannot use {directory} as a cache directory: {exc}") from None
 
 
 def _replay_client(path: Path, role: str) -> LLMClient:
@@ -335,10 +439,57 @@ def _hybrid(options: dict[str, Any], ctx: Context, where: str) -> HybridExtracto
 
 def _llm_grounder(options: dict[str, Any], ctx: Context, where: str) -> LLMGrounder:
     injected = {"roles": ctx.roles, "client": ctx.client("ground")}
+    if options.get("widen"):
+        # The retries' calls, metered as their own stage (#102).
+        injected["widen_client"] = ctx.client("ground", stage="ground.widen")
     grounder: LLMGrounder = construct(
-        LLMGrounder, _with_retry(options, where), where, injected=injected, reserved=("sleep",)
+        LLMGrounder,
+        _with_retry(options, where),
+        where,
+        injected=injected,
+        reserved=("sleep", "widen_client"),
     )
     return grounder
+
+
+def _native_resolver(options: dict[str, Any], ctx: Context, where: str) -> NativeResolver:
+    """`resolver: {use: native, judge: ...}`: the pair judge is off unless named (DECISIONS #34).
+
+    `judge: true` takes its defaults; a mapping sets `low`, `queue` and
+    `reviewed` (paths relative to the config), `max_workers` and `retry`. It
+    asks the `ground` role's model, metered as the stage `judge`.
+    `normalize_batch: true` normalises the batch (DECISIONS #43), with the
+    run's ontology for its types' aliases; `embed` is a function, so Python
+    only.
+    """
+    opts = dict(options)
+    judge = opts.pop("judge", None)
+    if judge is not None and judge is not False:
+        if judge is True:
+            judge = {}
+        if not isinstance(judge, Mapping):
+            raise ConfigError(f"{where}.judge: true, or the judge's options")
+        opts["judge"] = _pair_judge(dict(judge), ctx, f"{where}.judge")
+    resolver: NativeResolver = construct(
+        NativeResolver, opts, where, injected={"ontology": ctx.ontology}, reserved=("embed",)
+    )
+    return resolver
+
+
+def _pair_judge(options: dict[str, Any], ctx: Context, where: str) -> PairJudge:
+    for key in ("queue", "reviewed"):
+        if isinstance(options.get(key), str):
+            options[key] = ctx.config.resolve(options[key])
+    if isinstance(options.get("reviewed"), Path) and not options["reviewed"].is_file():
+        raise ConfigError(f"{where}.reviewed: {options['reviewed']} does not exist")
+    judge: PairJudge = construct(
+        PairJudge,
+        _with_retry(options, where),
+        where,
+        injected={"roles": ctx.roles, "client": ctx.client("ground", stage="judge")},
+        reserved=("sleep", "store_context"),
+    )
+    return judge
 
 
 def _with_retry(options: dict[str, Any], where: str) -> dict[str, Any]:
@@ -380,7 +531,7 @@ _PASSTHROUGH: dict[str, Callable[[], Any]] = {
     "resolver": PassThroughResolver,
     "corroborator": PassThroughCorroborator,
     "scorer": PassThroughScorer,
-    "validator": PassThroughValidator,
+    "gate": PassThroughGate,
     "constrainer": PassThroughConstrainer,
     "inferrer": PassThroughInferrer,
 }
@@ -410,10 +561,10 @@ BUILTINS: dict[str, dict[str, Factory]] = {
     },
     "grounder": {"span": _plain(SpanGrounder), "llm": _llm_grounder},
     "normalizer": {"value": _with_ontology(ValueNormalizer)},
-    "resolver": {"native": _plain(NativeResolver)},
-    "corroborator": {"signature": _with_ontology(SignatureCorroborator, "source")},
+    "resolver": {"native": _native_resolver},
+    "corroborator": {"signature": _with_ontology(SignatureCorroborator, "source", "documents")},
     "scorer": {"evidence": _scorer},
-    "validator": {"verdict": _plain(VerdictValidator)},
+    "gate": {"verdict": _plain(VerdictGate)},
     "constrainer": {"neo4j": _plain(Neo4jConstrainer)},
     "inferrer": {},
 }
@@ -498,18 +649,25 @@ class SinkPlan:
     """A sink as configured: described without connecting, opened only to write.
 
     A dry run describes what would be written and never opens a sink, so it
-    needs neither a database nor its password.
+    needs neither a database nor its password. `streams` says whether a run in
+    micro-batches can write to it (#158): a sink that writes a file of the
+    whole graph would keep the last one.
     """
 
     name: str = "sink"
     profile: PlatformProfile | None = None
     can_bootstrap: bool = False
+    streams: bool = True
 
     def open(self) -> Sink:  # pragma: no cover - every plan overrides it
         raise NotImplementedError
 
     def describe(self, kg: KnowledgeGraph) -> list[str]:  # pragma: no cover
         raise NotImplementedError
+
+    def streamed(self, graph: Mapping[str, Any], batches: int) -> list[str]:
+        """What a streamed run wrote, from the run's counts: `describe` reads one graph."""
+        return [f"{self.name}: {_counted(graph)}, in {_batches(batches)}"]
 
     def ddl(self, ontology: Ontology, constrainer: Constrainer | None) -> list[str]:
         return []
@@ -519,20 +677,35 @@ class _JsonlPlan(SinkPlan):
     name = "jsonl"
 
     def __init__(self, options: dict[str, Any], ctx: Context, where: str) -> None:
-        unknown = sorted(set(options) - {"directory"})
+        unknown = sorted(set(options) - {"directory", "merge"})
         if unknown:
-            raise ConfigError(f"{where}.{unknown[0]}: unknown option; jsonl takes directory")
+            raise ConfigError(
+                f"{where}.{unknown[0]}: unknown option; jsonl takes directory and merge"
+            )
         if not isinstance(options.get("directory"), str):
             raise ConfigError(f"{where}.directory: the directory to write into")
+        if not isinstance(options.get("merge", False), bool):
+            raise ConfigError(f"{where}.merge: true or false")
         self.directory = ctx.config.resolve(options["directory"])
+        self.merge = bool(options.get("merge", False))
+        self.tenant = ctx.config.tenant
 
     def open(self) -> Sink:
-        return JsonlSink(self.directory)
+        return JsonlSink(self.directory, merge=self.merge, tenant=self.tenant)
 
     def describe(self, kg: KnowledgeGraph) -> list[str]:
         return [
             f"jsonl → {self.directory}: entities.jsonl {len(kg.entities)}, facts.jsonl "
             f"{len(kg.facts)}, links.jsonl {len(kg.links)}, manifest.json"
+        ]
+
+    def streamed(self, graph: Mapping[str, Any], batches: int) -> list[str]:
+        how = "merged" if self.merge else "appended"
+        links = sum(graph.get("links", {}).values())
+        return [
+            f"jsonl → {self.directory}: entities.jsonl {graph.get('entities', 0)}, facts.jsonl "
+            f"{graph.get('facts', 0)}, links.jsonl {links}, manifest.json; "
+            f"{how} in {_batches(batches)}"
         ]
 
 
@@ -569,6 +742,7 @@ class _Neo4jPlan(SinkPlan):
             raise ConfigError(f"{where}: neo4j needs uri or uri_env")
         self.ontology = ctx.ontology
         self.where = where
+        self.tenant = ctx.config.tenant
 
     @property
     def target(self) -> str:
@@ -589,10 +763,11 @@ class _Neo4jPlan(SinkPlan):
             database=opts.database,
             batch_size=opts.batch_size,
             ontology=self.ontology,
+            tenant=self.tenant,
         )
 
     def describe(self, kg: KnowledgeGraph) -> list[str]:
-        statements = plan(kg, ontology=self.ontology)
+        statements = plan(kg, ontology=self.ontology, tenant=self.tenant)
         rows = sum(len(s.rows) for s in statements)
         lines = [f"neo4j → {self.target}: {len(statements)} statements, {rows} rows"]
         for statement in statements:
@@ -610,6 +785,9 @@ class _Neo4jPlan(SinkPlan):
     def ddl(self, ontology: Ontology, constrainer: Constrainer | None) -> list[str]:
         compiled = (constrainer or Neo4jConstrainer()).constrain(ontology)
         return [s for s in compiled if not is_check(s)]
+
+    def streamed(self, graph: Mapping[str, Any], batches: int) -> list[str]:
+        return [f"neo4j → {self.target}: {_counted(graph)}, in {_batches(batches)}"]
 
 
 class _WriterPlan(SinkPlan):
@@ -661,6 +839,7 @@ class _WriterPlan(SinkPlan):
 
 class _CypherFilePlan(_WriterPlan):
     name = "cypher_file"
+    streams = False
     profile = CypherFileSink.profile
     what = "CypherFileSink"
 
@@ -680,6 +859,7 @@ class _CypherFilePlan(_WriterPlan):
 
 class _Neo4jAdminCsvPlan(_WriterPlan):
     name = "neo4j_admin_csv"
+    streams = False
     profile = Neo4jAdminCsvSink.profile
     target_key = "directory"
     what = "Neo4jAdminCsvSink"
@@ -701,6 +881,7 @@ class _Neo4jAdminCsvPlan(_WriterPlan):
 
 class _RdfPlan(_WriterPlan):
     name = "rdf"
+    streams = False
     needs = RDFLIB
     what = "RdfSink"
 
@@ -739,6 +920,10 @@ class _NetworkXPlan(_WriterPlan):
         return [
             f"networkx → {where}: {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges"
         ]
+
+    def streamed(self, graph: Mapping[str, Any], batches: int) -> list[str]:
+        where = f"{self.target} (node-link JSON)" if self.target else "a MultiDiGraph"
+        return [f"networkx → {where}: {_counted(graph)}, in {_batches(batches)}"]
 
 
 class NodeLinkFile:
@@ -802,6 +987,37 @@ class _CustomPlan(SinkPlan):
     def describe(self, kg: KnowledgeGraph) -> list[str]:
         return [f"{self.spec.use} → write() with {len(kg.facts)} facts, {len(kg.links)} links"]
 
+    def streamed(self, graph: Mapping[str, Any], batches: int) -> list[str]:
+        links = sum(graph.get("links", {}).values())
+        return [
+            f"{self.spec.use} → write() once a micro-batch, {batches} in all: "
+            f"{graph.get('facts', 0)} facts, {links} links"
+        ]
+
+
+def _counted(graph: Mapping[str, Any]) -> str:
+    links = sum(graph.get("links", {}).values())
+    return (
+        f"{graph.get('facts', 0)} facts ({graph.get('edges', 0)} edges, "
+        f"{graph.get('properties', 0)} properties), {graph.get('entities', 0)} entities, "
+        f"{links} links"
+    )
+
+
+def _batches(count: int) -> str:
+    return f"{count} micro-batch{'' if count == 1 else 'es'}"
+
+
+def check_streams(plans: Sequence[SinkPlan], where: str = "batch_size") -> None:
+    """Refuse a streamed run a sink that writes the whole graph on every write (#158)."""
+    whole = [plan.name for plan in plans if not plan.streams]
+    if whole:
+        raise ConfigError(
+            f"{where}: {', '.join(whole)} writes a file of the whole graph on every write, so "
+            "a run in micro-batches would keep only the last; stream to jsonl or neo4j, or "
+            "leave batch_size out"
+        )
+
 
 SINKS: dict[str, Callable[[dict[str, Any], Context, str], SinkPlan]] = {
     "jsonl": _JsonlPlan,
@@ -829,6 +1045,138 @@ def sink_plan(spec: StageSpec, ctx: Context, where: str) -> SinkPlan:
 
 
 # --------------------------------------------------------------------------- #
+# The store lookup
+# --------------------------------------------------------------------------- #
+
+
+class _LookupOptions(BaseModel):
+    """`store_lookup: {use: neo4j, ...}`: where to read, and how widely.
+
+    The connection keys are the neo4j sink's. Left out, the lookup reads the
+    store the run's one neo4j sink writes to, on that sink's connection. Its
+    tenant is the run's (`tenant`): giving it another is refused, because a run
+    looks up the tenant it writes (#159).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    uri: str | None = None
+    uri_env: str | None = None
+    user: str | None = None
+    user_env: str | None = None
+    password_env: str = "NEO4J_PASSWORD"
+    database: str | None = None
+    tenant: str | None = None
+    limit: int = 100
+
+
+class LookupPlan:
+    """The store lookup as configured: checked while the config is built, opened only to run.
+
+    A dry run opens no sink and so no store: it resolves each batch within
+    itself, and says so. `neo4j` reads through the run's Neo4j sink unless it
+    names a `uri` of its own; `package.module:Name` is a `StoreLookup` of yours,
+    constructed with its options.
+    """
+
+    def __init__(
+        self, spec: StageSpec, ctx: Context, sinks: Sequence[SinkPlan], where: str
+    ) -> None:
+        self.where = where
+        self.name = spec.use
+        self.ontology = ctx.ontology
+        self.custom: StoreLookup | None = None
+        self.sink: int | None = None
+        self._opened: Any = None
+        self.tenant = ctx.config.tenant
+        if spec.is_custom:
+            built = _custom(spec, where)
+            if not isinstance(built, StoreLookup):
+                raise ConfigError(
+                    f"{where}: {spec.use} is not a StoreLookup; it needs a method candidates()"
+                )
+            self.custom = built
+            return
+        if spec.use != "neo4j":
+            close = difflib.get_close_matches(spec.use, ["neo4j"], n=1)
+            hint = f" — did you mean {close[0]!r}?" if close else ""
+            raise ConfigError(
+                f"{where}: unknown store lookup {spec.use!r}{hint} (built-in: neo4j; or name "
+                "your own as package.module:Name)"
+            )
+        if "password" in spec.options:
+            raise ConfigError(
+                f"{where}.password: a password never goes in a config file. Put it in an "
+                "environment variable and name that with password_env"
+            )
+        try:
+            self.options = _LookupOptions.model_validate(spec.options)
+        except ValidationError as exc:
+            first = exc.errors()[0]
+            key = ".".join(str(part) for part in first["loc"])
+            raise ConfigError(f"{where}.{key}: {first['msg']}") from None
+        given = self.options.tenant
+        if given is not None and given != ctx.config.tenant:
+            raise ConfigError(
+                f"{where}.tenant: the run writes tenant {ctx.config.tenant!r}, and a run looks "
+                "up the tenant it writes; set the run's `tenant` instead"
+            )
+        if not self.options.uri and not self.options.uri_env:
+            stores = [i for i, plan in enumerate(sinks) if plan.name == "neo4j"]
+            if len(stores) != 1:
+                raise ConfigError(
+                    f"{where}: neo4j reads the store the run's neo4j sink writes to, and "
+                    f"{'there is none' if not stores else 'there are several'}; name one "
+                    "with uri or uri_env"
+                )
+            self.sink = stores[0]
+
+    def open(self, sinks: Sequence[Sink]) -> StoreLookup:
+        """The lookup to resolve with: on the opened sink's connection, or its own.
+
+        One of your own is scoped to the run's tenant when it can be (`scoped`).
+        """
+        if self.custom is not None:
+            to_tenant = getattr(self.custom, "scoped", None)
+            if self.tenant is not None and callable(to_tenant):
+                scoped_lookup: StoreLookup = to_tenant(self.tenant)
+                return scoped_lookup
+            return self.custom
+        opts = self.options
+        scope: dict[str, Any] = {"tenant": self.tenant, "limit": opts.limit}
+        if self.sink is not None:
+            sink = sinks[self.sink]
+            if not isinstance(sink, Neo4jSink):  # pragma: no cover - the plan said neo4j
+                raise ConfigError(f"{self.where}: the neo4j sink did not open as one")
+            lookup: StoreLookup = sink.lookup(**scope)
+            return lookup
+        uri = opts.uri or os.environ.get(opts.uri_env or "")
+        if not uri:
+            raise ConfigError(f"{self.where}.uri_env: {opts.uri_env} is not set")
+        user = opts.user or (os.environ.get(opts.user_env) if opts.user_env else None) or "neo4j"
+        password = os.environ.get(opts.password_env)
+        if password is None:
+            raise ConfigError(f"{self.where}.password_env: {opts.password_env} is not set")
+        self._opened = Neo4jLookup(
+            uri, (user, password), database=opts.database, ontology=self.ontology, **scope
+        )
+        return self._opened
+
+    def close(self) -> None:
+        """Close a connection this plan opened; one shared with a sink closes with the sink."""
+        if self._opened is not None:
+            self._opened.close()
+            self._opened = None
+
+    @property
+    def dry_run_note(self) -> str:
+        return (
+            f"{self.where}: a dry run opens no store, so each batch was resolved within "
+            "itself; the run looks the store up"
+        )
+
+
+# --------------------------------------------------------------------------- #
 # The whole configuration
 # --------------------------------------------------------------------------- #
 
@@ -847,8 +1195,21 @@ class Built:
     context: Context
     stages: dict[str, Any]
     sinks: list[SinkPlan]
+    # `store_lookup`, opened with the sinks and handed to the resolver.
+    lookup: LookupPlan | None = None
+
+    def open_lookup(self, sinks: Sequence[Sink]) -> StoreLookup | None:
+        """Hand the resolver its store lookup, on the opened sinks; None when none is set."""
+        if self.lookup is None:
+            return None
+        opened = self.lookup.open(sinks)
+        self.stages["resolver"].lookup = opened
+        return opened
 
     def pipeline(self, *, sinks: Sequence[Sink] = (), **overrides: Any) -> Pipeline:
+        if "validator" in overrides:
+            deprecated("Built.pipeline(validator=...)", "Built.pipeline(gate=...)")
+            overrides["gate"] = overrides.pop("validator")
         s = {**self.stages, **overrides}
         return Pipeline(
             self.ontology,
@@ -860,10 +1221,35 @@ class Built:
             resolver=s["resolver"],
             corroborator=s["corroborator"],
             scorer=s["scorer"],
-            validator=s["validator"],
+            gate=s["gate"],
             constrainer=s["constrainer"],
             sinks=sinks,
+            inverses=self.config.inverses,
+            coverage=self.config.coverage,
+            # An extractor passed in replays one that already ran (the ablation's),
+            # and asking it again would be a second extraction pass.
+            reextract=None
+            if "extractor" in overrides
+            else reextract_policy(self.config, s["extractor"]),
+            observer=self.context.observer,
         )
+
+    def iter_documents(self) -> Iterator[Document]:
+        """`documents()`, one at a time as they are asked for: what a streamed run reads (#158).
+
+        Every input is checked before the first is read, so a missing one
+        stops the run before anything is written. A loader that reads lazily,
+        as the directory and JSON Lines loaders do, holds one file at a time.
+        """
+        sources: list[tuple[Any, Path]] = []
+        for i, item in enumerate(self.config.inputs):
+            spec, where = input_loader(self.config, i, item)
+            loader = build_stage("loader", spec, self.context, where)
+            path = self.config.resolve(item.path)
+            if not path.exists():
+                raise ConfigError(f"inputs[{i}].path: {path} does not exist")
+            sources.append((loader, path))
+        return iter_path_ids((loader.load(path) for loader, path in sources), self.config.base_dir)
 
     def documents(self) -> list[Document]:
         """Every input through its loader, with ids you can label and query by.
@@ -883,6 +1269,18 @@ class Built:
                 raise ConfigError(f"inputs[{i}].path: {path} does not exist")
             docs.extend(loader.load(path))
         return with_path_ids(docs, self.config.base_dir)
+
+
+def reextract_policy(config: RunConfig, extractor: Any) -> Reextract | None:
+    """The config's `reextract:` as a policy, or None. An extractor that cannot is refused."""
+    if config.reextract is None:
+        return None
+    if not callable(getattr(extractor, "reextract", None)):
+        raise ConfigError(
+            f"reextract: the extractor ({type(extractor).__name__}) has no "
+            "reextract(window, relations, already, ontology); llm and hybrid have one"
+        )
+    return Reextract(windows=config.reextract.windows)
 
 
 def input_loader(config: RunConfig, index: int, item: InputSpec) -> tuple[StageSpec, str]:
@@ -906,7 +1304,45 @@ def with_path_ids(docs: Sequence[Document], base: Path) -> list[Document]:
     return out
 
 
+def iter_path_ids(inputs: Iterable[Iterable[Document]], base: Path) -> Iterator[Document]:
+    """`with_path_ids` over each input's documents in turn, one at a time.
+
+    It counts per file rather than per document, so a streamed run holds a
+    number for each file, not an id for each record. A record's line or row
+    already sets it apart within its file, so within one input only a
+    whole-file name is counted; across inputs, a file read again counts on
+    from the highest count an earlier input gave it, which is the id
+    `with_path_ids` gives it.
+    """
+    top: dict[str, int] = {}
+    for docs in inputs:
+        whole: dict[str, int] = {}
+        reached: dict[str, int] = {}
+        for doc in docs:
+            parts = _path_parts(doc, base)
+            if parts is None:
+                yield doc
+                continue
+            file, suffix = parts
+            name = file + suffix
+            if suffix:
+                count = top.get(file, 0) + 1
+            else:
+                whole[name] = whole.get(name, 0) + 1
+                count = top.get(file, 0) + whole[name]
+            reached[file] = max(reached.get(file, 0), count)
+            yield doc.model_copy(update={"id": name if count == 1 else f"{name}~{count}"})
+        for file, count in reached.items():
+            top[file] = max(top.get(file, 0), count)
+
+
 def _path_id(doc: Document, base: Path) -> str | None:
+    parts = _path_parts(doc, base)
+    return None if parts is None else "".join(parts)
+
+
+def _path_parts(doc: Document, base: Path) -> tuple[str, str] | None:
+    """A document's file, relative to `base`, and the `#L<line>` or `#<row>` of its record."""
     if not doc.uri or not doc.uri.startswith("file:"):
         return None
     path = Path(unquote(urlsplit(doc.uri).path))
@@ -916,10 +1352,10 @@ def _path_id(doc: Document, base: Path) -> str | None:
         name = path.as_posix()
     line, row = doc.metadata.get("line"), doc.metadata.get("row_index")
     if isinstance(line, int):
-        return f"{name}#L{line}"
+        return name, f"#L{line}"
     if isinstance(row, int):
-        return f"{name}#{row}"
-    return name
+        return name, f"#{row}"
+    return name, ""
 
 
 def build(config: RunConfig) -> Built:
@@ -928,12 +1364,20 @@ def build(config: RunConfig) -> Built:
         directory = str(config.resolve(entry))
         if directory not in sys.path:
             sys.path.insert(0, directory)
+    # Process-wide, as a provider's limit is: every stage, and every run here.
+    PROVIDER_LIMITS.update(config.models.limits)
     ontology = _ontology(config)
     context = Context(
         config=config,
         ontology=ontology,
         roles=config.models.roles(),
         meter=CostMeter() if config.models.meter else None,
+        ledger=Ledger(config.models.budget),
+        cache=(
+            response_cache(config.resolve(config.models.cache))
+            if config.models.cache is not None
+            else None
+        ),
     )
     # Each input's loader is built here too and discarded, so an unknown loader or
     # a missing extra stops the config before a sink is opened.
@@ -954,12 +1398,35 @@ def build(config: RunConfig) -> Built:
         )
         for i, spec in enumerate(config.stages.sink)
     ]
+    reextract_policy(config, stages["extractor"])
+    if config.batch_size is not None:
+        check_streams(sinks)
     if config.bootstrap and not any(p.can_bootstrap for p in sinks):
         raise ConfigError(
             "bootstrap: true needs a sink that applies constraints (neo4j); "
             f"configured: {', '.join(p.name for p in sinks) or 'no sink'}"
         )
-    return Built(config=config, ontology=ontology, context=context, stages=stages, sinks=sinks)
+    lookup = None
+    if config.store_lookup is not None:
+        # The store is looked up by the resolver: the native one, unless one is named.
+        if stages["resolver"] is None:
+            native = StageSpec(use="native")
+            stages["resolver"] = build_stage("resolver", native, context, "stages.resolver")
+        if not hasattr(stages["resolver"], "lookup"):
+            raise ConfigError(
+                f"store_lookup: the resolver looks the store up, and "
+                f"{type(stages['resolver']).__name__} takes no lookup; use stages.resolver: "
+                "native, or a resolver of your own with a `lookup` attribute"
+            )
+        lookup = LookupPlan(config.store_lookup, context, sinks, "store_lookup")
+    return Built(
+        config=config,
+        ontology=ontology,
+        context=context,
+        stages=stages,
+        sinks=sinks,
+        lookup=lookup,
+    )
 
 
 def _ontology(config: RunConfig) -> Ontology:
@@ -980,13 +1447,18 @@ __all__ = [
     "Built",
     "Context",
     "Extra",
+    "LookupPlan",
     "NodeLinkFile",
+    "OnFirstCall",
     "SinkPlan",
     "build",
     "build_stage",
+    "check_streams",
     "construct",
     "input_loader",
     "require_extra",
+    "response_cache",
+    "iter_path_ids",
     "sink_plan",
     "with_path_ids",
 ]

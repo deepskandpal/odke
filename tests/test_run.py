@@ -8,6 +8,7 @@ extraction, match entries for grounding — through the config's own
 from __future__ import annotations
 
 import json
+import re
 import sys
 import types
 from collections import Counter
@@ -19,7 +20,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from openodke import Chunk, Ontology, RouteVerdict, Sink
+from openodke import Chunk, Entity, Ontology, RouteVerdict, Sink
 from openodke.cli.main import app
 from openodke.corroborate import SCORE
 from openodke.ground import RetryPolicy
@@ -31,6 +32,7 @@ from openodke.sinks import neo4j as neo4j_module
 from openodke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink
 from openodke.sinks.networkx import NetworkXSink
 from openodke.sinks.rdf import RdfSink
+from openodke.stages import PassThroughGate
 from test_neo4j_sink import FakeDriver
 
 runner = CliRunner()
@@ -124,7 +126,7 @@ def _config(**overrides: Any) -> dict[str, Any]:
             "normalizer": {"use": "value", "person_types": ["Person"]},
             "corroborator": "signature",
             "scorer": "evidence",
-            "validator": "verdict",
+            "gate": "verdict",
             "sink": {"use": "jsonl", "directory": "out"},
         },
     }
@@ -190,6 +192,12 @@ def test_a_config_runs_end_to_end_into_jsonl_with_every_stage_counted(project: P
     grounder = stages["grounder"]
     assert (grounder["supported"], grounder["contradicted"], grounder["not_found"]) == (4, 1, 1)
     assert (grounder["calls"], grounder["failed"]) == (6, 0)
+    # Which registered prompts the run sent, by key (DECISIONS #27).
+    assert (stages["extractor"]["prompts"], grounder["prompts"]) == (
+        ["extract@1"],
+        ["ground.span@1"],
+    )
+    assert "prompts ground.span@1" in result.output
     assert stages["validator"] == {"accepted": 5, "refused": {"contradicted": 1}}
     # 1906 and 1907 contested a single-valued birth date and tied; the loser's
     # twin was refused, so one stamped fact reached the graph.
@@ -261,9 +269,9 @@ def test_a_config_that_names_no_scorer_still_scores_from_the_grounding_verdict(
 
     `odke run` writes a graph somebody is about to filter, so it scores whether
     or not the config says to. The gate is off here to keep the contradicted
-    fact, which the default validator refuses.
+    fact, which the default gate refuses.
     """
-    config = _config(stages__validator="passthrough")
+    config = _config(stages__gate="passthrough")
     del config["stages"]["scorer"]
     facts = {
         (f.predicate, f.object_value): f
@@ -294,6 +302,48 @@ def test_models_accept_a_bare_model_string() -> None:
     assert config.models.roles() == ModelRoles(
         extract=ModelSpec(model="ollama/llama3.1"), ground=ModelSpec(model="ollama/qwen2.5:3b")
     )
+
+
+def _with_old_gate_key() -> dict[str, Any]:
+    config = _config()
+    config["stages"]["validator"] = config["stages"].pop("gate")
+    return config
+
+
+def test_the_gate_s_old_key_warns_and_runs_the_same(project: Path) -> None:
+    """`validator:` is the 0.2 name of `gate:` (DECISIONS #26): the same run, and a warning."""
+    with pytest.warns(
+        DeprecationWarning, match=r"stages\.validator is deprecated: use stages\.gate"
+    ):
+        old = parse_config(_with_old_gate_key(), base_dir=project)
+    assert old.stages.gate == StageSpec(use="verdict")
+    renamed, current = execute(old), execute(parse_config(_config(), base_dir=project))
+    assert [f.signature for f in renamed.graph.facts] == [f.signature for f in current.graph.facts]
+    # The report keeps the gate's counts under their 0.2 key, whichever spelling ran.
+    counts = {"accepted": 5, "refused": {"contradicted": 1}}
+    assert renamed.stats["stages"]["validator"] == current.stats["stages"]["validator"] == counts
+    assert "gate" not in current.stats["stages"]
+
+
+def test_the_command_prints_the_old_key_s_warning(project: Path) -> None:
+    """Python hides a library's DeprecationWarning; a config's reader still has to see it."""
+    result = runner.invoke(app, ["run", "--dry-run", str(_write(project, _with_old_gate_key()))])
+    assert result.exit_code == 0, result.output
+    assert "warning: stages.validator is deprecated: use stages.gate" in result.stderr
+
+
+def test_the_gate_and_its_old_key_together_are_refused() -> None:
+    config = _config()
+    config["stages"]["validator"] = "passthrough"
+    with pytest.raises(ConfigError, match="`validator` is the old name of `gate`"):
+        parse_config(config)
+
+
+def test_built_pipeline_takes_the_gate_s_old_name_with_a_warning(project: Path) -> None:
+    built = build(parse_config(_config(), base_dir=project))
+    with pytest.warns(DeprecationWarning, match=r"Built\.pipeline\(validator=\.\.\.\)"):
+        pipeline = built.pipeline(validator=PassThroughGate())
+    assert isinstance(pipeline.gate, PassThroughGate)
 
 
 # --------------------------------------------------------------------------- #
@@ -357,6 +407,133 @@ def test_a_missing_password_variable_is_named(
     result = runner.invoke(app, ["run", str(_write(project, config))])
     assert result.exit_code == 2
     assert "ODKE_TEST_SECRET is not set" in result.output
+
+
+# --------------------------------------------------------------------------- #
+# store_lookup
+# --------------------------------------------------------------------------- #
+
+# What `SHOW INDEXES` answers once the people ontology is bootstrapped.
+INDEXES = [
+    {"name": f"odke_{what}_{label}", "type": kind, "labelsOrTypes": [label], "properties": props}
+    for label in ("Company", "Person")
+    for what, kind, props in (
+        ("key", "RANGE", ["key"]),
+        ("external_id", "RANGE", ["external_id"]),
+        ("names", "FULLTEXT", ["label", "aliases"]),
+    )
+]
+
+
+def test_store_lookup_reads_the_neo4j_sinks_store_before_it_writes(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hopper = {"key": "p:hopper", "label": "Grace Hopper", "aliases": []}
+
+    class Store(FakeDriver):
+        """Every name asked about finds her; the resolver decides which one she is."""
+
+        def answer(self, cypher: str) -> list[dict[str, Any]]:
+            if "fulltext" not in cypher:
+                return super().answer(cypher)
+            # The statement being answered is the last one recorded.
+            return [{"block": row["block"], "node": hopper} for row in self.calls[-1][2]["rows"]]
+
+    driver = Store({"SHOW INDEXES": INDEXES})
+    connected: list[str] = []
+
+    def connect(uri: str, auth: Any) -> Any:
+        connected.append(uri)
+        return driver
+
+    monkeypatch.setattr(neo4j_module, "_connect", connect)
+    monkeypatch.setenv("ODKE_TEST_SECRET", "not-a-real-password")
+    config = _config(store_lookup={"use": "neo4j", "limit": 7})
+    # The run's tenant is the lookup's: a run looks up the tenant it writes (#159).
+    config["tenant"] = "t1"
+    config["stages"]["sink"] = _neo4j_sink()
+    result = execute(parse_config(config, base_dir=project))
+
+    # One connection, the sink's; the store is read before the first write.
+    assert connected == ["bolt://example.invalid:7687"]
+    modes = [mode for mode, _, _ in driver.calls]
+    assert modes[0] == "auto" and "read" in modes and "write" in modes
+    assert max(i for i, m in enumerate(modes) if m == "read") < modes.index("write")
+    reads = [(cypher, params) for mode, cypher, params in driver.calls if mode == "read"]
+    assert all(params["tenant"] == "t1" for _, params in reads)
+    assert any(params.get("limit") == 7 for _, params in reads)
+    # No resolver named: store_lookup brings the native one, and it found the person.
+    links = [(link.source_key, link.target_key, link.kind.value) for link in result.graph.links]
+    assert any(target == "p:hopper" and kind == "similar" for _, target, kind in links)
+    store = result.stats["stages"]["resolver"]["store"]
+    assert store["looked_up"] >= 1 and store["similar"] >= 1
+    assert driver.closed
+
+
+def test_a_dry_run_opens_no_store_and_says_so(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(uri: str, auth: Any) -> Any:
+        raise AssertionError("a dry run must not connect")
+
+    monkeypatch.setattr(neo4j_module, "_connect", refuse)
+    config = _config(store_lookup="neo4j")
+    config["stages"]["sink"] = _neo4j_sink()
+    result = runner.invoke(app, ["run", str(_write(project, config)), "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "store_lookup: a dry run opens no store" in result.output
+
+
+@pytest.mark.parametrize(
+    ("store_lookup", "stages", "message"),
+    [
+        ("neo4j", {}, "store_lookup: neo4j reads the store the run's neo4j sink writes to"),
+        ("neo", {"sink": _neo4j_sink()}, "did you mean 'neo4j'?"),
+        ({"use": "neo4j", "password": "x"}, {"sink": _neo4j_sink()}, "store_lookup.password"),
+        ({"use": "neo4j", "tenant_id": "x"}, {"sink": _neo4j_sink()}, "store_lookup.tenant_id"),
+        ({"use": "neo4j", "tenant": "t2"}, {"sink": _neo4j_sink()}, "store_lookup.tenant: the run"),
+        ("neo4j", {"sink": _neo4j_sink(), "resolver": "passthrough"}, "takes no lookup"),
+    ],
+)
+def test_a_store_lookup_that_cannot_run_is_refused_before_anything_runs(
+    project: Path, store_lookup: Any, stages: dict[str, Any], message: str
+) -> None:
+    config = _config(store_lookup=store_lookup)
+    config["stages"].update(stages)
+    if not stages:
+        del config["stages"]["sink"]
+    with pytest.raises(ConfigError, match=re.escape(message)):
+        build(parse_config(config, base_dir=project))
+
+
+class _OneStoredPerson:
+    """A store of one, as a lookup of your own: `{use: module:Name, ...}`."""
+
+    def __init__(self, key: str) -> None:
+        self.stored = Entity(key=key, type="Person", label="Grace Hopper")
+        self.asked: list[str] = []
+
+    def candidates(self, entities: Any) -> dict[str, list[Entity]]:
+        self.asked.extend(e.key for e in entities)
+        return {e.key: [self.stored] for e in entities}
+
+
+def test_a_store_lookup_of_your_own_is_named_by_import_path(
+    project: Path, support: types.ModuleType
+) -> None:
+    support.OneStoredPerson = _OneStoredPerson  # type: ignore[attr-defined]
+    config = _config(store_lookup={"use": f"{SUPPORT}:OneStoredPerson", "key": "p:grace"})
+    config["stages"]["resolver"] = {"use": "native", "threshold": 0.95}
+    built = build(parse_config(config, base_dir=project))
+    assert built.stages["resolver"].threshold == 0.95
+    result = execute(parse_config(config, base_dir=project))
+    links = {(link.target_key, link.kind.value) for link in result.graph.links}
+    assert ("p:grace", "similar") in links
+
+    # A router is not a lookup, and the config says so before anything runs.
+    config["store_lookup"] = {"use": f"{SUPPORT}:SkipPrefix", "prefix": "#"}
+    with pytest.raises(ConfigError, match="SkipPrefix is not a StoreLookup"):
+        build(parse_config(config, base_dir=project))
 
 
 # --------------------------------------------------------------------------- #

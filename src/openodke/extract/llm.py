@@ -14,7 +14,7 @@ Nothing is paraphrased into place, and every span that survives has passed
 `Span.is_faithful`.
 
 The quote asked for is the *clause* that supports the claim, not the word that
-names the value, because the grounder is shown that span and nothing else
+names the value, because by default the grounder reads that span alone
 (DECISIONS #23). The word that tells one fact from its siblings — one of three
 regions in a list — is carried alongside as `Evidence.mention`, checked the same
 way and dropped if it is not inside the clause.
@@ -34,49 +34,37 @@ from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Any
 
+from openodke._batch import incomplete, is_config_error
+from openodke.corroborate.provenance import SCHEMA_SLICE
 from openodke.extract._common import (
     ChunkContext,
     Documents,
     index_documents,
     subject_entity,
 )
+from openodke.ground.llm import render_claim
 from openodke.ground.retry import RetryPolicy, call_with_retry
 from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
+from openodke.llm.budget import BudgetExceeded
 from openodke.llm.registry import resolve
 from openodke.llm.roles import ModelRoles
 from openodke.ontology import Ontology, OntologySnippet, Predicate
+from openodke.prompts import Prompt
+from openodke.prompts import get as get_prompt
 from openodke.types import Chunk, Entity, Fact, Polarity, Span
 
 log = logging.getLogger("openodke.extract")
 
-_INSTRUCTIONS = """\
-Extract facts from the passage in the user message, using only the entity types \
-and properties listed below. Anything else is ignored.
-
-Every fact needs "quote": the words of the passage that state it, copied exactly, \
-with the same spelling, capitals, punctuation and spacing. Quote the whole clause \
-that supports the fact, not just the word naming the value; where one clause \
-states several facts, quote it in full for each and put the words that tell this \
-one apart in "mention". A fact whose quote is not in the passage is discarded. \
-Give "start", the character offset where the quote begins (the passage's first \
-character is 0); your best count is fine. "mention" is "" when there is nothing \
-to tell the fact apart, and a qualifier the passage does not state is "".
-
-"polarity" is "denied" when the passage says the fact is not so, "partial" when \
-it holds only with a limitation the passage states, and "asserted" otherwise. \
-For a property whose range is an entity type, "value" is that entity's name as \
-the passage writes it.
-
-Reply with one JSON object and nothing else, in this shape:
-{"entities": [{"type": "...", "name": "...", "facts": [{"predicate": "...", \
-"value": "...", "quote": "...", "start": 0, "mention": "...", \
-"polarity": "asserted", "qualifiers": {}}]}]}
-Reply {"entities": []} when the passage states none of these properties."""
-
-_REPAIR = (
-    'That reply was not a JSON object with an "entities" array. Reply again with '
-    "only that object, following the same rules."
-)
+# Registered prompts (DECISIONS #27): the instructions, which the ontology
+# snippets follow in the system message, and the repair turn. The latest version
+# of each is what is sent, and every `ModelCall` names the one it sent.
+_PROMPT = get_prompt("extract")
+_REPAIR_PROMPT = get_prompt("extract.repair")
+# The re-extract hook's (#102); the same repair turn follows a malformed reply.
+_REEXTRACT = get_prompt("reextract")
+# The texts under their old names, for anything that imports them.
+_INSTRUCTIONS = _PROMPT.text
+_REPAIR = _REPAIR_PROMPT.text
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 
@@ -93,6 +81,11 @@ class ModelCall:
     cost_usd: float | None
     # A second attempt after a reply that did not follow the contract.
     repair: bool = False
+    # The key of the registered prompt the call sent (DECISIONS #27): `extract@1`,
+    # or on a repair the repair prompt's. None only on a record built elsewhere.
+    prompt: str | None = None
+    # Answered from the response cache, so nothing was sent and nothing spent.
+    cached: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,13 +104,20 @@ class MalformedReply:
 
 @dataclass(frozen=True, slots=True)
 class Rejection:
-    """A candidate the extractor refused, and why. A drop is a count, not a mystery."""
+    """A candidate the extractor refused, and why. A drop is a count, not a mystery.
+
+    `subject`, `predicate`, `value` and `quote` are the candidate as the model
+    wrote it, as far as it got before it was refused: a malformed one may have
+    none of them.
+    """
 
     doc_id: str
     chunk_index: int
     reason: str
     predicate: str | None = None
     quote: str | None = None
+    subject: str | None = None
+    value: Any = None
 
 
 def response_schema(snippets: Sequence[OntologySnippet]) -> dict[str, Any]:
@@ -212,9 +212,10 @@ class LLMExtractor:
     `confidence` is a prior, not a probability: the scorer calibrates it (M3).
     `calls`, `rejections`, `empty_extractions` and `malformed` accumulate across
     chunks, so cost, drop rate and silence are counts a caller can read after a
-    run. An extraction that yields nothing also logs a WARNING naming its chunk:
-    a factless passage and a dropped one are not the same event, and a batch job
-    cannot measure recall if they report identically (#78).
+    run. Each call names the registered prompt it sent, and `prompts` lists
+    them. An extraction that yields nothing also logs a WARNING naming its
+    chunk: a factless passage and a dropped one are not the same event, and a
+    batch job cannot measure recall if they report identically (#78).
 
     `extract_many` is the batched path the pipeline uses: many chunks at once,
     with at most `max_workers` model calls in flight, as `LLMGrounder` does.
@@ -267,6 +268,12 @@ class LLMExtractor:
             self._client = resolve(self.spec)
         return self._client
 
+    @property
+    def prompts(self) -> list[str]:
+        """The keys of the registered prompts sent so far, in the order first sent."""
+        with self._lock:
+            return list(dict.fromkeys(c.prompt for c in self.calls if c.prompt))
+
     def snippets(self, ontology: Ontology) -> list[OntologySnippet]:
         names = self.types if self.types is not None else sorted(ontology.types)
         if not names:
@@ -277,10 +284,19 @@ class LLMExtractor:
         found = [ontology.snippet(name, limit=self.snippet_limit) for name in names]
         return [snippet for snippet in found if snippet.predicates]
 
+    def offered(self, ontology: Ontology) -> list[str]:
+        """The predicates the prompt shows the model, in snippet order.
+
+        The coverage report subtracts these from the ontology to name the
+        relations the model was never asked about: a type left out of `types`,
+        or a predicate past `snippet_limit`, is one.
+        """
+        return list(dict.fromkeys(p.name for s in self.snippets(ontology) for p in s.predicates))
+
     def messages(self, chunk: Chunk, snippets: Sequence[OntologySnippet]) -> list[Message]:
         # The passage is the whole user message, so "start" counts from its first
         # character and maps to the chunk with no arithmetic the model can miss.
-        system = "\n\n".join([_INSTRUCTIONS, *(s.render() for s in snippets)])
+        system = "\n\n".join([_PROMPT.text, *(s.render() for s in snippets)])
         return [Message(role="system", content=system), Message(role="user", content=chunk.text)]
 
     def extract(self, chunk: Chunk, ontology: Ontology) -> list[Fact]:
@@ -289,56 +305,14 @@ class LLMExtractor:
         snippets = self.snippets(ontology)
         if not snippets:
             return []
-        schema = response_schema(snippets) if self.structured else None
-        messages = self.messages(chunk, snippets)
-        data: dict[str, Any] | None = None
-        replies: list[str] = []
-        for attempt in range(self.repairs + 1):
-            completion = self._complete(chunk, messages, schema)
-            call = ModelCall(
-                doc_id=chunk.doc_id,
-                chunk_index=chunk.index,
-                model=completion.model or self.spec.model,
-                prompt_tokens=completion.prompt_tokens,
-                completion_tokens=completion.completion_tokens,
-                cost_usd=completion.cost_usd,
-                repair=attempt > 0,
-            )
-            with self._lock:
-                self.calls.append(call)
-            data = _contract(completion)
-            if data is not None:
-                break
-            replies.append(completion.text)
-            messages = [
-                *messages,
-                Message(role="assistant", content=completion.text),
-                Message(role="user", content=_REPAIR),
-            ]
+        data = self._reply(chunk, self.messages(chunk, snippets), snippets, _PROMPT)
         if data is None:
-            self._reject(chunk, "malformed reply")
-            kept = MalformedReply(
-                doc_id=chunk.doc_id, chunk_index=chunk.index, replies=tuple(replies)
-            )
             with self._lock:
-                self.malformed.append(kept)
                 self.empty_extractions += 1
-            log.warning(
-                "no reply followed the contract for chunk %s#%d after %d attempts; "
-                "nothing extracted. The raw text is in LLMExtractor.malformed",
-                chunk.doc_id,
-                chunk.index,
-                len(replies),
-            )
             return []
-
-        ctx = ChunkContext(chunk, self.documents.get(chunk.doc_id))
-        by_type = {s.type_name: s for s in snippets}
         with self._lock:
             since = len(self.rejections)
-        facts: list[Fact] = []
-        for entity in data["entities"]:
-            facts.extend(self._entity(ctx, ontology, by_type, entity))
+        facts = self._facts(chunk, ontology, snippets, data)
         if not facts:
             # Not an error, and not nothing: the same chunk yields five facts on
             # one call and none on the next, and only a count and a line in the
@@ -359,36 +333,206 @@ class LLMExtractor:
             )
         return facts
 
+    def reextract(
+        self,
+        window: Chunk,
+        relations: Sequence[str],
+        already: Sequence[Fact],
+        ontology: Ontology,
+    ) -> list[Fact]:
+        """Facts the first pass missed in `window`, asked about `relations` alone (#102).
+
+        The re-extract hook (`openodke.reextract.Reextractor`). One call with the
+        registered `reextract` prompt: the flagged properties' snippets, the
+        facts `already` taken from the passage, rendered as the grounder renders
+        claims, and the window. The reply is read exactly as `extract` reads
+        one, quotes checked against the window, and a reply with nothing in it
+        is the expected answer rather than an empty extraction.
+        """
+        if not window.text.strip():
+            return []
+        snippets = self.reextract_snippets(ontology, relations)
+        if not snippets:
+            return []
+        listed = "\n".join(f"- {render_claim(fact)}" for fact in already) or "(none)"
+        system = "\n\n".join([_REEXTRACT.text, *(s.render() for s in snippets)])
+        user = f"Already extracted from this passage:\n{listed}\n\nPassage:\n{window.text}"
+        messages = [Message(role="system", content=system), Message(role="user", content=user)]
+        data = self._reply(window, messages, snippets, _REEXTRACT)
+        return [] if data is None else self._facts(window, ontology, snippets, data)
+
+    def reextract_snippets(
+        self, ontology: Ontology, relations: Sequence[str]
+    ) -> list[OntologySnippet]:
+        """One snippet per entity type, holding only `relations`, ranked as `snippet` ranks.
+
+        `snippet_limit` does not apply: the relations are already the few a gap
+        could hold, and one past the limit is exactly what a gap may be missing.
+        """
+        wanted = set(relations)
+        out: list[OntologySnippet] = []
+        for name in self.types if self.types is not None else sorted(ontology.types):
+            found = [p for p in ontology.predicates_for(name) if p.name in wanted]
+            if not found:
+                continue
+            ranked = sorted(found, key=lambda p: (-p.importance, p.name))
+            kind = ontology.types.get(name)
+            out.append(
+                OntologySnippet(
+                    type_name=name,
+                    type_description=kind.description if kind is not None else None,
+                    predicates=tuple(ranked),
+                    ontology_name=ontology.name,
+                    ontology_version=ontology.version,
+                )
+            )
+        return out
+
+    def _reply(
+        self,
+        chunk: Chunk,
+        messages: list[Message],
+        snippets: Sequence[OntologySnippet],
+        prompt: Prompt,
+    ) -> dict[str, Any] | None:
+        """The contract from the model, after up to `repairs` repairs; None, recorded, if never."""
+        schema = response_schema(snippets) if self.structured else None
+        data: dict[str, Any] | None = None
+        replies: list[str] = []
+        for attempt in range(self.repairs + 1):
+            completion = self._complete(chunk, messages, schema)
+            call = ModelCall(
+                doc_id=chunk.doc_id,
+                chunk_index=chunk.index,
+                model=completion.model or self.spec.model,
+                prompt_tokens=completion.prompt_tokens,
+                completion_tokens=completion.completion_tokens,
+                cost_usd=completion.cost_usd,
+                repair=attempt > 0,
+                prompt=(_REPAIR_PROMPT if attempt else prompt).key,
+                cached=completion.cached,
+            )
+            with self._lock:
+                self.calls.append(call)
+            data = _contract(completion)
+            if data is not None:
+                return data
+            replies.append(completion.text)
+            messages = [
+                *messages,
+                Message(role="assistant", content=completion.text),
+                Message(role="user", content=_REPAIR_PROMPT.text),
+            ]
+        self._reject(chunk, "malformed reply")
+        kept = MalformedReply(doc_id=chunk.doc_id, chunk_index=chunk.index, replies=tuple(replies))
+        with self._lock:
+            self.malformed.append(kept)
+        log.warning(
+            "no reply followed the contract for chunk %s#%d after %d attempts; "
+            "nothing extracted. The raw text is in LLMExtractor.malformed",
+            chunk.doc_id,
+            chunk.index,
+            len(replies),
+        )
+        return None
+
+    def _facts(
+        self,
+        chunk: Chunk,
+        ontology: Ontology,
+        snippets: Sequence[OntologySnippet],
+        data: dict[str, Any],
+    ) -> list[Fact]:
+        ctx = ChunkContext(chunk, self.documents.get(chunk.doc_id))
+        by_type = {s.type_name: s for s in snippets}
+        facts: list[Fact] = []
+        for entity in data["entities"]:
+            facts.extend(self._entity(ctx, ontology, by_type, entity))
+        return facts
+
     def extract_many(self, chunks: Sequence[Chunk], ontology: Ontology) -> list[list[Fact]]:
         """Many chunks, with at most `max_workers` model calls in flight.
 
         One list of facts comes back per chunk, in order, and `calls`,
         `rejections` and `malformed` are left in the order chunk-by-chunk
-        extraction gives, so a batch reads exactly as a loop would. A failure
-        that `extract` would raise is raised here too, and the calls not yet
-        started are dropped rather than paid for. The client must be
-        thread-safe: both built-in clients are; `ScriptedClient` answers by
-        position and is not, which is what `RecordedClient` is for.
+        extraction gives, so a batch reads exactly as a loop would.
+
+        A chunk whose call fails, after its retries, costs only itself: the
+        rest of the batch is extracted, and then the first failure is raised
+        with the batch's `partial` (a list of facts per chunk, None where one
+        failed) and its `failures` by chunk index (`openodke._batch`). A
+        configuration error raises at once and drops the calls not yet
+        started, as every call would fail alike. A budget stop
+        (`BudgetExceeded`) is raised once the chunks in flight are done, with
+        the same two attributes; None in its `partial` is also a chunk the
+        stop reached first. The client must be thread-safe: both built-in
+        clients are; `ScriptedClient` answers by position and is not, which is
+        what `RecordedClient` is for.
         """
         if self.max_workers == 1 or len(chunks) < 2:
-            return [self.extract(chunk, ontology) for chunk in chunks]
+            done: list[list[Fact] | None] = []
+            failed: dict[int, Exception] = {}
+            for at, chunk in enumerate(chunks):
+                try:
+                    done.append(self.extract(chunk, ontology))
+                except BudgetExceeded as stop:
+                    stop.partial = [*done, *([None] * (len(chunks) - len(done)))]
+                    stop.failures = failed
+                    raise
+                except Exception as exc:
+                    if is_config_error(exc):
+                        raise
+                    _log_failure(chunk, exc)
+                    done.append(None)
+                    failed[at] = exc
+            if failed:
+                raise incomplete(failed, done)
+            return [facts for facts in done if facts is not None]
         with self._lock:
             marks = len(self.calls), len(self.rejections), len(self.malformed)
         workers = min(self.max_workers, len(chunks))
         with ThreadPoolExecutor(workers, thread_name_prefix="openodke-extract") as pool:
-            futures = [pool.submit(self.extract, chunk, ontology) for chunk in chunks]
+            futures = [pool.submit(self._guarded, chunk, ontology) for chunk in chunks]
             wait(futures, return_when=FIRST_EXCEPTION)
             if any(f.done() and f.exception() is not None for f in futures):
                 pool.shutdown(cancel_futures=True)
-            # Raises the first failure in chunk order: the pool starts chunks in
-            # order, so none before a failed one can have been cancelled.
-            found = [future.result() for future in futures]
+        # Only a configuration error or a budget stop is raised by a worker.
+        raised = [f.exception() for f in futures if not f.cancelled() and f.exception()]
+        # The first in chunk order that is not a budget stop: the pool starts
+        # chunks in order, so none before a failed one was cancelled.
+        if other := next((e for e in raised if not isinstance(e, BudgetExceeded)), None):
+            raise other
         order = {(c.doc_id, c.index): i for i, c in enumerate(chunks)}
         with self._lock:
             _in_chunk_order(self.calls, marks[0], order)
             _in_chunk_order(self.rejections, marks[1], order)
             _in_chunk_order(self.malformed, marks[2], order)
-        return found
+        results = [
+            f.result() if not f.cancelled() and f.exception() is None else None for f in futures
+        ]
+        failures = {at: r.error for at, r in enumerate(results) if isinstance(r, _Failed)}
+        partial = [None if isinstance(r, _Failed) else r for r in results]
+        if raised:
+            budget = raised[0]
+            assert isinstance(budget, BudgetExceeded)  # every one left is a budget stop
+            budget.partial = partial
+            budget.failures = failures
+            raise budget
+        if failures:
+            raise incomplete(failures, partial)
+        return [facts for facts in partial if facts is not None]
+
+    def _guarded(self, chunk: Chunk, ontology: Ontology) -> list[Fact] | _Failed:
+        """`extract`, with a failure that is this chunk's alone handed back, not raised."""
+        try:
+            return self.extract(chunk, ontology)
+        except BudgetExceeded:
+            raise
+        except Exception as exc:
+            if is_config_error(exc):
+                raise
+            _log_failure(chunk, exc)
+            return _Failed(exc)
 
     def _complete(
         self, chunk: Chunk, messages: list[Message], schema: dict[str, Any] | None
@@ -425,7 +569,12 @@ class LLMExtractor:
         raw_type = entity.get("type")
         snippet = by_type.get(raw_type) if isinstance(raw_type, str) else None
         if snippet is None:
-            self._reject(ctx.chunk, f"type not in the prompt: {raw_type!r}")
+            named = entity.get("name")
+            self._reject(
+                ctx.chunk,
+                f"type not in the prompt: {raw_type!r}",
+                subject=named if isinstance(named, str) else None,
+            )
             return []
         name, items = entity.get("name"), entity.get("facts")
         if not isinstance(name, str) or not name.strip() or not isinstance(items, list):
@@ -433,11 +582,13 @@ class LLMExtractor:
             return []
         subject = subject_entity(snippet.type_name, name.strip())
         allowed = {p.name: p for p in snippet.predicates}
+        # The slice the model was shown for this type, by its fingerprint (#163).
+        shown = {SCHEMA_SLICE: snippet.fingerprint}
         facts: list[Fact] = []
         for item in items:
             fact = self._fact(ctx, ontology, subject, allowed, item)
             if fact is not None:
-                facts.append(fact)
+                facts.append(fact.model_copy(update={"qualifiers": {**fact.qualifiers, **shown}}))
         return facts
 
     def _fact(
@@ -455,20 +606,21 @@ class LLMExtractor:
         predicate = allowed.get(raw_predicate) if isinstance(raw_predicate, str) else None
         label = str(raw_predicate) if raw_predicate is not None else None
         quoted = quote if isinstance(quote, str) else None
+        said = {"subject": subject.label or subject.key, "value": value}
         if predicate is None:
-            self._reject(ctx.chunk, "predicate not in the snippet", label, quoted)
+            self._reject(ctx.chunk, "predicate not in the snippet", label, quoted, **said)
             return None
         if value is None or value == "" or isinstance(value, dict | list):
-            self._reject(ctx.chunk, "no value", label, quoted)
+            self._reject(ctx.chunk, "no value", label, quoted, **said)
             return None
         polarity = _polarity(item.get("polarity"))
         if polarity is None:
-            self._reject(ctx.chunk, "unknown polarity", label, quoted)
+            self._reject(ctx.chunk, "unknown polarity", label, quoted, **said)
             return None
         start = _locate(ctx.chunk.text, quoted, item.get("start")) if quoted else None
         span = ctx.span(start, quoted) if start is not None and quoted else None
         if span is None or start is None or quoted is None:
-            self._reject(ctx.chunk, "quote not in the passage", label, quoted)
+            self._reject(ctx.chunk, "quote not in the passage", label, quoted, **said)
             return None
         mention = _mention(ctx, item.get("mention"), quoted, start)
         raw_qualifiers = item.get("qualifiers")
@@ -500,6 +652,9 @@ class LLMExtractor:
         reason: str,
         predicate: str | None = None,
         quote: str | None = None,
+        *,
+        subject: str | None = None,
+        value: Any = None,
     ) -> None:
         rejection = Rejection(
             doc_id=chunk.doc_id,
@@ -507,9 +662,27 @@ class LLMExtractor:
             reason=reason,
             predicate=predicate,
             quote=quote,
+            subject=subject,
+            value=value,
         )
         with self._lock:
             self.rejections.append(rejection)
+
+
+@dataclass(frozen=True, slots=True)
+class _Failed:
+    """A chunk whose extraction raised: its own failure, kept apart from the batch."""
+
+    error: Exception
+
+
+def _log_failure(chunk: Chunk, exc: BaseException) -> None:
+    log.warning(
+        "extraction failed for chunk %s#%d, the rest of the batch carries on: %s",
+        chunk.doc_id,
+        chunk.index,
+        exc,
+    )
 
 
 def _is_for(record: Rejection, chunk: Chunk) -> bool:

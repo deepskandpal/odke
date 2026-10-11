@@ -2,6 +2,65 @@
 
 *Bring your own labelled dataset.*
 
+## Point it at your pipeline
+
+`odke eval pipeline` runs your extraction pipeline, whatever it is, and scores
+the triples it returns. Hand it the pipeline one of three ways:
+
+| Mode | Flag | What runs |
+|---|---|---|
+| command | `--cmd "python my_extract.py {in} {out}"` | the command; `{in}` is a folder with one `<name>.txt` per document, `{out}` the file it must write |
+| callable | `--run my_pkg.extract:run`, or `--run path/to/file.py:run` | the function, called with the `Document`s; it returns triples rows, `TripleRow`s or `Fact`s |
+| files | `--predictions out.jsonl` | nothing: the output is already written |
+
+Score it against your labels (`--labels gold.jsonl --documents texts/`), or
+against a public benchmark set `odke bench prepare` wrote (`--bench runs/movie`),
+scored with that benchmark's own metrics.
+
+```bash
+odke eval pipeline --labels examples/triples/gold.jsonl \
+    --documents examples/triples/texts --ontology examples/triples/ontology.json \
+    --cmd "python examples/triples/pipeline.py {in} {out}" --report report.json
+odke eval pipeline --bench runs/movie --run my_pkg.extract:run --validator
+```
+
+- **Output** is the [triples format](inputs.md): one JSON row per triple, with
+  `doc`, `subject`, `predicate` and `object`, and optionally types, offsets and
+  a quote. A row names its document by id, or by its file name without the
+  suffix. `--adapter langchain`, `langextract` or `graphrag` reads that
+  library's output instead, and a file of `Fact` rows, such as a sink's
+  `facts.jsonl`, is read as facts. A row that names no document is left out
+  and counted in the notes.
+- **Documents** are a folder, each file named by its path inside it
+  (`halden.txt`), or `Document` JSONL. A gold fact names its document the same
+  way.
+- **The command runs with no shell.** The template is split into words first,
+  and the paths go into the words, so nothing in a path is ever parsed. It is
+  stopped after `--timeout` seconds (600 by default). A non-zero exit, a
+  timeout, or no file at `{out}` exits 1 and says which.
+- **`--validator`** runs the [Validator](validator.md) over the same output and
+  reports both rows: `pipeline`, and `+ validator`, the facts it writes after
+  grounding, normalising, resolving, corroborating and gating, with its calls
+  and cost. Its stages and models come from `--config` as `odke validate
+  --config` takes them (a bench set's own `odke.json` by default); a stage the
+  config leaves out is the Validator's default. With neither, it is the
+  Validator's defaults, on the default models.
+- **`--adjudicate LIST`** grounds each prediction your gold lacks three times
+  and prints an adjudicated precision beside the strict one
+  ([Is the gold complete?](#is-the-gold-complete)).
+- **The report** is the [eval report](#the-eval-report). `--report` writes it
+  and `--json` prints it. The three modes give the same report for the same
+  output.
+- **The last row is diagnosed**: [where it loses facts](#where-does-it-lose-facts)
+  and [what should change](#what-should-change). `--trace` says what the
+  extractor was offered, `--reference` names another system's output for a
+  second price on each fix, and `--items` writes the last row's counts per
+  document for [`compare`](#was-the-change-real).
+
+On `examples/triples`, five hand-written triples against four gold facts score
+precision 0.600 and recall 0.750: three hits, Berlin spurious, and 2012 a wrong
+value. One document, so each range is its number.
+
 Precision and recall claims need a harness, or they are marketing. A number
 computed against the pipeline's own output measures nothing, though, and the
 package cannot label your corpus for you. So for every stage, `openodke.eval` ships
@@ -26,7 +85,9 @@ the base install.
 
 One evaluator is not BYOLD: [`odke eval spans`](#spans) needs **no labelled data
 at all**. It reads a run's own facts and reports cited span width split by the
-grounder's verdict, which scores the too-narrow-citation error directly.
+grounder's verdict, which scores the too-narrow-citation error directly. With
+no gold, `odke eval precision` needs only a small labelled sample and `odke
+eval pool` none ([Your data, no gold](#your-data-no-gold)).
 
 ## `StageReport`
 
@@ -40,12 +101,273 @@ Every evaluator returns the same type:
   classes.
 - `notes`: what a number cannot say.
 
-`report.render()` is the plain-text form `odke eval` prints; `--json` prints
-`model_dump_json`.
+`report.render()` is the plain-text form `odke eval` prints, below the eval
+report's rows; `--json` prints `model_dump_json`.
 
 A class nothing was predicted for has an **undefined** precision, and the report
 keeps that as `None` (shown as `—`). Zero would read as "every prediction was
 wrong", which is a different and worse finding.
+
+## The eval report
+
+A `StageReport` is shaped by its stage. A CI job, a dashboard or a second run to
+compare against needs precision in the same place every time, so `odke eval`
+and `odke bench run` also write an `EvalReport`: one JSON document, versioned by
+`schema_version`. A minor version adds fields and a major one changes them, so
+check the major version first.
+
+- `odke eval <stage> --report report.json` writes it. `--json` still prints the
+  stage's `StageReport`, as before; for `pipeline`, `precision`, `pool` and
+  `refusals` it prints the eval report.
+- `odke bench run` writes it as `report.json` beside the predictions; `--report`
+  puts it elsewhere.
+- 1.1 added `judged_precision`, `adjudication` and `pooled_recall`, and 1.2
+  added `lenient`. The schema does not require them, so an older report still
+  reads. 1.1 also typed the `diagnosis[]` and `fixes[]` entries, which a 1.0
+  report leaves empty.
+- The schema ships in the package, as `openodke/eval/eval_report.schema.json`.
+  `check_report(data)` holds a document to it in plain Python and lists every
+  mismatch. The package checks each report before writing it, and
+  `read_report(path)` checks before loading.
+
+| Key | What it holds |
+|---|---|
+| `schema_version` | `"1.2"`; `diagnosis[]` and `fixes[]` are typed within it, and stay required |
+| `title`, `n` | what was scored (`extract`, `ablation`, `text2kgbench:ont_1_movie`) and how many rows |
+| `run` | `openodke` (the version), `models` (role → model), `prompts` (the registered keys sent), `dataset` (name, path, documents, labels, details) |
+| `bootstrap` | how the ranges were drawn: `unit`, `units`, `resamples`, `seed`, `level`, `method`; `null` with no rows |
+| `rows[]` | one per configuration scored against gold facts: one for `extract`, three for the ablation and a benchmark, none for the other stages |
+| `rows[].performance` | `precision`, `recall`, `f1`, each `{value, low, high}`; `average` is `micro` (facts pooled) or `macro` (the mean of documents, as Text2KGBench averages) |
+| `rows[].counts` | `hits`; `over_extraction` (predicted, not in gold); `under_extraction` (gold, not predicted); `predicted`, `gold`; `uncited` (spurious predictions citing no document); `unscored`; `documents` |
+| `rows[].conformance` | `rate`, `conformant`, `facts`, `checks`: the share of predicted facts whose relation and types fit the ontology; `null` with no ontology |
+| `rows[].hallucination` | `definition`, `hallucinated`, `facts`, `rate`, and per-part rates where the dataset gives them; `null` where it defines none |
+| `rows[].cost`, `rows[].latency` | calls, tokens, USD (`null` when any call was unpriced) and seconds in calls; `null` when the run was not metered |
+| `stages[]` | the `StageReport`s, unchanged |
+| `notes[]` | what a number cannot say about the whole run |
+| `comparison` | `odke eval compare`'s block, unchanged: `a`, `b`, `unit`, `metric`, the `primary` paired result, `guardrails`, `mcnemar`, `notes`; `null` when nothing was compared. `odke eval compare A B --report PATH` writes a report that carries it |
+| `diagnosis[]` | the last row's misses, one entry per [cause bucket](#where-does-it-lose-facts), then its false positives: `row`, `side`, `bucket`, `label`, `count`, `share`, `examples` (`doc_id`, `gold`, `nearest`, `why`), `note`; `count` is `null` where the run cannot say |
+| `fixes[]` | [what should change](#what-should-change), ranked: `id`, `rank`, `buckets`, `misses`, `action`, `knob`, `recall` (`expected`, `ceiling`, `exact`, `basis`, `reference`, `precision`), `detail`, and `record`, the fix's track record |
+| `calibration` | reserved, empty and typed until #135 fills it |
+| `judged_precision` | 1.1, `null` unless asked for: a judge's precision with no gold, `judge_only`, `corrected` and `labels_only` as `{value, low, high}`; `facts`, `labels`, `false_support`, `lost_support`, `calibrated` and `coverage` ([Your data, no gold](#your-data-no-gold)) |
+| `adjudication` | 1.1, `null` unless asked for: `runs`, `needed`, `questions`, the `audit` path, and per row `strict` and `adjudicated` precision with `not_in_gold`, `asked` and `possibly_missing` ([Is the gold complete?](#is-the-gold-complete)) |
+| `pooled_recall` | 1.1, `null` unless asked for: the `pool`, its `documents`, the `bootstrap`, the `caveat`, and per run `relative_recall`, `supported`, `unique` and `coverage` |
+| `lenient` | 1.2, `null` unless asked for: the `judge` prompt key, its `model`, `questions` and `disagreed`, and per row `strict` and `lenient` performance with `candidates`, `same`, `different`, `unsure` and `counted` ([Surface forms: the lenient score](#surface-forms-the-lenient-score)) |
+
+- **The ranges are 95% bootstrap ranges over documents.** Facts from one
+  document share one reading of it, so they are not independent; resampling
+  facts would print a range too narrow. 2,000 draws, seed 0, so the same labels
+  give the same range on any machine. A draw on which a number is undefined is
+  left out.
+- **One bootstrap.** `openodke.eval.bootstrap` draws the documents and reads
+  the percentiles, for a report's ranges and for [`compare`](#was-the-change-real)
+  alike, so the same documents and seed give the same range in both. A
+  document's counts are the row `--items` writes for it.
+- **A spurious prediction that cites no document** is in no document's counts,
+  and so in no `--items` row. The report still counts it, as
+  `evaluate_extraction` does, in its numbers and in every draw, and
+  `counts.uncited` says how many.
+- **A wrong value or a wrong entity** counts once in `over_extraction` and once
+  in `under_extraction`, as it does in `fp` and `fn`.
+- **The numbers are the evaluator's own.** The rows hold the same precision,
+  recall and F1 as the `StageReport` beside them, to the last digit, and
+  `render()` prints them from the same fields.
+
+```python
+from openodke import Entity, Evidence, Fact
+from openodke.eval import GoldFact, evaluate_extraction
+from openodke.eval.eval_report import check_report, extraction_rows, from_stage
+
+ada, babbage = Entity(key="ada", type="Person"), Entity(key="babbage", type="Person")
+gold = [
+    GoldFact(doc_id="d1", fact=Fact(subject=ada, predicate="born", object_value=1815)),
+    GoldFact(doc_id="d2", fact=Fact(subject=babbage, predicate="born", object_value=1791)),
+]
+said = [
+    Fact(subject=ada, predicate="born", object_value="1815", evidence=(Evidence(doc_id="d1"),)),
+    Fact(subject=babbage, predicate="born", object_value=1792, evidence=(Evidence(doc_id="d2"),)),
+]
+rows, how = extraction_rows([("extract", said, None)], gold)
+report = from_stage(evaluate_extraction(gold, said), rows=rows, bootstrap=how)
+
+# One right document and one wrong one: the range is everything from 0 to 1.
+precision = report.rows[0].performance.precision
+assert (precision.value, precision.low, precision.high) == (0.5, 0.0, 1.0)
+assert check_report(report.model_dump(mode="json")) == []
+```
+
+## Where does it lose facts?
+
+A recall of 14% says how much was lost, not where. So `odke eval pipeline` and
+`odke eval extract` put every gold fact their last row missed in one cause
+bucket, the first its evidence fits ([DECISIONS #38](decisions.md#38)), and
+print the table with an example of each.
+
+| # | Bucket | The miss, when | Read from |
+|---|---|---|---|
+| 1 | relation never offered | the extractor was never shown the relation, for the subject's type | `--trace` |
+| 2 | refused by the Validator | a prediction matching it was made and the gate refused it | `--validator` |
+| 3 | wrong relation | a prediction links the same pair with another relation | predictions |
+| 4 | inverse direction | a prediction links the pair the other way round, with the same relation or the ontology's inverse ([#28](decisions.md#28)) | predictions, ontology |
+| 5 | surface form | a prediction that is no hit has the relation and one end, and the judge calls it the gold fact; with no judge, the other end is a near name | predictions, `--lenient` |
+| 6 | same triple, scored apart | a prediction states the triple, but a type, polarity or qualifier differs, or the scorer paired it with another gold fact | predictions |
+| 7 | cross-sentence | nothing came near, and the fact's evidence spans sentences | the dataset's evidence, else the text |
+| 8 | output saturation | nothing came near, the run's output is flat against length, and the document is long | the texts |
+| 9 | entity never extracted | an end is in no prediction for the document | predictions |
+| 10 | both seen but not linked | both ends are, never in one prediction | predictions |
+
+- **Three tiers.** What the pipeline did (1–6) beats the condition the fact or
+  its document was in (7–8), which beats what is merely missing (9–10). Every
+  miss with nothing near it is, trivially, a missing end or an unlinked pair.
+- **Predictions** are what the pipeline made: what it wrote and, with
+  `--validator`, what the gate refused. An entity in a refused fact was extracted.
+- **`--trace`** is the run's `manifest.json`, whose coverage report names the
+  relations no type was shown, or the run config that produced the predictions,
+  whose extractor is built, with no model call, to read its snippets per type.
+- **Surface form** takes the fact-equivalence judge's pre-filter
+  ([#39](decisions.md#39)): a prediction that is no hit, with the relation and
+  exactly one end equal as the scorer compares them. With `--lenient` the
+  judge has already decided those pairs, and the diagnosis reads its decisions
+  without asking again: a candidate it calls the same fact lands here, and
+  one it does not falls through to the buckets after. With no judge the bucket
+  is printed *surface form (unconfirmed)*, and only a candidate whose other end
+  is a near name lands in it: name keys equal, one inside the other as whole
+  words (four characters or more), or 85% alike. An `EquivalenceJudge` is the
+  hook, and `FactJudge.equivalent` is one, given the gold fact's document.
+- **Cross-sentence** reads the evidence sentence ids where the dataset gives
+  them (a Re-DocRED set prepared since #140 keeps them, and each entity's
+  type). Otherwise it is cross-sentence when no sentence names both ends, by the
+  span locator's rules.
+- **Output saturation** is a run-level signal: the extraction count per
+  document and the gold count are each regressed on length, log on log. When
+  the output grows at under half the gold's rate, the misses of documents
+  longer than the median land here.
+- **A bucket the run cannot measure is `—`**, `null` in the JSON, never zero:
+  no trace, no gate's record, too few texts.
+
+The precision side splits every false positive before the gate: refused, and
+not in the gold (the gate's catches); written, not in the gold, but supported
+by its passage (perhaps missing from the gold: the `Adjudicator` hook is where
+#145 adjudicates them); and the rest.
+
+```bash
+odke eval pipeline --bench runs/cmp/redocred --predictions snippet25.jsonl \
+    --trace runs/cmp/redocred/odke-snippet25.json --report s25/report.json \
+    --items s25/items.jsonl
+```
+
+```text
+where it loses facts  (pipeline: 1,574 misses)
+                              misses  share
+  relation never offered      363     23.1%
+  refused by the Validator    —       —
+  wrong relation              82      5.2%
+  inverse direction           0       0.0%
+  surface form (unconfirmed)  41      2.6%
+  same triple, scored apart   6       0.4%
+  cross-sentence              680     43.2%
+  output saturation           219     13.9%
+  entity never extracted      144     9.1%
+  both seen but not linked    39      2.5%
+
+  e.g. relation never offered: test_0001: Orlov · educated at · St Petersburg University (not offered for Person)
+```
+
+## What should change?
+
+Each bucket maps to a fix with its config knob, ranked by the recall gain the
+arithmetic expects ([DECISIONS #38](decisions.md#38)). Gains are recall points
+as shares of the gold facts scored. They overlap, so they never add.
+
+| Fix | Buckets | Knob or command | Expected gain |
+|---|---|---|---|
+| `offer-relations` | never offered | `stages.extractor.snippet_limit`, `types` | misses × recall on the offered relations / gold |
+| `audit-refusals` | refused | `odke eval refusals` (#113), `stages.gate.refuse_not_found` | exact: accept every refusal and rescore; precision too |
+| `relation-descriptions` | wrong relation | each predicate's `description` and `examples` | misses × the row's recall / gold |
+| `inverses` | inverse direction | `inverse_of`, `symmetric`, `inverses: true` | exact: the inverse step replayed on the output; precision too |
+| `normalise-names` | surface form | `stages.normalizer`, `Entity.aliases` | 0 until a judge confirms; confirmed / gold after |
+| `check-details` | scored apart | the ontology's types and qualifiers | misses × the row's recall / gold |
+| `wider-context` | cross-sentence | `stages.chunker` | misses × same-sentence recall / gold |
+| `smaller-chunks` | output saturation | `stages.chunker`, `models.extract.max_tokens` | misses × the short documents' recall / gold |
+| `reextract` | entity never extracted, not linked | `reextract:` (#102) | misses × the row's recall / gold |
+
+- **`expected`** is exact where the fix can be replayed, and otherwise assumes
+  the bucket is found as often as the run finds the facts its cause does not
+  touch. `basis` prints the arithmetic with its numbers. **`ceiling`** is every
+  miss in the bucket found. **`reference`**, with `--reference`, is the gain at
+  another system's rate on the same facts.
+- The **inverse replay** uses the ontology's pairs, and a relation a miss was
+  written backwards with, priced as symmetric. A relation written backwards as
+  another relation is a wrong relation; the ontology says what is an inverse.
+
+```text
+what should change  (pipeline: ranked by expected recall gain; gains overlap)
+     fix                    expected  ceiling  reference  knob
+  1  wider-context          +6.4      +38.9    +3.7       stages.chunker
+  2  offer-relations        +2.6      +20.8    +7.3       stages.extractor.snippet_limit
+  3  smaller-chunks         +1.5      +12.5    +1.9       stages.chunker; models.extract.max_tokens
+
+  2. Offer every relation the subject's type can take: raise the snippet limit, or name the types. 363 misses × 12.4% (its recall on the relations it was offered: 172 of 1,383) / 1,747 gold
+     - Misc · producer: 35
+```
+
+**The track record.** A prediction nobody checks is a guess with a decimal
+point, so each report written with `--report` appends its fixes to
+`track-record.jsonl` beside it (`--track-record` puts it elsewhere): the run,
+named by a hash of its `--items` counts; each fix with its expected gain and
+ceiling; and the run config that produced it (`--trace`'s, else the
+Validator's). `odke eval compare A B` then reads the record beside each items
+file, and when B applied a fix A predicted, appends the recall B measured, with
+its 95% interval and verdict, beside the prediction. B applied a fix when
+`--applied <fix-id>` says so, or when the configs differ at that fix's knobs
+alone; a change at two fixes' knobs is attributed to neither. The file only
+grows, and every later report prints it, predicted against measured.
+
+```bash
+odke eval pipeline ... --trace odke-snippet25.json --report s25/report.json --items s25/items.jsonl --track-record record.jsonl
+odke eval pipeline ... --trace odke.json --report s96/report.json --items s96/items.jsonl --track-record record.jsonl
+odke eval compare s25/items.jsonl s96/items.jsonl --track-record record.jsonl
+```
+
+```text
+track record: offer-relations expected +2.6 (ceiling +20.8), measured +4.5 [+2.0, +7.4] better (config: stages.extractor.snippet_limit (unset) → 96)
+```
+
+In Python, `gold_view` (or a benchmark's own `diagnosis_view`), `diagnose` and
+`fixes` are the same steps:
+
+```python
+from openodke import Entity, Evidence, Fact
+from openodke.eval import GoldFact
+from openodke.eval.diagnosis import Offered, diagnose, gold_view
+from openodke.eval.fixes import fixes
+
+
+def said(subject, predicate, obj, doc="d1"):
+    return Fact(
+        subject=Entity(key=subject, type="Person"),
+        predicate=predicate,
+        object_entity=Entity(key=obj, type="Thing"),
+        evidence=(Evidence(doc_id=doc),),
+    )
+
+
+gold = [
+    GoldFact(doc_id="d1", fact=said("ada", p, o))
+    for p, o in [
+        ("born_in", "london"),
+        ("employer", "acme"),
+        ("award", "medal"),
+        ("award", "prize"),
+    ]
+]
+view = gold_view(gold, [said("ada", "born_in", "london"), said("ada", "founded", "acme")])
+found = diagnose(view, offered=Offered(by_type={"Person": ("born_in", "employer")}))
+print({b.bucket: b.count for b in found.buckets if b.count})
+# {'never_offered': 2, 'wrong_relation': 1, 'written_other': 1}
+best = fixes(found)[0]
+print(best.id, round(best.recall.expected, 3), best.recall.basis)
+# offer-relations 0.25 2 misses × 50.0% (its recall on the relations it was offered: 1 of 2) / 4 gold
+```
 
 ## Formats and evaluators, per stage
 
@@ -176,7 +498,9 @@ for citation quality with no gold set**: it scores the too-narrow-citation error
 directly, which is the error a span gold set would be built to find. The report
 is the width distribution per verdict — count, median, quartiles, min and max —
 plus the share of facts citing no span at all, and one summary line. The widths
-are of `Evidence.span`, the span the grounder is shown.
+are of `Evidence.span`, the span the grounder is shown. A span the
+[locator](grounding.md#locating-spans) found is not a citation, so it is counted
+apart, in the `located` column, and left out of the widths.
 
 ```python
 from openodke.eval import evaluate_spans
@@ -289,12 +613,12 @@ assert report.metrics["brier"] > report.metrics["brier_baseline"]  # worse than 
 
 ## validate
 
-The validator is the gate, so its costly disagreements point in opposite
-directions. `wrongly_refused` is silent data loss. `wrongly_written` puts a fact in
-the graph that should not be there. `conflicts_missed` is a contradiction nobody
-will be asked to look at. Agreement is reported as accuracy and as Cohen's kappa:
-a validator that accepts everything scores a high accuracy on a mostly acceptable
-slice, and a kappa of zero.
+This scores a gate. What it refuses is not written, so its costly disagreements
+point in opposite directions. `wrongly_refused` is silent data loss.
+`wrongly_written` puts a fact in the graph that should not be there.
+`conflicts_missed` is a contradiction nobody will be asked to look at. Agreement
+is reported as accuracy and as Cohen's kappa: a gate that accepts everything
+scores a high accuracy on a mostly acceptable slice, and a kappa of zero.
 
 ## sink
 
@@ -357,7 +681,7 @@ runs one [run config](run.md) three ways against one labelled extraction set:
 1. **extraction alone**: the config's loaders, chunker, router and extractor, with
    every candidate kept.
 2. **+ grounding**: the same candidates through the config's grounder, then its
-   gate, which is the configured validator or `VerdictValidator` when it names none.
+   gate, which is the configured one or `VerdictGate` when it names none.
 3. **+ corroboration**: the whole configured pipeline (normalise, resolve,
    corroborate and score), then the same gate.
 
@@ -431,6 +755,541 @@ What it says about that fixture, and only that fixture:
   model copied as written became the ISO dates the labels use. Merging alone moves
   neither number, because a merged fact is scored once in each document it cites.
 
+## Was the change real?
+
+An eval can mislead three ways: in what it sampled, in how its judges are
+calibrated, and in its statistics. `odke eval compare` handles the third. Two
+runs scored on the same items are not two independent samples. Most items pass
+or fail in both, and only the ones that flip carry information, so the
+comparison is paired. A **paired bootstrap** (Koehn 2004) resamples items with
+replacement, recomputes the metric for both runs on the same resample, and reads
+the 95% interval of the difference. For corpus precision, recall and F1 the item
+is the document: its counts are resampled, and the corpus metric is recomputed
+from their sums.
+
+**Three verdicts, never two** ([DECISIONS #29](decisions.md#29)).
+
+| Verdict | When | Exit |
+|---|---|---|
+| better | the whole 95% interval is above zero | 0 |
+| worse | the whole 95% interval is below zero | 1 |
+| inconclusive | the interval contains zero | 0, or 1 with `--fail-on-inconclusive` |
+
+Inconclusive never means "no regression". It is printed with the **detection
+limit**, the smallest change the set detects at 95% confidence and 80% power:
+about Z·√(d/n), with Z = 1.959964 + 0.841621 and d the share of items that flip.
+
+| Items | Detection limit at 10% flips |
+|---|---|
+| 300 | 5.1 points |
+| 1,500 | 2.3 points |
+| 5,000 | 1.3 points |
+
+For pass/fail items the limit is that formula. For a corpus metric, where one
+document moves F1 by its own amount rather than by 1/n, it is Z times the
+bootstrap's own standard error. When no item changed at all, the limit is
+reported as unknown rather than as zero.
+
+**One primary metric.** F1 decides for documents and accuracy for pass/fail
+items; `--metric` picks another. The rest are guardrails: printed with their
+intervals, never deciding, so three metrics are not three chances of a false
+alarm. For pass/fail items, McNemar's exact test on the flips is printed as a
+cross-check, and a note says when it disagrees with the bootstrap.
+
+```bash
+odke eval ground --labels gate.jsonl --predictions p1/facts.jsonl --items p1.items.jsonl
+odke eval ground --labels gate.jsonl --predictions p2/facts.jsonl --items p2.items.jsonl
+odke eval compare p1.items.jsonl p2.items.jsonl          # A, then B
+odke eval compare p1.items.jsonl p2.items.jsonl --json   # one comparison block
+odke eval compare --describe
+```
+
+```text
+compare  accuracy over 300 items  (A: p1.items.jsonl, B: p2.items.jsonl)
+  verdict   inconclusive: with this set the smallest change it can detect is 5.1 points
+  accuracy  A 0.853  B 0.847  difference -0.7 points, 95% interval -4.3 to +3.0
+  limit     5.1 points: the smallest change these 300 items detect (95% confidence, 80% power)
+  flips     30 of 300 items changed (10.0%): 14 gained, 16 lost, McNemar exact p = 0.856
+  B range   0.807 to 0.887 (95%)
+```
+
+- `--items` writes one row per item, for extract, ground, validate and route:
+  `{"id": "d1", "tp": 3, "fp": 1, "fn": 0}` per labelled document, and
+  `{"id": "g7", "correct": true}` per labelled fact or chunk. The rows sum to the
+  report's own counts, less any spurious prediction that cites no document,
+  which is in no document's row and is named in a warning.
+- Both files must hold the same ids, and items are paired by id. Different items
+  are refused, naming the ones only one side has: a comparison over different
+  items measures the difference between the sets.
+- `--resamples` (2,000) and `--seed` (0): the same items and seed give the same
+  interval on every interpreter. `--json` prints one `Comparison` block, and
+  `--report PATH` writes it as the [eval report](#the-eval-report)'s
+  `comparison` section.
+
+**In CI**, keep the base run's items and compare the head's against them:
+
+```bash
+odke eval extract --labels gold.jsonl --predictions out/facts.jsonl --items head.items.jsonl
+odke eval compare base.items.jsonl head.items.jsonl --fail-under 0.80
+```
+
+- The step exits 1 when the verdict is worse, with a `gate: fail:` line on
+  stderr for each reason.
+- `--fail-under 0.80` also exits 1 when the low end of B's own 95% range for the
+  primary metric is under 0.80. B has to clear the floor with its uncertainty, not
+  with its point estimate.
+- `--fail-on-inconclusive` also exits 1 on inconclusive. It is off by default: a
+  change too small for the set to see is not a regression it saw, and the limit
+  says how small. Turn it on once the set is big enough that "inconclusive" means
+  "too small to matter".
+- Exit 2 means files that cannot be compared.
+
+The comparison is tested on itself. `tests/test_eval_aa.py` runs 300 seeded A/A
+comparisons, the same simulated system twice, and 96.7% come back inconclusive,
+within three binomial standard deviations of 95%. Offline, at 1,500 comparisons
+each, the rate was 95.2% to 95.3% on pass/fail items and 94.7% to 94.9% for corpus
+F1. A planted drop well above the limit comes back worse; one well below it comes
+back inconclusive, with the limit printed.
+
+```python
+from openodke.eval import detection_limit, mcnemar, paired_bootstrap
+
+print([round(detection_limit(n, 0.10) * 100, 1) for n in (300, 1_500, 5_000)])
+# [5.1, 2.3, 1.3]
+
+# 300 items: 240 pass in both, 3 fixed, 27 broken, 30 fail in both.
+before = [True] * 240 + [False] * 3 + [True] * 27 + [False] * 30
+after = [True] * 240 + [True] * 3 + [False] * 27 + [False] * 30
+result = paired_bootstrap(before, after)
+print(result.verdict, round(result.difference * 100, 1), round(result.detection_limit * 100, 1))
+# worse -8.0 5.1
+assert mcnemar(before, after).p_value < 0.001
+```
+
+`compare_items` does the same over two runs' `ItemRow`s, and
+`bootstrap_interval` gives one run's 95% range from the same resampler.
+
+## Your data, no gold
+
+On your own documents there is no gold. Two measurements still hold: a judge's
+precision, corrected by a small labelled sample, and each pipeline's recall
+relative to what several found together.
+
+### Precision: the judge, corrected
+
+The grounder, or any judge, grades every fact the pipeline wrote, and its
+supported share is a precision. It is the judge's, though, biased whichever
+way the judge leans, and agreement on a sample does not say which way. So a
+person labels a random sample, and **prediction-powered inference** corrects
+the judge by the mean gap between the labels and the judge on that sample
+(Angelopoulos et al., *Science* 382, 2023, arXiv 2301.09633; ARES uses it for
+LLM judges, arXiv 2311.09476). [DECISIONS #36](decisions.md#36) says why.
+
+```bash
+odke ground --facts triples.jsonl --texts texts/ -o out/   # or any run whose grounder ran
+odke eval precision --facts out/facts.jsonl --documents texts/ --make-sheet sheets/ --n 150
+odke label read sheets/ -o labels.jsonl                 # after ticking the sheets
+odke eval precision --facts out/facts.jsonl --labels labels.jsonl --documents texts/ \
+    --report report.json
+```
+
+On 1,000 judged facts with 120 labelled, the example further down:
+
+```text
+precision without gold  (1000 facts judged, 120 labels)
+  judge only   0.850                 the judge's verdicts, uncorrected
+  corrected    0.783 [0.717, 0.850]  prediction-powered (PPI), 95%
+  labels only  0.750 [0.672, 0.828]  the labels alone, 95%
+  the judge on the sample: 12 false support, 4 lost support
+```
+
+- **Judge only** is the share of `--facts` whose verdict is `supported`. Any
+  other verdict, `unchecked` included, counts as wrong. It has no range: a
+  range would only say how precisely the judge is biased.
+- **Corrected** is the judge's share plus the labels' mean gap,
+  `(1/N) Σ fᵢ + (1/n) Σ (yⱼ − fⱼ)`, over N judged and n labelled facts. Its
+  95% interval is **PPI's closed form**, normal, with variance
+  `Var(y)/N + Var(y − f)·(1/n − 1/N)`. The labelled facts are among the judged
+  ones, so that is the paper's `Var(f)/N + Var(y − f)/n` with the overlap
+  taken out. It is exact when every fact is labelled. Both variances are read
+  off the labelled sample, and the number and its interval are clipped to
+  [0, 1].
+- **Labels only** is the classical interval on the same labels,
+  `ȳ ± 1.96·s/√n`. The corrected interval is narrower whenever the judge
+  mostly agrees with the labels.
+- **Under 100 labels** the corrected number is printed as an *uncalibrated
+  estimate*, and `calibrated` is false in the JSON.
+- **The judge on the sample** is `odke eval ground` over the labels: the
+  confusion, `false_support` and `lost_support`, printed below the numbers.
+- **Recall is never claimed.** With `--documents`, the
+  [coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)
+  stands in for it: sentences naming two known entities that no fact covers,
+  and entities no fact names.
+- **Facts count as independent,** where the report's other ranges resample
+  documents. The sample is drawn fact by fact, so few labelled facts share a
+  document. A corpus of a few long documents is where the interval would be
+  too narrow.
+
+`--make-sheet DIR` draws `--n` facts (150), seeded by `--seed` (0) with
+`random.random()` alone, so the same facts and seed draw the same sample on
+any machine. `--by-predicate` gives each predicate its share, rounded by
+largest remainder, so the sample stays self-weighting and the estimator still
+reads it as a simple random one. The drawn facts go to `DIR/sample.jsonl`
+with their verdict cleared, so nothing beside a sheet shows the judge's
+answer, and onto [label sheets](#labelling-by-hand). Every judged fact must
+cite one of `--documents`, since any may be drawn. A directory that already
+holds a sample or sheets is refused. Labels join the facts on `Fact.id`; one
+that names no judged fact, or repeats one, is left out and counted.
+
+**The simulation** is the test (`tests/test_eval_ppi.py`): judged sets of
+2,000 facts whose true precision is 80%, and a judge biased a known way. The
+lenient judge lets 43% of false facts through and reads 84.6%; the strict one
+misses 10% of true facts and reads 72.4%. Offline, 5,000 seeded sets each:
+
+| Judge | Labels | PPI covers 80% | PPI ± | Labels only ± |
+|---|---|---|---|---|
+| lenient | 300 | 95.2% | 4.1 points | 4.5 points |
+| strict | 300 | 94.8% | 3.4 | 4.5 |
+| lenient | 150 | 95.0% | 5.7 | 6.4 |
+| strict | 150 | 94.0% | 4.6 | 6.4 |
+| lenient | 50 | 94.3% | 9.7 | 11.0 |
+| strict | 50 | 90.8% | 7.6 | 11.0 |
+
+The judge alone misses the truth by its whole bias every time. At 50 labels
+the strict judge's interval covers too rarely: its disagreements are rare, so
+their mean is skewed and the normal interval is too short. That is the
+uncalibrated estimate.
+
+```python
+from openodke.eval.ppi import prediction_powered
+
+# 1,000 facts, 850 judged supported. 120 labelled at random: the judge let 12
+# false facts through and lost 4 true ones.
+judged = [True] * 850 + [False] * 150
+labelled = [(True, True)] * 86 + [(True, False)] * 12 + [(False, True)] * 4 + [(False, False)] * 18
+judge, corrected, labels = prediction_powered(judged, labelled)
+
+assert judge.value == 0.85
+assert (round(corrected.value, 3), round(corrected.low, 3), round(corrected.high, 3)) == (
+    0.783,
+    0.717,
+    0.85,
+)
+assert (round(labels.low, 3), round(labels.high, 3)) == (0.672, 0.828)
+```
+
+In process, `judged_precision(facts, labels, documents=...)` returns the
+section and its notes, `report_precision` the eval report, and
+`write_sample` draws the sheets.
+
+### Recall: a pool of pipelines
+
+Nobody knows how many facts a document states, so recall needs gold. Two or
+more pipelines on the same documents can still be compared on it, the way
+TREC compares search systems it has no complete judgements for: pool what
+they found, and score each against the pool.
+
+```bash
+odke eval pool runs/lgt runs/neo4j runs/reference --documents texts/
+```
+
+- **Each run** is its facts after grounding: a `facts.jsonl`, or the directory a
+  sink wrote, named by its directory. Only a `supported` fact is pooled, so a
+  run must have been grounded (`odke ground`, `odke validate`, or a run whose
+  grounder ran). One run can be openodke's reference extractor, `odke run` with
+  `extractor: llm` on the same texts, as a second opinion.
+- **The pool** is every supported fact any run wrote, per document, once per
+  signature after normalisation: values through `ValueNormalizer`, then folded
+  for case and spacing as the extraction matcher folds them, and each entity
+  by its name key rather than its key. `ACME, Inc.` keyed `Company:acme` and
+  `Acme Inc.` keyed `acme` state one fact.
+- **Relative recall** is a run's supported facts over the pool's, with a 95%
+  bootstrap range over the documents the pool cites, every run's from the same
+  draws. `found by no other` counts the facts only that run has.
+- **It overstates true recall.** The pool misses whatever every run missed, so
+  each share is a ceiling on that run's recall, how far above the truth
+  unknown (Zobel, SIGIR 1998, measured it for TREC's pools). Adding a run can
+  only lower every number. The caveat is a field of the section and is printed
+  beside the numbers, with each run's coverage report, which needs no pool.
+
+## Is the gold complete?
+
+Not in either public dataset. Text2KGBench and Re-DocRED both leave out facts
+their texts state, so a prediction missing from the gold may be one the gold
+missed, and precision against it understates the pipeline. `--adjudicate`
+finds the candidates.
+
+```bash
+odke eval pipeline --labels gold.jsonl --documents texts/ --predictions out.jsonl \
+    --config odke.yaml --adjudicate adjudicated.jsonl
+```
+
+On `examples/triples`, with a recorded grounder that supports Berlin in two
+of three runs (`tests/test_eval_adjudication.py`):
+
+```text
+gold adjudication  (each prediction the gold lacks grounded 3 times; supported in 2 is possibly missing from gold)
+            strict                adjudicated           not in gold  asked  possibly missing
+  pipeline  0.600 [0.600, 0.600]  0.800 [0.800, 0.800]  2            2      1
+  the strict precision never changes; the list, with every verdict: adjudicated.jsonl
+```
+
+- **Missing from the gold** means not a hit by the extraction matcher:
+  spurious, a wrong value or a wrong entity, the row's `over_extraction`. A
+  spurious prediction that cites no document has nothing to be grounded
+  against, and stays a miss.
+- **Each is grounded three times** against the document it was scored in, by
+  `--config`'s grounder or the default one. Supported in at least two of the
+  three, it is **possibly missing from gold**. A question the pipeline row and
+  the `+ validator` row share is asked once.
+- **Three runs are three calls.** Each carries its run index as
+  `ModelSpec.repeat` (0, 1, 2), which no provider sees. The
+  [response cache](models.md#the-response-cache) keys it when it is not 0, so
+  runs 1 and 2 are entries of their own, and run 0 shares the entry of any
+  earlier grounding of the same question. A grounder with no model answers
+  alike every time, and agrees with itself.
+- **The adjudicated precision** counts the possibly missing as hits, in the
+  document each was scored in, and is resampled on the strict range's own
+  draws. It is printed beside the strict precision, which never changes: the
+  adjudicated one trusts the grounder on exactly the facts in question. On the
+  `+ validator` row that is the grounder vouching for what it already let
+  through.
+- **The list** goes to the path given, one JSON line per prediction the gold
+  lacks, the listed ones first: `doc_id`, `claim` (as the grounder read it),
+  `kind`, the `rows` it was in, the three `verdicts`, `supported`,
+  `possibly_missing_from_gold` and the `fact`.
+- **It needs `--labels`.** A `--bench` set is scored by its benchmark's own
+  matching, which this does not read.
+
+How often the list is right is measured on label set G's 200 not-in-gold
+predictions, once a person has labelled them. `bench/adjudication.py` sets the
+list beside the labels: its precision, its recall, and how many of G's planted
+false facts it lists. Until `bench/labels/G/labels.jsonl` exists, it says so
+and exits 0.
+
+## Surface forms: the lenient score
+
+A scorer compares strings after a normaliser, so "Gabby Logan" for "Gabrielle
+Nicole Logan" is a miss and a false positive. `--lenient` asks a model whether
+such a near miss is the gold fact in other words, and prints a lenient score
+beside the strict one, never instead of it ([DECISIONS #39](decisions.md#39)).
+
+```bash
+odke eval pipeline --labels gold.jsonl --documents texts/ --predictions out.jsonl \
+    --config odke.yaml --lenient pairs.jsonl
+```
+
+- **The pre-filter** decides which pairs reach the judge, with no model
+  (`candidate`, `surface_pair`): a gold fact the matcher counted missed and a
+  prediction it left unmatched, in one document, with the same relation and
+  polarity, one end equal after normalisation (`name_key` against every name
+  the gold end goes by, `normalise_value` for a value) and the other end not
+  exactly equal as written. A prediction the matcher already set against the
+  gold fact, as a wrong value or entity, is tried first.
+- **The judge** (`FactJudge`) reads the relation and its description, both
+  facts as the grounder renders a claim, and the gold fact's evidence: the
+  sentences its span covers, else those naming both its ends, else the start
+  of its document. It sends `fact_equiv@1` and `fact_equiv.user@1` to the
+  `ground` role's model, `--config`'s or the default, metered as `judge`.
+- **The swap rule**: each pair is asked with the gold fact first and with the
+  prediction first. "same" counts only when both orders say same; a
+  disagreement, an unsure or an unreadable answer counts nothing.
+  `disagreed` counts the pairs whose orders differed.
+- **The lenient score** moves each pair judged the same from a miss and a
+  false positive to a hit, at most once per gold fact and once per prediction,
+  and is resampled on the strict range's own draws. A pair two rows share is
+  asked once.
+- **The pairs** go to the path given, one JSON line each, those judged the
+  same first: `doc_id`, `gold`, `predicted`, `differs` (the end that differs),
+  `passage`, `rows`, `decision`, `gold_first`, `prediction_first` and `why`.
+- **It needs `--labels`.** A `--bench` set is scored by its benchmark's own
+  matching, which this does not read.
+
+```python
+from openodke import Document, Entity, Evidence, Fact
+from openodke.eval import GoldFact
+from openodke.eval.equivalence import FactJudge, lenient
+from openodke.llm import RecordedClient
+
+ada = Entity(key="ada", type="Person", label="Ada Lovelace")
+doc = Document(id="a1", text="Ada Lovelace was born in London on 10 December 1815.")
+cited = (Evidence(doc_id="a1"),)
+gold = [GoldFact(doc_id="a1", fact=Fact(subject=ada, predicate="born", object_value="1815"))]
+said = [Fact(subject=ada, predicate="born", object_value="10 December 1815", evidence=cited)]
+
+# Recorded answers: "same" in both orders.
+judge = FactJudge(client=RecordedClient([{"match": "Fact 1", "response": {"decision": "same"}}]))
+section, pairs = lenient([("extract", said)], gold, [doc], judge)
+(row,) = section.rows
+assert (row.candidates, row.same, row.counted) == (1, 1, 1)
+assert (row.strict.recall.value, row.lenient.recall.value) == (0.0, 1.0)
+assert pairs[0].passage == "Ada Lovelace was born in London on 10 December 1815."
+```
+
+How far the judge can be trusted is measured on label set F: 300 pairs the
+pre-filter made from the published comparison, labelled blind by a person
+(`bench/labels/README.md`). Until its calibration card exists, the lenient
+score is printed, not trusted. The same pre-filter makes the miss diagnosis's
+surface-form candidates, and with `--lenient` the diagnosis reads these
+decisions rather than asking again (`Decided`), so the bucket and the lenient
+score agree. `FactJudge.equivalent` is the diagnosis's hook for a judge of its
+own, and narrows the document it is given to the gold claim's sentences.
+
+## What the grounder refused
+
+Nobody reads what a grounder throws away. A refusal rate says how many, not
+whether they were right, and against distantly supervised gold a refused
+"right" fact may be one the text never stated. `odke eval refusals` draws a
+sample of the refusals for a person to read, and scores what they tick.
+
+```bash
+odke eval refusals out/ --documents texts/ --make-sheet refusal-sheets/ --n 100
+odke label read refusal-sheets/ -o refusal-labels.jsonl
+odke eval refusals --labels refusal-labels.jsonl
+```
+
+- **What it reads**, any of: an `odke ground` output (its directory, or
+  `facts.jsonl`), where a refusal is a fact the free checks stamped, or one
+  whose verdict is `contradicted` or `not_found`; an `odke validate -o`
+  directory, whose `refused.jsonl` holds each fact the gate refused and the
+  gate's reason ([The Validator](validator.md#one-command)); or an
+  `odke bench run` set, or a directory of them, competitors' sets included.
+  A ground or validate run keeps facts and not texts, so give `--documents`.
+- **A bench set keeps triples, not verdicts**, so its refusals are each
+  extractor's triples before grounding that the gated row lacks. The verdict
+  is the one its config refuses: the paper's binary grounder answers only
+  "False", which is `not_found`. The text is the document, which is what a
+  grounder reading the whole document read, and whether the gold lists the
+  fact is the dataset's own scoring.
+- **The sample** gives each stratum, a dataset, extractor and verdict, an
+  equal share as its size allows, and within one the predicates take turns,
+  so no predicate takes the stratum. It is seeded (`--seed`, default 0), and
+  `--n` is 100 unless given. `refusals.jsonl` beside the sheets holds the
+  drawn rows, in sheet order.
+- **An item** shows the claim as the grounder read it, `Refused:` with the
+  verdict and the reason, `Gold:` where there is gold, and the text, with the
+  cited span in bold, or else where the claim's names are, as the span
+  locator finds them. A text over 3,000 characters is cut to the sentences
+  around what is bold. The boxes are `refusal correct` (the text does not
+  state the fact), `refusal wrong` (it does), `gold wrong` (the gold lists it
+  and the text does not state it) and `unsure`.
+- **The refusal precision** is the right refusals, correct and gold wrong,
+  over every judgement but unsure, with its Wilson 95% interval beside it:
+  arithmetic, no dependency, and inside [0, 1] even at 0 or n. It is reported
+  overall and per dataset, extractor and verdict where there are two or more,
+  with each judgement's count and, of the refusals the gold lists, the share
+  the gold was wrong on.
+
+```python
+from openodke.eval import RefusalLabel, report_refusals
+
+
+def label(judgement: str, gold: bool) -> RefusalLabel:
+    return RefusalLabel(
+        id=judgement,
+        claim="Loud — performer — Rihanna.",
+        text="…",
+        verdict="not_found",
+        reason="the passage does not settle it",
+        predicate="performer",
+        gold=gold,
+        judgement=judgement,
+    )
+
+
+labels = [label("refusal_correct", False)] * 6 + [label("gold_wrong", True)] * 2
+labels += [label("refusal_wrong", True)] * 2 + [label("unsure", False)]
+report = report_refusals(labels)
+assert "refusal precision 0.800 [0.490, 0.943] (Wilson 95%), 10 judged, 1 unsure" in report.render()
+```
+
+## Labelling by hand
+
+`odke label` writes rows out as markdown sheets that a person ticks wherever a
+markdown file opens, Obsidian on a tablet included. It then reads the ticks
+back as `GroundingLabel`, `PairLabel` or `FactPairLabel` rows.
+
+back as `GroundingLabel`, `PairLabel` or `RefusalLabel` rows.
+
+```bash
+odke label make grounding to-check.jsonl -o sheets/ --per-sheet 50
+odke label make pair pairs.jsonl -o pair-sheets/
+odke label make fact fact-pairs.jsonl -o fact-sheets/
+odke label read sheets/ -o ground.jsonl        # or one sheet: sheets/sheet-03.md
+odke eval ground --labels ground.jsonl --predictions out/facts.jsonl
+```
+
+- **A grounding row** is a `GroundingLabel` without its `verdict`: `text`,
+  `fact` and an optional `doc_id`. Give every fact an `id`, because predictions
+  join on it; `make` warns about any fact that has none.
+- **A pair row** is `{"a": {...}, "b": {...}}`. Each side has a `key` and a
+  `type`, plus an optional `label` (the name as written), `context` and
+  `aliases`, shown as "also known as". The [pair judge's](resolution-and-corroboration.md#the-pair-judge)
+  review queue is a file of them, each with the judge's answers under
+  `judge`, which the sheet does not show.
+- **A fact row** is a `FactPair`: an `id`, the `relation` and its
+  `description`, two facts `first` and `second`, and the `passage`. Nothing in
+  it says which fact is gold; keep that apart, as `bench/labels/F` does.
+- **Sheets** are `sheet-01.md`, `sheet-02.md` and so on, and one sheet is one
+  sitting. Item ids run across the sheets (`G-0001`, `P-0001`, `F-0001`).
+
+- **A refusal row** is a `Refusal`, as `odke eval refusals --make-sheet`
+  writes it: `id`, `claim`, `text`, `bold`, `verdict`, `reason`, `gold`, and
+  what it was stratified on. Its label adds `judgement`.
+- **Sheets** are `sheet-01.md`, `sheet-02.md` and so on, and one sheet is one
+  sitting. Item ids run across the sheets (`G-0001`, `P-0001`, `X-0001`).
+  Beside each sheet, `sheet-NN.items.jsonl` keeps its rows, so the markdown
+  only has to carry the ticks and the notes. The same rows give byte-identical
+  sheets. `make` refuses a directory that already holds sheets.
+
+A grounding item, as written:
+
+```markdown
+### G-0007
+
+Acme Cloud (Company) — operates in — "Ireland".
+
+> **Acme Cloud runs data centres in Ireland, Virginia and Singapore.** Its uptime target is 99.9\% and it costs \$5 a seat.
+
+- [ ] supported
+- [ ] contradicted
+- [ ] not found
+
+note:
+```
+
+The claim line is `render_claim(fact)`, the sentence the grounder is asked
+about, and the cited span is bold inside the passage. A `context` span, the
+whole text of a fact that cited nothing, is no citation and stays plain.
+Passage text is escaped, so markdown cannot hide or restyle it: `$` would
+otherwise open a formula and `%%` a comment. A pair item shows `A:` and `B:`,
+each a name and its type with its context quoted, then the boxes `same`,
+`different` and `unsure`. A fact item shows the relation, `Fact 1:` and
+`Fact 2:` as `render_claim` puts them to the fact-equivalence judge, and the
+passage, with the same three boxes. Each sheet opens with two lines that
+explain the answers and asks for exactly one tick.
+
+Reading back:
+
+- **Exactly one tick** (`[x]` or `[X]`) is a label. **No tick** leaves the item
+  unlabelled; it is counted in the summary, not refused.
+- **Two or more ticks**, or a heading the sidecar does not know, exit 2 with
+  the file and the line of the item's heading. A mark other than `x` names the
+  box's own line. Every problem in every sheet is listed at once, and nothing is
+  written.
+- **Labels** go to `-o` in input order: the row as given plus `verdict`, or
+  `PairLabel(a, b, same)` on the two keys, or a fact row as given plus `same`.
+  Pairs ticked `unsure` never become a label. They go to `<out>.unsure.jsonl`
+  in the input shape, ready to be made into a sheet again. Text after `note:`
+  goes to `<out>.notes.jsonl` with the item's id, sheet and answer.
+
+  `PairLabel(a, b, same)` on the two keys, or a refusal row plus `judgement`. Pairs ticked `unsure` never become a
+  `PairLabel`. They go to `<out>.unsure.jsonl` in the input shape, ready to be
+  made into a sheet again. Text after `note:` goes to `<out>.notes.jsonl` with
+  the item's id, sheet and answer.
+- **The summary** gives the sheets and items, how many are labelled and
+  unlabelled, and the count for each answer.
+
 ## From the shell
 
 ```bash
@@ -440,9 +1299,20 @@ odke eval resolve --labels pairs.jsonl --predictions links.jsonl --json
 odke eval route --labels route.jsonl --run mypackage.routers:MarketingRouter
 odke eval extract --labels gold.jsonl --run mypackage.extract:MyExtractor \
     --documents documents.jsonl --ontology schema.json
-odke eval validate --labels verdicts.jsonl --run mypackage.gate:MyValidator --ontology schema.json
+odke eval validate --labels verdicts.jsonl --run mypackage.gate:MyGate --ontology schema.json
 odke eval ablation --config examples/e2e/odke.yaml --labels examples/e2e/gold.jsonl
 odke eval spans --facts out/                        # no labels: width by verdict
+odke eval extract --labels gold.jsonl --predictions facts.jsonl --items b.items.jsonl
+odke eval compare a.items.jsonl b.items.jsonl       # better, worse or inconclusive
+odke eval extract --labels gold.jsonl --predictions facts.jsonl --report report.json
+odke eval precision --facts out/facts.jsonl --labels labels.jsonl   # no gold: judge + sample
+odke eval pool runs/a runs/b --documents texts/     # no gold: recall relative to a pool
+odke eval compare a.items.jsonl b.items.jsonl --applied offer-relations   # record what B measured
+odke eval pipeline --labels gold.jsonl --documents texts/ --predictions out.jsonl \
+    --lenient pairs.jsonl                           # near misses judged; strict stays
+
+odke eval refusals runs/cmp --make-sheet sheets/ --n 100   # what the grounder refused, to tick
+odke eval refusals --labels refusal-labels.jsonl    # refusal precision, Wilson 95%
 ```
 
 - The CLI covers route, extract, ground, resolve, score and validate, and the
@@ -454,4 +1324,16 @@ odke eval spans --facts out/                        # no labels: width by verdic
   instance.
 - Resolution cannot run from labels, because a resolver takes facts, not pairs.
   Its links always come from a file, which is also how a platform's merges arrive.
+- `compare` takes two runs' `--items` files and exits 1 when B is worse
+  ([Was the change real?](#was-the-change-real)). With a track record beside
+  them, it also records what B measured of the fixes A predicted
+  ([What should change?](#what-should-change)).
+- `extract` and `pipeline` diagnose their last row; `--trace`, `--examples` and
+  `--track-record` are theirs.
+- `precision` takes `--facts` a judge graded, and `--labels` or
+  `--make-sheet`; `pool` takes two or more runs
+  ([Your data, no gold](#your-data-no-gold)).
+- `refusals` takes runs and `--make-sheet`, or `--labels` alone
+  ([What the grounder refused](#what-the-grounder-refused)).
+- `--report PATH` writes the [eval report](#the-eval-report) for any stage.
 - Errors exit with status 2.

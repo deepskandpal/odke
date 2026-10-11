@@ -55,7 +55,11 @@ parquet = ["pyarrow>=15"]
 # `odke bench`: Text2KGBench's hallucination metrics stem with NLTK, as the
 # benchmark's own scorer does. Imported on first use; the rest of a run needs nothing.
 bench = ["nltk>=3.8,<4"]
-all = ["openodke[llm,neo4j,rdf,networkx,docs,pdf,docx,yaml,parquet,bench]"]
+# Spans per job, stage and model call (`openodke.observe`), sent to the tracer
+# provider the application configures. The API alone: the SDK and an exporter
+# are the application's to choose. Imported on first use; without it, no spans.
+otel = ["opentelemetry-api>=1.24,<2"]
+all = ["openodke[llm,neo4j,rdf,networkx,docs,pdf,docx,yaml,parquet,bench,otel]"]
 
 [project.urls]
 Homepage = "https://github.com/deepskandpal/odke"
@@ -82,6 +86,8 @@ dev = [
   # Stubs for mypy; PyYAML ships none.
   "types-pyyaml>=6",
   "hypothesis>=6",
+  # An in-memory exporter, so the spans `[otel]` emits are checked, not assumed.
+  "opentelemetry-sdk>=1.24,<2",
 ]
 # The documentation site: `uv run --group docs mkdocs build --strict`. A group,
 # not an extra, so it never reaches a user's install. (The `docs` *extra* above
@@ -89,6 +95,9 @@ dev = [
 docs = [
   "mkdocs>=1.6,<2",
   "mkdocs-material>=9.5,<10",
+  # Old page URLs redirect. 1.2.3 moved to ProperDocs and pulls in a second
+  # MkDocs, properdocs, so this stays on 1.2.2.
+  "mkdocs-redirects>=1.2.2,<1.2.3",
 ]
 
 [build-system]

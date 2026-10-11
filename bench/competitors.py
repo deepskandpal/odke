@@ -2,6 +2,7 @@
 
     python bench/competitors.py extract lgt   runs/movie     # LangChain LLMGraphTransformer
     python bench/competitors.py extract neo4j runs/movie     # neo4j-graphrag's ER extractor
+    python bench/competitors.py extract langextract runs/movie   # google/langextract
     odke bench run text2kgbench runs/movie/competitors/lgt   # raw, + grounding, + corroboration
 
 `extract` gives each competitor what openodke gets: the same documents, whole,
@@ -12,26 +13,36 @@ ollama/..., gemini/...); `--model` overrides it. Keys come from the environment,
 LiteLLM reads them (OPENAI_API_KEY, ANTHROPIC_API_KEY, ...); `--env-file` loads a file
 of KEY=value lines first.
 
-Both competitors reach the model through LiteLLM, as openodke does, so one model
-string runs all three and a reasoning model's thinking never reaches either
+The competitors reach the model through LiteLLM, as openodke does, so one model
+string runs them all and a reasoning model's thinking never reaches either
 library's parser: LiteLLM returns the reply's text, and each library gets that.
 Nothing about what the model is asked changes. (The libraries' structured paths
 force a tool choice, which some reasoning models refuse; both run their
 prompt-and-parse paths here.)
 
 Triples go to `competitors/<system>/facts.jsonl` in openodke's triples format
-(docs/triples.md), and the directory is made runnable: the prepared config with
+(docs/inputs.md), and the directory is made runnable: the prepared config with
 the extractor swapped for `triples`, which hands those triples to openodke's
 grounder and corroborator unchanged.
-Both competitors are held to the schema the way LLMGraphTransformer's strict
+Every competitor is held to the schema the way LLMGraphTransformer's strict
 mode does it: a triple whose (head type, relation, tail type) is not a pattern
 of the ontology is dropped.
+
+LangExtract has no provider for every LiteLLM model string, so it gets a
+`BaseLanguageModel` that calls LiteLLM, and each document whole, as one chunk.
+It needs examples, and gets one that shows the output's shape and nothing of
+any dataset (`EXAMPLE`): an example drawn from a dataset's labels would show it
+answers the other two never see. An extraction is a subject with attributes;
+each attribute naming one of the ontology's relations is a triple, read by
+openodke's own adapter (`openodke.interop.from_langextract`), which keeps
+LangExtract's offsets as the citation.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import importlib.metadata
 import json
 import os
@@ -44,11 +55,26 @@ CONCURRENCY = 3
 RETRIES = 6
 DEFAULT_MAX_TOKENS = 16000
 # What the calls cost in tokens, and documents that failed after LiteLLM's retries.
-USAGE = {"input_tokens": 0, "output_tokens": 0, "calls": 0, "failed_documents": 0}
+USAGE: dict[str, Any] = {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "calls": 0,
+    "failed_documents": 0,
+    "usd": 0.0,
+}
+# The most the extraction may spend, in USD: `--budget-usd`. None is no limit.
+BUDGET: dict[str, float | None] = {"usd": None}
 LITERAL_NODES = {"date": "Date", "number": "Number", "integer": "Number", "string": "Text"}
 ROLES = {"system": "system", "human": "user", "user": "user", "ai": "assistant"}
 # Whose versions `usage.json` records: a published number names what made it.
-LIBRARIES = ("langchain-experimental", "neo4j-graphrag", "litellm")
+LIBRARIES = ("langchain-experimental", "neo4j-graphrag", "langextract", "litellm")
+# The one LangExtract example: the output's shape, and nothing of any dataset.
+EXAMPLE = {
+    "text": "Marie Curie was born in Warsaw. She worked at the University of Paris.",
+    "extraction_class": "Person",
+    "extraction_text": "Marie Curie",
+    "attributes": {"place_of_birth": "Warsaw", "employer": "University of Paris"},
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -89,11 +115,33 @@ def extract_model(prepared: Path, override: str | None) -> tuple[str, int]:
     return model, int(max_tokens)
 
 
+class BudgetSpent(RuntimeError):
+    """The extraction reached `--budget-usd`; the call was not made."""
+
+
+def _check() -> None:
+    """Refuse a call once the spend has reached the budget.
+
+    The spend is known only after a call returns, so the run can pass the limit
+    by the calls already in flight (at most `CONCURRENCY`), as openodke's own
+    USD limit can before its first priced call (DECISIONS #32). A document
+    refused is a failed document, so the set is not scored.
+    """
+    limit = BUDGET["usd"]
+    if limit is not None and USAGE["usd"] >= limit:
+        raise BudgetSpent(f"budget of ${limit:.2f} spent (${USAGE['usd']:.4f})")
+
+
 def _record(response: Any) -> str:
+    import litellm
+
     usage = getattr(response, "usage", None)
     USAGE["input_tokens"] += getattr(usage, "prompt_tokens", 0) or 0
     USAGE["output_tokens"] += getattr(usage, "completion_tokens", 0) or 0
     USAGE["calls"] += 1
+    # A model LiteLLM cannot price has no USD limit, as in openodke.
+    with contextlib.suppress(Exception):
+        USAGE["usd"] += float(litellm.completion_cost(completion_response=response) or 0.0)
     return response.choices[0].message.content or ""
 
 
@@ -101,6 +149,7 @@ async def complete(messages: Sequence[dict[str, str]], model: str, max_tokens: i
     """The reply's text. LiteLLM keeps a reasoning model's thinking out of `content`."""
     import litellm
 
+    _check()
     response = await litellm.acompletion(
         model=model, messages=list(messages), max_tokens=max_tokens, num_retries=RETRIES
     )
@@ -110,6 +159,7 @@ async def complete(messages: Sequence[dict[str, str]], model: str, max_tokens: i
 def complete_sync(messages: Sequence[dict[str, str]], model: str, max_tokens: int) -> str:
     import litellm
 
+    _check()
     response = litellm.completion(
         model=model, messages=list(messages), max_tokens=max_tokens, num_retries=RETRIES
     )
@@ -258,6 +308,9 @@ async def run_neo4j(
     )
     from neo4j_graphrag.components.types import TextChunk, TextChunks
 
+    from openodke import Document
+    from openodke.interop import from_graphrag
+
     graph_schema = GraphSchema(
         node_types=[
             NodeType(label=n, properties=[PropertyType(name="name", type="STRING")]) for n in nodes
@@ -283,29 +336,124 @@ async def run_neo4j(
                 print(f"neo4j {doc_id}: {exc}")
                 USAGE["failed_documents"] += 1
                 return []
-        by_id = {n.id: n for n in graph.nodes}
-        rows = []
-        for rel in graph.relationships:
-            head, tail = by_id.get(rel.start_node_id), by_id.get(rel.end_node_id)
-            if head is None or tail is None:
-                continue
-            rows.append(
-                {
-                    "doc": doc_id,
-                    "subject": str(head.properties.get("name") or head.id),
-                    "subject_type": head.label,
-                    "predicate": rel.type,
-                    "object": str(tail.properties.get("name") or tail.id),
-                    "object_type": tail.label,
-                }
-            )
-        return rows
+        # openodke's own adapter, so the mapping measured here is the one users get.
+        # Each document is one chunk and no lexical graph is built, so every row
+        # is grounded on the document. Only relationships are scored, as before.
+        rows, _ = from_graphrag(graph, document=Document(id=doc_id, text=text))
+        kinds = {rel.type for rel in graph.relationships}
+        return [r.model_dump(exclude_defaults=True) for r in rows if r.predicate in kinds]
 
     results = await asyncio.gather(*(one(d, t) for d, t in docs))
     return [row for rows in results for row in rows]
 
 
-SYSTEMS = {"lgt": run_lgt, "neo4j": run_neo4j}
+# --------------------------------------------------------------------------- #
+# LangExtract
+# --------------------------------------------------------------------------- #
+
+
+def litellm_for_langextract(model: str, max_tokens: int) -> Any:
+    """A LangExtract language model that calls LiteLLM, one prompt at a time."""
+    from langextract.core.base_model import BaseLanguageModel
+    from langextract.core.types import ScoredOutput
+
+    class LiteLLM(BaseLanguageModel):
+        def infer(self, batch_prompts, **kwargs):  # type: ignore[no-untyped-def]
+            for prompt in batch_prompts:
+                text = complete_sync([{"role": "user", "content": prompt}], model, max_tokens)
+                yield [ScoredOutput(score=1.0, output=text)]
+
+    return LiteLLM()
+
+
+def langextract_prompt(patterns: list[tuple[str, str, str]]) -> str:
+    """The task and the schema, every relation with its subject and object types."""
+    heads: dict[str, set[str]] = {}
+    tails: dict[str, str] = {}
+    for head, relation, tail in patterns:
+        heads.setdefault(relation.lower(), set()).add(head)
+        tails[relation.lower()] = tail
+    lines = [
+        "Extract every fact the text states, using only the relations listed below.",
+        "Each extraction is one subject, keyed by its type, with its exact mention in the",
+        "text. Its attributes are the relations the text states about it, each named exactly",
+        "as listed, with the object's exact mention as the value (a list when there are",
+        "several). The example shows the format only.",
+        "",
+        "Relations (subject types -> object type):",
+    ]
+    for relation in sorted(heads):
+        lines.append(f"- {relation}: {' | '.join(sorted(heads[relation]))} -> {tails[relation]}")
+    return "\n".join(lines)
+
+
+async def run_langextract(
+    docs: list[tuple[str, str]], nodes: list[str], patterns: list, model: str, max_tokens: int
+) -> list[dict]:
+    import langextract as lx
+
+    from openodke.interop import from_langextract
+
+    language_model = litellm_for_langextract(model, max_tokens)
+    prompt = langextract_prompt(patterns)
+    example = lx.data.ExampleData(
+        text=EXAMPLE["text"],
+        extractions=[
+            lx.data.Extraction(
+                extraction_class=EXAMPLE["extraction_class"],
+                extraction_text=EXAMPLE["extraction_text"],
+                attributes=EXAMPLE["attributes"],
+            )
+        ],
+    )
+    tails = {relation.lower(): tail for _, relation, tail in patterns}
+
+    def triples(extraction: dict[str, Any]) -> list[dict[str, Any]]:
+        rows = []
+        for key, value in (extraction.get("attributes") or {}).items():
+            tail = tails.get(str(key).lower())
+            for item in value if isinstance(value, list) else [value]:
+                if tail is None or item in (None, ""):
+                    continue
+                rows.append(
+                    {
+                        "subject": extraction["extraction_text"],
+                        "subject_type": extraction.get("extraction_class") or "",
+                        "predicate": str(key).upper(),
+                        "object": str(item),
+                        "object_type": tail,
+                    }
+                )
+        return rows
+
+    gate = asyncio.Semaphore(CONCURRENCY)
+
+    async def one(doc_id: str, text: str) -> list[dict]:
+        async with gate:
+            try:
+                annotated = await asyncio.to_thread(
+                    lx.extract,
+                    text,
+                    prompt_description=prompt,
+                    examples=[example],
+                    model=language_model,
+                    # Whole, as the other systems get it: one chunk per document.
+                    max_char_buffer=max(len(text), 1),
+                    use_schema_constraints=False,
+                    show_progress=False,
+                )
+            except Exception as exc:
+                print(f"langextract {doc_id}: {exc}")
+                USAGE["failed_documents"] += 1
+                return []
+        rows, _ = from_langextract(annotated, triples=triples)
+        return [r.model_dump(exclude_defaults=True) | {"doc": doc_id} for r in rows]
+
+    results = await asyncio.gather(*(one(d, t) for d, t in docs))
+    return [row for rows in results for row in rows]
+
+
+SYSTEMS = {"lgt": run_lgt, "neo4j": run_neo4j, "langextract": run_langextract}
 
 
 def versions() -> dict[str, str | None]:
@@ -341,6 +489,7 @@ def extract(
     )
     usage = {
         **USAGE,
+        "budget_usd": BUDGET["usd"],
         "model": model,
         "documents": len(docs),
         "triples_raw": len(raw),
@@ -388,10 +537,14 @@ def main() -> None:
     parser.add_argument("--model", help="A LiteLLM model string; default: the set's extractor.")
     parser.add_argument("--limit", type=int, help="Only the first N documents (a smoke test).")
     parser.add_argument(
+        "--budget-usd", type=float, help="Stop calling the model once this much is spent."
+    )
+    parser.add_argument(
         "--env-file", default=os.environ.get("ODKE_ENV_FILE"), help="KEY=value lines to load."
     )
     args = parser.parse_args()
     load_env(args.env_file)
+    BUDGET["usd"] = args.budget_usd
     extract(args.system, args.prepared, model=args.model, limit=args.limit)
 
 

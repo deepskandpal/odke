@@ -66,8 +66,9 @@ class NetworkXSink:
     - An edge fact is an edge `subject → object` whose key is the fact's
       signature (DECISIONS #14, #15) and whose attributes are `kind="fact"`,
       `predicate`, and the provenance a Neo4j relationship carries —
-      evidence ids, uris, spans and tiers, extractor, verdict, confidence,
-      support, both clocks — with the qualifiers beside them.
+      evidence ids, uris, spans and who chose them, tiers, extractor,
+      verdict, confidence, support, both clocks — with the qualifiers beside
+      them.
     - A literal fact follows the `:Claim` decision: an edge of the same shape
       to a claim node `claim:<signature>` holding `kind="claim"` and the
       `value`. An attribute cannot carry provenance, two contested values or a

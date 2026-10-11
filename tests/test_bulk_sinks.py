@@ -128,6 +128,16 @@ def test_with_an_ontology_the_script_opens_with_the_ddl_and_never_runs_checks(
     assert "odke:check" not in path.read_text(encoding="utf-8")
 
 
+def test_the_script_tells_a_context_span_from_a_citation(tmp_path: Path) -> None:
+    path = tmp_path / "g.cypher"
+    CypherFileSink(path).write(_graph())
+    statements = _script_statements(path)
+    (employer,) = [s for s in statements if "[r:`employer`" in s]
+    (name,) = [s for s in statements if "[r:`name`" in s]
+    assert "evidence_span_origins: ['cited', 'cited']" in employer
+    assert "evidence_span_origins: ['context']" in name
+
+
 def test_a_value_with_semicolons_and_newlines_never_splits_a_statement(tmp_path: Path) -> None:
     ada = Entity(key="p:ada", type="Person", label="x;\n\nMATCH (n) DETACH DELETE n;\n\n")
     path = tmp_path / "g.cypher"
@@ -272,6 +282,7 @@ def test_edges_carry_every_provenance_property_typed(tmp_path: Path) -> None:
         "evidence_uris:string[]",
         "evidence_starts:long[]",
         "evidence_ends:long[]",
+        "evidence_span_origins:string[]",
         "evidence_retrieved_at:datetime[]",
         "start_time:string",
         "qualifier_signature:string",
@@ -285,6 +296,7 @@ def test_edges_carry_every_provenance_property_typed(tmp_path: Path) -> None:
     assert row[":TYPE"] == "employer"
     assert row["signature:string"] == signature_of(graph.facts[0])
     assert row["evidence_starts:long[]"] == "0;-1"
+    assert row["evidence_span_origins:string[]"] == "cited;cited"
     assert row["valid_from:datetime"] == "2019-01-01T00:00:00+00:00"
     assert row["valid_to:string"] == ""
 
@@ -303,6 +315,14 @@ def test_claims_are_nodes_in_one_space_and_a_denial_keeps_its_polarity(tmp_path:
     (sells,) = next(rs for f, rs in rows.items() if f.startswith("odke_claim_edges_Company_sells"))
     assert sells["polarity:string"] == "denied"
     assert sells[":END_ID(odke_claim_signature)"] == signature_of(_graph().facts[4])
+
+
+def test_the_csv_tells_a_context_span_from_a_citation(tmp_path: Path) -> None:
+    rows = _read(_written_csv(tmp_path))
+    (name,) = next(rs for f, rs in rows.items() if f.startswith("odke_claim_edges_Person_name"))
+    (sells,) = next(rs for f, rs in rows.items() if f.startswith("odke_claim_edges_Company_sells"))
+    assert name["evidence_span_origins:string[]"] == "context"
+    assert sells["evidence_span_origins:string[]"] == "cited"
 
 
 def test_rows_the_driver_would_merge_into_one_are_one_row(tmp_path: Path) -> None:

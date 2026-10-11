@@ -32,7 +32,7 @@ from openodke.corroborate import (
 ## Nothing is overwritten: the reserved `odke.*` keys
 
 `Fact` is frozen and has no free-form metadata slot, and adding one to a frozen
-type is the migration [DECISIONS #4](decisions.md) warns about. `Fact.qualifiers`
+type is the migration [DECISIONS #4](decisions.md#4) warns about. `Fact.qualifiers`
 is already an open mapping, and a key enters `signature` only when it is named in
 `identity_keys`, which a namespaced `odke.` key never is. So each stage records
 what it did under one reserved key, instead of discarding what it replaced:
@@ -43,6 +43,9 @@ what it did under one reserved key, instead of discarding what it replaced:
 | `odke.name_key` | `NAME_KEY` | `Entity.attributes` | `ValueNormalizer` | the name's comparison key; the label stays the display form |
 | `odke.conflict` | `CONFLICT` | `Fact.qualifiers` | `SignatureCorroborator` | the decision about a contested value: `status` (`won`, `lost` or `tied`) and a `reason` sentence, plus `to`, `ratio` and `confidence_before` for a loser |
 | `odke.score` | `SCORE` | `Fact.qualifiers` | `EvidenceScorer` | the scorer's inputs: `extractor`, `prior_used`, `verdict`, `support`, `conflict` |
+| `odke.derived` | `DERIVED` | `Fact.qualifiers` | the pipeline's [inverse step](concepts.md#inverse-and-symmetric-partners) | `rule` (`inverse` or `symmetric`) and `of`, the signature of the stated fact this one was derived from |
+| `odke.widen` | `WIDEN` | `Fact.qualifiers` | `LLMGrounder(widen=True)` | one [widen-and-retry](grounding.md#widen-and-retry) attempt: `from` and `to` as `[start, end]`, and the retry's `verdict`; the span is the wider one only when that verdict is `supported` |
+| `odke.near_duplicates` | `NEAR_DUPLICATES` | `Fact.qualifiers` | `SignatureCorroborator` | the groups of evidence documents found to be [near-duplicates](#near-duplicate-sources), each a sorted tuple of document ids; each group counts as one source |
 
 The conflict and score stamps are functions of the batch they were computed in.
 Running either stage again over its own output starts from the extractor's
@@ -69,23 +72,36 @@ value left alone costs a missed merge; a wrong rewrite costs a wrong fact.
 | Function | Reads | Canonical form |
 |---|---|---|
 | `normalize_date(text, *, day_first=None)` | ISO dates and datetimes, `10 December 1815`, `Dec 10, 1815`, `03/04/2020`, `March 2020`, `2020-03` | `1815-12-10`, a month such as `2020-03`, or an ISO datetime; `None` when unsure |
-| `normalize_quantity(text)` | `1,234`, `12.5 percent`, `$1.2bn`, `1.5 GiB` | `1234`, `"12.5 %"`, `"1200000000 USD"`, `"1610612736 B"`; `None` when unsure |
+| `normalize_quantity(text)` | `1,234`, `5 km`, `12.5 percent`, `€1.2bn`, `1.5 GiB` | `1234`, `"5000 m"`, `"12.5 %"`, `"1200000000 EUR"`, `"1610612736 B"`; `None` when unsure |
 | `name_key(text, *, person=False)` | a name | casefolded, accents and punctuation dropped, `S.A.` → `sa`, `&` → `and`. Organisations lose a leading "the" and trailing legal forms; people are reordered from "Last, First" and lose honorifics and generational suffixes |
 
 - An all-numeric day/month date is read only when it is unambiguous (one part
   above 12, or both equal) unless `day_first` settles it: `03/04/2020` is the third
   of April in London and the fourth of March in New York.
-- Scale abbreviations apply only to money, because `5 m` is five metres. Byte
-  units are case-sensitive, so `Mb` (megabits) is not read as megabytes. A leading
-  zero (`0123`) marks an identifier, and it is refused.
+- Scale abbreviations apply only to money, because `5 m` is five metres. Unit
+  symbols are case-sensitive, as SI writes them, so `Mb` (megabits) is not read as
+  megabytes. A leading zero (`0123`) marks an identifier, and it is refused.
 - The ontology's range decides what a value may become. A `string` range is left
   verbatim apart from whitespace (a registration number `"0114322"` must not become
-  an integer), a `date` range is only read as a date, and a numeric range only as a
-  quantity.
+  an integer), a `date` range is only read as a date, and a numeric or `quantity`
+  range only as a quantity.
 - `person_types` names the entity types whose names are people's. Which types
   those are is your schema, not something the package assumes. Initials are kept,
   so `J. Smith` is not made `John Smith`: that is the resolver's call, with a
   score.
+
+**Units.** A number with a unit becomes `"<number> <unit>"` in one unit per
+dimension: metres, kilograms and seconds, bytes for data, and `%`. The arithmetic
+is `Decimal`, so `5 km`, `5,000 m` and `5000 metres` are all `"5000 m"`, and a
+length never meets a mass. `KB` is 1,000 bytes, as SI says, and only `KiB` is
+1,024. A year is a unit of its own, because it has no fixed length in seconds.
+Currency is never converted. A symbol becomes an ISO code only when one currency
+owns it (`€`, `£`, `₹`, `US$`); `$`, `¥` and `Rs` are kept as written, after the
+amount. Numbers are read in English notation, with a dot decimal and comma
+thousands. Anything outside the table stays as written: temperature, `pound`,
+`ton`, months, a decimal comma. A predicate whose values carry units wants the
+range `quantity`: it is text to the model, so the unit survives structured
+output, where a `number` range would drop it.
 
 ```python
 from openodke.corroborate import name_key, normalize_date, normalize_quantity
@@ -93,7 +109,8 @@ from openodke.corroborate import name_key, normalize_date, normalize_quantity
 assert normalize_date("Dec 10, 1815") == "1815-12-10"
 assert normalize_date("03/04/2020") is None
 assert normalize_date("03/04/2020", day_first=True) == "2020-04-03"
-assert normalize_quantity("$1.2bn") == "1200000000 USD" and normalize_quantity("5 m") is None
+assert normalize_quantity("5 km") == normalize_quantity("5,000 metres") == "5000 m"
+assert normalize_quantity("$1.2bn") == "1200000000 $" and normalize_quantity("5 °C") is None
 assert name_key("Acme, Inc.") == name_key("The Acme Corporation") == "acme"
 assert name_key("Lovelace, Ada", person=True) == "ada lovelace"
 
@@ -121,7 +138,9 @@ Normalising is idempotent: normalising a normalised fact changes nothing.
 `NativeResolver(*, threshold=0.9, nudge_up=0.05, nudge_down=0.15, max_block=100)`
 is the dependency-free resolver. It follows the standard recipe in its standard
 order, and adds the two parts the surveyed resolvers leave out: a disagreement
-rule, and a refusal to destroy anything ([DECISIONS #16](decisions.md)).
+rule, and a refusal to destroy anything ([DECISIONS #16](decisions.md#16)).
+Asked to, it also [normalises the batch](#normalising-mentions-in-a-batch): the
+batch's own look-alikes that nothing keeps apart become one entity.
 
 ```mermaid
 flowchart TD
@@ -173,9 +192,11 @@ whose ids disagree, through a third that has none, is refused and recorded as
 
 **Nothing is destroyed.** Only a `SAME_AS`, which is proof rather than resemblance,
 re-keys facts onto one canonical entity, and the other keys, labels and aliases
-survive as that entity's aliases. The canonical entity is the one the caller
-keyed, then one already in the index, then the smallest key, so a re-run picks the
-same one. A `SIMILAR` is a proposal with a score and changes no key. A wrong merge
+survive as that entity's aliases. The one exception is the batch's own
+look-alikes when the batch is [normalised](#normalising-mentions-in-a-batch),
+before anything is written; a stored node is never re-keyed on resemblance. The canonical entity is
+the one the caller keyed, then one already in the index, then one with an
+`external_id`, then the smallest key, so a re-run picks the same one. A `SIMILAR` is a proposal with a score and changes no key. A wrong merge
 silently corrupts every query that touches the node, while a missed one costs a
 duplicate the link still points at. Thresholds are wrong on the first try, and a
 link can be re-run at a new threshold; a merge cannot.
@@ -226,16 +247,369 @@ example's `e2e_stages:RegistryResolver` is twenty lines that stamp each company'
 registration number on as its `external_id` and then hand over to
 `NativeResolver`, which is how that example's `DIFFERENT` link comes about.
 
+### Resolving against the store
+
+`NativeResolver(lookup=...)` also resolves the batch against what the store
+already holds, without loading it ([DECISIONS #31](decisions.md#31)). A
+`StoreLookup` returns, for each entity, the store's entities sharing one of its
+block keys (`block_keys(entity)`: its key, an external id, a domain, the first
+or last name token), within its type and, when scoped, its tenant. Each pair is
+judged by the rules above:
+
+- **A proof re-keys the incoming facts**, never the store. A shared id or
+  domain moves them onto the stored key, carrying the stored entity exactly as
+  the store holds it, so writing them changes nothing on the node. The
+  `SAME_AS` link keeps the incoming key and the reason. A batch that states the
+  stored key itself, or a key the caller chose (`method="caller"`), keeps its
+  own entity, as it would with no store.
+- **Anything weaker is a `SIMILAR` link**, at the same `threshold`; no key
+  moves. A disagreeing id is a `DIFFERENT` link.
+- **Never across types, and never store against store.**
+
+```python
+from openodke.corroborate import MemoryLookup
+
+acme = Entity(key="c:acme", type="Company", label="Acme Corporation", aliases=("acme.com",))
+widgets = Entity(key="c:widgets", type="Company", label="Acme Widgets")
+store = MemoryLookup({e.key: e for e in (acme, widgets)})
+batch = [
+    Entity(key="c:acme-inc", type="Company", label="ACME Inc.", aliases=("https://acme.com/",)),
+    Entity(key="c:acme-widget", type="Company", label="Acme Widget"),
+]
+resolver = NativeResolver(lookup=store)
+resolved, links = resolver.resolve(
+    [Fact(subject=e, predicate="headquarters", object_value="Leeds") for e in batch], {}
+)
+for link in links:
+    print(link.kind.value, link.source_key, link.target_key, link.score)
+# similar c:acme-widget c:widgets 0.9565
+# same_as c:acme-inc c:acme 1.0
+
+assert resolved[0].subject == acme  # the stored entity, as stored
+assert resolved[1].subject.key == "c:acme-widget"  # a link, not a merge
+assert resolver.stats["store"]["rekeyed"] == 1
+```
+
+`MemoryLookup(index, *, tenant=None, tenant_property="tenant", limit=100,
+embed=None, vector_k=5)` is the store in memory: today's `EntityIndex` mapping,
+blocked once. `Neo4jLookup`, or `Neo4jSink.lookup(**options)` on the sink's own
+connection, reads a graph the sink wrote. It reads the store's indexes once
+(`SHOW INDEXES`), then each batch in one read transaction: per type, an
+`UNWIND` of the batch's distinct block keys through the key constraint, the
+`external_id` index (the id as written and in each case), and the
+`odke_names_<Type>` full-text index (`limit` hits a token). `bootstrap()`
+creates all three. A type without one is not read, with a warning: nothing is
+scanned and nothing is written.
+
+<!-- docs: no-run -->
+```python
+with Neo4jSink(uri, auth, ontology=ontology) as sink:
+    sink.bootstrap(ontology)
+    validator = Validator(ontology, lookup=sink.lookup(), sinks=[sink], tenant="acme")
+    kg, report = validator.validate(rows, documents)  # report.store: what it found
+```
+
+- **Tenant** scopes the lookup to one tenant's store
+  ([Tenants](stores.md#tenants), [DECISIONS #44](decisions.md#44)). `Neo4jLookup`
+  asks for the tenant's keys, which only the tenant's nodes hold, and keeps
+  the tenant's nodes among those an id, a name or a vector finds, after the
+  full-text `limit`. With no tenant it reads only what no tenant wrote. The
+  Validator scopes the lookup it is given to its own tenant. `MemoryLookup`
+  keeps the entities whose `tenant_property` attribute equals `tenant`.
+- **Vectors** are a slot, not a dependency. With `embed`, a function from
+  texts to vectors, the `vector_k` nearest stored labels of the same type are
+  candidates too (in Neo4j, from a `vector_index` you keep; openodke writes no
+  embeddings). They are judged like any candidate: an embedding widens what is
+  compared, never what counts as a match.
+- **The defaults are defaults, not findings:** the `SIMILAR` bar is the
+  resolver's 0.9, a token returns 100 hits (`max_block`'s 100), and
+  `vector_k` is 5, all set before anything was measured.
+
+The one measurement so far is `bench/store_lookup.py` on Re-DocRED's 500 test
+documents. Its identity is within a document, so each document's first half
+of sentences is the store (4,619 entities, one tenant per document) and its
+second half the batch (3,777 mentions, 968 of them of a stored entity). There
+are no ids, so every link is a `SIMILAR`:
+
+| threshold | links | link precision | link recall |
+|---|---|---|---|
+| 0.8 | 867 | 89.9% | 80.5% |
+| 0.9 (default) | 807 | 95.3% | 79.4% |
+| 1.0 | 776 | 97.9% | 78.5% |
+
+Of the 38 wrong links at 0.9, 16 join two entities Re-DocRED gives one name
+key ("the United States" and "United States"); the rest are near names that
+differ by a number or a suffix ("1900" and "1903 County Championship", "South
+Africa" and "South African"). The misses are surnames, abbreviations and
+demonyms ("Lovelace", "UK", "German"). Across documents, on T-REx with
+Wikidata ids as gold identity (#117), the extractors named an entity the same
+way in nearly every abstract, so most entities met the store as one node by key
+and too few pairs were left to link for a rate: the counts are in
+[Benchmarks](benchmarks.md#corroboration-on-t-rex). No extractor there gives
+ids, so the proof path is still exact by construction only. In a run config the
+option is [`store_lookup`](run.md#store_lookup).
+
+### The pair judge
+
+`NativeResolver(judge=PairJudge(...))` puts the pairs the rules leave open to a
+model ([DECISIONS #34](decisions.md#34)). A pair is open when no id or domain
+settled it either way and its name score is in the band from the judge's
+`low` (0.7) up to the resolver's `threshold` (0.9). Above the band the rules
+stand, below it nothing is asked, and a pair whose ids disagree is never asked.
+
+- **Both orders.** Each pair is asked as (A, B) and as (B, A), against a
+  model's position bias. "same" counts only when both orders say same, and
+  "different" only when both say different. Anything else is unsure: the
+  orders disagree, one says unsure, or an answer could not be read.
+- **What it makes.** "same" is a `SIMILAR` link with the resolver's name score
+  and a reason naming the judge, its prompt and its model; never a merge, since
+  only a proof re-keys. "different" is a `DIFFERENT` link. Unsure is no link,
+  and neither is a call that failed, which the next run asks again.
+- **What the model reads.** The registered `pair@1` and its user message
+  `pair.user@1` ([Prompts](models.md#prompts)): each mention's name, its type,
+  and its sentence with one either side, from the document its fact cites.
+  `judge.documents` holds the texts; `odke run` and the Validator fill it, and
+  the quote on a span stands in when a document is missing. An entity no fact
+  of the batch mentions is a stored one: it shows its aliases, and its context
+  is what `store_context(entity)` returns, meant as the evidence of its
+  strongest supporting fact. The store keeps offsets, not passages, so without
+  it a stored entity has none. A side with no context is never asked.
+- **The review queue.** With `queue=`, every unsure pair is appended to a
+  JSONL file, once, in the row format `odke label make pair` reads, with the
+  judge's two answers under `judge`, which the sheet does not show. Ticked and
+  read back with `odke label read`, the labels are `reviewed=`: a pair a person
+  decided is decided in the judge's place with no call, and its link's reason
+  starts `person:`. A person's same is a `SIMILAR` too.
+- **The model** is the `ground` role's, the same size of question, asked for
+  `{"because": …, "decision": …}`. A call is retried as the grounder's are; a
+  missing key raises rather than failing every pair. A budget stop ends the
+  calls and not the resolver: a pair it reached is `unasked`, makes no link,
+  is not queued and is asked by the next run, and a stop the judge reached
+  first is the run's `stopped`, during resolve.
+
+```python
+from openodke import Document, Span
+from openodke.corroborate import PairJudge
+from openodke.llm import RecordedClient
+
+bio = Document(
+    id="bio",
+    text="Ada Lovelace wrote the first program. She worked with Charles Babbage. "
+    "Lovelace died in London in 1852.",
+)
+
+
+def cited(entity, quote):
+    start = bio.text.index(quote)
+    span = Span(doc_id="bio", start=start, end=start + len(quote))
+    return Fact(
+        subject=entity, predicate="mentioned", object_value=quote,
+        evidence=(Evidence(doc_id="bio", span=span),),
+    )  # fmt: skip
+
+
+ada = Entity(key="p:ada", type="Person", label="Ada Lovelace")
+surname = Entity(key="p:lovelace", type="Person", label="Lovelace")
+# Recorded answers, by the mention each order names first. Drop `client=` to call a model.
+client = RecordedClient(
+    [
+        {"match": 'Mention A: "Ada', "response": {"because": "one woman", "decision": "same"}},
+        {"match": 'Mention A: "Lov', "response": {"because": "her surname", "decision": "same"}},
+    ]
+)
+judge = PairJudge(client=client)
+judge.documents[bio.id] = bio
+resolver = NativeResolver(judge=judge)
+facts = [cited(ada, "Ada Lovelace wrote the first program."), cited(surname, "Lovelace died")]
+resolved, links = resolver.resolve(facts, {})
+for link in links:
+    print(link.kind.value, link.source_key, link.target_key, link.score)
+    print(link.reason)
+# similar p:ada p:lovelace 0.8
+# pair judge (pair@1, anthropic/claude-haiku-4-5-20251001): same in both orders; one woman
+
+assert [f.subject.key for f in resolved] == ["p:ada", "p:lovelace"]  # a link, not a merge
+assert resolver.stats["judge"]["calls"] == 2 and resolver.stats["judge"]["swapped"] == 1
+```
+
+The first of the two calls sent this, and the second the same with the two
+mentions swapped:
+
+```text
+Mention A: "Ada Lovelace" (type: Person)
+Context A: Ada Lovelace wrote the first program. She worked with Charles Babbage.
+
+Mention B: "Lovelace" (type: Person)
+Context B: She worked with Charles Babbage. Lovelace died in London in 1852.
+```
+
+`resolver.stats["judge"]` counts the pairs handed in and `asked`, the `calls`,
+the `swapped` ones (the (B, A) calls), the pairs whose orders `disagreed`,
+each decision, `person`, `queued`, `no_context`, `failed` calls,
+`unparseable` answers, tokens and cost; with a response cache, the `cached`
+calls; after a budget stop, the `unasked` calls and the stop as `stopped`.
+`stats["prompts"]` names the two keys. `judge.decisions` keeps every `PairDecision`, with both answers. In a run
+config the judge is an option of the native resolver,
+[`resolver: {use: native, judge: …}`](run.md#the-pair-judge). The band's 0.7
+was read off Re-DocRED's dev split, where 533 of 2,076 blocked pairs fall in
+it, nearly a third of them one entity; the calibration card on label set R
+(#151) is where the judge and the band are measured.
+
+### Normalising mentions in a batch
+
+`NativeResolver(normalize_batch=True, embed=None, context_floor=0.5,
+ontology=None)` makes two mentions the batch itself introduces one entity when
+they look alike and nothing in their names or contexts says otherwise
+([DECISIONS #43](decisions.md#43)). It is off by default. Nothing is written
+yet, so nothing is replaced: the incoming mentions are re-keyed onto one
+canonical key. A key the store holds is never part of it, and a pair with a
+store entity is still only linked ([Resolving against the store](#resolving-against-the-store)).
+
+1. **Normalise.** Names compare by their keys (`odke.name_key`, or
+   `name_key(label)`): case, accents, punctuation and legal forms dropped.
+   Given `ontology` (the Validator and `odke run` pass theirs), a type's
+   aliases are that type, case- and punctuation-blind, so an `organisation`
+   mention is a `Company`.
+2. **Block** as resolution does: one type, and a shared first or last name
+   token, id or domain.
+3. **Compare.** A pair no id or domain settled, with a name score at the
+   `threshold`, merges unless:
+    - **the names disagree**: both carry numbers and they differ (`1900` and
+      `1902 County Championship`, `Robert II` and `Robert III`), or both end
+      in a legal form and the forms differ (`Acme GmbH` and `Acme Ltd`). A
+      name without one may be either;
+    - **the contexts differ**: given `embed`, a function from texts to
+      vectors, the cosine of the two mentions' sentences is below
+      `context_floor`. A mention's sentence is where the first fact citing it
+      names it, read from `documents` or its span's quote. Each distinct
+      sentence is embedded once, in one call; a mention with none is decided
+      on its name.
+4. **Judge.** In the band below the threshold, with a [pair judge](#the-pair-judge),
+   the judge's "same" (or a person's, from `reviewed`) merges the pair if the
+   names do not disagree; its swap rule, queue and counts are #34's. Its
+   "different" keeps the pair apart. Nothing below the band is asked.
+5. **Merge.** One canonical entity per group: the key a caller chose, then
+   one already in the index, then one with an `external_id`, then one typed
+   with the ontology's own name, then the smallest key. Every other key,
+   label and alias survives as its aliases. Its `resolution` is `linker` with
+   the weakest score the group was joined at, so a group joined by the judge
+   is a query: `score < 0.9`.
+
+**Evidence against wins, through any chain.** Merges are made strongest first.
+One that would put in one entity two ids that disagree, two keys a caller
+chose, or two mentions kept apart (by a `DIFFERENT`, a number, a legal form or
+their contexts) is refused. A mention alike to two entities that are kept apart
+could be either, and merges with neither. Each merge is a `SAME_AS` link with
+the name score and a reason starting `in-batch merge:`; each pair kept apart
+keeps its `SIMILAR` link, with `not merged:` and why in its reason.
+
+```python
+sky = Document(
+    id="sky",
+    text="Mercury is the planet closest to the Sun. Mercury is a metal that stays "
+    "liquid at room temperature. Mercury takes 88 days to orbit the Sun.",
+)
+
+
+def mention(key, quote):
+    start = sky.text.index(quote)
+    span = Span(doc_id="sky", start=start, end=start + len(quote))
+    entity = Entity(key=key, type="Thing", label="Mercury")
+    return Fact(
+        subject=entity, predicate="mentioned", object_value=quote,
+        evidence=(Evidence(doc_id="sky", span=span),),
+    )  # fmt: skip
+
+
+def embed(texts):  # stands in for a model: a sentence about orbits, or about metals
+    return [[float("planet" in t or "orbit" in t), float("metal" in t)] for t in texts]
+
+
+facts = [
+    mention("t:planet", "Mercury is the planet"),
+    mention("t:metal", "Mercury is a metal"),
+    mention("t:orbit", "Mercury takes 88 days"),
+]
+resolver = NativeResolver(normalize_batch=True, embed=embed)
+resolver.documents[sky.id] = sky
+resolved, links = resolver.resolve(facts, {})
+for link in links:
+    print(link.kind.value, link.source_key, link.target_key, "|", link.reason)
+# similar t:metal t:orbit | not merged: the contexts differ (0.0000 < 0.5)
+# similar t:metal t:planet | not merged: the contexts differ (0.0000 < 0.5)
+# same_as t:orbit t:planet | in-batch merge: names 1.0, contexts 1.0000
+
+planet = resolved[0].subject
+assert [f.subject.key for f in resolved] == ["t:orbit", "t:metal", "t:orbit"]
+assert planet.aliases == ("t:planet",) and planet.resolution.score == 1.0
+print(resolver.stats["batch"])
+# {'alike': 3, 'merged': 1, 'groups': 1, 'mentions': 2, 'numbers': 0, 'forms': 0, 'context': 2, 'ambiguous': 0, 'refused': 0, 'embedded': 3}
+```
+
+`stats["batch"]` counts the look-alike pairs (`alike`), those `merged`, the
+`groups` they made and the `mentions` in them, and the pairs kept apart by
+`numbers`, legal `forms`, `context`, as `ambiguous` or `refused` by a chain;
+`embedded` is the sentences embedded. The Validator reports it as `batch`.
+`normalize_batch=True` turns it on: `Validator(normalize_batch=True)`, or
+[`resolver: {use: native, normalize_batch: true}`](run.md#stages) in a run
+config. `embed` is a function, so it is Python only; `context_floor` is a
+default set before anything was measured, since every model has its own scale.
+
+**Measured** on [label set R](https://github.com/deepskandpal/odke/blob/main/bench/labels/README.md#r-entity-pairs-151)
+by `bench/batch_normalize.py`, offline, against R's labels from the dataset:
+one batch a document, each pair scored by whether it ended in one entity. The
+resolver as it was merges on proof only, and R has no ids, so its "same" is
+its `SIMILAR` link, counted as merged. The perfect judge is R's own labels
+handed in as `reviewed`, never called: an upper bound for the band, and the
+real judge's numbers come from its calibration card.
+
+| Setting | Dev merged | Dev P | Dev R | Gate merged | Gate P | Gate R |
+|---|---:|---:|---:|---:|---:|---:|
+| the resolver as it was | 4 (3 right) | 75.0% | 3.0% | 7 (2 right) | 28.6% | 1.0% |
+| batch, judge-free | 4 (3 right) | 75.0% | 3.0% | 4 (2 right) | 50.0% | 1.0% |
+| batch, names alone (no number or legal-form rule) | 4 (3 right) | 75.0% | 3.0% | 7 (2 right) | 28.6% | 1.0% |
+| the resolver as it was + perfect judge | 21 (20 right) | 95.2% | 20.0% | 36 (31 right) | 86.1% | 15.5% |
+| batch + perfect judge | 21 (20 right) | 95.2% | 20.0% | 32 (30 right) | 93.8% | 15.0% |
+
+A rule stated before measuring said on by default only if, on R's gate split,
+the judge-free batch's precision of merged pairs is at least the resolver's as
+it was, at equal or better recall. It passed (50.0% against 28.6%, both at
+1.0%), and it ties without the number rule, which would pass too. It is off by
+default all the same: four merged pairs is a small sample, R is drawn to be
+hard (its 200 different pairs share a name token or score 0.5), and it leaves
+out pairs whose names share one key, which are most of what the option merges.
+The documents as they come, below, decided it. The number rule kept apart three wrong merges
+on the gate split and one R labels the same, `8th Route Army` and `19th Route
+Army`, which reads as a slip in the dataset's clusters.
+
+On Re-DocRED's 500 test documents as they come (`--redocred`: one batch each,
+8,202 mentions, all 69,720 pairs labelled by the clusters), the batch merges
+103 pairs, 52 of them one entity by the clusters (50.5%, recall 3.8%), where
+the resolver as it was linked 129, 57 of them right (44.2%, 4.1%). About half
+of the 51 others are one entity the dataset splits ("the United States",
+"SpaceX.", a change of case); the rest are the name score's own mistakes, which
+it makes for a link too: a demonym ("South Africa", "South African"), "West
+Germany" and "East Germany", a number on one side only ("Borderlands 2"),
+names reordered ("José Maria", "María José"). They score above the judge's
+band, so only `embed`'s context check can keep them apart. A wrong merge is
+the worst error [#16](decisions.md#16) names, so a default that re-keys waits
+for stronger evidence: the judge's calibration card on R with `embed`'s
+context check, or the owner's audit labels on R ([#43](decisions.md#43)).
+
 ## Corroborate
 
 `SignatureCorroborator(ontology=None, *, source=source_of, half_life_days=365.0,
-freshness_floor=0.5, intervals=DEFAULT_INTERVALS)` does two jobs, in order.
+freshness_floor=0.5, intervals=DEFAULT_INTERVALS, documents=None,
+near_duplicates=0.9, store=None)` does two jobs, in order. With `store`, a
+`FactLookup` or several, it also merges each claim with the one the store
+already holds under its signature, between the two
+([Merge with the store](stores.md#merge-with-the-store)).
 
 ### Merge by signature
 
 Facts sharing a `signature` are one claim. The signature already carries polarity
-and the identity-bearing qualifiers ([DECISIONS #14](decisions.md),
-[#15](decisions.md)), so a denial never merges with its assertion and uptime at
+and the identity-bearing qualifiers ([DECISIONS #14](decisions.md#14),
+[#15](decisions.md#15)), so a denial never merges with its assertion and uptime at
 p50 never merges with uptime at p95. Everything else about the claim is
 reconciled:
 
@@ -245,6 +619,7 @@ reconciled:
   has one, and otherwise its document. Forty pages from one scraper are one
   source, and two chunks of one document are one. Pass `source=` to decide
   differently.
+- **`supported_by`** names those sources: the [support list](#support-lists).
 - **Reconcilable qualifiers** either agree, or take the interval union for the
   keys in `intervals` (`start_time` and `start` the earliest, `end_time` and `end`
   the latest), or take the best-ranked source's value. Every `odke.source_form`
@@ -255,6 +630,78 @@ reconciled:
   supports the claim, and otherwise a contradiction outweighs silence.
 - **`confidence`** is the members' maximum, and `extractor` joins their names.
 
+#### Near-duplicate sources
+
+A page copied to another host, or a document re-saved with a few words changed,
+is not a second source, so it counts once toward `support`. Given the texts
+(`documents=`, by `Document.id`), the corroborator compares the documents behind
+each claim: two from different sources are one when the Jaccard similarity of
+their 5-word shingle sets is at least `near_duplicates` (0.9; `None` turns it
+off). One changed word in 200 scores 0.95, and two articles that share a quoted
+sentence score near zero. Only documents that back the same claim are compared,
+each pair once, so the check never runs over all pairs in the batch. Every
+document's evidence is kept, and `odke.near_duplicates` names the group. A
+group's trust is its best member's tier, because trust is the maximum over the
+evidence. The scorer reads the same count. `odke run` and the Validator hand
+the corroborator the texts they load, and `stats["near_duplicates"]` counts the
+pairs compared and found.
+
+#### Support lists
+
+`Fact.supported_by` is a tuple of `Support`, one per independent source, so
+`support == len(supported_by)` whenever it is filled
+([DECISIONS #33](decisions.md#33)). The [reconciler](stores.md#reconcile) reads it
+when a source changes or disappears: which facts lose support, and whether
+anything is left.
+
+| `Support` field | Holds |
+|---|---|
+| `source` | the key the corroborator grouped on: a host, `doc:<id>` for a document with no URI, or a near-duplicate group's least key |
+| `doc_ids` | that source's documents the fact cites, sorted |
+| `tier` | the best tier among their evidence |
+| `retrieved_at` | the newest clock among their evidence: the last time this source confirmed the claim |
+
+- **The list is the evidence, counted.** `support_of(evidence, groups, source)`
+  gives it, by the same rules as `support`. A group of near-duplicates is one
+  entry naming every copy. Entries are sorted by `source`.
+- **A derived fact shares its parent's list.** It cites the same evidence, so
+  it names the same sources and adds none ([DECISIONS #28](decisions.md#28)).
+- **A source that cannot be named empties the list.** A claim with a member
+  that cites nothing keeps its count, and `supported_by` stays empty rather
+  than name some sources and not others. So does a fact no corroborator
+  merged, and one serialised by 0.2.x, which still loads.
+- **The scorer keeps a listed count.** `EvidenceScorer` recounts `support`
+  only for a fact with no list.
+
+```python
+from openodke import Support
+
+two = [
+    Fact(
+        subject=ada,
+        predicate="born",
+        object_value="1815-12-10",
+        evidence=(Evidence(doc_id=doc, uri=uri, retrieved_at=datetime(2026, 9, day, tzinfo=UTC)),),
+    )
+    for doc, uri, day in (
+        ("bio.md", "https://www.example.org/ada", 1),
+        ("register.csv#L2", None, 2),
+    )
+]
+(born,) = SignatureCorroborator().corroborate(two)
+for entry in born.supported_by:
+    print(entry.source, entry.doc_ids, entry.retrieved_at.date())
+# doc:register.csv#L2 ('register.csv#L2',) 2026-09-02
+# example.org ('bio.md',) 2026-09-01
+assert born.support == len(born.supported_by) == 2
+assert isinstance(born.supported_by[0], Support)
+```
+
+Every sink writes the list. JSONL keeps it as it is; Neo4j, the bulk sinks and
+NetworkX as parallel `support_*` properties on the relationship, which
+`openodke.sinks.neo4j.support_from(props)` reads back; RDF as an `odke:Support`
+node per source ([Provenance on every fact](stores.md#provenance-on-every-fact)).
+
 ### Contest
 
 Two claims conflict when they share subject and predicate, the predicate is
@@ -264,7 +711,7 @@ their valid intervals overlap. A denial and an assertion of the same object
 conflict on any predicate. Without an ontology, or for a predicate it does not
 declare, no *value* is contested, because picking a winner among values that may
 all be true is the more harmful mistake. A CEO from 2019 to 2024 and another from
-2024 on is a value that changed, not a conflict ([DECISIONS #17](decisions.md)).
+2024 on is a value that changed, not a conflict ([DECISIONS #17](decisions.md#17)).
 
 Every contested claim gets a rank:
 
@@ -286,7 +733,7 @@ halve trust, so a stale curated record still beats a fresh scrape.
 
 The highest rank wins, and **a loser is kept, never dropped**. Its confidence is
 multiplied by `rank / winning rank`, and `odke.conflict` records a sentence saying
-why, so a validator or a person can see the losing claim. Equal ranks are `tied`,
+why, so the gate or a person can see the losing claim. Equal ranks are `tied`,
 and both claims stay at full confidence for someone to settle.
 
 ```python

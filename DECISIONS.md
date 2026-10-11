@@ -84,7 +84,8 @@ its passages to the default's vendor.
 
 Defaults name Claude models because something must be the default. Nothing in the
 library depends on them, and `ModelRoles.single("ollama/…")` is a first-class
-configuration rather than a degraded one.
+configuration rather than a degraded one. Defaults are pinned model ids, never
+moving aliases, and a default changes only along with a new calibration card.
 
 ### 7b. A registry, so an internal gateway is not a fork
 
@@ -275,6 +276,8 @@ ablation can count what would have gone; the `Validator` is the gate.
 rather than per batch — before anything implemented them. Later would have
 been a migration for every caller.
 
+*Renamed by #26:* the tenth stage is `Gate` now. "Validator" names the layer.
+
 ### 21. A stage the platform also does is warned about, never forbidden
 
 The package sits on top of any platform, and some platforms already do a
@@ -457,3 +460,1111 @@ span.
 *Cost:* one more optional field on a frozen model. It defaults to `cited`,
 because every extractor in this package cites, so a fact serialised by 0.2.x
 loads as exactly what it was.
+
+### 26. The Validator is the layer; the gate is a stage
+
+1.0 is two products in one package. The Validator sits between any extractor
+and the store, and grounds, resolves, corroborates, gates and writes (#24). The
+Evaluator runs a pipeline on benchmarks or your labels and says where it loses
+facts and whether the Validator helps. "Validator" is the name people will look
+for: `openodke.Validator`, `odke validate`.
+
+But since 0.1 that name has meant one stage: the tenth Protocol, the gate that
+decides what is written (#20), and `VerdictValidator`, the gate `odke run`
+ships. One word for the whole layer and for one of its stages makes every
+sentence about either ambiguous, in the docs and in a traceback. So the stage
+gives the name up:
+- `stages.Validator` is `stages.Gate`, and `PassThroughValidator` is
+  `PassThroughGate`;
+- `VerdictValidator` is `VerdictGate`, in `openodke.gate`;
+- `Pipeline(validator=...)` is `Pipeline(gate=...)`, and the `odke run` key
+  `validator:` is `gate:`.
+
+The method keeps its name, `validate(fact, ontology)`. Renaming it would break
+every gate already written, and a gate validating a fact still reads correctly.
+The inner stages keep theirs too (grounder, normaliser, resolver, corroborator,
+scorer), because each names one job and the decisions above use them.
+
+The old names keep working until 1.0.0, because nothing public is removed
+before 1.0 (#24). Each warns where it is used:
+- an old class name, at every path where it was public (`openodke`,
+  `openodke.stages`, `openodke.pipeline`, `openodke.validators`), is the new
+  class itself, read through the module's `__getattr__` with a
+  `DeprecationWarning`. `isinstance`, subclassing and old pickles keep working.
+- `Pipeline(validator=...)` and `Pipeline.validator` warn and pass through to
+  the gate.
+- a config with `validator:` warns and runs. `odke run` prints that warning
+  itself, because Python hides a library's `DeprecationWarning` from the person
+  at the terminal. Naming both keys is an error.
+
+Two names do not follow the rest:
+- **`openodke.Validator` is the gate only until #129.** Then it becomes the
+  layer: one entry point that runs ground, resolve, corroborate, gate and write.
+  Its warning says so now, so a caller learns the name is about to change
+  meaning, not merely move.
+- **The run report keeps `stages.validator`.** The gate's counts sit under that
+  key in `KnowledgeGraph.stats`, in every JSONL manifest written so far, and in
+  whatever reads those. A report key is a format, and it changes with the
+  report's schema version, not with a Python name.
+
+*Cost:* two names for one thing until 1.0.0. `openodke.Validator` changes
+meaning instead of disappearing, so code that ignored its warning will not
+fail at import; it will fail later, wherever it used the name as the gate. And
+until the report's schema moves, a config that says `gate:` produces a report
+whose line says `validator`.
+
+*2026-10-09, for 1.0.0 (#129):* the planned break. `openodke.Validator` is the
+layer, `openodke.validator.Validator`, and the alias that named the gate there
+is gone. It goes without a release that warns in between: the name now
+resolves to a working class, so a warning would fire on every correct use.
+`stages.Validator`, `pipeline.Validator` and the other old names still name
+the gate and still warn. The layer's method is `validate`, the gate's method
+name too, so a `Validator` fits the `Gate` Protocol by shape. Code that still
+passes it as the gate builds a pipeline. The first `validate(fact, ontology)`
+call then raises a `TypeError` naming `openodke.Gate`.
+
+### 27. A prompt is a registered, versioned object
+
+A calibration card says what it measured: a model, a prompt, a dataset. "The
+grounder's prompt" names no prompt, because it is whatever the source said on the
+day of the run. A one-word edit changes the instrument, and a card measured before
+the edit then describes a grounder nobody can run.
+
+So every prompt openodke sends is registered in `openodke.prompts` as
+`id@version`, with its text, its SHA-256 and its source, and every model call
+records the key it sent. A text is never edited in place. `prompts.lock.json`
+holds each key's hash, and the suite fails on a mismatch with "bump the version".
+A change is the next version, and the old one stays registered, so an old card
+still names a prompt that exists. The stages send the latest.
+
+Only the fixed instruction text is registered. How a claim, a passage or an
+ontology snippet is rendered into the message is code, and the package version
+names it.
+
+The same suite fails when a prompt shares twelve words in a row with a passage
+from a benchmark gate split. A prompt tuned on the test makes the test
+meaningless.
+
+*Cost:* fixing a typo is a new version, and the next run names a different
+prompt from the last. That is correct: it sent one.
+
+### 28. An inverse comes from the schema, is marked, and is never grounded twice
+
+A passage that says "France contains Brittany" has also said that Brittany is
+located in France. An extractor states the claim once, in whichever direction
+the sentence ran. On Re-DocRED that cost 25 gold facts (#106), each the
+partner of a fact already extracted. The ontology already knows the pairs, so
+the partner needs no model: `Predicate.inverse_of` and `Predicate.symmetric`
+declare them, and the pipeline adds each edge's partner after resolution and
+before corroboration. Declaring an inverse on one side is enough; loading fills
+in the other, as `owl:inverseOf` holds both ways, and `validate()` refuses one
+that does not hold both ways or whose ends do not swap.
+
+Four calls come with it.
+
+**A step, not a fourteenth stage.** The ontology decides everything the step
+does, so there is nothing for a caller to swap in, and a Protocol whose only
+sensible implementation is ours would be a seam in name only (#5, #20). It is a
+step in `Pipeline`, on exactly when the ontology declares a pair.
+`inverses=False`, or `inverses: false` in a run config, turns it off.
+
+**Marked the way the stages mark their work.** The partner carries
+`qualifiers["odke.derived"]`: the rule, and the signature of the fact it came
+from. It says how the claim got into the graph, which is what the reserved
+`odke.*` keys are for, and every sink already writes qualifiers. The link is a
+signature, not an id, because a corroborator merge keeps one id of several
+and the signature survives it. Hashed, it is also the Neo4j relationship's
+MERGE key.
+
+**Never grounded twice, gated with its source.** The partner cites the
+source's evidence and keeps its verdict. Asking the grounder again would pay
+for a question already answered, and could get a different answer. Because the
+verdict is inherited, the gate refuses the partner whenever it refuses the
+source on its verdict (#20), so a refused fact has no partner in the graph.
+Support is counted from evidence, so the two share it, and a source retracted
+by the reconciler (#116) takes its partner's evidence with it.
+
+**A stated fact wins.** When the batch already states the partner, nothing is
+derived. The stated fact stands on its own evidence, and no duplicate reaches
+the store, whether or not a corroborator runs. The price is that a claim stated
+forward in one document and backward in another counts one source in each
+direction, not two.
+
+*Cost:* the graph holds facts no source stated in that direction. They are
+true whenever their source is, and marked, but a query that wants only stated
+facts has to filter on `odke.derived`. Errors are doubled along with facts. On
+the published Re-DocRED runs, the six pairs #106 named raise openodke's recall
+by 1.2 points and cut its precision by 5.1. Of its 59 partners, 21 are gold
+facts, 15 are partners of facts the gold calls right but leaves the other
+direction out of, and 23 come from facts the gold calls wrong. And since the
+step is on by default, adding an `inverse_of` to a live ontology changes the
+next run's graph; `diff` calls that compatible, and calls removing one breaking.
+
+### 29. A comparison has three verdicts, and inconclusive is not a pass
+
+Two runs on the same items are compared item by item: a paired bootstrap over
+the items, the 95% interval of the difference, and *better*, *worse* or
+*inconclusive*. Folding inconclusive into "pass" is how a regression ships on a
+set too small to see it, so inconclusive is never printed as "no regression". It
+carries the detection limit, the smallest change the set could have seen. One
+metric is primary and the rest are guardrails that print and never decide,
+because every metric that decides is one more chance of a false alarm.
+
+The CI gate fails *worse* and passes *inconclusive* unless asked. Failing
+inconclusive by default would fail every small change on a small set, and teach
+people to delete the step.
+
+The bootstrap is the standard library's, not numpy's, so the base install keeps
+its promise (#1). A resample of pass/fail items is a multinomial draw over their
+four pairings, not one draw per item, which keeps 2,000 resamples fast without
+an array library. LangChef's `compare` was the other candidate. It takes
+pass/fail verdicts only, not a corpus F1 resampled by document, and needs Python
+3.12 or 3.13 with numpy, scipy and pyarrow.
+
+*Cost:* an inconclusive result passes CI, so a real regression smaller than the
+limit can ship. The limit printed beside it says how big that could be, and the
+A/A test holds the false-alarm rate near 5%.
+
+### 30. A cached answer is keyed on everything that changes it, and costs 0.0
+
+A batch rerun after a crash, a sink change or a gate change asks the models
+the same questions again, and pays for them again. So `CachedClient` answers
+a request it has seen from a store (#156). A cache is only as good as its key,
+and a key that leaves something out replays an answer to a different
+question. So the key holds everything that changes the answer: the model and
+its `base_url`, every message, the schema, `temperature`, `max_tokens`,
+`extra`, and the registered prompts the messages carry (#27). It leaves out
+only `timeout` and `api_key_env`, which decide whether a call succeeds, not
+what it says. A miss costs one call. A false hit is a wrong fact that looks
+grounded.
+
+An error is never stored, because the next run should ask again. A reply the
+caller rejects is stored, because rejecting it is the caller's reading, and the
+repair turn that follows has a key of its own.
+
+A hit costs `0.0`, not `None`. `None` means the provider did not say (#7), and
+here nobody was asked: nothing was spent. The meter records the hit as a call,
+marked `cached`, so a run that cost nothing still says why.
+
+The store is files: one JSON file per key, renamed into place. It needs nothing
+beyond the standard library, a person can read it, and threads and processes
+can share it without a lock. SQLite was the alternative. It is in the
+standard library too, but its write lock makes concurrent writers wait, and
+nothing here needs a query.
+
+*Cost:* a cached run is not a fresh sample. At a temperature above zero the
+rerun replays the draw it made the first time, and nothing expires. Asking
+again means deleting the directory or naming a new one. Two threads asking the
+same new question at once both pay for it.
+
+*2026-10-10, for #145:* the key also holds `ModelSpec.repeat` when it is not
+0. Gold adjudication asks one question three times on purpose, and a key
+without it replays the first answer as all three (#36). Draw 0 adds nothing to
+the key, so every entry written before is still found, and the first draw
+shares its entry with an ordinary call of the same question.
+
+### 31. The store is looked up, never loaded, and a lookup never changes it
+
+#24 put resolution against the store in scope "through a lookup rather than a
+loaded copy", and `EntityIndex` could not keep that promise. It is a
+`Mapping[str, Entity]`, so resolving a batch against a graph of a million
+nodes meant reading a million nodes first. But blocking already says which
+entities a batch can match: the same type and a shared key, external id,
+domain, or first or last name token. Those are questions a store's indexes
+answer.
+
+So `StoreLookup` is a Protocol with one method, `candidates(entities)`: for
+each entity, by key, the store's entities sharing a block key with it, within
+its type, and within a tenant when the lookup is scoped to one. It is not a
+fourteenth stage. It is the resolver's way into the store, and
+`NativeResolver(lookup=...)` is how it is used. `MemoryLookup` answers from
+today's mapping, in memory. `Neo4jLookup` answers from the indexes
+`bootstrap()` creates, each batch in one read transaction, each block key
+asked once. A type with no index is not read, and says so: a lookup that
+scans is a load by another name.
+
+Four calls come with it.
+
+**A proof re-keys the incoming facts, and the stored entity travels as
+stored.** On a shared id or domain the incoming facts take the store's key and
+the store's entity as the store holds it: label, aliases, id, resolution and
+attributes. The sink's `MERGE` then writes every property back to what it
+already is. Nothing the batch knew about the entity lands on the node. Merging
+the incoming names into it would change a stored node on one batch's say-so,
+which is the replace #16 refuses, one property at a time.
+
+**Anything weaker is a link**, as within a batch (#16): `SIMILAR` at the same
+threshold, `DIFFERENT` on a disagreeing id. Store entities are never compared
+with each other. Resolving the store against itself is a different job, and a
+batch that proposed links between nodes it never mentioned would be doing it
+unasked.
+
+**The batch's own statement of a key wins.** A batch that states a stored key
+itself, or a key its caller chose (`method="caller"`, #18), keeps its own
+entity, as it would with no store. The sink has always updated a node a batch
+restates, and a lookup does not take that from the caller.
+
+**An embedding widens what is compared, never what counts as a match.** The
+vector lookup is a slot. With `embed`, the caller's function, the nearest
+stored labels of the type are candidates too, judged by the same rules. There
+is no embedding dependency, no model, and no new kind of evidence in the
+resolver.
+
+The tenant is a filter on a property until tenant keys arrive (#159). The
+defaults (the resolver's 0.9 for `SIMILAR`, 100 hits a name token, five
+nearest vectors) were set before anything was measured, and are documented as
+defaults.
+
+*Cost:* the incoming entity's other names reach the store only through its
+`SAME_AS` link, and in Neo4j not even there. That link's source key has no
+node, so the sink's `MATCH` finds nothing to hang it on, which is also true
+of a within-batch merge's losing key; a JSONL sink keeps it. A lookup reads
+which indexes exist once, so an index created after its first batch is seen
+by the next lookup. And the first measurement is within documents only:
+Re-DocRED has no ids, so it measures the `SIMILAR` path alone, and identity
+across documents waits for the multi-source benchmark (#117).
+
+### 32. A budget stop keeps what the run has
+
+A batch that runs away costs real money before anyone looks. So a run takes a
+budget (#157): USD, input tokens, output tokens and calls. One ledger counts
+every call from every stage and thread, and a call that would go past a limit
+is refused before it is made. Before the call there is only an estimate:
+characters over four for the input, `max_tokens` for the output, and the run's
+own USD per token for the price. The output estimate is the most the call can
+return, so a run can stop with room left, and never past the limit. The one
+exception is USD before the first priced call: there is no price to estimate
+from, so that check runs after the call, and the run can overshoot by the
+calls already in flight.
+
+The stop is the run's, not the stage's. The first refused call stops the
+ledger, and every call after it is refused too, so a stopped extraction does
+not hand its room to the grounder. The run then ends as if the remaining calls
+had answered nothing. Facts grounded so far keep their verdicts, a fact the
+stop reached first stays `UNCHECKED` and is counted, the sinks write, and the
+report says where it stopped. `UNCHECKED` already means "not asked" (#20), and
+the next run picks those facts up, from the cache for whatever was answered
+before (#30).
+
+Raising was the alternative, and it throws away what was paid for. The CLI
+exits 3, so a scheduler can tell a budget stop from a failure (1) and a bad
+config (2) without parsing the report.
+
+*Cost:* a stopped run writes facts nobody checked, marked `unchecked`, and a
+gate that accepts `unchecked` writes them to the store. The output estimate
+wastes room: a call that would have returned 50 tokens is refused for its
+`max_tokens`. And a provider that reports no cost never reaches a USD limit.
+
+
+### 33. A support list names each source, and Neo4j keeps it as parallel lists
+
+`Fact.support` was a count. The corroborator already worked out which
+independent sources back a claim, then kept only the number. A reconciler
+needs the names (#115, #116): when a source changes or disappears, which facts
+lose support, and is anything left? So `Fact.supported_by` names them, one
+`Support` per source: the key the corroborator grouped on, the documents, the
+best tier and the newest clock. `support` is its length whenever it is filled,
+and the suite checks that on every fact it makes. The list is empty on a fact
+no corroborator merged, and on a fact serialised by 0.2.x, which still loads
+(#4).
+
+Three calls come with it.
+
+**The list is the evidence, counted.** It comes from the merged evidence by
+the rules `support` already used. A host is one source, and a group of
+near-duplicate documents is one entry under its least key (#154). A derived
+fact cites its parent's evidence, so it carries the same list and adds no
+entry (#28). A claim with a member that cites nothing keeps its count and
+names no source. A list naming some sources and not others would be wrong
+about which facts a retraction leaves with none.
+
+**In Neo4j, parallel lists on the relationship, not support nodes.** A fact
+is a relationship, and a relationship cannot have relationships. Support
+nodes would need every edge reified as a node, which changes the shape of
+every query on the graph for one property. Evidence is already parallel lists
+on the relationship, for the same reason. A list holds no lists, so the
+documents are flattened into `support_doc_ids`, each beside its source in
+`support_doc_sources`. The bulk sinks and NetworkX write the same properties
+from the same `provenance_of`. RDF has nodes to spare, so it gives each source
+an `odke:Support` node in the evidence's vocabulary.
+
+**The scorer keeps a listed count.** `EvidenceScorer` recounts `support` only
+on a fact with no list, so a scorer configured with another `source` cannot
+leave a count its list disagrees with.
+
+*Cost:* five more properties on every relationship, read back with
+`support_from` rather than as one property. And the list can be recounted
+from the evidence, yet is kept beside it, so a store can be reconciled without
+the `source` function that made it.
+
+### 34. The pair judge asks in both orders, and only where the rules leave a pair open
+
+The resolver's rules settle a pair with an id, a domain or a name score at the
+`SIMILAR` bar, and below the bar nothing links. That is where its misses are:
+a surname and the full name, a short form, a former name. Names alone cannot
+tell whether "Lovelace" is the "Ada Lovelace" two sentences earlier; the
+sentences around them can. So a model reads them, and three things about how
+are decided here.
+
+**Where it runs.** Only on a pair no rule settled, whose name score is in a
+band below the bar: from the judge's `low`, 0.7, up to the resolver's
+`threshold`, 0.9. Above the bar the rules stand; a model is not asked to
+overturn them. A pair whose ids or domains disagree is never asked: evidence
+against beats evidence for (#16), and a model's "same" would be resemblance
+arguing with proof. Below the band the names share too little for a call to
+be worth it. 0.7 was read off Re-DocRED's dev split (nearly a third of the
+533 blocked pairs between 0.7 and 0.9 are one entity), never its test split or
+label set R, and is a default until the calibration card on R (#151) says
+otherwise. The judge is off unless given.
+
+**The swap rule.** Each pair is asked twice, as (A, B) and as (B, A). A model
+judging two items in a row favours a position (Zheng et al. 2023, §3.4), and
+on a pair the two orders are the same question, so they must give one answer.
+"same" counts only when both orders say same, and "different" only when both
+say different. Anything else is unsure: a disagreement, an unsure, or an
+answer that could not be read. Each decision keeps both answers and whether
+the orders disagreed, and the stats count calls, swapped calls and
+disagreements, so position bias is a number a run reports rather than an
+assumption about the model.
+
+**What a decision makes.** "same" is a `SIMILAR` link, never a merge. Only a
+proof re-keys (#16, #31): a model's reading of two sentences is better
+resemblance, not proof, and a wrong merge cannot be undone where a link can be
+ignored. "different" is a `DIFFERENT` link, because a pair the judge looked at
+and rejected is worth a query, as a disagreeing id is. The reason names the
+judge, its prompt key and its model, in the string #16 already has. Unsure is
+no link at all, and goes to a review queue when one is given: a JSONL file in
+the pair sheet's own row format, so `odke label make pair` reads it as it
+stands, and the person's labels come back as `reviewed`, decided in the
+judge's place with no call and a reason that starts `person:`. A person's
+"same" is a `SIMILAR` too: a re-key is a proof's, and a person who means one
+adds the id.
+
+The prompt is LLM entity matching's (Peeters, Steiner & Bizer 2023): two
+mentions, their types and their contexts, the knowledge of names allowed
+(abbreviations, former names) and a decision on names alone forbidden. It is
+`pair@1`, and its user message is `pair.user@1`, so a calibration card names
+both (#27). It asks the `ground` role's model, since it is the same size of
+question, metered as the stage `judge`.
+
+*Cost:* two calls a pair in the band, about one pair a document on Re-DocRED's
+dev split. An unsure pair costs a person's time, and is queued once. A pair
+with a side that has no text is not asked, since the prompt forbids deciding on
+names, and goes to the queue. A stored entity has text only through
+`store_context`, because the store keeps offsets and not passages, so against
+a store without it every pair in the band waits for a person. A budget stop
+ends the judge's calls and not the resolver: a pair it reached is unasked, no
+link and no queue, and the next run asks it.
+
+### 35. A write merges with the store, in the corroborator, before the score
+
+A rerun into Neo4j found each relationship by its signature and replaced its
+properties (`SET r =`). So a claim stated again by a second source replaced
+the first source's support instead of adding to it, which loses exactly what a
+support list (#33) exists to keep. Now a fact the store already holds merges
+with an incoming one by signature, and its list grows (#153).
+
+Four calls come with it.
+
+**The sink reads; the corroborator merges.** A `FactLookup`
+(`stored(facts)`) says what the store holds under each signature in the
+batch. The corroborator merges each stored fact into its claim as one more
+member, after the batch merges and before the scorer and the gate. So the
+score counts every source, and the receipts written back agree with each
+other. A merge in the sink, at write time, would write a support of two
+beside a score computed on one.
+
+**One read per write, through the signature index.** `Neo4jSink.stored` is
+one read transaction: per predicate, an `UNWIND` of the batch's signature keys
+through the index the relationship uniqueness constraint brings. A predicate
+with no index is not read and warns, because a read that scans is a load
+(#31). `JsonlSink` is a store only when asked (`merge=True`). By default each
+write replaces its files, so there is nothing to merge with.
+
+**A statement wins across the store, as within a batch (#28).** A derived
+fact merges only with a derived one. A derived twin of a stored statement is
+dropped, and a statement replaces a stored derived twin. A derived fact then
+takes its parent's merged list, so the two stay shared.
+
+**The Validator merges by default.** It hands every sink that is a
+`FactLookup` to its default corroborator. A corroborator passed in merges
+with the stores it was given, and a dry run reads no sink. `odke run` does
+not merge yet: its corroborator comes from the config, which has no key for a
+store.
+
+*Cost:* a read transaction before every write. A stored fact's receipts come
+back from the relationship's properties, which hold no quotes or mentions, so
+its evidence returns without them. A store never bootstrapped has no
+signature index, so nothing merges with it, and the warning is the only sign.
+
+### 36. Without gold, the judge is corrected, the strict number stands, and pooled recall overstates
+
+Three evaluators score a pipeline where gold is missing or incomplete (#144,
+#145, #146). Each has a number that is easy to print and wrong to trust alone.
+
+**A judge's precision is corrected by labels.** The grounder can grade every
+fact, and the share it supports is a precision. It is the judge's, though,
+biased whichever way the judge leans, and agreement on a sample does not say
+which way. So a person labels a random sample, and prediction-powered
+inference adds the mean gap between the labels and the judge on it to the
+judge's share (Angelopoulos et al. 2023; ARES uses it for LLM judges, arXiv
+2311.09476). That removes the bias on average, and the interval is narrower
+than the labels' own whenever the judge mostly agrees with them. The report
+prints all three numbers: judge only, corrected and labels only.
+
+- **The interval is PPI's closed form, not a bootstrap.** It is one formula
+  with no resampling. Its variance, Var(y)/N + Var(y − f)·(1/n − 1/N), takes
+  out the overlap between the two terms, because the labelled facts are among
+  the judged ones, and it is exact when every fact is labelled.
+- **It treats facts as independent,** where every other range in the report
+  resamples documents. The sample is drawn fact by fact, so few labelled facts
+  share a document.
+- **Under 100 labels it is an "uncalibrated estimate".** In simulation a judge
+  that misses one true fact in ten covers the truth 94.8% of the time at 300
+  labels and 90.8% at 50.
+- **Recall is never claimed.** The coverage report stands in for it.
+
+**The strict precision never changes.** Adjudication lists a prediction the
+gold lacks as possibly missing from gold when the grounder supports it in 2 of
+3 runs. The adjudicated precision is printed beside the strict one and never
+replaces it, because it trusts the grounder on exactly the facts in question.
+Label set G measures how far that trust goes. The three runs are three calls:
+each carries its run index as `ModelSpec.repeat`, which no provider sees.
+
+**Pooled recall carries its caveat.** Pooling two or more runs' supported
+facts gives each run a recall relative to the pool. That overstates true
+recall, because the pool misses whatever every run missed. The caveat is a
+field of the report section, not a footnote, and each run's coverage report
+sits beside the number.
+
+*Cost:* three numbers where a reader wanted one, and a judge-only number
+printed though never trusted, since hiding it would hide the bias it shows. A
+calibrated number still needs a person to label 100 facts or more.
+Adjudication triples the grounding bill for the predictions the gold lacks.
+And with the response cache on, the first of the three draws is not always
+fresh: the cache keys `repeat` only when it is not 0, so run 0 is answered by
+any earlier grounding of the same question.
+
+### 37. A source that changes is retracted, and a fact left with none is retired, not deleted
+
+A layer that only adds keeps facts whose text no longer exists. Support lists
+(#33) make a change mechanical. A deleted document comes out of the evidence
+and the support list of every fact it backed. An updated one is retracted the
+same way, then its new version is validated, so the facts it still states
+merge with the store again (#35) and regain it (#116).
+
+Four calls come with it.
+
+**Retired, not deleted, by default.** A fact left with no source was not
+proven false; it lost its evidence. It keeps its claim, its edge and its valid
+clock, and `Fact.retired_at` records the transaction time it lost its last
+source. Graphiti invalidates an edge rather than delete it (#17), and this is
+the same instinct. A retired fact has no support and is never the value:
+- it is not projected;
+- no cardinality check counts it;
+- no plain RDF triple asserts it.
+
+A source that states it again brings it back, and `hard_delete` removes it
+instead.
+
+**One change, two commands.** `odke reconcile --delete <doc-id>` retracts a
+source that is gone, and needs only the store. An update needs the whole
+layer, to ground the new version's facts against its text. So it is
+`odke validate --update`, which retracts each text it is given before it
+writes. An `--update` on `odke reconcile` would have repeated every option
+`odke validate` has.
+
+**Found through an index, rewritten in one transaction.** `bootstrap()` adds a
+full-text index over `evidence_doc_ids` per predicate. It uses the keyword
+analyzer, so a document id is one exact term. `Neo4jSink.retract` finds every
+fact a document backs through those indexes, never by a scan, and a
+relationship type with none is not read and warns (#31). In one write
+transaction it then:
+- rewrites the evidence and support lists, `support` and `retired_at`, by
+  element id;
+- projects each value again from the claims left.
+
+**Idempotent by construction.** A fact that no longer cites a document is not
+touched, so retracting it twice changes nothing, and a retired fact keeps the
+time it was first retired. An update run twice ends where it ended once: the
+second run retracts what the first wrote, then writes it back.
+
+*Cost:* a full-text index per predicate. An update retracts before it
+validates, so a run that fails in between leaves the old version retracted
+and the new one unwritten; running it again finishes it. The reconciler does
+not rescore, so a fact that lost a source keeps its confidence until it is
+next validated.
+### 38. A miss goes where its evidence first points, and a fix is priced by arithmetic
+
+A recall number says how much a pipeline lost. The Evaluator also says where
+(#140) and what to change first (#141), and both are counts on the run's own
+evidence: the trace of what the extractor was offered, the gate's refusals, the
+predictions that came near a gold fact, the documents. Nothing is judged by a
+model.
+
+**One bucket per miss, the first its evidence fits, in three tiers:**
+- what the pipeline did: relation never offered, refused by the Validator, wrong
+  relation, inverse direction, surface form, and the same triple scored apart;
+- the condition the fact or its document was in: cross-sentence, output
+  saturation;
+- what is merely missing: entity never extracted, both seen but not linked.
+
+Within each tier the order is the one #140 proposed; the tiers are not. There,
+the two symptoms came before cross-sentence, saturation and surface form. But a
+miss with no prediction near it always has an end missing or two ends unlinked,
+so in that order the last three buckets could never fill, and the planted output
+cap of #147 would read as "entity never extracted". A bucket that says what the
+pipeline did beats one that describes the fact, and that beats one that names a
+symptom. "Same triple, scored apart" is a tenth bucket: the matcher pairs one
+prediction with one gold fact, and compares type, polarity and qualifiers, so a
+stated triple can still be a miss. A bucket the run cannot measure is `null`,
+not zero: with no trace, nothing is known about what was offered.
+
+**Expected gain is arithmetic on the counts, never an opinion.** A fix that can
+be replayed on the run's own output is exact: accepting the refusals writes the
+refused gold facts back, and the inverse step adds exactly the partners
+`Pipeline` would (#28), so recall gained and precision lost are both counts.
+Any other fix assumes its bucket is found as often as the run finds the facts
+its cause does not touch: never-offered relations at the recall on offered
+ones, cross-sentence facts at the same-sentence recall, a saturated run's long
+documents at its short ones' recall, and the rest at the run's recall. That is
+the expected gain, and fixes are ranked by it; every miss in the bucket found is
+the ceiling. A reference run, another system on the same gold, gives a third
+figure at its rate. Surface form is worth zero until #143's judge confirms a
+candidate.
+
+On the published Re-DocRED runs this reproduces the 4 October estimate for
+offering every relation: +2.6 recall points at openodke's own rate, +7.3 at
+LangChain's (+7.4 by hand), +20.8 at most. The rerun measured +4.5.
+
+**Each prediction is kept beside its measurement.** A report appends its
+predicted fixes to a track record, a JSON Lines file beside it, naming the run
+by a hash of its per-document outcomes. `odke eval compare A B` appends the
+recall B measured for a fix A predicted, when `--applied` names it or the two
+configs differ at that fix's knobs alone. The file only grows.
+
+*Cost:* the rate is an assumption, and the ranking inherits it. On Re-DocRED,
+cross-sentence ranks first at +6.4, priced at the same-sentence rate, which no
+fix has yet been measured against. The order is a choice too: a cross-sentence
+fact whose entity was never extracted counts as cross-sentence. Gains overlap,
+so they never add. And the inverse replay matches a partner on the triple,
+which is what Re-DocRED scores but not every detail a labelled `Fact` carries.
+
+### 39. The fact-equivalence judge reads only the pre-filter's pairs, in both orders, and its score sits beside the strict one
+
+A scorer compares strings after a normaliser. "Gabby Logan" for "Gabrielle
+Nicole Logan", or "track and field athlete" for "athletics competitor", is one
+miss and one false positive, and no normaliser can know otherwise without the
+passage. A model can (#143). Three things about how are decided here.
+
+**A deterministic pre-filter decides which pairs reach it.** A gold fact the
+scorer counted missed and a prediction it left unmatched, in one document, make
+a pair when they have the same relation and polarity, one end equal after
+normalisation, and the other end not exactly equal as written. A name is
+compared by `name_key` against every name the gold end goes by; a value by
+`normalise_value`. Nothing else is asked. A pair with only the relation in
+common is not a question of wording, and two identical triples are the
+scorer's question, not the judge's. So the judge sets one bucket, and its bill
+grows with the near misses, not with misses times predictions. The diagnosis's
+surface-form bucket (#38) takes its candidates from the same pre-filter, and
+with `--lenient` it reads the same decisions instead of asking again, so the
+bucket and the lenient score agree. With no judge, only a candidate whose
+other end is a near name is counted there, as unconfirmed, so a plain wrong
+value is never taken for wording.
+
+**The swap rule, as the pair judge's (#34).** Each pair is asked with the gold
+fact first and with the prediction first. "same" counts only when both orders
+say same, and anything else counts nothing. The gold fact is the reference, as
+in reference-guided judging (Zheng et al. 2023). A quantity, date or number
+must have one value, EnterpriseRAG-Bench's correctness rule (arXiv
+2605.05253): "1988" is not "27 October 1988", however the facts are worded.
+
+**Lenient beside strict, never instead.** A pair judged the same moves one miss
+and one false positive to a hit, at most once per gold fact and once per
+prediction. Each row's lenient precision, recall and F1 sit beside its strict
+ones in the report's `lenient` section (schema 1.2), resampled on the same
+draws. The strict number is the one that compares across runs and papers; the
+lenient one says how much of the gap is wording. Like adjudication (#36), it
+trusts a model on exactly the facts in question, so label set F measures that
+trust: 300 pairs the pre-filter made from the published comparison, labelled
+blind, 100 dev and 200 gate by document. A sheet never says which fact is
+gold, and each item's order is drawn from its id.
+
+The prompt is `fact_equiv@1` and its user message `fact_equiv.user@1` (#27).
+It asks the `ground` role's model, the same size of question, metered as the
+stage `judge`.
+
+*Cost:* two calls a pair. Until F's calibration card exists, the lenient score
+is an unvalidated number printed beside a validated one. And the pre-filter is
+a normaliser's: a pair whose ends `name_key` matches on neither side never
+reaches the judge, so the lenient score is a floor on what wording costs, not a
+measure of it.
+
+### 40. A run writes its manifest after the sinks, and a replay refuses what changed
+
+A graph says what it holds, not how it was made. When a number moves, the
+first questions are which model, which prompt, which schema and which texts.
+Prompts are versioned (#27) and an ontology has a fingerprint, so a run can
+name each one. Every run now writes a manifest (#160): `odke run`,
+`odke validate`, `odke ground` and `Validator.validate`.
+
+Four calls come with it.
+
+**The JSONL manifest is the run manifest.** `manifest.json` already held the
+graph's counts and stats. The run adds its own fields beside them, after the
+sinks have written, and never replaces a key the sink wrote. An older reader
+finds what it found. In a store that merges, the counts stay the files', and
+the run's own counts sit apart under `counts`. Written after the sinks, the end
+time is the real end, and the JSONL sink still knows nothing about runs. A run
+with no JSONL sink writes the same document beside its config, so every run
+writes one.
+
+**The config hash is of the resolved config, without its secrets.** Every key
+is filled in and each model role is the spec `ModelRoles` resolves it to, so a
+config that leaves a default out and one that names it hash alike. A value
+under a key that names a secret, and the password in a URL, is redacted
+before the hash. The hash then identifies the run, not the credential, and a
+manifest can be passed around.
+
+**Asked for and served, both.** A config may name an alias. The provider's
+answer names the model that served it, so the manifest records both, by role.
+A replay runs the config as written. If the alias has moved, the next manifest
+says so.
+
+**A replay is the same run or no run.** `odke run --from-manifest` refuses,
+before anything is written, when the ontology's fingerprint or any document's
+hash differs, and it takes no override. Otherwise it would be another run
+under an old name. A different openodke only warns: an upgrade is not a
+reason to refuse. `odke validate` and `odke ground` record their options
+instead, and are run again by hand.
+
+*Cost:* one hash per document, so the manifest grows with the corpus, and
+every text is hashed once more. A secret under a name the pattern
+does not know is written as it is. A run with no JSONL sink leaves a file
+beside its config.
+
+### 41. An event holds ids and numbers, never text, and a span goes where the application sends it
+
+A batch job in production has to say, while it runs and to a machine, which
+stage it is in, which document failed, and what each call cost and took
+(#161). So every job emits events on one logger, and `--log-format json` writes
+each as one JSON object a line.
+
+Four calls come with it.
+
+**One shape for every event.** Every event has the same ten keys, null where
+they do not apply, and a few of its own. A reader parses one schema, not one
+per event, and a field never moves between events.
+
+**No text by default.** An event holds ids, names, counts, times and costs.
+It never holds a passage, a quote, an entity's name, a prompt, a reply or the
+config. Logs travel further than graphs: to aggregators, to vendors, into
+tickets. The stages' own warnings can quote a model's reply, so as JSON they
+keep their template and lose their arguments. `--log-text` puts them back,
+for whoever asks.
+
+**A job's counts are its report's.** `job.end` reads facts in and out,
+refused, merged, linked and sent to review from the numbers the report
+prints, not from a tally of its own. Two tallies of one job drift, and then
+the logs and the report disagree about the same run.
+
+**OpenTelemetry is the API alone, and the application's provider.** The
+`otel` extra is `opentelemetry-api`, imported on first use. The spans go to
+whatever tracer provider the application configured. A library that picked
+the SDK and an exporter would pick a vendor. Each span names its parent
+explicitly: a stage's calls run in its thread pool, where the context the
+stage set does not follow. Without a provider, or without the extra, a span
+is nothing.
+
+*Cost:* an event per document and per model call, so a large run logs a lot.
+A warning's arguments are lost unless asked for, the document ids in them
+too; the `document` and `document.failed` events carry those. A model call
+names its stage and not its document. A stage with a client of its own, the
+Validator's pair judge say, sends no call events, though its spend is in
+`job.end`.
+
+### 42. A fact names the ontology that last checked it, as a stamp and not a field
+
+A schema changes under a live graph, and after a breaking change the
+question is which stored facts the old schema checked (#163). An ontology has
+a fingerprint, the hash of its types and predicates, and a fact now carries
+the one it was checked under, `odke.ontology`. A fact the model extracted also
+carries the fingerprint of the slice of the schema it was shown,
+`odke.schema_slice`.
+
+Four calls come with it.
+
+**A reserved qualifier, not a field.** `Fact` already has a namespaced home for
+what a stage did (`corroborate/provenance.py`): a stamp is never in the
+signature, and every sink already writes qualifiers. A field would have meant
+a change to the frozen type and to every sink's writer (#4). As a stamp, the
+JSONL file, the Neo4j relationship, the Cypher script, the CSV, the NetworkX
+edge and the RDF statement all carry it with no sink changed.
+
+**Stamped by the pipeline, at the gate, every time.** The gate is the last
+check, and the pipeline holds the ontology it ran. So every fact the gate lets
+through is stamped, by `odke run`, the Validator and `odke ground` alike, and a
+fact checked again carries the latest ontology. That is the one a reader
+needs: a fact the new schema has checked is not stale, whatever wrote it
+first. An ontology with no types and no predicates checks nothing, and
+stamps nothing.
+
+**The content, not the label.** The fingerprint leaves out `name`, `version`
+and the review fields. Two files that check every fact alike share it. A
+version string bumped with nothing changed does not make the store look
+stale, and a schema edited without a bump does.
+
+**Found through an index, never a scan.** `bootstrap()` adds a range index on
+`odke.ontology` per predicate. `Neo4jSink.checked_under` names that index in
+its query, and does not read a type that has none (#31). `odke ontology diff
+--store` puts the changes beside the stored facts each ontology checked.
+
+*Cost:* 64 characters more on every fact, and one more index per predicate. A
+fact written before 1.0 carries no stamp, and is checked under neither
+ontology until it is validated again. The slice is the one shown for the
+subject's type: a fact merged from several extractions keeps the slice of
+the one that ranked first.
+
+### 43. A batch's own look-alikes are one entity unless something keeps them apart
+
+#16 let only a proof re-key, and #34 made the judge's "same" a link. Issue
+#148 asks for more: mentions in one batch that look alike and mean the same
+thing in context become one entity, with every name kept. That is consistent
+with #16 once it is said where it happens. #16 refused to replace a stored
+node, because a merged node cannot be re-run at a new threshold. A batch's
+mentions are not nodes yet. Re-keying them onto one key before anything is
+written replaces nothing, and running the batch again, with the option off,
+undoes it.
+
+**Only what the batch introduces.** A merge joins two entities that facts of
+the batch state, by keys the store does not hold. A pair with a store entity
+is still a link (#31), so a stored node changes on proof alone. A group of
+mentions proven to be a stored entity takes that entity as stored, as one
+mention would.
+
+**Evidence against wins, through any chain.** `NativeResolver` blocks as it
+always has, by type (an ontology type's aliases being that type) and a shared
+token, id or domain. A pair above the `SIMILAR` bar merges unless something
+keeps it apart. The judge's "same", or a person's, merges a pair in its band.
+What keeps a pair apart:
+- a disagreeing id or domain, or the judge's "different";
+- names that both carry numbers or legal forms, and differ in them;
+- given `embed`, sentences whose cosine is below `context_floor`.
+
+Merges are made strongest first, and one that would put a pair kept apart, two
+caller keys or two ids that disagree in one entity is refused. A mention alike
+to two entities kept apart could be either, so it merges with neither.
+
+**A merge is a `SAME_AS`, and says what it rests on.** `SAME_AS` now means "one
+entity, re-keyed", not only "proven". A proof has score 1.0 and an id or
+domain in its reason; a batch merge has the name score and a reason starting
+`in-batch merge:`. The entity's `resolution` is `linker` with the weakest score
+its group was joined at, so a group the judge joined is a query (#18). The
+embedding is the caller's function, as the lookup's is (#31): no dependency
+and no model. A pair kept apart keeps its `SIMILAR`, with why in its reason.
+
+**Off by default: the rule passed, and the supplement overrode it.** The rule,
+stated before measuring: on only if, on label set R's gate split, the
+judge-free batch's precision of merged pairs is at least the resolver's as it
+was, at equal or better recall. R has no ids, so the resolver as it was merges
+nothing there, and its `SIMILAR` links stood in as its merges. The batch
+merged 4 gate pairs, 2 right (50.0%, recall 1.0%), against 7, 2 right (28.6%,
+1.0%), so the rule passed. It was not enough. Four pairs against seven is
+little to stand on, and R leaves out names with one key, which are most of
+what the option merges. Re-DocRED's test documents as they come said more: of
+the 103 pairs the batch merged, 52 are one entity by the dataset's clusters
+(50.5%). About half the rest are one entity the dataset splits, and the others
+are the name score's own mistakes: "South Africa" and "South African", "West
+Germany" and "East Germany", "Borderlands" and "Borderlands 2", "José Maria"
+and "María José". They score above the judge's band, so no judge sees them. A
+wrong merge is the worst error #16 names, and a default that re-keys needs
+stronger evidence than a link does. So `normalize_batch` is off in
+`NativeResolver`, the Validator and `odke run`, and a caller turns it on.
+
+**What would turn it on.** The calibration pass on R with the real judge's
+card (#151), together with `embed`'s context check measured against the
+mistakes above the band; or the owner's audit labels on R, read back, showing
+the merges hold. Either is a measurement, run by this decision's rule again.
+With R's own labels as a perfect judge, the band takes gate precision to 93.8%
+at recall 15.0%: the ceiling a judge can reach, not a number it has reached.
+
+*Cost:* a caller who wants a batch's look-alikes as one entity must ask, and a
+run that does not ask keeps `SIMILAR` links where an obvious spelling variant
+("Acme Corp." and "ACME Corporation") could have been one node. Above the band
+only `embed` can catch the name score's mistakes, and its `context_floor` of
+0.5 was set before anything was measured. A gold keyed by each text's names, as
+the end-to-end example's is, scores a right merge as a miss, so that example
+pins the option off.
+
+### 44. A tenant is a prefix on the key and a salt on the signature, not a second key property
+
+One store, many tenants, and two tenants who state the same claim must own two
+facts (#159). Everything that finds a node or a fact in the store does it by
+one indexed value: the sink's `MERGE` on `key` and on `signature`, the
+uniqueness constraints that make those MERGEs safe under concurrent writers,
+the store lookup (#31), the store merge (#35) and the reconciler's rewrite
+(#37). So the tenant goes into those values. In the store an entity's key is
+`<tenant>/<key>`, a fact's signature is hashed with its tenant, and every
+node and relationship also carries `tenant`, for queries and for the filters
+an index cannot do. In memory nothing changes: one run is one tenant, and its
+keys are the ones its extractor gave.
+
+The alternative was a `tenant` property beside the key, and a composite
+uniqueness constraint `(tenant, key)`. Two things about Neo4j decided against
+it. A uniqueness constraint skips a node that lacks any of its properties, so a
+store with untenanted nodes would have no constraint on them at all. And
+`MERGE` refuses a null property, so an untenanted write would need Cypher of its
+own. Every store would then need one regime or the other, chosen when it was
+bootstrapped, and an existing store a migration. With the prefix, a store
+with no tenant is written byte for byte as before, and one constraint per type
+serves every tenant.
+
+Three calls come with it.
+
+**Every read is scoped, and no tenant is a scope too.** A key or a signature is
+asked for as the tenant's, so the index finds the tenant's and no other. An
+external id, a name, a vector, a document's facts and a check's subjects are
+found through their index, then kept when `tenant` is the reader's. A reader
+with no tenant keeps what no tenant wrote. A sink or lookup scoped to one tenant
+refuses to be scoped to another, and a JSONL directory holds one tenant.
+
+**The tenant is the run's.** `Validator(tenant=...)`, `tenant:` in a config and
+`--tenant` scope every sink and lookup that can be scoped (`scoped(tenant)`). A
+`store_lookup` naming another tenant is refused, because a run looks up the
+tenant it writes. A tenant is a name of letters, digits, `_`, `.` and `-`, so a
+scoped key splits at its first `/`.
+
+**Writes are packed, and counted.** Rows go in transactions of at most
+`batch_size`, across statements in write order, so a graph of many small groups
+is a few transactions, and each one commits whole. Each statement returns the
+rows that reached its `MERGE`, and the database's counters say what was made.
+So every sink reports, per kind, the rows it wrote new (`written`), wrote into
+what it held (`merged`) and could not write (`skipped`), and a rerun's report
+says it made nothing new. A sink's counts run on across its writes, so a job's
+report is the difference from a snapshot taken before it writes, before the
+first micro-batch of a streamed run (#45). The run manifest (#40) and the
+`job.end` event (#41) carry it, and the manifest hashes the tenant with the
+rest of the config, so a replay is the same tenant's.
+
+*Cost:* a stored key is not the key a person types: finding Ada by hand
+means `acme/p:ada`. The sink now owns `tenant`, so an entity attribute or a
+qualifier of that name is written as `attribute_tenant` or `qualifier_tenant`.
+The store lookup's `tenant_property`, a stand-in until this landed (#31), is
+gone. A full-text name lookup still counts every tenant's hits in its `limit`.
+An unscoped `check()` reports the whole store, keyed as stored. And the
+`RETURN count(*)` each write statement ends with is one more row per
+statement, which `CypherFileSink` does not write.
+
+### 45. A large run is micro-batches, and the store joins them
+
+A batch is held whole. The pipeline runs each phase over all of it, every
+chunk extracted and then every document grounded, so that the model calls run
+concurrently, and resolution and corroboration compare the batch with itself.
+A run of a million rows then holds a million rows' facts at once, and the
+graph they become (#158).
+
+So a run can be cut into micro-batches: `batch_size` documents for `odke run`,
+or triples rows for the Validator and `odke validate`, read, run through every
+stage and written, then the next. The inputs are iterators (`read_triples`,
+the JSON Lines loader), the JSONL sink appends, and `openodke.stream.Totals`
+sums each micro-batch's counts into the report and the manifest. One ledger
+counts every call (#32), the cache answers across micro-batches (#30), and one
+document's failure stays its own (#162). Left out, a run is one batch.
+
+Three calls come with it.
+
+**The store joins micro-batches, not memory.** A fact two micro-batches both
+state is merged when the second is written, by the corroborator's store merge,
+through a sink that says what it holds (#35), before the score. Keeping every
+signature seen so far in memory would grow with the run, a load by another
+name (#31). Without such a sink the two stay two: a JSONL file that only
+appends holds a line for each, and a reader keeps the last. Entities are
+resolved within a micro-batch, and against the store with a lookup (#31).
+
+**A micro-batch of rows ends where its text changes.** Rows are read
+`batch_size` at a time, and a micro-batch is closed only where the next row
+cites another text, so one text's rows, sorted together, are grounded,
+measured and written once. A text with more than twice `batch_size` rows in a
+row is split there, so no micro-batch outgrows it. The texts are held,
+because a row may cite any of them; the rows, the facts and the graph are not.
+
+**A sink that writes the whole graph is refused.** RDF, a Cypher script and
+neo4j-admin CSV rewrite their files on every write, so a streamed run would
+leave the last micro-batch. They say so (`streams = False`), and a streamed
+run refuses them before anything runs. JSONL appends after its first
+micro-batch, Neo4j merges each one, and a sink of your own is written once a
+micro-batch.
+
+*Cost:* a micro-batch sees less than the run.
+- A contest is decided among the claims in hand: a rival value stated in
+  another micro-batch is never weighed against it, and `check()` finds the
+  pair in the store.
+- Near-duplicate texts are compared within a micro-batch, and the coverage
+  report knows the names its micro-batch knows.
+- Counts are summed, so an entity two micro-batches mention counts in each,
+  and the coverage report keeps the records of the first 100 documents with a
+  gap.
+
+What comes back holds the run's stats and no facts; the sinks hold those.
+The run manifest (#40) records `batch_size` in its config and hash, the summed
+counts with `batches`, and inputs hashed as one batch hashes them, so a replay
+streams.
+Measured with every default stage and a scripted client, 50,000 rows peak at
+the RSS of 25,000, about 66 MB, against 141 MB for 5,000 rows in one batch.
+
+### 46. Corroboration is scored on the graph, by support, with checked alignments as sources
+
+Corroboration had never been measured (#24): Text2KGBench and Re-DocRED state
+each fact once. T-REx aligns Wikidata triples to Wikipedia abstracts, and a fact
+can be aligned in more than one, so it has facts with a number of independent
+sources (#117). Four calls come with measuring it.
+
+**A source is an abstract a checked aligner placed the fact in.** T-REx's
+Simple-Aligner aligns any two linked entities in a sentence to a triple Wikidata
+holds between them, and most of its multi-abstract alignments are co-mentions:
+Indonesia and the United States in a list of countries, aligned to "diplomatic
+relation". With every aligner, 20.4% of the sample's entity facts are in two or
+more abstracts; with the two aligners that check the sentence, 4.6%. The gold
+and its source counts use those two. A corpus at 4.6% would barely move a
+number, so the set is drawn around multi-source facts: 78 of its 513. It
+measures what agreement is worth, not how often a corpus has it.
+
+**Precision is factual, and closed-world.** Every T-REx alignment is a Wikidata
+triple whatever its sentence says, so a predicted triple is right when T-REx
+aligns it anywhere in the sample, by any aligner. A true fact the 2017 slice
+never aligned counts as wrong, so the number is a lower bound. The precision
+against each abstract's own gold is printed beside it, as Re-DocRED's is.
+
+**On is the edges two or more sources back, scored edge by edge.** The third
+row of the ablation merges claims and counts their sources, but the gate
+refuses nothing a verdict did not, so its precision barely moves. The paper's
+98.8% is after ranking. Once the gate keeps only supported facts and the
+extractor gives one confidence, `EvidenceScorer` rises with support alone, so
+ranking by the score and keeping support of two or more are the same cut.
+Support belongs to an edge, not to a document, so the graph is scored one edge
+per distinct claim.
+
+**One entity type.** The resolver matches within a type (#24), and a fact told
+by two abstracts must not stay two claims because the extractor typed France as
+a Country once and a Location once. The extractor loses the types' hint, which
+none of T-REx's gold needs.
+
+*Cost:* the support cut's precision is measured on a set built to contain
+agreement, and a corpus with less would lose more recall to the same cut. A
+name stands for every id T-REx linked it to anywhere in the sample, so an
+ambiguous name matches any of them. The sample is the first 10,000 of about 3
+million abstracts, so a fact's sources in it undercount its sources in the full
+set, which figshare would not serve to the bench machine. And sources are
+counted on name keys: a fact stated under two names is two claims of one source
+each, which the run reports beside what ids would have pooled.
+
+### 48. The public API is a pinned list, and an old name warns until the next major
+
+1.0 freezes the API under semver (#166). A promise needs a boundary, so the
+boundary is a list, not a reading of the source.
+
+**What semver covers.** Every name in a public module's `__all__`; the names
+and kinds of those callables' parameters; `odke`'s commands, flags and exit
+statuses; the run config's keys and the short names `use:` takes; and the
+versioned formats. A module is public unless a part of its dotted path starts
+with `_`; `openodke.cli` is the command, not a Python API. What a public
+module leaves out of `__all__` is private, whatever its spelling.
+`tests/public_api.json` pins all of it, and `tests/test_public_api.py` fails on
+any change, naming it. A patch release fixes. A minor adds: a name, an
+optional parameter, a flag, a key, or an optional field (a format's minor
+version). A major removes, renames or changes a meaning.
+
+**A deprecated name warns through every 1.x release and goes in 2.0.0.** The
+old spelling keeps working, as the new object where it can be. Each use
+raises one `DeprecationWarning` at the caller's line, naming the new spelling
+and the removal (`openodke._renamed.deprecated`). A config key or a flag also
+prints its warning on standard error, because Python hides a library's
+`DeprecationWarning` from the person at the terminal (#26). A name deprecated
+later in 1.x is removed at the first major after a minor that warned. Every
+deprecation is listed in the guard test, which checks that it warns.
+
+**A provisional API may change in a minor release, with a CHANGELOG line.** It
+is public and documented, but held outside the promise until its reason is
+gone. Its module says so in its docstring, and the guard test lists it with
+the reason. Freezing it is a minor release too.
+
+**A format carries its version, and ships its schema.** The triples input
+format, the run report and the eval report each have a `schema_version`,
+`major.minor`, and a JSON Schema in the package beside the model that reads
+it (`interop/triples.schema.json`, `validation_report.schema.json`,
+`eval/eval_report.schema.json`). A minor adds optional fields; a major changes
+them; a reader refuses another major by name. A test holds each schema and
+its model to the same fields.
+
+*The review, for 1.0.0 (#166).* Of 923 exported names in 124 public modules,
+806 are frozen and 117 provisional.
+
+- **Frozen:** the Validator (`openodke.validator`, `odke validate`); the
+  Evaluator (`openodke.eval`, `odke eval`, `odke bench`); `Fact`, `Evidence`,
+  `Entity` and the rest of `openodke.types`; `Ontology` and its I/O; the
+  thirteen stage Protocols, `Initiator`, `Retriever`, the store lookups
+  (`StoreLookup`, `FactLookup`), `Retractable` and `LLMClient`; the reference
+  extractors and ontology inference, which are parked and so do not move
+  (#24). Also every format: the triples input
+  (schema 1.0), the run report (`ValidationReport`, 1.0), the eval report
+  (1.2), the run manifest (`manifest_version` 1), the label formats and sheets,
+  the JSONL sink's files, the Neo4j graph shape and the RDF vocabulary (#22,
+  #33, #42, #44), the JSON log events (#41), and the registered prompt keys,
+  which are never edited or removed (#27). The CLI's 17 commands in 3 groups
+  and their flags, exit statuses 0, 1, 2 and 3, and the config's 95 keys.
+- **Provisional:** the pair judge, `openodke.corroborate.judge`, and the
+  resolver's `normalize_batch` and `embed`, off by default until their
+  calibration card (#34, #43). The fact-equivalence judge,
+  `openodke.eval.equivalence`, unvalidated until label set F's card (#39).
+  The benchmark adapters, `openodke.eval.datasets`, which follow the datasets'
+  releases and the published numbers (#104). The LangChain, LangExtract and
+  neo4j-graphrag adapters, which follow those libraries' objects. The
+  re-extract hook, `openodke.reextract`, off by default with one extractor
+  behind it. Which version of a prompt a stage sends; the old one stays
+  registered. The OpenTelemetry spans' names and attributes, whose GenAI
+  conventions are themselves experimental upstream.
+- **Private:** `openodke._batch`, `_renamed` and `_text`,
+  `extract._common`, `eval.datasets._common`, and `openodke.cli`'s Python.
+  `openodke.types` and `openodke.sinks.jsonl` had no `__all__`, so now they
+  do; `Frozen`, the models' shared base, stays out.
+
+*0.2.1's names, against 1.0.0.* Nothing in a 0.2.1 `__all__`, no command, no
+flag and no class member is gone. These warn, until 2.0.0:
+`openodke.VerdictValidator`, `openodke.validators.VerdictValidator`,
+`stages.Validator`, `stages.PassThroughValidator`, `pipeline.Validator` and
+`pipeline.PassThroughValidator` (module `__getattr__`); `Pipeline(validator=)`,
+`Pipeline.validator`, `Built.pipeline(validator=)` and
+`StagesConfig.validator` (the old parameter or attribute, passed through); the
+config key `stages.validator` (also on stderr); and
+`sinks.neo4j.cardinality_scope()`, for `Predicate.scope_keys`. These changed
+without a warning:
+- **`openodke.Validator` is the layer, not the gate** (#26, #129). A warning
+  would fire on every correct use, and the gate's method now raises a
+  `TypeError` naming `openodke.Gate`.
+- **`JsonlLoader.load` returns an iterator, not a list** (#45). The `Loader`
+  Protocol has always promised an iterable, and a list that warned on
+  indexing would hold every record, which is what streaming removes.
+  `list(...)` restores the old value.
+- **`run.execute.register_documents(extractor, docs)` names its first
+  parameter `stage`.** A positional call, the only kind in the docs, is
+  unchanged.
+- **A `tenant` attribute or qualifier is stored as `attribute_tenant` or
+  `qualifier_tenant` in Neo4j** (#44), as a key the sink owns already was. It
+  is a store's format, and Python cannot warn a Cypher query.
+- **The RDF vocabulary moved to `https://openodke.dev/vocab#`**, as the
+  CHANGELOG says. An IRI is an identifier, not a name a warning reaches.
+- `openodke.cli.main`'s functions, `extract._common.best_type` and
+  `run.build.Context._replays` changed shape: private.
+
+What changed within the 1.0 cycle and never reached PyPI needs no warning,
+and goes in the CHANGELOG: `read_triples` returns an iterator;
+`TriplesExtractor.rows` is a property, fed a micro-batch at a time;
+`Neo4jLookup(tenant_property=)` and `store_lookup.tenant_property` are gone;
+an untenanted lookup or retraction reads only untenanted data; with
+`batch_size`, `Validator.validate` returns a graph of stats with no facts;
+every Neo4j write statement ends in `RETURN count(*)`; and the gate's name
+`openodke.Validator` warned for a while, then named the layer.
+
+*Cost:* a pinned list is one more file to edit, and an addition fails CI until
+it is. That is the point: an export is a promise, so it should take a line in
+a diff to make one. The old names stay, warning, for the whole of 1.x.

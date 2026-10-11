@@ -23,6 +23,7 @@ from typing import TypeVar
 from pydantic import BaseModel, ConfigDict, Field
 
 from openodke.llm.base import MissingAPIKey, ProviderNotInstalled
+from openodke.llm.budget import BudgetExceeded
 
 T = TypeVar("T")
 
@@ -68,8 +69,9 @@ class RetryPolicy(BaseModel):
 def is_transient(exc: BaseException) -> bool:
     """True when the same call, asked again after a wait, could plausibly answer."""
     chain = list(_chain(exc))
-    # Neither waiting nor asking again installs a package or sets a variable.
-    if any(isinstance(e, ProviderNotInstalled | MissingAPIKey) for e in chain):
+    # Neither waiting nor asking again installs a package, sets a variable or
+    # raises a budget.
+    if any(isinstance(e, ProviderNotInstalled | MissingAPIKey | BudgetExceeded) for e in chain):
         return False
     for e in chain:
         status = _status(e)

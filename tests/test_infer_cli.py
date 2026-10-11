@@ -189,7 +189,9 @@ def test_the_model_path_from_the_shell_on_a_recorded_response(tmp_path: Path, re
     assert "# model: replay/sonnet" in out.read_text(encoding="utf-8")
     assert "Place" in Ontology.from_yaml(out).types
     assert "rejected from the model (3)" in stdout
-    assert "model calls: 1, 1250 tokens, $0.0075" in stdout
+    assert "model calls: 1, 1250 tokens, $0.0075; prompts infer@1" in stdout
+    evidence = json.loads(evidence_path(out).read_text(encoding="utf-8"))
+    assert [call["prompt"] for call in evidence["calls"]] == ["infer@1"]
 
 
 def test_model_provider_names_the_provider_the_model_string_left_out(

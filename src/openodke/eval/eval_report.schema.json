@@ -1,0 +1,564 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "openodke eval report",
+  "description": "One run of the Evaluator, scored. schema_version is major.minor: a minor version adds fields, a major one changes them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "title",
+    "n",
+    "run",
+    "bootstrap",
+    "rows",
+    "stages",
+    "notes",
+    "diagnosis",
+    "fixes",
+    "comparison",
+    "calibration"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^1\\.[0-9]+$"},
+    "title": {"type": "string", "description": "What was scored: a stage, the ablation, a benchmark set."},
+    "n": {"type": "integer", "minimum": 0, "description": "Rows scored: gold facts, or labelled rows for a stage."},
+    "run": {"$ref": "#/$defs/run"},
+    "bootstrap": {
+      "description": "How the ranges were drawn; null when there are no rows.",
+      "anyOf": [{"type": "null"}, {"$ref": "#/$defs/bootstrap"}]
+    },
+    "rows": {
+      "type": "array",
+      "description": "One per configuration scored against gold facts; empty for a stage that scores something else.",
+      "items": {"$ref": "#/$defs/row"}
+    },
+    "stages": {
+      "type": "array",
+      "description": "The StageReports the rows were computed beside, as 0.x printed them.",
+      "items": {"$ref": "#/$defs/stage_report"}
+    },
+    "notes": {"type": "array", "items": {"type": "string"}},
+    "diagnosis": {
+      "type": "array",
+      "description": "Where the final row lost facts (#140): every miss in one cause bucket, in the order they are tried, then the false positives before the gate.",
+      "items": {"$ref": "#/$defs/bucket"}
+    },
+    "fixes": {
+      "type": "array",
+      "description": "What should change (#141): the buckets' fixes, ranked by expected recall gain.",
+      "items": {"$ref": "#/$defs/fix"}
+    },
+    "comparison": {
+      "description": "This run against a baseline: odke eval compare's block, as --json prints it (#142).",
+      "anyOf": [{"type": "null"}, {"$ref": "#/$defs/comparison"}]
+    },
+    "calibration": {
+      "type": "array",
+      "description": "Reserved for #135: the grounder's calibration cards.",
+      "items": {"type": "object"}
+    },
+    "judged_precision": {
+      "description": "Added in 1.1, so not required: precision with no gold, a judge corrected by a labelled sample (#144); null when not asked for.",
+      "anyOf": [{"type": "null"}, {"$ref": "#/$defs/judged_precision"}]
+    },
+    "adjudication": {
+      "description": "Added in 1.1, so not required: the predictions the gold lacks that the grounder supports in enough runs, and each row's precision strict and adjudicated (#145); null when not asked for.",
+      "anyOf": [{"type": "null"}, {"$ref": "#/$defs/adjudication"}]
+    },
+    "pooled_recall": {
+      "description": "Added in 1.1, so not required: two or more runs' recall relative to the pool of the supported facts they found, with no gold (#146); null when not asked for.",
+      "anyOf": [{"type": "null"}, {"$ref": "#/$defs/pooled_recall"}]
+    },
+    "lenient": {
+      "description": "Added in 1.2, so not required: each row strict and lenient, the surface forms the fact-equivalence judge called the gold fact in both orders counted as hits (#143); null when not asked for.",
+      "anyOf": [{"type": "null"}, {"$ref": "#/$defs/lenient"}]
+    }
+  },
+  "$defs": {
+    "metric": {"type": ["integer", "number", "null"]},
+    "share": {"type": ["number", "null"]},
+    "count": {"type": "integer", "minimum": 0},
+    "average": {"enum": ["micro", "macro"]},
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["openodke", "models", "prompts", "dataset"],
+      "properties": {
+        "openodke": {"type": "string", "description": "The package version that wrote the report."},
+        "models": {
+          "type": "object",
+          "description": "Role (extract, ground) -> provider-qualified model.",
+          "additionalProperties": {"type": "string"}
+        },
+        "prompts": {
+          "type": "array",
+          "description": "Registered prompt keys the stages sent, id@version.",
+          "items": {"type": "string"}
+        },
+        "dataset": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/dataset"}]}
+      }
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "path", "documents", "labels", "details"],
+      "properties": {
+        "name": {"type": "string"},
+        "path": {"type": ["string", "null"]},
+        "documents": {"type": ["integer", "null"]},
+        "labels": {"type": ["integer", "null"]},
+        "details": {
+          "type": "object",
+          "additionalProperties": {"type": ["string", "integer", "number", "boolean", "null"]}
+        }
+      }
+    },
+    "bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "units", "resamples", "seed", "level", "method"],
+      "properties": {
+        "unit": {"const": "document"},
+        "units": {"$ref": "#/$defs/count"},
+        "resamples": {"$ref": "#/$defs/count"},
+        "seed": {"type": "integer"},
+        "level": {"type": "number"},
+        "method": {"const": "percentile"}
+      }
+    },
+    "estimate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "low", "high"],
+      "properties": {
+        "value": {"$ref": "#/$defs/share"},
+        "low": {"$ref": "#/$defs/share"},
+        "high": {"$ref": "#/$defs/share"}
+      }
+    },
+    "performance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["precision", "recall", "f1", "average"],
+      "properties": {
+        "precision": {"$ref": "#/$defs/estimate"},
+        "recall": {"$ref": "#/$defs/estimate"},
+        "f1": {"$ref": "#/$defs/estimate"},
+        "average": {"$ref": "#/$defs/average"}
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hits",
+        "over_extraction",
+        "under_extraction",
+        "predicted",
+        "gold",
+        "uncited",
+        "unscored",
+        "documents"
+      ],
+      "properties": {
+        "hits": {"$ref": "#/$defs/count"},
+        "over_extraction": {"$ref": "#/$defs/count"},
+        "under_extraction": {"$ref": "#/$defs/count"},
+        "predicted": {"$ref": "#/$defs/count"},
+        "gold": {"$ref": "#/$defs/count"},
+        "uncited": {"$ref": "#/$defs/count"},
+        "unscored": {"$ref": "#/$defs/count"},
+        "documents": {"$ref": "#/$defs/count"}
+      }
+    },
+    "conformance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rate", "conformant", "facts", "checks", "average"],
+      "properties": {
+        "rate": {"$ref": "#/$defs/share"},
+        "conformant": {"$ref": "#/$defs/count"},
+        "facts": {"$ref": "#/$defs/count"},
+        "checks": {"type": "array", "items": {"enum": ["predicate", "domain", "range"]}},
+        "average": {"$ref": "#/$defs/average"}
+      }
+    },
+    "hallucination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["definition", "hallucinated", "facts", "rate", "subject", "relation", "object"],
+      "properties": {
+        "definition": {"type": "string"},
+        "hallucinated": {"$ref": "#/$defs/count"},
+        "facts": {"$ref": "#/$defs/count"},
+        "rate": {"$ref": "#/$defs/share"},
+        "subject": {"$ref": "#/$defs/share"},
+        "relation": {"$ref": "#/$defs/share"},
+        "object": {"$ref": "#/$defs/share"}
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "calls",
+        "prompt_tokens",
+        "completion_tokens",
+        "usd",
+        "priced_usd",
+        "unpriced_calls"
+      ],
+      "properties": {
+        "calls": {"$ref": "#/$defs/count"},
+        "prompt_tokens": {"$ref": "#/$defs/count"},
+        "completion_tokens": {"$ref": "#/$defs/count"},
+        "usd": {"type": ["number", "null"], "description": "null when any call was unpriced."},
+        "priced_usd": {"type": "number"},
+        "unpriced_calls": {"$ref": "#/$defs/count"}
+      }
+    },
+    "latency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["calls", "seconds", "per_call"],
+      "properties": {
+        "calls": {"$ref": "#/$defs/count"},
+        "seconds": {"type": "number"},
+        "per_call": {"$ref": "#/$defs/share"}
+      }
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "performance",
+        "counts",
+        "conformance",
+        "hallucination",
+        "cost",
+        "latency"
+      ],
+      "properties": {
+        "name": {"type": "string"},
+        "performance": {"$ref": "#/$defs/performance"},
+        "counts": {"$ref": "#/$defs/counts"},
+        "conformance": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/conformance"}]},
+        "hallucination": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/hallucination"}]},
+        "cost": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/cost"}]},
+        "latency": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/latency"}]}
+      }
+    },
+    "interval": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {"type": "number"}
+    },
+    "paired": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "a",
+        "b",
+        "difference",
+        "interval",
+        "a_interval",
+        "b_interval",
+        "flips",
+        "flip_share",
+        "detection_limit",
+        "verdict",
+        "level",
+        "resamples",
+        "seed"
+      ],
+      "properties": {
+        "items": {"$ref": "#/$defs/count"},
+        "a": {"type": "number"},
+        "b": {"type": "number"},
+        "difference": {"type": "number", "description": "B minus A."},
+        "interval": {"$ref": "#/$defs/interval"},
+        "a_interval": {"$ref": "#/$defs/interval"},
+        "b_interval": {"$ref": "#/$defs/interval"},
+        "flips": {"$ref": "#/$defs/count"},
+        "flip_share": {"type": "number"},
+        "detection_limit": {"type": ["number", "null"]},
+        "verdict": {"enum": ["better", "worse", "inconclusive"]},
+        "level": {"type": "number"},
+        "resamples": {"$ref": "#/$defs/count"},
+        "seed": {"type": "integer"}
+      }
+    },
+    "mcnemar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "gained", "lost", "p_value"],
+      "properties": {
+        "items": {"$ref": "#/$defs/count"},
+        "gained": {"$ref": "#/$defs/count"},
+        "lost": {"$ref": "#/$defs/count"},
+        "p_value": {"type": "number"}
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["a", "b", "unit", "metric", "primary", "guardrails", "mcnemar", "notes"],
+      "properties": {
+        "a": {"type": "string"},
+        "b": {"type": "string"},
+        "unit": {"enum": ["document", "item"]},
+        "metric": {"type": "string"},
+        "primary": {"$ref": "#/$defs/paired"},
+        "guardrails": {"type": "object", "additionalProperties": {"$ref": "#/$defs/paired"}},
+        "mcnemar": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/mcnemar"}]},
+        "notes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "example": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["doc_id", "gold", "nearest", "why"],
+      "properties": {
+        "doc_id": {"type": ["string", "null"]},
+        "gold": {"type": ["string", "null"], "description": "The gold fact missed; null for a false positive."},
+        "nearest": {"type": ["string", "null"], "description": "The prediction nearest to it; null when none came near."},
+        "why": {"type": ["string", "null"]}
+      }
+    },
+    "bucket": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["row", "side", "bucket", "label", "count", "share", "examples", "note"],
+      "properties": {
+        "row": {"type": "string"},
+        "side": {"enum": ["recall", "precision"]},
+        "bucket": {
+          "enum": [
+            "never_offered",
+            "refused",
+            "wrong_relation",
+            "inverse",
+            "surface_form",
+            "scored_apart",
+            "cross_sentence",
+            "saturation",
+            "entity_missing",
+            "not_linked",
+            "refused_not_in_gold",
+            "written_supported",
+            "written_other"
+          ]
+        },
+        "label": {"type": "string"},
+        "count": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/count"}], "description": "null when the run cannot say; note says why."},
+        "share": {"$ref": "#/$defs/share", "description": "Of the row's misses, or of its false positives before the gate."},
+        "examples": {"type": "array", "items": {"$ref": "#/$defs/example"}},
+        "note": {"type": ["string", "null"]}
+      }
+    },
+    "gain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected", "ceiling", "exact", "basis", "reference", "precision"],
+      "properties": {
+        "expected": {"type": "number", "description": "Recall points as a share of the gold: exact, or at the run's own rate."},
+        "ceiling": {"type": "number", "description": "Every miss in the buckets found."},
+        "exact": {"type": "boolean", "description": "A replay of the fix on the run's own output."},
+        "basis": {"type": "string", "description": "The arithmetic, with its numbers."},
+        "reference": {"type": ["number", "null"], "description": "At a reference run's rate on the same facts."},
+        "precision": {"type": ["number", "null"], "description": "The change in precision, where the replay knows it."}
+      }
+    },
+    "measured": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run", "against", "applied", "expected", "ceiling", "measured", "low", "high", "verdict"],
+      "properties": {
+        "run": {"type": "string"},
+        "against": {"type": "string"},
+        "applied": {"type": "string"},
+        "expected": {"type": "number"},
+        "ceiling": {"type": "number"},
+        "measured": {"type": "number"},
+        "low": {"type": "number"},
+        "high": {"type": "number"},
+        "verdict": {"enum": ["better", "worse", "inconclusive"]}
+      }
+    },
+    "fix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "rank", "row", "buckets", "misses", "action", "knob", "recall", "detail", "record"],
+      "properties": {
+        "id": {"type": "string"},
+        "rank": {"type": "integer", "minimum": 1},
+        "row": {"type": "string"},
+        "buckets": {"type": "array", "items": {"type": "string"}},
+        "misses": {"$ref": "#/$defs/count"},
+        "action": {"type": "string"},
+        "knob": {"type": "string", "description": "The config key or command that applies it."},
+        "recall": {"$ref": "#/$defs/gain"},
+        "detail": {"type": "array", "items": {"type": "string"}},
+        "record": {
+          "type": "array",
+          "description": "This fix's past predictions beside their measurements, from the track record.",
+          "items": {"$ref": "#/$defs/measured"}
+        }
+      }
+    },
+    "stage_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage", "n", "metrics", "breakdown", "confusion", "notes"],
+      "properties": {
+        "stage": {"type": "string"},
+        "n": {"$ref": "#/$defs/count"},
+        "metrics": {"type": "object", "additionalProperties": {"$ref": "#/$defs/metric"}},
+        "breakdown": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {"$ref": "#/$defs/metric"}
+          }
+        },
+        "confusion": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {"type": "integer"}
+          }
+        },
+        "notes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "coverage_totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["documents", "sentences", "uncovered", "missed_entities", "not_offered", "unused"],
+      "properties": {
+        "documents": {"$ref": "#/$defs/count"},
+        "sentences": {"$ref": "#/$defs/count"},
+        "uncovered": {"$ref": "#/$defs/count"},
+        "missed_entities": {"$ref": "#/$defs/count"},
+        "not_offered": {"anyOf": [{"type": "null"}, {"type": "array", "items": {"type": "string"}}]},
+        "unused": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "judged_precision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "facts",
+        "supported",
+        "labels",
+        "labelled_supported",
+        "false_support",
+        "lost_support",
+        "judge_only",
+        "corrected",
+        "labels_only",
+        "level",
+        "method",
+        "minimum",
+        "calibrated",
+        "coverage"
+      ],
+      "properties": {
+        "facts": {"$ref": "#/$defs/count"},
+        "supported": {"$ref": "#/$defs/count"},
+        "labels": {"$ref": "#/$defs/count"},
+        "labelled_supported": {"$ref": "#/$defs/count"},
+        "false_support": {"$ref": "#/$defs/count"},
+        "lost_support": {"$ref": "#/$defs/count"},
+        "judge_only": {"$ref": "#/$defs/estimate"},
+        "corrected": {"$ref": "#/$defs/estimate"},
+        "labels_only": {"$ref": "#/$defs/estimate"},
+        "level": {"type": "number"},
+        "method": {"const": "ppi-closed-form"},
+        "minimum": {"$ref": "#/$defs/count"},
+        "calibrated": {"type": "boolean"},
+        "coverage": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/coverage_totals"}]}
+      }
+    },
+    "adjudicated_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "not_in_gold", "asked", "possibly_missing", "strict", "adjudicated"],
+      "properties": {
+        "name": {"type": "string"},
+        "not_in_gold": {"$ref": "#/$defs/count"},
+        "asked": {"$ref": "#/$defs/count"},
+        "possibly_missing": {"$ref": "#/$defs/count"},
+        "strict": {"$ref": "#/$defs/estimate"},
+        "adjudicated": {"$ref": "#/$defs/estimate"}
+      }
+    },
+    "adjudication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runs", "needed", "questions", "rows", "audit"],
+      "properties": {
+        "runs": {"type": "integer", "minimum": 1},
+        "needed": {"type": "integer", "minimum": 1},
+        "questions": {"$ref": "#/$defs/count"},
+        "rows": {"type": "array", "items": {"$ref": "#/$defs/adjudicated_row"}},
+        "audit": {"type": ["string", "null"], "description": "Where the list was written, as JSONL."}
+      }
+    },
+    "pool_member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "facts", "supported", "unique", "relative_recall", "coverage"],
+      "properties": {
+        "name": {"type": "string"},
+        "facts": {"$ref": "#/$defs/count"},
+        "supported": {"$ref": "#/$defs/count"},
+        "unique": {"$ref": "#/$defs/count"},
+        "relative_recall": {"$ref": "#/$defs/estimate"},
+        "coverage": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/coverage_totals"}]}
+      }
+    },
+    "pooled_recall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pool", "documents", "runs", "bootstrap", "caveat"],
+      "properties": {
+        "pool": {"$ref": "#/$defs/count"},
+        "documents": {"$ref": "#/$defs/count"},
+        "runs": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/pool_member"}},
+        "bootstrap": {"$ref": "#/$defs/bootstrap"},
+        "caveat": {"type": "string"}
+      }
+    },
+    "lenient_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "candidates", "same", "different", "unsure", "counted", "strict", "lenient"],
+      "properties": {
+        "name": {"type": "string"},
+        "candidates": {"$ref": "#/$defs/count", "description": "Pairs the pre-filter let through: a missed gold fact and an unmatched prediction with the relation and one end in common."},
+        "same": {"$ref": "#/$defs/count"},
+        "different": {"$ref": "#/$defs/count"},
+        "unsure": {"$ref": "#/$defs/count"},
+        "counted": {"$ref": "#/$defs/count", "description": "Misses counted found: once per gold fact, once per prediction."},
+        "strict": {"$ref": "#/$defs/performance"},
+        "lenient": {"$ref": "#/$defs/performance"}
+      }
+    },
+    "lenient": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["judge", "model", "questions", "disagreed", "rows"],
+      "properties": {
+        "judge": {"type": "string", "description": "The registered prompt key the calls sent."},
+        "model": {"type": ["string", "null"]},
+        "questions": {"$ref": "#/$defs/count"},
+        "disagreed": {"$ref": "#/$defs/count", "description": "Pairs whose two orders answered differently."},
+        "rows": {"type": "array", "items": {"$ref": "#/$defs/lenient_row"}}
+      }
+    }
+  }
+}

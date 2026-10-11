@@ -1,5 +1,9 @@
 """Public benchmarks, run the way openodke runs: fetch, prepare, run three ways, score.
 
+Provisional (DECISIONS #48): the benchmark adapters follow the datasets' own
+releases and the published numbers (#104), so their options and outputs may
+move. It may change in a minor release, with a CHANGELOG line.
+
 Every dataset module has the same functions:
 
 - `fetch(dest)` downloads the official files; nothing is redistributed here;
@@ -18,8 +22,12 @@ from __future__ import annotations
 
 from types import ModuleType
 
-from openodke.eval.datasets import redocred, text2kgbench
+from openodke.eval.datasets import redocred, text2kgbench, trex
 
-DATASETS: dict[str, ModuleType] = {"text2kgbench": text2kgbench, "redocred": redocred}
+DATASETS: dict[str, ModuleType] = {
+    "text2kgbench": text2kgbench,
+    "redocred": redocred,
+    "trex": trex,
+}
 
-__all__ = ["DATASETS", "redocred", "text2kgbench"]
+__all__ = ["DATASETS", "redocred", "text2kgbench", "trex"]

@@ -9,13 +9,20 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import typer
 
 from openodke import __version__
 from openodke.ontology import Ontology, OntologyLoadError
+
+if TYPE_CHECKING:
+    from openodke.eval.compare import Comparison, ItemRow
+    from openodke.eval.eval_report import EvalReport
+    from openodke.run import RunConfig
 
 app = typer.Typer(
     name="odke",
@@ -47,6 +54,23 @@ def _load_or_exit(path: Path) -> Ontology:
     except (OntologyLoadError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from None
+
+
+def _load_run_config(path: Path) -> RunConfig:
+    """`load_config`, with what it warned about printed as `warning:` lines.
+
+    Python hides a `DeprecationWarning` raised inside a library, and the reader
+    of a config file is a person at a terminal: a key that still works under an
+    old name (`validator:`, now `gate:`) has to be said where they will see it.
+    """
+    from openodke.run import load_config
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        config = load_config(path)
+    for warning in caught:
+        typer.echo(f"warning: {warning.message}", err=True)
+    return config
 
 
 def _count(n: int, noun: str) -> str:
@@ -143,23 +167,142 @@ def ontology_diff(
     fail_on_breaking: bool = typer.Option(
         False, "--fail-on-breaking", help="Exit 1 if any change is breaking."
     ),
+    store: str | None = typer.Option(
+        None,
+        "--store",
+        help="Also say which stored facts each ontology checked: a directory odke wrote as "
+        "JSONL, or a Neo4j URI (bolt://, neo4j://).",
+    ),
+    database: str | None = typer.Option(None, "--database", help="Neo4j: the database."),
+    user: str = typer.Option("neo4j", "--user", envvar="NEO4J_USER", help="Neo4j: the user."),
+    password_env: str = typer.Option(
+        "NEO4J_PASSWORD",
+        "--password-env",
+        help="Neo4j: the environment variable holding the password. Never a flag or a file.",
+    ),
 ) -> None:
     """Added, removed and changed types, predicates, qualifiers and cardinality.
 
     Breaking changes print first, because "does this break the live graph?" is
     the question being asked; `--fail-on-breaking` makes the answer an exit code.
+
+    With --store, the next question too: which stored facts the old ontology
+    checked, by the fingerprint each fact carries (`odke.ontology`), so the
+    facts a breaking change may no longer fit can be validated again. Exit 2
+    is a store that cannot be read.
     """
-    changes = _load_or_exit(old).diff(_load_or_exit(new))
+    before, after = _load_or_exit(old), _load_or_exit(new)
+    changes = before.diff(after)
     for change in sorted(changes, key=lambda c: not c.breaking):
         typer.echo(str(change))
     breaking = sum(c.breaking for c in changes)
     typer.echo(f"{_count(len(changes), 'change')}, {breaking} breaking")
+    if store is not None:
+        connection = _Store(
+            text_property=None, database=database, user=user, password_env=password_env
+        )
+        try:
+            for line in _checked_lines(store, before, after, connection):
+                typer.echo(line)
+        except (ValueError, ImportError, OSError) as exc:
+            _data_error(exc)
     if breaking and fail_on_breaking:
         raise typer.Exit(1)
 
 
+def _checked_lines(store: str, old: Ontology, new: Ontology, connection: _Store) -> list[str]:
+    """Which facts in `store` each ontology last checked, as `odke ontology diff` prints it."""
+    from openodke.corroborate import checked_by, checked_under
+    from openodke.eval.spans import load_facts
+
+    first, second = old.fingerprint, new.fingerprint
+    if "://" in store:
+        from openodke.sinks.neo4j import Neo4jSink
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with Neo4jSink(driver=connection.driver(store), database=connection.database) as sink:
+                stale = sink.checked_under(first)
+                current = len(sink.checked_under(second)) if second != first else len(stale)
+        _echo_warnings(caught)
+        other = None
+    else:
+        directory = Path(store)
+        if not (directory / "facts.jsonl").is_file():
+            raise ValueError(f"{directory} holds no facts.jsonl: not a store odke wrote")
+        facts = load_facts(directory)
+        stale = checked_under(facts, first)
+        current = len(checked_under(facts, second))
+        other = sum(checked_by(fact) not in (first, second) for fact in facts)
+    lines = [f"old           {first[:12]}: {_count(len(stale), 'stored fact')} checked under it"]
+    if second == first:
+        lines.append("new           the same schema: nothing to validate again")
+        return lines
+    lines.append(f"new           {second[:12]}: {_count(current, 'stored fact')} checked under it")
+    if other is not None:
+        lines.append(
+            f"other         {_count(other, 'stored fact')} checked under neither, or never"
+        )
+    for fact in stale[:5]:
+        target = fact.object_entity.key if fact.object_entity is not None else fact.object_value
+        lines.append(f"  {fact.subject.key} —{fact.predicate}→ {target}  [{fact.id}]")
+    if len(stale) > 5:
+        lines.append(f"  … and {len(stale) - 5} more")
+    return lines
+
+
 MODEL_HELP = "Provider-qualified model for every role, e.g. openai/gpt-5.5. Overrides `models`."
 MODEL_PROVIDER_HELP = "Provider for --model when the string does not name one, e.g. openai."
+CACHE_HELP = (
+    "A directory of model answers: a call asked before is answered from it for nothing, "
+    "and every new answer is kept there. Overrides models.cache."
+)
+BUDGET_USD_HELP = (
+    "Stop the run cleanly before it spends more than this many US dollars, keeping what is "
+    "done. Overrides models.budget.usd. Exit 3 when it stops."
+)
+BUDGET_CALLS_HELP = (
+    "Stop the run cleanly before it makes more than this many model calls, keeping what is "
+    "done. Overrides models.budget.calls. Exit 3 when it stops."
+)
+BATCH_SIZE_HELP = (
+    "Stream: read, run and write this many documents (odke run) or triples rows (odke "
+    "validate) at a time, so a batch of any size runs in the memory of one. Overrides "
+    "batch_size."
+)
+TENANT_HELP = (
+    "Key everything written to, and read from, the store by this tenant: two tenants' "
+    "identical facts never merge (DECISIONS #44). Overrides tenant."
+)
+# The exit status of a run a budget stopped: what it kept was written.
+EXIT_BUDGET = 3
+LOG_FORMAT_HELP = (
+    "json: every event (the job, each stage, each document, each model call) as one JSON "
+    "object a line on standard error, with its counts, latency and cost. text: as before."
+)
+LOG_TEXT_HELP = (
+    "With --log-format json, keep the arguments of the stages' own warnings, which can quote a "
+    "passage or a model's reply. Off by default."
+)
+
+
+def _logs(ctx: typer.Context, log_format: str, log_text: bool) -> None:
+    """`--log-format` and `--log-text`, applied before anything is read; a bad one exits 2.
+
+    The JSON handler is taken off again when the command ends, however it
+    ends, so a command run in-process leaves logging as it found it.
+    """
+    from openodke.observe import configure_logs
+
+    if log_format not in ("json", "text"):
+        typer.echo(f"error: --log-format is json or text, not {log_format!r}", err=True)
+        raise typer.Exit(2)
+    if log_text and log_format != "json":
+        typer.echo("error: --log-text is for --log-format json", err=True)
+        raise typer.Exit(2)
+    if log_format == "json":
+        configure_logs("json", text=log_text)
+        ctx.call_on_close(lambda: configure_logs("text"))
 
 
 @app.command("models")
@@ -182,7 +325,16 @@ def models_command() -> None:
 
 @app.command("run")
 def run_command(
-    config: Path = typer.Argument(..., help="Run config, YAML or JSON. See examples/run.yaml."),
+    ctx: typer.Context,
+    config: Path | None = typer.Argument(
+        None, help="Run config, YAML or JSON. See examples/run.yaml."
+    ),
+    from_manifest: Path | None = typer.Option(
+        None,
+        "--from-manifest",
+        help="Run again what a run manifest recorded: its config, as resolved, refused if the "
+        "ontology or the inputs changed. A manifest.json, or the directory holding one.",
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -190,38 +342,906 @@ def run_command(
     ),
     model: str | None = typer.Option(None, "--model", help=MODEL_HELP),
     model_provider: str | None = typer.Option(None, "--model-provider", help=MODEL_PROVIDER_HELP),
+    widen: bool = typer.Option(
+        False,
+        "--widen",
+        help="Give a not_found whose cited span is narrower than its sentence one more "
+        "grounding call, against the sentence. Needs stages.grounder: llm.",
+    ),
+    cache: Path | None = typer.Option(None, "--cache", help=CACHE_HELP),
+    budget_usd: float | None = typer.Option(None, "--budget-usd", min=0, help=BUDGET_USD_HELP),
+    budget_calls: int | None = typer.Option(None, "--budget-calls", min=0, help=BUDGET_CALLS_HELP),
+    log_format: str = typer.Option("text", "--log-format", help=LOG_FORMAT_HELP),
+    log_text: bool = typer.Option(False, "--log-text", help=LOG_TEXT_HELP),
+    batch_size: int | None = typer.Option(None, "--batch-size", min=1, help=BATCH_SIZE_HELP),
+    tenant: str | None = typer.Option(None, "--tenant", help=TENANT_HELP),
 ) -> None:
     """Run the whole pipeline from a config file.
 
     The config names the inputs, the ontology, the models and which
     implementation fills each of the thirteen stages. A dry run still calls
     the models; it is the store it spares. Exit 2 is a config that cannot run,
-    exit 1 a run that failed.
+    exit 1 a run that failed, exit 3 a run its budget stopped, which still
+    wrote what it kept.
 
     `--model` puts every role on one model and prints which, so a run states
     what it called instead of leaving it to be read out of a config; per-role
     models stay a config decision. `odke models` lists what can be named.
+
+    Every run writes a manifest: the config resolved and its hash, the models,
+    prompts, ontology, package and inputs, the times and the counts. It goes
+    into each JSONL sink's manifest.json, or beside the config.
+    `--from-manifest` runs one again, as it was: no override is taken with it.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
     from openodke.llm.base import ProviderError
-    from openodke.run import ConfigError, execute, load_config
+    from openodke.llm.budget import BudgetExceeded
+    from openodke.run import ConfigError, execute
+    from openodke.run import from_manifest as read_run
 
     chosen = _qualified(model, model_provider)
+    _logs(ctx, log_format, log_text)
+    overrides = (
+        chosen is not None
+        or widen
+        or cache is not None
+        or batch_size is not None
+        or tenant is not None
+    )
+    if (config is None) == (from_manifest is None):
+        typer.echo("error: give a config, or --from-manifest, and not both", err=True)
+        raise typer.Exit(2)
+    if from_manifest is not None and (overrides or (budget_usd, budget_calls) != (None, None)):
+        typer.echo(
+            "error: --from-manifest runs the config it recorded; --model, --widen, --cache, "
+            "--batch-size, --tenant and the budget flags would make it another run",
+            err=True,
+        )
+        raise typer.Exit(2)
     try:
-        loaded = load_config(config)
+        replaying = None
+        if from_manifest is not None:
+            loaded, replaying = read_run(from_manifest)
+            typer.echo(f"replaying {from_manifest}: config {replaying.config_hash[:12]}")
+        else:
+            assert config is not None
+            loaded = _load_run_config(config)
         if chosen is not None:
             loaded = loaded.with_model(chosen)
             typer.echo(f"models: every role on {chosen}")
-        result = execute(loaded, dry_run=dry_run)
+        if widen:
+            loaded = loaded.with_widen()
+        if cache is not None:
+            loaded = loaded.with_cache(cache)
+        loaded = loaded.with_budget(usd=budget_usd, calls=budget_calls)
+        loaded = loaded.with_batch_size(batch_size)
+        loaded = loaded.with_tenant(tenant)
+        result = execute(loaded, dry_run=dry_run, replaying=replaying)
     except (ConfigError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from exc
+    except BudgetExceeded as exc:
+        # Raised by a stage outside the pipeline's reach, so nothing was kept.
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(EXIT_BUDGET) from exc
     except (ProviderError, OSError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
     for warning in result.warnings:
         typer.echo(f"warning: {warning}", err=True)
     typer.echo(result.render())
+    if result.stats.get("stopped"):
+        raise typer.Exit(EXIT_BUDGET)
+    _every_document_failed(result.stats.get("failed"), int(result.stats.get("documents", 0)))
+
+
+# --------------------------------------------------------------------------- #
+# odke ground — a graph from somewhere else
+# --------------------------------------------------------------------------- #
+
+ADAPTERS = ("triples", "langchain", "langextract", "graphrag", "neo4j")
+FACTS_HELP = (
+    "The facts: a triples JSONL file, an adapter's output file, or a Neo4j URI "
+    "(bolt://, neo4j://) for neo4j and graphrag."
+)
+TEXTS_HELP = (
+    "The texts the facts cite: a file or a directory. Triples need them; LangChain, "
+    "LangExtract and neo4j-graphrag output carries its own."
+)
+ADAPTER_HELP = "How to read --facts: triples, langchain, langextract, graphrag or neo4j."
+ONTOLOGY_HELP = (
+    "Ontology JSON or YAML: adds the free checks that the relation is in it and the types fit."
+)
+CONFIG_HELP = (
+    "A file with a `models` block (a run config will do): the model and recorded responses."
+)
+TEXT_PROPERTY_HELP = (
+    "neo4j: the relationship property holding its source text, for a graph openodke did not write."
+)
+DATABASE_HELP = "Neo4j: the database to read."
+USER_HELP = "Neo4j: the user."
+PASSWORD_ENV_HELP = "Neo4j: the environment variable holding the password. Never a flag or a file."
+
+
+class _Store:
+    """How to reach a Neo4j source: the sink's settings, the password from the environment."""
+
+    def __init__(
+        self, *, text_property: str | None, database: str | None, user: str, password_env: str
+    ) -> None:
+        self.text_property = text_property
+        self.database = database
+        self.user = user
+        self.password_env = password_env
+
+    def driver(self, uri: str) -> Any:
+        password = os.environ.get(self.password_env)
+        if password is None:
+            raise ValueError(
+                f"{self.password_env} is not set: the Neo4j password is read from the "
+                "environment variable --password-env names, never from a flag or a file"
+            )
+        from openodke.sinks.neo4j import _connect
+
+        return _connect(uri, (self.user, password))
+
+
+def _read_facts(
+    adapter: str, facts: str, texts: Path | None, store: _Store, tenant: str | None = None
+) -> tuple[Iterable[Any], list[Any], Any]:
+    """The rows `--facts` holds, the texts they cite, and the driver if a store was read.
+
+    A triples file's rows are an iterator, read as they are asked for.
+
+    Raises ValueError for input that does not fit the adapter: a usage error.
+    """
+    from openodke import interop
+    from openodke.loaders import DirectoryLoader
+    from openodke.run import with_path_ids
+
+    if adapter not in ADAPTERS:
+        raise ValueError(f"unknown adapter {adapter!r}; one of {', '.join(ADAPTERS)}")
+    uri = "://" in facts
+    if uri and adapter not in ("neo4j", "graphrag"):
+        raise ValueError(f"{adapter} reads a file; only neo4j and graphrag read a Neo4j URI")
+    if adapter == "neo4j" and not uri:
+        raise ValueError("neo4j reads a store: give its URI as --facts, e.g. bolt://localhost:7687")
+    if adapter in ("langchain", "langextract") and texts is not None:
+        raise ValueError(f"{adapter} output carries its own texts; leave --texts out")
+    if adapter == "graphrag" and uri and texts is not None:
+        raise ValueError("a neo4j-graphrag store holds its own chunks; leave --texts out")
+    if store.text_property is not None and adapter != "neo4j":
+        raise ValueError("--text-property is for the neo4j adapter")
+    docs = with_path_ids(list(DirectoryLoader().load(texts)), Path.cwd()) if texts else []
+    if adapter == "triples":
+        if texts is None:
+            raise ValueError("triples cite texts by name: give them as --texts")
+        # An iterator: a streamed job reads it a micro-batch at a time.
+        return interop.read_triples(facts), docs, None
+    if adapter == "langchain":
+        rows, docs = interop.from_graph_documents(facts)
+        return rows, docs, None
+    if adapter == "langextract":
+        rows, docs = interop.from_langextract(facts)
+        return rows, docs, None
+    if adapter == "graphrag" and not uri:
+        if len(docs) > 1:
+            raise ValueError("graphrag takes one text with --texts: the one the graph came from")
+        rows, docs = interop.from_graphrag(facts, document=docs[0] if docs else None)
+        return rows, docs, None
+    if adapter == "neo4j" and texts is None and store.text_property is None:
+        raise ValueError(
+            "neo4j needs --texts (the documents a graph openodke wrote was built from) "
+            "or --text-property (the relationship property holding each one's text)"
+        )
+    driver = store.driver(facts)
+    try:
+        if adapter == "graphrag":
+            rows, docs = interop.read_graphrag(driver, database=store.database)
+        else:
+            rows, read = interop.read_neo4j(
+                driver,
+                documents=docs,
+                text_property=store.text_property,
+                database=store.database,
+                tenant=tenant,
+            )
+            # Every text given, not only those matched by id or URI: a row that
+            # names a file by its name still finds it in the extractor.
+            docs = list({doc.id: doc for doc in [*docs, *read]}.values())
+    except BaseException:
+        driver.close()
+        raise
+    return rows, docs, driver
+
+
+def _grounder(
+    config: Path | None,
+    chosen: str | None,
+    *,
+    locate: bool,
+    paper: bool,
+    cache: Path | None = None,
+    budget_usd: float | None = None,
+    budget_calls: int | None = None,
+    recorder: Any = None,
+    observer: Any = None,
+) -> Any:
+    """The model grounder `odke run` would build from these models, or the config's replay.
+
+    Every call holds a slot of its provider's limit, from the `models` block's
+    `limits`, process-wide. A budget, from the flags over the block's, counts
+    every call that goes out. The response cache is `--cache` when given, else
+    the block's, and answers in front of both, for nothing. The run manifest's
+    `recorder` is told the models block as resolved, the cache and the budget,
+    and sees every answer's model; the job's `observer` sees every call, a
+    cached one too.
+    """
+    from openodke.ground import LLMGrounder
+    from openodke.llm.base import ProviderNotInstalled
+    from openodke.llm.budget import Ledger
+    from openodke.llm.cache import CachedClient
+    from openodke.llm.limits import PROVIDER_LIMITS, LimitedClient
+    from openodke.llm.registry import resolve as resolve_client
+    from openodke.run import ModelsConfig, load_models
+    from openodke.run.build import OnFirstCall, _replay_client, response_cache
+
+    models, base = load_models(config) if config is not None else (ModelsConfig(), Path.cwd())
+    if chosen is not None:
+        models = models.with_model(chosen)
+        typer.echo(f"models: grounding on {chosen}")
+    roles = models.roles()
+    models = models.with_budget(usd=budget_usd, calls=budget_calls)
+    PROVIDER_LIMITS.update(models.limits)
+    if cache is not None:
+        store = response_cache(cache.expanduser(), "--cache")
+    elif models.cache is not None:
+        store = response_cache(base / Path(models.cache).expanduser())
+    else:
+        store = None
+    replay = models.replay.get("ground")
+    client: Any
+    if replay is not None:
+        client = _replay_client(base / replay, "ground")
+    else:
+        try:
+            client = resolve_client(roles.ground)
+        except ProviderNotInstalled:
+            # Behind a cache, a rerun answered from it needs no adapter at all.
+            if store is None:
+                raise
+            client = OnFirstCall(roles.ground)
+    client = LimitedClient(client)
+    if models.budget is not None:
+        client = Ledger(models.budget).client(client)
+    if store is not None:
+        client = CachedClient(client, store)
+    if recorder is not None:
+        recorder.config["models"] = models.canonical()
+        recorder.cache = store.directory if store is not None else None
+        recorder.budget = models.budget.limits if models.budget is not None else None
+        client = recorder.served.client("ground", roles.ground, client)
+    if observer is not None:
+        client = observer.client(client, "ground")
+    mode: dict[str, Any] = {"context": "document", "verdicts": "binary"} if paper else {}
+    return LLMGrounder(roles, client=client, locate=locate, **mode)
+
+
+def _path(path: Path | None) -> str | None:
+    """A path option as the run manifest records it: as given."""
+    return str(path) if path is not None else None
+
+
+def _strict_ontology(path: Path) -> Ontology:
+    if path.suffix.lower() in {".yaml", ".yml"}:
+        return Ontology.from_yaml(path)
+    return Ontology.from_json(path)
+
+
+def _echo_warnings(caught: list[warnings.WarningMessage]) -> None:
+    for warning in caught:
+        typer.echo(f"warning: {warning.message}", err=True)
+
+
+@app.command("ground")
+def ground_command(
+    ctx: typer.Context,
+    facts: str = typer.Option(..., "--facts", help=FACTS_HELP),
+    out: Path = typer.Option(
+        ..., "--out", "-o", help="Directory to write facts.jsonl and summary.json into."
+    ),
+    texts: Path | None = typer.Option(None, "--texts", help=TEXTS_HELP),
+    adapter: str = typer.Option("triples", "--adapter", help=ADAPTER_HELP),
+    ontology: Path | None = typer.Option(None, "--ontology", help=ONTOLOGY_HELP),
+    config: Path | None = typer.Option(None, "--config", help=CONFIG_HELP),
+    model: str | None = typer.Option(None, "--model", help=MODEL_HELP),
+    model_provider: str | None = typer.Option(None, "--model-provider", help=MODEL_PROVIDER_HELP),
+    locate: bool = typer.Option(
+        False, "--locate", help="Find the sentence naming both ends of a fact that cited nothing."
+    ),
+    paper: bool = typer.Option(
+        False, "--paper", help="ODKE+'s own grounder: the whole document, True or False."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="The free checks and the locator only: no model, no cost."
+    ),
+    text_property: str | None = typer.Option(None, "--text-property", help=TEXT_PROPERTY_HELP),
+    database: str | None = typer.Option(None, "--database", help=DATABASE_HELP),
+    user: str = typer.Option("neo4j", "--user", envvar="NEO4J_USER", help=USER_HELP),
+    password_env: str = typer.Option("NEO4J_PASSWORD", "--password-env", help=PASSWORD_ENV_HELP),
+    write_back: bool = typer.Option(
+        False,
+        "--write-verdicts",
+        help="neo4j: set odke_verdict on each relationship read. Off unless asked.",
+    ),
+    cache: Path | None = typer.Option(None, "--cache", help=CACHE_HELP),
+    budget_usd: float | None = typer.Option(None, "--budget-usd", min=0, help=BUDGET_USD_HELP),
+    budget_calls: int | None = typer.Option(None, "--budget-calls", min=0, help=BUDGET_CALLS_HELP),
+    log_format: str = typer.Option("text", "--log-format", help=LOG_FORMAT_HELP),
+    log_text: bool = typer.Option(False, "--log-text", help=LOG_TEXT_HELP),
+) -> None:
+    """Ground a graph openodke did not build, and say what is wrong with it.
+
+    Reads the facts through an adapter and checks each in three steps, cheapest
+    first: the free checks (the mention is in the text; with --ontology, the
+    relation is in it and the types fit its domain and range), the span
+    locator with --locate, then the model. A fact the free checks refuse is
+    never sent to the model, and a dry run sends none.
+
+    Writes the same facts back with their verdicts to OUT/facts.jsonl, and a
+    summary to OUT/summary.json and here: counts per verdict, the facts with no
+    span, the `odke eval spans` width split, and the two ways a fact fails:
+    evidence that does not support it, and a citation too narrow for its claim.
+    Models come from --config's `models` block, as in `odke run`.
+
+    Exit 2 is input that cannot be read, exit 1 a run that failed, exit 3 a run
+    its budget stopped, which still wrote what it grounded. OUT/manifest.json is
+    the run manifest: these options, the models, prompts, ontology and inputs.
+    """
+    # Imported here so `odke --version` and the ontology commands stay light.
+    from openodke.interop import ground_graph, ground_manifest, write_verdicts
+    from openodke.llm.base import ProviderError
+    from openodke.manifest import FILE, Recorder
+    from openodke.observe import Observer, spend
+    from openodke.run import ConfigError
+
+    chosen = _qualified(model, model_provider)
+    _logs(ctx, log_format, log_text)
+    observer = Observer("ground")
+    observer.start(dry_run=dry_run)
+    recorder = Recorder(
+        "ground",
+        {
+            "facts": facts,
+            "texts": _path(texts),
+            "adapter": adapter,
+            "ontology": _path(ontology),
+            "out": _path(out),
+            "locate": locate,
+            "paper": paper,
+            "text_property": text_property,
+            "database": database,
+            "user": user,
+            "password_env": password_env,
+            "write_verdicts": write_back,
+        },
+    )
+    try:
+        if write_back and adapter != "neo4j":
+            raise ValueError("--write-verdicts writes to the Neo4j graph the neo4j adapter read")
+        if write_back and dry_run:
+            raise ValueError("a dry run asks no model, so it has no verdicts to write back")
+        schema = _strict_ontology(ontology) if ontology is not None else None
+        grounder = (
+            None
+            if dry_run
+            else _grounder(
+                config,
+                chosen,
+                locate=locate,
+                paper=paper,
+                cache=cache,
+                budget_usd=budget_usd,
+                budget_calls=budget_calls,
+                recorder=recorder,
+                observer=observer,
+            )
+        )
+        store = _Store(
+            text_property=text_property, database=database, user=user, password_env=password_env
+        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            rows, docs, driver = _read_facts(adapter, facts, texts, store)
+            rows = list(rows)
+    except (ValueError, ConfigError, OntologyLoadError, ImportError, OSError) as exc:
+        _data_error(exc)
+    except ProviderError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    _echo_warnings(caught)
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            # With a model, the grounder locates; a dry run's free checks do it themselves.
+            grounded = ground_graph(
+                rows,
+                docs,
+                ontology=schema,
+                grounder=grounder,
+                locate=locate and dry_run,
+                observer=observer,
+            )
+        _echo_warnings(caught)
+        begun = observer.begin("write")
+        if write_back:
+            written = write_verdicts(driver, grounded.facts, database=database)
+        paths = grounded.write(out)
+        manifest = ground_manifest(
+            recorder, grounded, rows, docs, ontology=schema, grounder=grounder, run=observer.run
+        )
+        paths.append(manifest.write(out / FILE))
+        observer.end(begun, {"facts": len(grounded.facts)})
+    except (ProviderError, OSError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        if driver is not None:
+            driver.close()
+    summary = grounded.summary
+    observer.finish(
+        summary.job,
+        cost=spend(getattr(grounder, "stats", None) or {}),
+        documents=len(docs),
+        failed=len(summary.failed),
+        stopped=summary.stopped.get("limit") if summary.stopped else None,
+    )
+    typer.echo(grounded.summary.render())
+    typer.echo("")
+    typer.echo(f"wrote {', '.join(str(p) for p in paths)}")
+    if write_back:
+        typer.echo(f"wrote odke_verdict on {_count(written, 'relationship')}")
+    if grounded.summary.stopped:
+        raise typer.Exit(EXIT_BUDGET)
+    if grounded.summary.failed and not grounded.summary.facts:
+        _every_document_failed(grounded.summary.failed, len(grounded.summary.failed))
+
+
+# --------------------------------------------------------------------------- #
+# odke validate — the whole layer
+# --------------------------------------------------------------------------- #
+
+VALIDATE_CONFIG_HELP = (
+    "A run config whose extractor is triples: its inputs, ontology, models, stages and "
+    "sinks. With --facts, only its models block is read, as odke ground reads it."
+)
+
+
+@app.command("validate")
+def validate_command(
+    ctx: typer.Context,
+    config: Path | None = typer.Option(None, "--config", help=VALIDATE_CONFIG_HELP),
+    facts: str | None = typer.Option(None, "--facts", help=FACTS_HELP),
+    texts: Path | None = typer.Option(None, "--texts", help=TEXTS_HELP),
+    adapter: str = typer.Option("triples", "--adapter", help=ADAPTER_HELP),
+    ontology: Path | None = typer.Option(None, "--ontology", help=ONTOLOGY_HELP),
+    out: Path | None = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="Write the graph here as JSONL, beside any sinks the config names.",
+    ),
+    merge: bool = typer.Option(
+        False,
+        "--merge",
+        help="Merge into the JSONL already at -o: a fact it holds gains this batch's sources.",
+    ),
+    update: bool = typer.Option(
+        False,
+        "--update",
+        help="The texts are new versions of ones the store cites: retract each first, so "
+        "what a new version no longer states loses it. Implies --merge.",
+    ),
+    model: str | None = typer.Option(None, "--model", help=MODEL_HELP),
+    model_provider: str | None = typer.Option(None, "--model-provider", help=MODEL_PROVIDER_HELP),
+    locate: bool = typer.Option(
+        False, "--locate", help="Find the sentence naming both ends of a fact that cited nothing."
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="The free checks, the locator and every deterministic stage: no model, no write.",
+    ),
+    text_property: str | None = typer.Option(None, "--text-property", help=TEXT_PROPERTY_HELP),
+    database: str | None = typer.Option(None, "--database", help=DATABASE_HELP),
+    user: str = typer.Option("neo4j", "--user", envvar="NEO4J_USER", help=USER_HELP),
+    password_env: str = typer.Option("NEO4J_PASSWORD", "--password-env", help=PASSWORD_ENV_HELP),
+    cache: Path | None = typer.Option(None, "--cache", help=CACHE_HELP),
+    budget_usd: float | None = typer.Option(None, "--budget-usd", min=0, help=BUDGET_USD_HELP),
+    budget_calls: int | None = typer.Option(None, "--budget-calls", min=0, help=BUDGET_CALLS_HELP),
+    log_format: str = typer.Option("text", "--log-format", help=LOG_FORMAT_HELP),
+    log_text: bool = typer.Option(False, "--log-text", help=LOG_TEXT_HELP),
+    batch_size: int | None = typer.Option(None, "--batch-size", min=1, help=BATCH_SIZE_HELP),
+    tenant: str | None = typer.Option(None, "--tenant", help=TENANT_HELP),
+) -> None:
+    """Validate another extractor's facts: ground, resolve, corroborate, gate and write.
+
+    The whole verification layer over one batch, as `openodke.Validator` runs
+    it. The facts come as `odke ground` takes them (--facts, --texts,
+    --adapter, and --config's models block), or from a run config alone whose
+    extractor is `triples`. A stage the config leaves out is the Validator's
+    default, not the pass-through: the free checks and the model grounder, the
+    value normaliser, the native resolver, the signature corroborator, the
+    evidence scorer, and the verdict gate with the schema checks.
+
+    Writes the graph to -o as JSONL and to the config's sinks, and prints the
+    report: facts in, refused, merged, linked and derived, the cost, the
+    prompts sent and the coverage report. A dry run calls no model and writes
+    nothing.
+
+    A store merges: a fact a Neo4j sink already holds gains this batch's
+    sources rather than a second edge, and so does one in the JSONL at -o with
+    --merge, or in a config's jsonl sink with `merge: true`. With --update the
+    texts replace the versions the store cites: each is retracted from the
+    sinks first, so a fact the new version no longer states loses that source,
+    and is retired when it has none. To retract a text that is gone, use
+    `odke reconcile --delete`.
+
+    With --batch-size (or a config's `batch_size`) the triples are read, run
+    and written that many rows at a time, and the texts are held.
+
+    With --tenant (or a config's `tenant`) the stores key the job by that
+    tenant: its facts never merge with another tenant's, and the neo4j adapter
+    reads that tenant's. The report ends with what each sink wrote, merged and
+    skipped.
+
+    Exit 2 is input or a config that cannot be read, exit 1 a run that failed,
+    exit 3 a run its budget stopped, which still wrote what it kept.
+    """
+    # Imported here so `odke --version` and the ontology commands stay light.
+    from openodke import Retractable, SignatureCorroborator, Validator
+    from openodke.gate import REFUSED_FILE, Kept, VerdictGate
+    from openodke.interop import TriplesExtractor, read_triples
+    from openodke.llm.base import ProviderError
+    from openodke.manifest import FILE, Recorder
+    from openodke.observe import Observer
+    from openodke.run import ConfigError, build
+    from openodke.run.execute import _bootstrap, manifest_path
+    from openodke.sinks.jsonl import JsonlSink
+    from openodke.validator import stores_of
+
+    chosen = _qualified(model, model_provider)
+    _logs(ctx, log_format, log_text)
+    observer = Observer("validate")
+    # What the run manifest records as the job's config: these options, and
+    # the models block or the run config as resolved below.
+    options: dict[str, Any] = {
+        "facts": facts,
+        "texts": _path(texts),
+        "adapter": adapter,
+        "ontology": _path(ontology),
+        "out": _path(out),
+        "merge": merge,
+        "update": update,
+        "locate": locate,
+        "text_property": text_property,
+        "database": database,
+        "user": user,
+        "password_env": password_env,
+        "batch_size": batch_size,
+        "tenant": tenant,
+    }
+    recorder = Recorder("validate", options)
+    driver: Any = None
+    applied: list[str] = []
+    plans: list[Any] = []
+    sinks: list[Any] = []
+    # The store lookup's plan, which closes a connection it opened itself.
+    lookups: list[Any] = []
+    caught: list[warnings.WarningMessage] = []
+    try:
+        if facts is None and config is None:
+            raise ValueError("give the facts with --facts, or a run config with --config")
+        if merge and out is None:
+            raise ValueError("--merge merges into the JSONL at -o: give -o")
+        merge = merge or update
+        if facts is not None:
+            schema = _strict_ontology(ontology) if ontology is not None else None
+            grounder = (
+                None
+                if dry_run
+                else _grounder(
+                    config,
+                    chosen,
+                    locate=locate,
+                    paper=False,
+                    cache=cache,
+                    budget_usd=budget_usd,
+                    budget_calls=budget_calls,
+                    recorder=recorder,
+                    observer=observer,
+                )
+            )
+            store = _Store(
+                text_property=text_property,
+                database=database,
+                user=user,
+                password_env=password_env,
+            )
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                rows, docs, driver = _read_facts(adapter, facts, texts, store, tenant)
+            if batch_size is None:
+                rows = list(rows)
+            validator = Validator(
+                schema, grounder=grounder, locate=locate and grounder is None, tenant=tenant
+            )
+            named: dict[str, Any] = {}
+        else:
+            assert config is not None  # one of the two is given
+            given = (texts, ontology, text_property, database)
+            if any(v is not None for v in given) or adapter != "triples":
+                raise ValueError(
+                    "a run config names its own inputs, ontology and extractor: leave out "
+                    "--texts, --ontology, --adapter and the Neo4j source options"
+                )
+            loaded = _load_run_config(config)
+            if chosen is not None:
+                loaded = loaded.with_model(chosen)
+                typer.echo(f"models: every role on {chosen}")
+            if cache is not None:
+                loaded = loaded.with_cache(cache)
+            loaded = loaded.with_budget(usd=budget_usd, calls=budget_calls)
+            loaded = loaded.with_batch_size(batch_size)
+            batch_size = loaded.batch_size
+            loaded = loaded.with_tenant(tenant)
+            tenant = loaded.tenant
+            if locate:
+                raise ValueError("with a run config, the locator is the grounder's: locate: true")
+            built = build(loaded)
+            context = built.context
+            recorder = Recorder(
+                "validate",
+                {**options, "run": loaded.canonical()},
+                config_file=loaded.source.name if loaded.source is not None else None,
+                base_dir=loaded.base_dir,
+                served=context.served,
+                cache=context.cache.directory if context.cache is not None else None,
+                budget=context.ledger.budget.limits,
+            )
+            # The run's observer, which every client the config built reports to.
+            observer = built.context.observer
+            observer.command = "validate"
+            extractor = built.stages["extractor"]
+            if not isinstance(extractor, TriplesExtractor):
+                raise ConfigError(
+                    "stages.extractor: odke validate checks the triples another extractor "
+                    "wrote, so it takes {use: triples, path: ...}; to extract, use odke run"
+                )
+            docs = built.documents()
+            # In the file's order, read as they are needed when the job streams.
+            rows = read_triples(extractor.source)
+            if batch_size is None:
+                rows = list(rows)
+            named = {"extractor": extractor.extractor, "confidence": extractor.confidence}
+            stage = built.stages
+            plans = built.sinks
+            lookups = [built.lookup] if built.lookup is not None else []
+            if not dry_run:
+                sinks = [plan.open() for plan in plans]
+                # Before any model is called, as `odke run` applies it.
+                if loaded.bootstrap:
+                    applied = _bootstrap(built, sinks)
+                built.open_lookup(sinks)
+            elif built.lookup is not None:
+                typer.echo(f"warning: {built.lookup.dry_run_note}", err=True)
+            if dry_run and loaded.bootstrap:
+                constrainer = built.stages["constrainer"]
+                applied = [
+                    s for p in plans if p.can_bootstrap for s in p.ddl(built.ontology, constrainer)
+                ]
+            validator = Validator(
+                built.ontology,
+                grounder=stage["grounder"],
+                roles=built.context.roles,
+                client=built.context.client("ground"),
+                normalizer=stage["normalizer"],
+                resolver=stage["resolver"],
+                corroborator=stage["corroborator"],
+                scorer=stage["scorer"],
+                gate=stage["gate"],
+                inverses=loaded.inverses,
+                coverage=loaded.coverage,
+                tenant=tenant,
+            )
+            jsonl = out is not None or any(plan.name == "jsonl" for plan in plans)
+            validator.manifest = manifest_path(loaded, jsonl=jsonl)
+        if out is not None and not dry_run:
+            sinks.append(JsonlSink(out, merge=merge, tenant=tenant))
+        validator.sinks = tuple(sinks)
+        # A record of what the gate refuses, and why: -o writes it as refused.jsonl.
+        kept = Kept(validator.gate if validator.gate is not None else VerdictGate(schema=True))
+        validator.gate = kept
+        if update and not dry_run and not any(isinstance(s, Retractable) for s in sinks):
+            raise ValueError(
+                "--update retracts the old versions from the store: give -o, or a config "
+                "with a jsonl or neo4j sink"
+            )
+        # A corroborator the config names merges with the sinks, as the default does.
+        configured = validator.corroborator
+        if isinstance(configured, SignatureCorroborator) and not configured.store:
+            configured.store = stores_of(sinks)
+    except (ValueError, ConfigError, OntologyLoadError, ImportError, OSError) as exc:
+        _close(driver, [*lookups, *sinks])
+        _data_error(exc)
+    except ProviderError as exc:
+        _close(driver, [*lookups, *sinks])
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    _echo_warnings(caught)
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            kg, report = validator.validate(
+                rows,
+                docs,
+                dry_run=dry_run,
+                update=update,
+                recorder=recorder,
+                observer=observer,
+                batch_size=batch_size,
+                **named,
+            )
+    except ValueError as exc:
+        # A streamed job reads its rows as it goes, so a bad one is met here.
+        _data_error(exc)
+    except (ProviderError, OSError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        _close(driver, [*lookups, *sinks])
+    _echo_warnings(caught)
+    refused = kept.write(out / REFUSED_FILE) if out is not None and not dry_run else None
+    typer.echo(report.render(writes=False))
+    verb = "would write" if dry_run else "wrote"
+    if applied:
+        done = "would apply" if dry_run else "applied"
+        typer.echo(f"{'bootstrap':<13} {done} {_count(len(applied), 'statement')}")
+    if report.batches is None:
+        written = [line for plan in plans for line in plan.describe(kg)]
+        counts = (len(kg.entities), len(kg.facts), len(kg.links))
+        streamed = ""
+    else:
+        # A streamed job keeps no graph: what it wrote is the run's counts.
+        graph = kg.stats["graph"]
+        written = [line for plan in plans for line in plan.streamed(graph, report.batches)]
+        counts = (graph["entities"], graph["facts"], sum(graph["links"].values()))
+        how = "merged" if merge else "appended"
+        many = "" if report.batches == 1 else "es"
+        streamed = f"; {how} in {report.batches} micro-batch{many}"
+    if out is not None:
+        written.append(
+            f"jsonl → {out}: entities.jsonl {counts[0]}, facts.jsonl {counts[1]}, "
+            f"links.jsonl {counts[2]}, manifest.json"
+            + (f", {refused.name} {len(kept.refused)}" if refused is not None else "")
+            + streamed
+        )
+    for line in written or ["nothing: give -o, or name a sink in the config"]:
+        typer.echo(f"{verb:<13} {line}")
+    for line in report.write_lines():
+        typer.echo(line)
+    manifests = [str(s.directory / FILE) for s in sinks if isinstance(s, JsonlSink)]
+    if validator.manifest is not None:
+        manifests.append(str(validator.manifest))
+    if manifests and not dry_run:
+        typer.echo(f"{'manifest':<13} {manifests[0]}")
+        for path in manifests[1:]:
+            typer.echo(f"  {path}")
+    if report.stopped:
+        raise typer.Exit(EXIT_BUDGET)
+    _every_document_failed(report.failed, report.documents)
+
+
+def _every_document_failed(failed: Any, documents: int) -> None:
+    """Exit 1 when every document failed on its own: the run did nothing.
+
+    One document's failure is left out of the graph and named in the report,
+    and the run goes on (#162). When that is every document, the cause is
+    almost certainly not in the documents, and a zero exit would hide it.
+    """
+    if documents and isinstance(failed, dict) and len(failed) >= documents:
+        typer.echo(
+            f"error: every document failed; the first: {next(iter(failed.values()))}", err=True
+        )
+        raise typer.Exit(1)
+
+
+def _close(driver: Any, sinks: list[Any]) -> None:
+    """The Neo4j source and every sink that holds a connection, closed."""
+    for held in [driver, *sinks]:
+        close = getattr(held, "close", None)
+        if callable(close):
+            close()
+
+
+# --------------------------------------------------------------------------- #
+# odke reconcile — a source that is gone
+# --------------------------------------------------------------------------- #
+
+
+@app.command("reconcile")
+def reconcile_command(
+    sink: str = typer.Option(
+        ...,
+        "--sink",
+        help="The store: a directory odke wrote as JSONL, or a Neo4j URI (bolt://, neo4j://).",
+    ),
+    delete: list[str] = typer.Option(
+        ..., "--delete", help="The id of a document that is gone. Repeat for several."
+    ),
+    hard_delete: bool = typer.Option(
+        False, "--hard-delete", help="Delete a fact left with no source, rather than retire it."
+    ),
+    ontology: Path | None = typer.Option(
+        None,
+        "--ontology",
+        help="Neo4j: decides whether a value projected again is one value or a list.",
+    ),
+    database: str | None = typer.Option(None, "--database", help="Neo4j: the database."),
+    user: str = typer.Option("neo4j", "--user", envvar="NEO4J_USER", help=USER_HELP),
+    password_env: str = typer.Option("NEO4J_PASSWORD", "--password-env", help=PASSWORD_ENV_HELP),
+    tenant: str | None = typer.Option(
+        None, "--tenant", help="The tenant whose facts lose the documents; no other's change."
+    ),
+) -> None:
+    """Retract documents that are gone from the store, and retire facts left with no source.
+
+    Every fact a document backed loses that document: its evidence, and its
+    place in the support list. A fact with another source keeps it; a fact
+    with none is retired, marked with the time it lost its last source and
+    kept, or deleted with --hard-delete. Its valid clock is left alone. Run
+    the same command twice and the second changes nothing.
+
+    A document that changed is an update, not a delete: give the new version
+    to `odke validate --update`, which retracts the old one first, so the
+    facts the new version still states regain their support.
+
+    Exit 2 is a store that cannot be read.
+    """
+    from openodke.reconcile import Reconciler
+    from openodke.sinks.jsonl import JsonlSink
+
+    store: Any = None
+    try:
+        if "://" in sink:
+            schema = _strict_ontology(ontology) if ontology is not None else None
+            password = os.environ.get(password_env)
+            if password is None:
+                raise ValueError(
+                    f"{password_env} is not set: the Neo4j password is read from the "
+                    "environment variable --password-env names, never from a flag or a file"
+                )
+            from openodke.sinks.neo4j import Neo4jSink
+
+            store = Neo4jSink(
+                sink, (user, password), database=database, ontology=schema, tenant=tenant
+            )
+        else:
+            if ontology is not None or database is not None:
+                raise ValueError("--ontology and --database are for a Neo4j store")
+            directory = Path(sink)
+            if not (directory / "facts.jsonl").is_file():
+                raise ValueError(f"{directory} holds no facts.jsonl: not a store odke wrote")
+            store = JsonlSink(directory, merge=True, tenant=tenant)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            report = Reconciler([store], hard_delete=hard_delete).delete(delete)
+    except (ValueError, OntologyLoadError, ImportError, OSError) as exc:
+        _close(None, [store])
+        _data_error(exc)
+    _close(None, [store])
+    _echo_warnings(caught)
+    typer.echo(report.render())
 
 
 @ontology_app.command("infer")
@@ -381,31 +1401,180 @@ def eval_stage(
     stage: str = typer.Argument(
         ...,
         help="route, extract, ground, resolve, score, validate, ablation (with --config), "
-        "or spans (with --facts, and no labels at all).",
+        "spans (with --facts, and no labels at all), compare (two runs' --items files), "
+        "pipeline (your own, run with --cmd, --run or --predictions), precision (--facts "
+        "a judge graded, corrected by --labels on a random sample; no gold), pool (two "
+        "or more grounded runs: recall relative to what they found together; no gold), or "
+        "refusals (what a grounder refused, sampled for a person to judge).",
+    ),
+    runs: list[Path] | None = typer.Argument(
+        None,
+        help="compare: run A's --items file, then run B's. pool: two or more runs' facts "
+        "after grounding, each a facts.jsonl or the directory a sink wrote. refusals: odke "
+        "ground or odke validate -o output, or bench sets.",
+        show_default=False,
     ),
     labels: Path | None = typer.Option(None, "--labels", help="Your labelled rows, as JSONL."),
     predictions: Path | None = typer.Option(
-        None, "--predictions", help="What the stage produced, as JSONL."
+        None,
+        "--predictions",
+        help="What the stage produced, as JSONL. For pipeline, what it already wrote.",
     ),
     run: str | None = typer.Option(
-        None, "--run", help="package.module:Name — run that stage over the labels instead."
+        None,
+        "--run",
+        help="package.module:Name — run that stage over the labels instead. For pipeline: "
+        "module:function or path/file.py:function, called with the documents.",
     ),
     ontology: Path | None = typer.Option(
-        None, "--ontology", help="Ontology JSON, for --run with extract or validate."
+        None,
+        "--ontology",
+        help="Ontology JSON: for --run with extract or validate, and extract's conformance.",
     ),
     documents: Path | None = typer.Option(
-        None, "--documents", help="Document JSONL, for --run with extract."
+        None,
+        "--documents",
+        help="Document JSONL, for --run with extract. For pipeline, also a folder of texts.",
     ),
     config: Path | None = typer.Option(
-        None, "--config", help="Run config, for ablation: the pipeline to run three ways."
+        None,
+        "--config",
+        help="Run config: for ablation, the pipeline to run three ways; for pipeline "
+        "--validator, the Validator's stages and models.",
     ),
     facts: Path | None = typer.Option(
-        None, "--facts", help="For spans: a run's facts.jsonl, or the directory a sink wrote."
+        None,
+        "--facts",
+        help="For spans and precision: a run's facts.jsonl, or the directory a sink wrote. "
+        "For precision, after a judge (the grounder) set each verdict.",
     ),
     describe: bool = typer.Option(
         False, "--describe", help="Print what a label row and a prediction row are, and exit."
     ),
-    as_json: bool = typer.Option(False, "--json", help="Emit the report as JSON."),
+    as_json: bool = typer.Option(
+        False, "--json", help="Emit the stage's report as JSON; for pipeline, the eval report."
+    ),
+    items: Path | None = typer.Option(
+        None,
+        "--items",
+        help="Also write each labelled item's outcome here, as JSONL, for `compare`: "
+        "extract, ground, validate, route, and pipeline's last row.",
+    ),
+    metric: str | None = typer.Option(
+        None,
+        "--metric",
+        help="compare: the primary metric, which decides the verdict: f1, precision, recall "
+        "or accuracy. Default f1 for documents, accuracy for items; the rest are guardrails.",
+    ),
+    resamples: int = typer.Option(
+        2000, "--resamples", min=100, help="compare and pool: bootstrap resamples."
+    ),
+    seed: int = typer.Option(
+        0,
+        "--seed",
+        help="compare: the resampling seed; the same seed gives the same interval. "
+        "precision: the seed --make-sheet draws the sample with. pool: the resampling seed.",
+    ),
+    fail_under: float | None = typer.Option(
+        None,
+        "--fail-under",
+        min=0.0,
+        max=1.0,
+        help="compare, as a CI gate: also exit 1 when the low end of B's 95% range for the "
+        "primary metric is under this, e.g. 0.80. A worse verdict always exits 1; an "
+        "inconclusive one exits 0 unless --fail-on-inconclusive.",
+    ),
+    fail_on_inconclusive: bool = typer.Option(
+        False,
+        "--fail-on-inconclusive",
+        help="compare: exit 1 on inconclusive as well, a change this set cannot tell from noise.",
+    ),
+    report_to: Path | None = typer.Option(
+        None, "--report", help="Also write the versioned eval report, as JSON, here."
+    ),
+    cmd: str | None = typer.Option(
+        None,
+        "--cmd",
+        help="pipeline: a command that reads {in}, a folder of texts, and writes triples to "
+        '{out}, e.g. "python my_extract.py {in} {out}". Run without a shell.',
+    ),
+    bench: Path | None = typer.Option(
+        None, "--bench", help="pipeline: a set `odke bench prepare` wrote, to score against."
+    ),
+    adapter: str = typer.Option(
+        "triples",
+        "--adapter",
+        help="pipeline: the output's format: triples, langchain, langextract or graphrag.",
+    ),
+    validator: bool = typer.Option(
+        False,
+        "--validator",
+        help="pipeline: also run the Validator over the same output, with --config's stages "
+        "and models (a bench set's own odke.json by default), and report both rows.",
+    ),
+    timeout: float = typer.Option(
+        600.0, "--timeout", min=0.0, help="pipeline: seconds --cmd may run before it is stopped."
+    ),
+    make_sheet: Path | None = typer.Option(
+        None,
+        "--make-sheet",
+        help="precision: draw a random sample of --facts and write it here as `odke label` "
+        "grounding sheets, with the texts from --documents. refusals: draw a stratified "
+        "sample of the runs' refusals and write it here as refusal sheets.",
+    ),
+    sample_size: int = typer.Option(
+        150,
+        "--n",
+        min=1,
+        help="precision and refusals --make-sheet: how many to draw (150 facts; 100 refusals).",
+    ),
+    by_predicate: bool = typer.Option(
+        False,
+        "--by-predicate",
+        help="precision --make-sheet: give each predicate its share of the sample.",
+    ),
+    adjudicate: Path | None = typer.Option(
+        None,
+        "--adjudicate",
+        help="pipeline, with --labels: ground each prediction the gold lacks three times; one "
+        "supported in two is possibly missing from gold. Prints an adjudicated precision "
+        "beside the strict one and writes the list here, as JSONL.",
+    ),
+    trace: Path | None = typer.Option(
+        None,
+        "--trace",
+        help="extract and pipeline: what the extractor was offered, for the diagnosis: a run's "
+        "manifest.json, or the run config that produced the predictions.",
+    ),
+    examples: int = typer.Option(
+        3, "--examples", min=0, help="extract and pipeline: examples kept per cause bucket."
+    ),
+    reference: Path | None = typer.Option(
+        None,
+        "--reference",
+        help="pipeline: another system's triples on the same documents, for each fix's gain "
+        "at the rate that system finds the same facts.",
+    ),
+    track_record: Path | None = typer.Option(
+        None,
+        "--track-record",
+        help="extract and pipeline: append this run's predicted fixes here (default "
+        "track-record.jsonl beside --report). compare: where to find them and record what B "
+        "measured (default beside each --items file).",
+    ),
+    applied: list[str] | None = typer.Option(
+        None,
+        "--applied",
+        help="compare: a fix A predicted that B applied, by its id (offer-relations, inverses, "
+        "...); without it, the runs' configs are diffed.",
+    ),
+    lenient: Path | None = typer.Option(
+        None,
+        "--lenient",
+        help="pipeline, with --labels: ask the fact-equivalence judge, in both orders, about "
+        "each missed gold fact and unmatched prediction with the relation and one end in "
+        "common. Prints a lenient score beside the strict one and writes the pairs here.",
+    ),
 ) -> None:
     """Score one stage against your own labelled data.
 
@@ -419,14 +1588,222 @@ def eval_stage(
     `spans` is the exception: it needs no labelled data. It reads a run's facts
     and reports span width split by the grounder's verdict, which scores the
     too-narrow-citation error with no gold set at all.
+
+    `compare A B` asks whether the change between two runs was real. Write each
+    run's outcomes with `--items`, then compare them: a paired bootstrap over the
+    items both scored, with a verdict of better, worse or inconclusive and the
+    smallest change the set can detect. It exits 1 when B is worse, which makes
+    it a CI gate; `--fail-under` adds a floor and `--fail-on-inconclusive` a
+    stricter bar.
+
+    `pipeline` runs your whole extraction pipeline, a command (--cmd), a
+    function (--run) or output already written (--predictions), and scores
+    its triples against your labels (--labels, --documents) or a prepared
+    benchmark (--bench). --validator adds the row with the Validator's check.
+    --adjudicate LIST grounds each prediction your gold lacks three times and
+    prints an adjudicated precision beside the strict one. --lenient PAIRS asks
+    the fact-equivalence judge whether a near miss is the gold fact in other
+    words, and prints a lenient score beside the strict one.
+
+    `precision` needs no gold. A judge, the grounder, graded every fact in
+    --facts; `--make-sheet DIR` draws a random sample of them to label by hand,
+    and the labels read back (--labels) correct the judge's precision by
+    prediction-powered inference. It prints the judge's number, the corrected
+    one with its 95% interval and the labels' own. Recall is never claimed.
+
+    `pool A B ...` needs no gold either: two or more runs on the same
+    documents, after grounding. Their supported facts are pooled, and each
+    run's recall relative to the pool is printed with its range, beside the
+    caveat that it overstates true recall.
+
+    `refusals RUN ...` reads what a grounder refused in `odke ground` or
+    `odke validate -o` output, or in bench sets: `--make-sheet DIR` draws a
+    stratified sample as sheets for a person to tick, and `--labels` reads them
+    back as the refusal precision with its Wilson 95% interval.
+
+    `extract` and `pipeline` also say where the facts went, every miss in one
+    cause bucket, and what to change, each fix with the recall gain the
+    arithmetic expects; `--trace` says what the extractor was offered. With
+    `--report`, the predicted fixes go to a track record, and `compare` adds
+    what the next run measured when it applied one.
+
+    Extraction, the ablation and pipeline print precision, recall and F1 with
+    95% ranges over your documents. `--report` writes the versioned eval
+    report; `--json` prints the stage's own report, as 0.x did, and for
+    pipeline the eval report itself.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
+    from openodke.eval.compare import gate
+    from openodke.eval.eval_report import Dataset, Run, from_stage
     from openodke.eval.formats import describe as describe_formats
-    from openodke.eval.runner import evaluate_files
+    from openodke.eval.harness import PipelineError
+    from openodke.eval.runner import load_inputs, report_inputs
     from openodke.llm.base import ProviderError
 
+    inputs = (labels, predictions, run, ontology, documents, config, facts, items)
+    compare_flags = [
+        flag
+        for flag, used in (
+            ("--metric", metric is not None),
+            ("--resamples", resamples != 2000),
+            ("--seed", seed != 0),
+            ("--fail-under", fail_under is not None),
+            ("--fail-on-inconclusive", fail_on_inconclusive),
+        )
+        if used
+    ]
+    piped = {
+        "--cmd": cmd is not None,
+        "--bench": bench is not None,
+        "--adapter": adapter != "triples",
+        "--validator": validator,
+        "--timeout": timeout != 600.0,
+        "--adjudicate": adjudicate is not None,
+        "--reference": reference is not None,
+        "--lenient": lenient is not None,
+    }
+    sampled = {
+        "--make-sheet": make_sheet is not None,
+        "--n": sample_size != 150,
+        "--by-predicate": by_predicate,
+    }
+    # The flags compare shares with another stage, which takes them as its own.
+    shared = {"precision": ("--seed",), "pool": ("--seed", "--resamples"), "refusals": ("--seed",)}
+    compare_flags = [flag for flag in compare_flags if flag not in shared.get(stage, ())]
+    diagnosed = {"--trace": trace is not None, "--examples": examples != 3}
     try:
-        if stage == "spans":
+        if stage != "pipeline" and any(piped.values()):
+            named = ", ".join(flag for flag, given in piped.items() if given)
+            raise ValueError(f"{named}: these are for pipeline")
+        if stage not in ("precision", "refusals") and any(sampled.values()):
+            named = ", ".join(flag for flag, given in sampled.items() if given)
+            raise ValueError(f"{named}: these are for precision and refusals")
+        if stage == "refusals" and by_predicate:
+            raise ValueError("--by-predicate is for precision: a refusal sample always spreads")
+        if stage not in ("extract", "pipeline") and any(diagnosed.values()):
+            named = ", ".join(flag for flag, given in diagnosed.items() if given)
+            raise ValueError(f"{named}: for extract and pipeline")
+        if stage not in ("extract", "pipeline", "compare") and track_record is not None:
+            raise ValueError("--track-record: for extract, pipeline and compare")
+        if stage != "compare" and applied:
+            raise ValueError("--applied: for compare only")
+        if stage == "compare":
+            if any(v is not None for v in inputs):
+                raise ValueError("compare reads two --items files and takes no other inputs")
+            comparison = _eval_compare(runs or [], describe, as_json, metric, resamples, seed)
+            if comparison is None:
+                return
+            _measure_fixes(comparison, runs or [], track_record, applied or [], as_json)
+            if report_to is not None:
+                from openodke.eval.eval_report import EvalReport
+
+                items_compared = comparison.primary.items
+                EvalReport(title="compare", n=items_compared, comparison=comparison).write(
+                    report_to
+                )
+                if not as_json:
+                    typer.echo(f"wrote {report_to}")
+            reasons = gate(
+                comparison, fail_under=fail_under, fail_on_inconclusive=fail_on_inconclusive
+            )
+            for reason in reasons:
+                typer.echo(f"gate: fail: {reason}", err=True)
+            if reasons:
+                raise typer.Exit(1)
+            return
+        if runs and stage not in ("pool", "refusals"):
+            raise ValueError(
+                f"unexpected argument {str(runs[0])!r}: only compare, pool and refusals take runs"
+            )
+        if compare_flags:
+            owners = {
+                "--seed": "compare, precision, pool and refusals",
+                "--resamples": "compare and pool",
+            }
+            raise ValueError(
+                "; ".join(
+                    f"{flag}: for {owners.get(flag, 'compare')} only" for flag in compare_flags
+                )
+            )
+        record: list[str] = []
+        if stage == "pipeline":
+            from openodke.eval.harness import DESCRIPTION, evaluate
+
+            if describe:
+                typer.echo(DESCRIPTION)
+                return
+            if facts is not None:
+                raise ValueError("--facts is for spans")
+            if config is not None and not (validator or adjudicate or lenient):
+                raise ValueError(
+                    "--config is for ablation, and for pipeline with --validator, --adjudicate "
+                    "or --lenient"
+                )
+            evaluated = evaluate(
+                command=cmd,
+                function=run,
+                predictions=predictions,
+                adapter=adapter,
+                labels=labels,
+                documents=documents,
+                bench=bench,
+                ontology=ontology,
+                validator=validator,
+                config=config,
+                timeout=timeout,
+                adjudicate=adjudicate,
+                lenient=lenient,
+                trace=trace,
+                examples=examples,
+                reference=reference,
+            )
+            report = evaluated.report
+            if items is not None:
+                _write_rows(items, evaluated.items)
+            report, record = _record_fixes(
+                report, evaluated.items, evaluated.config, track_record, report_to
+            )
+        elif stage == "pool":
+            report = _eval_pool(
+                runs or [],
+                documents,
+                ontology,
+                describe=describe,
+                others=(labels, predictions, run, config, facts, items),
+                resamples=resamples,
+                seed=seed,
+            )
+            if report is None:
+                return
+        elif stage == "refusals":
+            report = _eval_refusals(
+                runs or [],
+                labels,
+                documents,
+                describe=describe,
+                others=(predictions, run, ontology, config, facts, items),
+                make_sheet=make_sheet,
+                sample_size=sample_size,
+                seed=seed,
+            )
+            if report is None:
+                return
+        elif stage == "precision":
+            report = _eval_precision(
+                facts,
+                labels,
+                documents,
+                ontology,
+                describe=describe,
+                others=(predictions, run, config, items),
+                make_sheet=make_sheet,
+                sample_size=sample_size,
+                seed=seed,
+                by_predicate=by_predicate,
+            )
+            if report is None:
+                return
+        elif stage == "spans":
             from openodke.eval.spans import DESCRIPTION, evaluate_spans, load_facts
 
             if describe:
@@ -439,28 +1816,30 @@ def eval_stage(
             # A facts file is what --predictions already means for the fact
             # stages, so it is taken as --facts rather than refused.
             source = facts if facts is not None else predictions
-            if any(v is not None for v in (run, ontology, documents, config)):
+            if any(v is not None for v in (run, ontology, documents, config, items)):
                 raise ValueError("spans reads a run's facts; it takes --facts and nothing else")
             if source is None:
                 raise ValueError(
                     "spans needs --facts: a run's facts.jsonl, or the directory a sink wrote"
                 )
-            report = evaluate_spans(load_facts(source))
+            dataset = Dataset(name=Path(source).name, path=str(source))
+            report = from_stage(evaluate_spans(load_facts(source)), run=Run(dataset=dataset))
         elif stage == "ablation":
-            from openodke.eval.ablation import DESCRIPTION, run_ablation
+            from openodke.eval.ablation import DESCRIPTION, report_ablation
             from openodke.eval.formats import GoldFact, load_jsonl
-            from openodke.run import load_config
 
             if describe:
                 typer.echo(
                     f"{DESCRIPTION}\n\n{describe_formats('extract').split('--predictions')[0]}"
                 )
                 return
-            if any(v is not None for v in (predictions, run, ontology, documents, facts)):
+            if any(v is not None for v in (predictions, run, ontology, documents, facts, items)):
                 raise ValueError("ablation runs the config itself; it takes --config and --labels")
             if config is None or labels is None:
                 raise ValueError("ablation needs --config and --labels (or --describe)")
-            report = run_ablation(load_config(config), load_jsonl(labels, GoldFact))
+            report = report_ablation(
+                _load_run_config(config), load_jsonl(labels, GoldFact), labels=labels
+            )
         else:
             if describe:
                 typer.echo(describe_formats(stage))
@@ -471,16 +1850,413 @@ def eval_stage(
                 raise ValueError("--config is for ablation")
             if facts is not None:
                 raise ValueError("--facts is for spans")
-            report = evaluate_files(
+            rows, predicted = load_inputs(
                 stage, labels, predictions, run=run, ontology=ontology, documents=documents
             )
+            if stage == "extract":
+                from openodke.eval.compare import item_rows
+                from openodke.eval.diagnosis import read_trace
+
+                offered, produced = read_trace(trace) if trace is not None else (None, None)
+                report = report_inputs(
+                    stage,
+                    rows,
+                    predicted,
+                    labels=labels,
+                    ontology=ontology,
+                    offered=offered,
+                    texts=_texts(documents),
+                    examples=examples,
+                )
+                outcomes, _ = item_rows(stage, rows, predicted)
+                report, record = _record_fixes(report, outcomes, produced, track_record, report_to)
+            else:
+                report = report_inputs(stage, rows, predicted, labels=labels, ontology=ontology)
+            if items is not None:
+                _write_items(items, stage, rows, predicted)
+        if report_to is not None:
+            report.write(report_to)
     except (ValueError, OSError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from exc
-    except ProviderError as exc:
+    except (ProviderError, PipelineError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
-    typer.echo(report.model_dump_json(indent=2) if as_json else report.render())
+    if as_json:
+        # The 0.x stages print their own report, as they did; the newer ones have no 0.x form.
+        shown = (
+            report if stage in ("pipeline", "precision", "pool", "refusals") else report.stages[0]
+        )
+        typer.echo(shown.model_dump_json(indent=2))
+        return
+    typer.echo(report.render())
+    if record:
+        typer.echo("\n" + "\n".join(record))
+    if report_to is not None:
+        typer.echo(f"wrote {report_to}")
+
+
+def _eval_precision(
+    facts: Path | None,
+    labels: Path | None,
+    documents: Path | None,
+    ontology: Path | None,
+    *,
+    describe: bool,
+    others: tuple[Any, ...],
+    make_sheet: Path | None,
+    sample_size: int,
+    seed: int,
+    by_predicate: bool,
+) -> Any:
+    """`odke eval precision`: its report, after drawing the sample if asked; None to describe."""
+    from openodke.eval.eval_report import Dataset
+    from openodke.eval.formats import GroundingLabel, load_jsonl
+    from openodke.eval.harness import load_documents
+    from openodke.eval.ppi import DESCRIPTION, SAMPLE_FILE, report_precision, write_sample
+    from openodke.eval.spans import load_facts
+
+    if describe:
+        typer.echo(DESCRIPTION)
+        return None
+    if any(v is not None for v in others):
+        raise ValueError(
+            "precision reads --facts, with --labels, --documents and --ontology; nothing else"
+        )
+    if facts is None:
+        raise ValueError(
+            "precision needs --facts: a run's facts after a judge (the grounder) graded them"
+        )
+    if make_sheet is not None and labels is not None:
+        raise ValueError(
+            "--make-sheet draws the sample to label and --labels reads it back: one step at a time"
+        )
+    judged = load_facts(facts)
+    docs = load_documents(documents) if documents is not None else None
+    if make_sheet is not None:
+        if docs is None:
+            raise ValueError("--make-sheet needs --documents: a sheet shows the text a fact cites")
+        drawn, made = write_sample(
+            judged, docs, make_sheet, n=sample_size, seed=seed, by_predicate=by_predicate
+        )
+        how = f"seed {seed}" + (", by predicate" if by_predicate else "")
+        typer.echo(
+            f"drew {len(drawn)} of {_count(len(judged), 'judged fact')} ({how}) into "
+            f"{make_sheet / SAMPLE_FILE}",
+            err=True,
+        )
+        for warning in made.warnings:
+            typer.echo(f"warning: {warning}", err=True)
+        typer.echo(
+            f"wrote {_count(len(made.sheets), 'sheet')} to {make_sheet}: {made.first} to "
+            f"{made.last}; tick them, read them back with `odke label read {make_sheet} -o "
+            "labels.jsonl`, and pass that file as --labels",
+            err=True,
+        )
+    rows = load_jsonl(labels, GroundingLabel) if labels is not None else []
+    return report_precision(
+        judged,
+        rows,
+        documents=docs,
+        ontology=_load(ontology) if ontology is not None else None,
+        dataset=Dataset(
+            name=Path(facts).name,
+            path=str(facts),
+            documents=len(docs) if docs is not None else None,
+            labels=len(rows) if labels is not None else None,
+        ),
+    )
+
+
+def _eval_refusals(
+    runs: list[Path],
+    labels: Path | None,
+    documents: Path | None,
+    *,
+    describe: bool,
+    others: tuple[Any, ...],
+    make_sheet: Path | None,
+    sample_size: int,
+    seed: int,
+) -> Any:
+    """`odke eval refusals`: the sample as sheets (None), or the labels' report."""
+    from collections import Counter
+
+    from openodke.eval.formats import RefusalLabel, load_jsonl
+    from openodke.eval.harness import load_documents
+    from openodke.eval.refusals import (
+        DESCRIPTION,
+        SAMPLE,
+        SAMPLE_FILE,
+        read_refusals,
+        report_refusals,
+        strata,
+        write_sample,
+    )
+
+    if describe:
+        typer.echo(DESCRIPTION)
+        return None
+    if any(v is not None for v in others):
+        raise ValueError(
+            "refusals reads runs, with --documents and --make-sheet, or --labels; nothing else"
+        )
+    if labels is not None:
+        if runs or make_sheet is not None or documents is not None:
+            raise ValueError("--labels reads the ticked sample back, on its own")
+        return report_refusals(load_jsonl(labels, RefusalLabel), path=str(labels))
+    if not runs:
+        raise ValueError(
+            "refusals needs a run to draw from (odke ground or odke validate -o output, or a "
+            "bench set), or --labels to read the ticks back"
+        )
+    if make_sheet is None:
+        raise ValueError("refusals writes its sample with --make-sheet DIR")
+    docs = load_documents(documents) if documents is not None else None
+    found = [refusal for path in runs for refusal in read_refusals(path, docs)]
+    n = sample_size if sample_size != 150 else SAMPLE
+    drawn, made = write_sample(found, make_sheet, n=n, seed=seed)
+    picked = Counter((r.dataset or "", r.extractor or "", r.verdict) for r in drawn)
+    typer.echo(
+        f"drew {len(drawn)} of {_count(len(found), 'refusal')} (seed {seed}) into "
+        f"{make_sheet / SAMPLE_FILE}",
+        err=True,
+    )
+    for (dataset, extractor, verdict), count in strata(found):
+        where = " / ".join(part for part in (dataset, extractor, verdict) if part)
+        typer.echo(f"  {where}: {picked[(dataset, extractor, verdict)]} of {count}", err=True)
+    typer.echo(
+        f"wrote {_count(len(made.sheets), 'sheet')} to {make_sheet}: {made.first} to "
+        f"{made.last}; tick them, read them back with `odke label read {make_sheet} -o "
+        "labels.jsonl`, and pass that file as --labels",
+        err=True,
+    )
+    return None
+
+
+def _eval_pool(
+    runs: list[Path],
+    documents: Path | None,
+    ontology: Path | None,
+    *,
+    describe: bool,
+    others: tuple[Any, ...],
+    resamples: int,
+    seed: int,
+) -> Any:
+    """`odke eval pool`: each run's recall relative to the pool; None for --describe."""
+    from openodke.eval.eval_report import Dataset
+    from openodke.eval.harness import load_documents
+    from openodke.eval.pooling import DESCRIPTION, report_pool, run_name
+    from openodke.eval.spans import load_facts
+
+    if describe:
+        typer.echo(DESCRIPTION)
+        return None
+    if any(v is not None for v in others):
+        raise ValueError(
+            "pool reads two or more runs, with --documents and --ontology; nothing else"
+        )
+    if len(runs) < 2:
+        raise ValueError(f"pool takes two or more runs' facts, after grounding; got {len(runs)}")
+    # Two runs in directories of one name, `a/out` and `b/out`, are out and out~2.
+    seen: dict[str, int] = {}
+    named: list[tuple[str, Any]] = []
+    for path in runs:
+        name = run_name(path)
+        seen[name] = seen.get(name, 0) + 1
+        named.append((name if seen[name] == 1 else f"{name}~{seen[name]}", load_facts(path)))
+    docs = load_documents(documents) if documents is not None else None
+    return report_pool(
+        named,
+        ontology=_load(ontology) if ontology is not None else None,
+        documents=docs,
+        dataset=Dataset(
+            name=Path(documents).name if documents is not None else "pool",
+            path=str(documents) if documents is not None else None,
+            documents=len(docs) if docs is not None else None,
+        ),
+        resamples=resamples,
+        seed=seed,
+    )
+
+
+def _texts(documents: Path | None) -> dict[str, str] | None:
+    """The documents' texts by id, for the diagnosis: a folder of texts, or Document JSONL."""
+    if documents is None:
+        return None
+    from openodke.eval.harness import load_documents
+
+    return {doc.id: doc.text for doc in load_documents(documents)}
+
+
+def _record_fixes(
+    report: EvalReport,
+    outcomes: list[ItemRow],
+    config: dict[str, Any] | None,
+    track_record: Path | None,
+    report_to: Path | None,
+) -> tuple[EvalReport, list[str]]:
+    """Append the run's predicted fixes to its track record, and carry what was measured.
+
+    The record is `--track-record`, or `track-record.jsonl` beside `--report`;
+    with neither, nothing is recorded.
+    """
+    from openodke.eval.track import TRACK_RECORD, measured, read, record_run, run_id, summary
+
+    path = track_record or (report_to.parent / TRACK_RECORD if report_to is not None else None)
+    if path is None or not outcomes:
+        return report, []
+    record_run(path, run_id(outcomes), report.fixes, report=report_to, config=config)
+    lines = read(path)
+    fixes = tuple(f.model_copy(update={"record": measured(lines, f.id)}) for f in report.fixes)
+    return report.model_copy(update={"fixes": fixes}), summary(lines, path)
+
+
+def _measure_fixes(
+    comparison: Comparison,
+    runs: list[Path],
+    track_record: Path | None,
+    applied: list[str],
+    as_json: bool,
+) -> None:
+    """After a comparison: record what B measured of the fixes A predicted and B applied."""
+    from openodke.eval.compare import ItemRow
+    from openodke.eval.formats import load_jsonl
+    from openodke.eval.track import TRACK_RECORD, record_comparison
+
+    if track_record is not None:
+        records = [track_record]
+    else:
+        records = list(dict.fromkeys(run.parent / TRACK_RECORD for run in runs))
+        records = [path for path in records if path.is_file()]
+    if not records and not applied:
+        return
+    lines, notes = record_comparison(
+        comparison,
+        load_jsonl(runs[0], ItemRow),
+        load_jsonl(runs[1], ItemRow),
+        records,
+        applied=applied,
+        into=track_record,
+    )
+    for line in lines:
+        typer.echo(
+            f"track record: {line.fix} expected {line.expected * 100:+.1f} (ceiling "
+            f"{line.ceiling * 100:+.1f}), measured {line.measured * 100:+.1f} "
+            f"[{line.low * 100:+.1f}, {line.high * 100:+.1f}] {line.verdict} ({line.applied})",
+            err=as_json,
+        )
+    for note in notes:
+        typer.echo(note, err=True)
+
+
+def _write_rows(path: Path, rows: list[ItemRow]) -> None:
+    from openodke.eval.compare import write_items
+
+    write_items(path, rows)
+    typer.echo(f"wrote {path}: {_count(len(rows), 'document')}", err=True)
+
+
+def _write_items(path: Path, stage: str, rows: Any, predicted: Any) -> None:
+    from openodke.eval.compare import item_rows, write_items
+
+    outcomes, warnings = item_rows(stage, rows, predicted)
+    write_items(path, outcomes)
+    for warning in warnings:
+        typer.echo(f"warning: {warning}", err=True)
+    unit = "document" if stage == "extract" else "item"
+    typer.echo(f"wrote {path}: {_count(len(outcomes), unit)}", err=True)
+
+
+def _eval_compare(
+    runs: list[Path], describe: bool, as_json: bool, metric: str | None, resamples: int, seed: int
+) -> Comparison | None:
+    from openodke.eval.compare import DESCRIPTION, compare_files
+
+    if describe:
+        typer.echo(DESCRIPTION)
+        return None
+    if len(runs) != 2:
+        raise ValueError(f"compare takes two runs' --items files, A then B; got {len(runs)}")
+    comparison = compare_files(runs[0], runs[1], metric=metric, resamples=resamples, seed=seed)
+    typer.echo(comparison.model_dump_json(indent=2) if as_json else comparison.render())
+    return comparison
+
+
+# --------------------------------------------------------------------------- #
+# odke label — labelling by hand
+# --------------------------------------------------------------------------- #
+
+label_app = typer.Typer(
+    help="Write sheets to label by hand, and read the ticks back as labels.",
+    no_args_is_help=True,
+)
+app.add_typer(label_app, name="label")
+
+
+def _data_error(exc: Exception) -> NoReturn:
+    # One `error:` line per problem: a sheet can have several, each with its line.
+    for line in str(exc).splitlines():
+        typer.echo(f"error: {line}", err=True)
+    raise typer.Exit(2) from exc
+
+
+@label_app.command("make")
+def label_make(
+    kind: str = typer.Argument(..., help="grounding, pair or fact."),
+    items: Path = typer.Argument(..., help="The rows to label, as JSONL."),
+    out: Path = typer.Option(..., "--out", "-o", help="A directory with no sheets in it yet."),
+    per_sheet: int = typer.Option(
+        50, "--per-sheet", min=1, help="Items per sheet: one sheet is one sitting."
+    ),
+) -> None:
+    """Write numbered markdown sheets to tick by hand, with the rows kept beside them.
+
+    A grounding row is a GroundingLabel without its verdict: the fact and the
+    text it cites. A pair row is two mentions, `a` and `b`, each a key and a
+    type with an optional label and context. A fact row is a FactPair: an
+    `id`, a relation and its description, two facts and their passage, with
+    nothing that says which is gold. Each item gets a heading, what to
+    judge and one box per answer; sheet-NN.items.jsonl keeps its rows. The same
+    rows write the same sheets, byte for byte, and a directory that already
+    holds sheets is refused. Exit 2 is a row or a directory it cannot use.
+    """
+    # Imported here so `odke --version` and the ontology commands stay light.
+    from openodke.eval.sheets import make_sheets
+
+    try:
+        made = make_sheets(kind, items, out, per_sheet=per_sheet)
+    except (ValueError, OSError) as exc:
+        _data_error(exc)
+    for warning in made.warnings:
+        typer.echo(f"warning: {warning}", err=True)
+    typer.echo(f"wrote {_count(len(made.sheets), 'sheet')} to {out}: {made.first} to {made.last}")
+
+
+@label_app.command("read")
+def label_read(
+    path: Path = typer.Argument(..., help="A sheet, or the directory `odke label make` wrote."),
+    out: Path = typer.Option(..., "--out", "-o", help="Where to write the labels, as JSONL."),
+) -> None:
+    """Read ticked sheets back as GroundingLabel, PairLabel or FactPairLabel rows.
+
+    One tick is a label. No tick leaves the item unlabelled, and it is counted.
+    Two ticks, or a heading the sidecar does not know, exits 2 with the file and
+    the line of the item's heading, and nothing is written. Notes go beside the
+    labels as <out>.notes.jsonl; pairs and fact pairs answered unsure as
+    <out>.unsure.jsonl.
+    """
+    from openodke.eval.sheets import read_sheets
+
+    try:
+        reading = read_sheets(path)
+        written = reading.write(out)
+    except (ValueError, OSError) as exc:
+        _data_error(exc)
+    typer.echo(reading.summary())
+    for target, n in written:
+        typer.echo(f"wrote {target}: {_count(n, 'row')}")
 
 
 # --------------------------------------------------------------------------- #
@@ -505,7 +2281,7 @@ def _dataset(name: str) -> Any:
 
 @bench_app.command("fetch")
 def bench_fetch(
-    dataset: str = typer.Argument(..., help="text2kgbench or redocred."),
+    dataset: str = typer.Argument(..., help="text2kgbench, redocred or trex."),
     dest: Path = typer.Argument(..., help="Directory to download into."),
     source: str = typer.Option(
         "wikidata_tekgen", help="text2kgbench only: wikidata_tekgen or dbpedia_webnlg."
@@ -522,6 +2298,8 @@ def bench_fetch(
     try:
         if dataset == "text2kgbench":
             module.fetch(dest, source=source, ontologies=ontology or None)
+        elif dataset == "trex":
+            module.fetch(dest)
         else:
             module.fetch(dest, splits=tuple(split or ("dev", "test")))
     except (ValueError, OSError) as exc:
@@ -532,7 +2310,7 @@ def bench_fetch(
 
 @bench_app.command("prepare")
 def bench_prepare(
-    dataset: str = typer.Argument(..., help="text2kgbench or redocred."),
+    dataset: str = typer.Argument(..., help="text2kgbench, redocred or trex."),
     root: Path = typer.Argument(..., help="Where `odke bench fetch` downloaded it."),
     out: Path = typer.Option(..., "--out", help="Directory to write the runnable set into."),
     ontology: str | None = typer.Option(
@@ -559,6 +2337,13 @@ def bench_prepare(
         "--paper",
         help="ODKE+'s own grounder and gate: the whole context, True/False, affirmed facts only.",
     ),
+    documents: int = typer.Option(
+        80, "--documents", help="trex only: how many abstracts the set is built from."
+    ),
+    seed: int = typer.Option(0, "--seed", help="trex only: the seed the facts are drawn with."),
+    judge: bool = typer.Option(
+        False, "--judge", help="trex only: the resolver's pair judge too (ground-model calls)."
+    ),
 ) -> None:
     """Write documents, ontology, gold and an `odke.json` run config. Calls no model."""
     module = _dataset(dataset)
@@ -573,6 +2358,17 @@ def bench_prepare(
             if ontology is None:
                 raise ValueError("text2kgbench needs --ontology, e.g. ont_1_movie")
             module.prepare(root, ontology, out, source=source, limit=limit, **models)
+        elif dataset == "trex":
+            chosen = {"documents": documents, "seed": seed, "judge": judge}
+            module.prepare(root, out, limit=limit, **chosen, **models)
+            meta = json.loads((out / "dataset.json").read_text(encoding="utf-8"))
+            facts, share = meta["gold_facts"], meta["share"]
+            typer.echo(
+                "gold facts by sources in the set: "
+                + ", ".join(f"{b}: {n}" for b, n in facts.items())
+                + "; in the whole file, aligned in two or more abstracts: "
+                + ", ".join(f"{k} {v['multi_share']:.1%}" for k, v in share.items())
+            )
         else:
             module.prepare(root, out, split=split, limit=limit, **models)
     except (ValueError, OSError) as exc:
@@ -583,27 +2379,38 @@ def bench_prepare(
 
 @bench_app.command("run")
 def bench_run(
-    dataset: str = typer.Argument(..., help="text2kgbench or redocred."),
+    dataset: str = typer.Argument(..., help="text2kgbench, redocred or trex."),
     prepared: Path = typer.Argument(..., help="A directory `odke bench prepare` wrote."),
-    as_json: bool = typer.Option(False, "--json", help="The report as JSON."),
+    as_json: bool = typer.Option(False, "--json", help="The dataset's own report as JSON."),
+    report_to: Path | None = typer.Option(
+        None, "--report", help="Where to write the eval report. Default: <prepared>/report.json."
+    ),
 ) -> None:
     """Run the prepared config three ways and score each row. Calls the models it names.
 
     Extraction and grounding are each called once; + grounding and + corroboration
-    replay them, so the bill is one run's, not three.
+    replay them, so the bill is one run's, not three. Each row's precision,
+    recall and F1 carry a 95% range over the documents, and the versioned eval
+    report is written beside the predictions.
     """
     from openodke.llm.base import ProviderError
 
     module = _dataset(dataset)
+    target = report_to if report_to is not None else prepared / "report.json"
     try:
-        report = module.run(prepared)
+        report = module.evaluate(prepared)
+        report.write(target)
     except (ValueError, OSError, ImportError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from exc
     except ProviderError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from exc
-    typer.echo(report.model_dump_json(indent=2) if as_json else report.render())
+    if as_json:
+        typer.echo(report.stages[0].model_dump_json(indent=2))
+        return
+    typer.echo(report.render())
+    typer.echo(f"wrote {target}")
 
 
 if __name__ == "__main__":  # pragma: no cover

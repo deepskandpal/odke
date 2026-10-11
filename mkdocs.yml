@@ -1,7 +1,7 @@
 site_name: openodke
 site_description: >-
-  Text in, a grounded knowledge graph out: ontology-guided knowledge extraction
-  for Neo4j or any graph store.
+  The verification layer between any extractor and the graph store: ground,
+  resolve, corroborate and evaluate extracted triples.
 site_url: https://openodke.dev/
 repo_url: https://github.com/deepskandpal/odke
 repo_name: deepskandpal/odke
@@ -41,6 +41,17 @@ validation:
   unrecognized_links: warn
   anchors: warn
 
+# Pages that were renamed or merged keep their old URLs.
+plugins:
+  - search
+  - redirects:
+      redirect_maps:
+        loaders-and-extraction.md: loading.md
+        sinks.md: stores.md
+        neo4j.md: stores.md#neo4j
+        inference.md: ontology.md#drafting-one-parked
+        triples.md: inputs.md
+
 markdown_extensions:
   - admonition
   - attr_list
@@ -50,11 +61,6 @@ markdown_extensions:
   - pymdownx.details
   - pymdownx.highlight
   - pymdownx.inlinehilite
-  # DECISIONS.md is rendered from the file in the repository root, not copied:
-  # one copy, so the site and the repo cannot disagree about a decision.
-  - pymdownx.snippets:
-      base_path: ["."]
-      check_paths: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -63,20 +69,23 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Installation: installation.md
+  - Install: installation.md
+  - Quickstart: quickstart.md
   - Concepts: concepts.md
-  - "Models & providers": models.md
-  - Ontology:
-      - "Loading, validating, importing": ontology.md
-      - Inference: inference.md
-  - "Loaders & extraction": loaders-and-extraction.md
-  - "Triples from any extractor": triples.md
-  - Grounding: grounding.md
-  - "Resolution & corroboration": resolution-and-corroboration.md
-  - Sinks:
-      - "All sinks": sinks.md
-      - Neo4j: neo4j.md
-  - "odke run": run.md
-  - "Evaluation (BYOLD)": evaluation.md
-  - Benchmarks: benchmarks.md
-  - Decisions: decisions.md
+  - Verify:
+      - "The Validator": validator.md
+      - Inputs: inputs.md
+      - "Loading documents": loading.md
+      - Grounding: grounding.md
+      - "Resolution & corroboration": resolution-and-corroboration.md
+      - "Write to a store": stores.md
+      - "odke run": run.md
+  - Evaluate:
+      - Evaluation: evaluation.md
+      - Benchmarks: benchmarks.md
+  - Reference:
+      - "Models & providers": models.md
+      - Ontology: ontology.md
+      - "Reference extractor": reference-extractor.md
+      - Stability: stability.md
+      - Decisions: decisions.md

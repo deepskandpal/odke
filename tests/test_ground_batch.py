@@ -443,7 +443,7 @@ def test_the_pipeline_hands_a_batching_grounder_each_document_once() -> None:
 
 
 def test_the_pipeline_refuses_a_batch_that_drops_facts() -> None:
-    """A grounder stamps, it never drops; the validator is the gate (DECISIONS #20)."""
+    """A grounder stamps, it never drops; the gate decides what is written (DECISIONS #20)."""
     pipeline = Pipeline(
         Ontology(),
         _NumberedExtractor(),

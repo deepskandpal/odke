@@ -40,6 +40,12 @@ NEO4J_REPLY = json.dumps(
 )
 
 
+LANGEXTRACT_REPLY = (
+    '```json\n{"extractions": [{"Person": "Marie Curie", '
+    '"Person_attributes": {"born_in": "Warsaw", "spouse": "Pierre Curie"}}]}\n```'
+)
+
+
 def fake_litellm(monkeypatch: pytest.MonkeyPatch, reply: str) -> list[dict[str, Any]]:
     """Patch LiteLLM to answer `reply`, recording every call it gets."""
     import litellm
@@ -138,11 +144,51 @@ def test_neo4j_graphrag_runs_on_any_litellm_model(monkeypatch: pytest.MonkeyPatc
             2000,
         )
     )
-    assert [(r["subject"], r["predicate"], r["object"]) for r in rows] == [
-        ("Marie Curie", "BORN_IN", "Warsaw")
+    # Read by openodke's own adapter: one row, grounded on the document it came from.
+    assert rows == [
+        {
+            "doc": "d1",
+            "subject": "Marie Curie",
+            "subject_type": "Person",
+            "predicate": "BORN_IN",
+            "object": "Warsaw",
+            "object_type": "City",
+        }
     ]
     assert calls[0]["model"] == "ollama/llama3.1"
     assert competitors.USAGE["output_tokens"] == 20
+
+
+def test_langextract_runs_on_any_litellm_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = fake_litellm(monkeypatch, LANGEXTRACT_REPLY)
+    rows = asyncio.run(
+        competitors.run_langextract(
+            [("d1", "Marie Curie was born in Warsaw.")],
+            ["City", "Person"],
+            [("Person", "BORN_IN", "City")],
+            "anthropic/claude-sonnet-5-5",
+            3000,
+        )
+    )
+    # Read by openodke's own adapter: the extraction's offsets are the citation, and an
+    # attribute that names no relation of the ontology is no triple.
+    assert rows == [
+        {
+            "doc": "d1",
+            "subject": "Marie Curie",
+            "subject_type": "Person",
+            "predicate": "BORN_IN",
+            "object": "Warsaw",
+            "object_type": "City",
+            "start": 0,
+            "end": 11,
+            "quote": "Marie Curie",
+        }
+    ]
+    prompt = calls[0]["messages"][0]["content"]
+    assert "- born_in: Person -> City" in prompt
+    assert competitors.EXAMPLE["text"] in prompt
+    assert calls[0]["model"] == "anthropic/claude-sonnet-5-5"
 
 
 def test_a_limited_run_scores_only_its_documents(
@@ -161,3 +207,15 @@ def test_a_limited_run_scores_only_its_documents(
         "path": str((out / "facts.jsonl").resolve()),
         "extractor": "lgt",
     }
+
+
+def test_a_budget_refuses_the_calls_once_it_is_spent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = fake_litellm(monkeypatch, LGT_REPLY)
+    monkeypatch.setitem(competitors.BUDGET, "usd", 0.0)
+    with pytest.raises(SystemExit, match="2 of 2 documents failed"):
+        competitors.extract("lgt", prepared(tmp_path, "openai/gpt-5"))
+    assert calls == []
+    usage = json.loads((tmp_path / "competitors" / "lgt" / "usage.json").read_text())
+    assert usage["budget_usd"] == 0.0 and usage["calls"] == 0

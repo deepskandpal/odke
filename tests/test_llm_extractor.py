@@ -25,6 +25,7 @@ from openodke import (
     Polarity,
     SourceTier,
 )
+from openodke.corroborate import SCHEMA_SLICE
 from openodke.extract import LLMExtractor, response_schema
 from openodke.ground import LLMGrounder, RetryPolicy
 from openodke.llm import (
@@ -39,6 +40,7 @@ from openodke.llm import (
     ReplayClient,
     ScriptedClient,
 )
+from openodke.prompts import get as get_prompt
 
 FIXTURES = Path(__file__).parent / "fixtures" / "llm"
 SONNET = ModelSpec(model="anthropic/claude-sonnet-5")
@@ -118,6 +120,16 @@ def test_sound_facts_survive_and_every_fault_is_dropped_and_recorded(people: Ont
     ]
     invented = {r.quote for r in extractor.rejections if r.reason == "quote not in the passage"}
     assert invented == {"born on 11 December 1815", "Augusta Ada King", "ada lovelace"}
+    # Each keeps the candidate as the model wrote it, as far as it got.
+    said = {(r.reason, r.subject, r.predicate, r.value) for r in extractor.rejections}
+    assert said == {
+        ("predicate not in the snippet", "Ada Lovelace", "spouse", "William King"),
+        ("quote not in the passage", "Ada Lovelace", "full_name", "Ada Lovelace"),
+        ("quote not in the passage", "Ada Lovelace", "full_name", "Augusta Ada King"),
+        ("quote not in the passage", "Ada Lovelace", "birth_date", "1815-12-11"),
+        ("type not in the prompt: 'City'", "London", None, None),
+        ("unknown polarity", "Ada Lovelace", "employer", "Babbage & Co"),
+    }
     # An extraction that yielded facts is silent: nothing counted, nothing kept.
     assert (extractor.empty_extractions, extractor.malformed) == (0, [])
 
@@ -144,7 +156,9 @@ def test_edges_qualifiers_and_identity_keys_come_from_the_ontology(people: Ontol
     # The edge's object is keyed exactly as the company's own facts are.
     assert worked.object_entity is not None and worked.object_entity.key == company.subject.key
     # Undeclared qualifiers are dropped; start_date is reconcilable, so no identity keys.
-    assert worked.qualifiers == {"start_date": "1833"}
+    # Beside it, the slice of the schema the model was shown for a Person (#163).
+    shown = people.snippet("Person").fingerprint
+    assert worked.qualifiers == {"start_date": "1833", SCHEMA_SLICE: shown}
     assert worked.identity_keys == ()
 
 
@@ -303,6 +317,11 @@ def test_a_malformed_reply_is_repaired_once(people: Ontology) -> None:
     repair = client.calls[1][0]
     assert [m.role for m in repair] == ["system", "user", "assistant", "user"]
     assert repair[2].content.startswith("Sure!")
+    # Each call names the registered prompt it sent, and that is the text it sent.
+    assert [c.prompt for c in extractor.calls] == ["extract@1", "extract.repair@1"]
+    assert extractor.prompts == ["extract@1", "extract.repair@1"]
+    assert repair[0].content.startswith(get_prompt("extract@1").text)
+    assert repair[3].content == get_prompt("extract.repair@1").text
     assert client.exhausted
     # Neither reply reported a cost: unknown, not zero.
     assert all(c.cost_usd is None for c in extractor.calls)

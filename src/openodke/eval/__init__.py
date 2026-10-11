@@ -18,6 +18,12 @@ says anything about any extractor, grounder or resolver. There is no corpus,
 no gold slice and no leaderboard. Brier, B-cubed and P/R/F1 are arithmetic,
 so the subpackage adds no dependency to the base install (DECISIONS #1).
 
+Every run the Evaluator scores can also be written as one `EvalReport`: a
+versioned JSON document whose shape does not depend on the stage, with 95%
+ranges on precision, recall and F1 (`openodke.eval.eval_report`).
+`evaluate_pipeline` points it at a whole pipeline: a command, a callable, or
+the files it wrote (`openodke.eval.harness`).
+
 Cost needs no labels: `CostMeter` wraps the `LLMClient` a stage was built
 with, so a run is measured without any stage Protocol changing.
 
@@ -26,10 +32,40 @@ without them: `evaluate_spans` splits cited span width by the grounder's
 verdict. Where the narrow spans are the `not_found` ones, the citations are too
 narrow to carry their claims, and the `not_found` rate measures that with no
 gold set at all.
+
+Whether a change between two runs was real is `openodke.eval.stats`: a paired
+bootstrap over the items both runs scored, three verdicts (better, worse,
+inconclusive) and the detection limit printed beside every one.
+`compare_items` runs it over two runs' per-item outcomes (`item_rows`).
+
+With no gold at all, `judged_precision` takes a judge's verdicts on every fact
+and a person's labels on a random sample, and corrects the judge's precision
+by prediction-powered inference (`openodke.eval.ppi`). With gold that is
+incomplete, `adjudicate` grounds each prediction the gold lacks three times and
+lists those supported in two as possibly missing from gold, for an adjudicated
+precision beside the strict one (`openodke.eval.adjudication`). And two or
+more pipelines on the same documents give each one's recall relative to the
+pool of what they found together, which overstates true recall and says so
+(`pool`, `openodke.eval.pooling`).
+
+Where a run lost its facts is `openodke.eval.diagnosis`: every miss in one cause
+bucket. What to change first is `openodke.eval.fixes`, each fix with the recall
+gain the arithmetic expects; and `openodke.eval.track` keeps each prediction
+beside what the next run measured. A near miss there, a prediction with the gold
+fact's relation and one end but the other end named another way, goes to the
+fact-equivalence judge (`FactJudge`, `openodke.eval.equivalence`), asked in
+both orders; one judged the same fact counts in a lenient score printed beside
+the strict one.
+
+What a grounder threw away is `openodke.eval.refusals`: a stratified sample of
+a run's refusals as sheets for a person, read back as the refusal precision
+with its Wilson interval (`read_refusals`, `report_refusals`).
 """
 
-from openodke.eval.ablation import per_document, run_ablation
+from openodke.eval.ablation import per_document, report_ablation, run_ablation
+from openodke.eval.adjudication import adjudicate
 from openodke.eval.calibration import evaluate_calibration, run_score
+from openodke.eval.compare import Comparison, ItemRow, compare_files, compare_items, item_rows
 from openodke.eval.cost import (
     CallRecord,
     CostMeter,
@@ -38,15 +74,21 @@ from openodke.eval.cost import (
     StageCost,
     compare_costs,
 )
+from openodke.eval.equivalence import FactJudge
+from openodke.eval.eval_report import EvalReport, check_report, read_report
 from openodke.eval.extraction import evaluate_extraction, match_extraction, run_extract
 from openodke.eval.formats import (
     LABEL_FORMATS,
     PREDICTION_FORMATS,
     CalibrationLabel,
+    FactPair,
+    FactPairLabel,
     GoldFact,
     GroundingLabel,
     LinkRow,
     PairLabel,
+    Refusal,
+    RefusalLabel,
     RouteLabel,
     RoutePrediction,
     ValidationLabel,
@@ -56,11 +98,23 @@ from openodke.eval.formats import (
     load_jsonl,
 )
 from openodke.eval.grounding import evaluate_grounding, grounding_ablation, kept, run_ground
+from openodke.eval.harness import evaluate_pipeline
+from openodke.eval.pooling import pool, report_pool
+from openodke.eval.ppi import judged_precision, report_precision
+from openodke.eval.refusals import read_refusals, report_refusals
 from openodke.eval.report import StageReport
 from openodke.eval.resolution import as_triples, evaluate_resolution, links_from_clusters
 from openodke.eval.routing import evaluate_routing, run_route
 from openodke.eval.sinks import assert_idempotent, check_idempotency, jsonl_counts
 from openodke.eval.spans import evaluate_spans, load_facts, span_width
+from openodke.eval.stats import (
+    McNemar,
+    Paired,
+    bootstrap_interval,
+    detection_limit,
+    mcnemar,
+    paired_bootstrap,
+)
 from openodke.eval.validation import evaluate_validation, run_validate
 
 __all__ = [
@@ -68,40 +122,68 @@ __all__ = [
     "PREDICTION_FORMATS",
     "CalibrationLabel",
     "CallRecord",
+    "Comparison",
     "CostMeter",
     "CostReport",
+    "EvalReport",
+    "FactJudge",
+    "FactPair",
+    "FactPairLabel",
     "GoldFact",
     "GroundingLabel",
+    "ItemRow",
     "LinkRow",
+    "McNemar",
     "MeteredClient",
     "PairLabel",
+    "Paired",
+    "Refusal",
+    "RefusalLabel",
     "RouteLabel",
     "RoutePrediction",
     "StageCost",
     "StageReport",
     "ValidationLabel",
     "ValidationPrediction",
+    "adjudicate",
     "as_triples",
     "assert_idempotent",
+    "bootstrap_interval",
     "check_idempotency",
+    "check_report",
+    "compare_files",
+    "compare_items",
     "compare_costs",
     "describe",
+    "detection_limit",
     "dump_jsonl",
     "evaluate_calibration",
     "evaluate_extraction",
     "evaluate_grounding",
+    "evaluate_pipeline",
     "evaluate_resolution",
     "evaluate_routing",
     "evaluate_spans",
     "evaluate_validation",
     "grounding_ablation",
+    "item_rows",
     "jsonl_counts",
+    "judged_precision",
     "kept",
     "links_from_clusters",
     "load_facts",
     "load_jsonl",
     "match_extraction",
+    "mcnemar",
+    "paired_bootstrap",
     "per_document",
+    "pool",
+    "read_refusals",
+    "read_report",
+    "report_ablation",
+    "report_pool",
+    "report_precision",
+    "report_refusals",
     "run_ablation",
     "run_extract",
     "run_ground",

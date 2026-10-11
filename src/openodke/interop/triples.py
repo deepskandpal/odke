@@ -21,6 +21,11 @@ The ontology, when there is one, decides what the extractor's labels cannot.
 A predicate whose range is an entity type makes an edge, and a subject with no
 type takes the predicate's domain. Without one, a string object is an entity
 unless `object_type` names a literal type, and anything untyped is a `Thing`.
+
+The format is versioned (`schema_version`, "1.0"; DECISIONS #48), and
+`triples.schema.json`, beside this file, is its JSON Schema for writers in any
+language. A row may name the version it was written to, and one that names
+another major version is refused by name. Left out, a row is read as this one.
 """
 
 from __future__ import annotations
@@ -28,12 +33,12 @@ from __future__ import annotations
 import json
 import warnings
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from pydantic import Field, ValidationError, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 
 from openodke.extract._common import entity_key
 from openodke.ground.span import Counts
@@ -50,12 +55,16 @@ from openodke.types import (
     SpanOrigin,
 )
 
+# The format's version: a minor adds optional fields, a major changes them.
+SCHEMA_VERSION = "1.0"
+SCHEMA_PATH = Path(__file__).with_name("triples.schema.json")
+
 # What an entity is called when nothing says what it is.
 THING = "Thing"
 # `object_type` values that name a literal rather than a node: the ontology's
 # literal ranges, and "text", which graph extractors use for a string node.
 LITERAL_TYPES = frozenset(
-    {"string", "text", "integer", "number", "float", "boolean", "date", "datetime"}
+    {"string", "text", "integer", "number", "float", "boolean", "date", "datetime", "quantity"}
 )
 
 
@@ -68,6 +77,8 @@ class TripleRow(Frozen):
     load its text like any other.
     """
 
+    # The format version the row was written to; left out, it is this one.
+    schema_version: str = SCHEMA_VERSION
     doc: str = Field(min_length=1)
     subject: str = Field(min_length=1)
     predicate: str = Field(min_length=1)
@@ -87,6 +98,18 @@ class TripleRow(Frozen):
     # Give one to join the row's fact to labels or to another run.
     id: str | None = None
 
+    @field_validator("schema_version")
+    @classmethod
+    def _one_major_version(cls, value: str) -> str:
+        major, _, minor = value.partition(".")
+        if not (major.isdigit() and minor.isdigit()):
+            raise ValueError(
+                f"schema_version {value!r} is not major.minor, such as {SCHEMA_VERSION!r}"
+            )
+        if major != SCHEMA_VERSION.split(".")[0]:
+            raise ValueError(f"schema_version {value!r}: this openodke reads {SCHEMA_VERSION}")
+        return value
+
     @model_validator(mode="after")
     def _offsets_come_in_pairs(self) -> TripleRow:
         if (self.start is None) != (self.end is None):
@@ -98,22 +121,29 @@ class TripleRow(Frozen):
         return self
 
 
-def read_triples(source: str | Path | Iterable[TripleRow | Mapping[str, Any]]) -> list[TripleRow]:
-    """Rows from a JSON Lines file, or from rows already in hand.
+def read_triples(
+    source: str | Path | Iterable[TripleRow | Mapping[str, Any]],
+) -> Iterator[TripleRow]:
+    """Rows from a JSON Lines file, or from rows already in hand, one at a time (#158).
+
+    An iterator: a file is read a line at a time as the rows are asked for, so
+    a file of any size can be streamed. `list(read_triples(path))` reads it all.
 
     A bad row is an error naming its line, never a row skipped in silence: a
-    triple that cannot be read is a fact that would vanish from the count.
+    triple that cannot be read is a fact that would vanish from the count. It
+    is raised when the iterator reaches it.
     """
     if not isinstance(source, str | Path):
-        return [r if isinstance(r, TripleRow) else TripleRow.model_validate(r) for r in source]
+        for row in source:
+            yield row if isinstance(row, TripleRow) else TripleRow.model_validate(row)
+        return
     path = Path(source)
-    rows: list[TripleRow] = []
     with path.open(encoding="utf-8") as fh:
         for number, line in enumerate(fh, start=1):
             if not line.strip():
                 continue
             try:
-                rows.append(TripleRow.model_validate(json.loads(line)))
+                row = TripleRow.model_validate(json.loads(line))
             except json.JSONDecodeError as exc:
                 raise ValueError(f"{path}:{number}: not JSON: {exc.msg}") from None
             except ValidationError as exc:
@@ -122,7 +152,7 @@ def read_triples(source: str | Path | Iterable[TripleRow | Mapping[str, Any]]) -
                 raise ValueError(
                     f"{path}:{number}: {where + ': ' if where else ''}{error['msg']}"
                 ) from None
-    return rows
+            yield row
 
 
 def to_fact(
@@ -180,6 +210,11 @@ class TriplesExtractor:
     chunk, so leave the chunker out; a router that skips a first chunk skips
     that document's triples. `stats` counts how each row's evidence was made,
     the rows whose text never came, and the rows whose file name was ambiguous.
+
+    A file is read through once when the stage is made, so a bad row is an
+    error before anything runs, and its rows are read again, and kept, the
+    first time they are asked for. `feed(rows)` swaps in the next
+    micro-batch's rows, which is how the Validator streams a file (#158).
     """
 
     name = "triples"
@@ -194,9 +229,14 @@ class TriplesExtractor:
     ) -> None:
         self.extractor = extractor
         self.confidence = confidence
-        self.rows: dict[str, list[TripleRow]] = defaultdict(list)
-        for row in read_triples(triples):
-            self.rows[row.doc].append(row)
+        # The file, or the rows, the stage was made from.
+        self.source = triples
+        self._rows: dict[str, list[TripleRow]] | None = None
+        if isinstance(triples, str | Path):
+            for _ in read_triples(triples):
+                pass
+        else:
+            self._rows = _by_doc(read_triples(triples))
         # Filled by `odke run` with the loaded inputs (DECISIONS #19).
         self.documents: dict[str, Document] = {doc.id: doc for doc in documents}
         # Each row `doc` and the document its rows went to. A file name is not
@@ -205,6 +245,38 @@ class TriplesExtractor:
         self._served: dict[str, str] = {}
         self._ambiguous: set[str] = set()
         self._counts = Counts("rows", "cited", "quoted", "quote_not_found", "context")
+        # What rows fed before the current ones left unmatched or ambiguous.
+        self._unmatched = 0
+        self._unmatched_docs: list[str] = []
+        self._ambiguous_rows = 0
+
+    @property
+    def rows(self) -> dict[str, list[TripleRow]]:
+        """The rows by the text they name, read from the file the first time they are asked for."""
+        if self._rows is None:
+            self._rows = _by_doc(read_triples(self.source))
+        return self._rows
+
+    @property
+    def served(self) -> Mapping[str, str]:
+        """Each row `doc` that found its text, and the id of the document its rows went to."""
+        return self._served
+
+    def feed(self, rows: Iterable[TripleRow | Mapping[str, Any]]) -> None:
+        """The next micro-batch's rows, in place of the ones held (#158).
+
+        Which document each name went to is kept, so a name split across
+        micro-batches goes to one text, and the counts go on: the rows replaced
+        stay counted as unmatched or ambiguous when they were.
+        """
+        if self._rows is not None:
+            unmatched = [doc for doc in self._rows if doc not in self._served]
+            self._unmatched += sum(len(self._rows[doc]) for doc in unmatched)
+            self._unmatched_docs = sorted({*self._unmatched_docs, *unmatched})[:20]
+            self._ambiguous_rows += sum(
+                len(held) for doc, held in self._rows.items() if doc in self._ambiguous
+            )
+        self._rows = _by_doc(read_triples(rows))
 
     def extract(self, chunk: Chunk, ontology: Ontology) -> list[Fact]:
         if chunk.index != 0:
@@ -237,15 +309,26 @@ class TriplesExtractor:
     def stats(self) -> dict[str, Any]:
         """Rows replayed, by how their evidence was made; rows no document or two matched."""
         counts: dict[str, Any] = dict(self._counts.snapshot())
-        unmatched = [doc for doc in self.rows if doc not in self._served]
-        counts["unmatched_rows"] = sum(len(self.rows[doc]) for doc in unmatched)
-        if unmatched:
-            counts["unmatched_docs"] = sorted(unmatched)[:20]
+        rows = self.rows
+        unmatched = [doc for doc in rows if doc not in self._served]
+        counts["unmatched_rows"] = self._unmatched + sum(len(rows[doc]) for doc in unmatched)
+        named = sorted({*self._unmatched_docs, *unmatched})[:20]
+        if named:
+            counts["unmatched_docs"] = named
         ambiguous = sorted(self._ambiguous)
-        counts["ambiguous_rows"] = sum(len(self.rows[doc]) for doc in ambiguous)
+        counts["ambiguous_rows"] = self._ambiguous_rows + sum(
+            len(rows[doc]) for doc in ambiguous if doc in rows
+        )
         if ambiguous:
             counts["ambiguous_docs"] = ambiguous[:20]
         return counts
+
+
+def _by_doc(rows: Iterable[TripleRow]) -> dict[str, list[TripleRow]]:
+    grouped: dict[str, list[TripleRow]] = defaultdict(list)
+    for row in rows:
+        grouped[row.doc].append(row)
+    return grouped
 
 
 def _evidence(row: TripleRow, doc: Document) -> Evidence:
@@ -324,6 +407,8 @@ def _file_name(doc: Document) -> str | None:
 
 __all__ = [
     "LITERAL_TYPES",
+    "SCHEMA_PATH",
+    "SCHEMA_VERSION",
     "THING",
     "TripleRow",
     "TriplesExtractor",

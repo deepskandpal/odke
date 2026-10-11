@@ -13,9 +13,11 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from openodke._batch import incomplete, is_config_error, told
 from openodke.corroborate.normalize import normalize_value
 from openodke.extract._common import Documents, index_documents
 from openodke.extract.pattern import PatternExtractor
+from openodke.llm.budget import BudgetExceeded
 from openodke.ontology import Ontology
 from openodke.stages import Extractor
 from openodke.types import Chunk, Document, Fact
@@ -128,18 +130,50 @@ class HybridExtractor:
     def extract_many(self, chunks: Sequence[Chunk], ontology: Ontology) -> list[list[Fact]]:
         docs = [self._document(chunk) for chunk in chunks]
         reports = [self.report.setdefault(d.id, PathReport(modality=d.modality)) for d in docs]
+        # A chunk that fails on either path fails alone (`openodke._batch`).
+        failures: dict[int, Exception] = {}
         # The free path first, chunk by chunk, so its failure costs no model call.
-        pattern = [
-            _run(self.pattern, chunk, doc, ontology) if doc.modality != "unstructured" else None
-            for chunk, doc in zip(chunks, docs, strict=True)
+        pattern: list[list[Fact] | None] = []
+        for at, (chunk, doc) in enumerate(zip(chunks, docs, strict=True)):
+            if doc.modality == "unstructured":
+                pattern.append(None)
+                continue
+            try:
+                pattern.append(_run(self.pattern, chunk, doc, ontology))
+            except Exception as exc:
+                if is_config_error(exc) or isinstance(exc, BudgetExceeded):
+                    raise
+                pattern.append(None)
+                failures[at] = exc
+        prose = [
+            i for i, doc in enumerate(docs) if doc.modality != "structured" and i not in failures
         ]
-        prose = [i for i, doc in enumerate(docs) if doc.modality != "structured"]
         model: dict[int, list[Fact]] = {}
+        stop: BudgetExceeded | None = None
         if self.llm is not None and prose:
-            found = self._model(
-                self.llm, [chunks[i] for i in prose], [docs[i] for i in prose], ontology
-            )
-            model = dict(zip(prose, found, strict=True))
+            try:
+                found: list[list[Fact] | None] = list(
+                    self._model(
+                        self.llm, [chunks[i] for i in prose], [docs[i] for i in prose], ontology
+                    )
+                )
+            except BudgetExceeded as exc:
+                # The pattern path's facts cost nothing and stand; the model
+                # path keeps the chunks it finished.
+                stop = exc
+                partial = exc.partial
+                found = (
+                    list(partial)
+                    if isinstance(partial, list) and len(partial) == len(prose)
+                    else [None] * len(prose)
+                )
+                failures.update({prose[j]: e for j, e in exc.failures.items()})
+            except Exception as exc:
+                if is_config_error(exc) or (got := told(exc, len(prose))) is None:
+                    raise
+                found, theirs = got
+                failures.update({prose[j]: e for j, e in theirs.items()})
+            model = {i: facts for i, facts in zip(prose, found, strict=True) if facts is not None}
         out: list[list[Fact]] = []
         for i, report in enumerate(reports):
             report.chunks += 1
@@ -155,7 +189,46 @@ class HybridExtractor:
             kept = merge(candidates, ontology=ontology)
             report.merged += len(candidates) - len(kept)
             out.append(kept)
-        return out
+        if stop is None and not failures:
+            return out
+        # None for a chunk that failed, and for one with no path finished: the
+        # stop reached it first.
+        partial_out: list[list[Fact] | None] = [
+            None
+            if i in failures or (pattern[i] is None and i in prose and i not in model)
+            else facts
+            for i, facts in enumerate(out)
+        ]
+        if stop is not None:
+            stop.partial = partial_out
+            stop.failures = failures
+            raise stop
+        raise incomplete(failures, partial_out)
+
+    def offered(self, ontology: Ontology) -> list[str] | None:
+        """The predicates the model path is shown, or None when it cannot say.
+
+        Only the model path's: the pattern path reads whatever predicate a
+        column names, so it withholds nothing a coverage report could name.
+        """
+        offered = getattr(self.llm, "offered", None)
+        if not callable(offered):
+            return None
+        shown = offered(ontology)
+        return None if shown is None else list(shown)
+
+    def reextract(
+        self,
+        window: Chunk,
+        relations: Sequence[str],
+        already: Sequence[Fact],
+        ontology: Ontology,
+    ) -> list[Fact]:
+        """The model path's re-extract (#102): a gap is prose, and prose is the model's."""
+        hook = getattr(self.llm, "reextract", None)
+        if not callable(hook):
+            raise TypeError("this HybridExtractor has no model path that can re-extract")
+        return list(hook(window, list(relations), list(already), ontology))
 
     def _document(self, chunk: Chunk) -> Document:
         doc = self.documents.get(chunk.doc_id)
@@ -174,22 +247,39 @@ class HybridExtractor:
         made = calls if isinstance(calls, list) else []
         many = getattr(llm, "extract_many", None)
         if not callable(many):
-            found = []
-            for chunk, doc in zip(chunks, docs, strict=True):
+            found: list[list[Fact] | None] = []
+            failed: dict[int, Exception] = {}
+            for at, (chunk, doc) in enumerate(zip(chunks, docs, strict=True)):
                 seen = len(made)
-                found.append(_run(llm, chunk, doc, ontology))
-                for call in made[seen:]:
-                    self.report[doc.id].count_call(call)
-            return found
+                try:
+                    found.append(_run(llm, chunk, doc, ontology))
+                except BudgetExceeded as stop:
+                    stop.partial = [*found, *([None] * (len(chunks) - len(found)))]
+                    stop.failures = failed
+                    raise
+                except Exception as exc:
+                    if is_config_error(exc):
+                        raise
+                    found.append(None)
+                    failed[at] = exc
+                finally:
+                    for call in made[seen:]:
+                        self.report[doc.id].count_call(call)
+            if failed:
+                raise incomplete(failed, found)
+            return [facts for facts in found if facts is not None]
         for doc in docs:
             _register(llm, doc)
         seen = len(made)
-        batched = [list(facts) for facts in many(chunks, ontology)]
-        # A batch's calls are told apart by the document each one names.
-        for call in made[seen:]:
-            report = self.report.get(getattr(call, "doc_id", ""))
-            if report is not None:
-                report.count_call(call)
+        try:
+            batched = [list(facts) for facts in many(chunks, ontology)]
+        finally:
+            # A batch's calls are told apart by the document each one names; a
+            # batch a budget stopped still made the calls it made.
+            for call in made[seen:]:
+                report = self.report.get(getattr(call, "doc_id", ""))
+                if report is not None:
+                    report.count_call(call)
         return batched
 
     def totals(self) -> PathReport:

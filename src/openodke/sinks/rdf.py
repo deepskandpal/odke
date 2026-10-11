@@ -17,12 +17,13 @@ from openodke.ontology import Ontology
 from openodke.sinks.neo4j import (
     entities_of,
     is_outvoted,
+    is_retired,
     is_scoped,
     provenance_of,
     signature_of,
     storable,
 )
-from openodke.types import Evidence, Fact, KnowledgeGraph, LinkKind, Polarity
+from openodke.types import Evidence, Fact, KnowledgeGraph, LinkKind, Polarity, Support
 
 if TYPE_CHECKING:
     from rdflib import Graph, URIRef
@@ -61,6 +62,7 @@ _FACT_PROVENANCE = (
     "valid_to",
     "retrieved_at",
     "extracted_at",
+    "retired_at",
 )
 # An ontology literal range as the XSD datatype it is written as.
 XSD_RANGES = {
@@ -97,13 +99,17 @@ class RdfSink:
       its provenance hangs off that node: `odke:polarity`, `odke:confidence`,
       `odke:support`, both clocks, `odke:identity_keys`, the qualifiers under
       `<schema>qualifier/`, and one `odke:evidence` node per source with
-      `odke:doc_id`, `odke:uri`, `odke:start`/`odke:end`, `odke:tier` and
-      `odke:retrieved_at`. The node plays the part the relationship plays in
-      Neo4j and carries the same property names. The IRI is the fact's
+      `odke:doc_id`, `odke:uri`, `odke:start`/`odke:end`, `odke:span_origin`
+      (who chose the span: `cited`, `located` or `context`), `odke:tier` and
+      `odke:retrieved_at`, and one `odke:supported_by` node per independent
+      source with `odke:source`, an `odke:doc_id` per document, `odke:tier`
+      and `odke:retrieved_at`. The node plays the part the relationship plays
+      in Neo4j and carries the same property names. The IRI is the fact's
       signature, so a rerun with new ids and clocks addresses the same node.
     - The plain triple `<s> <schema><predicate> <o>` is written **only** for
-      an asserted, unscoped fact the corroborator did not vote down — the same
-      rule that decides the Neo4j projection. It is what a SPARQL query reaches
+      an asserted, unscoped fact the corroborator did not vote down and the
+      reconciler did not retire — the same rule that decides the Neo4j
+      projection. It is what a SPARQL query reaches
       for first, and it is a claim of truth: a denial written that way would
       say the opposite of its source, "uptime 99.9%" without its percentile
       says something no source said, and a value that lost its contest is the
@@ -136,15 +142,19 @@ class RdfSink:
 
     With an `ontology`, the output also declares its schema — `owl:Class`
     with `rdfs:subClassOf`, `owl:ObjectProperty` or `owl:DatatypeProperty`
-    with domain, range and `owl:FunctionalProperty` for single cardinality —
-    so the file describes itself and `Ontology.from_owl` reads it back. A
+    with domain, range, `owl:FunctionalProperty` for single cardinality and
+    `owl:inverseOf` / `owl:SymmetricProperty` for inverses — so the file
+    describes itself and `Ontology.from_owl` reads it back. A
     literal value is then typed with its predicate's range, `"1815-12-10"`
     as an `xsd:date`, so SPARQL compares it as one.
 
     Two facts with one signature are one statement node, carrying the later
     fact, as successive `SET r = props` would leave a Neo4j relationship.
-    The file is rewritten on every `write`.
+    The file is rewritten on every `write`, so it does not stream.
     """
+
+    # Each write is the whole graph (`openodke.stream.streams`).
+    streams = False
 
     def __init__(
         self,
@@ -315,6 +325,7 @@ class _Builder:
             and fact.polarity is Polarity.ASSERTED
             and not is_scoped(fact)
             and not is_outvoted(fact)
+            and not is_retired(fact)
         ):
             self.g.add((subject, predicate, obj))
 
@@ -333,6 +344,21 @@ class _Builder:
         for key, value in fact.qualifiers.items():
             self._put(node, self._iri(f"{sink.schema}qualifier/{quote(key, safe='')}"), value)
         self._evidence(node, fact.evidence)
+        self._support(node, fact.supported_by)
+
+    def _support(self, owner: URIRef, entries: tuple[Support, ...]) -> None:
+        """One `odke:Support` node per independent source, in the evidence's vocabulary."""
+        from rdflib.namespace import RDF
+
+        for i, entry in enumerate(entries):
+            node = self._iri(f"{owner}/support/{i}")
+            self.g.add((owner, self._vocab("supported_by"), node))
+            self.g.add((node, RDF.type, self._vocab("Support")))
+            self._put(node, self._vocab("source"), entry.source)
+            for doc_id in entry.doc_ids:
+                self._put(node, self._vocab("doc_id"), doc_id)
+            self._put(node, self._vocab("tier"), entry.tier.value)
+            self._put(node, self._vocab("retrieved_at"), entry.retrieved_at)
 
     def _evidence(self, owner: URIRef, evidence: tuple[Evidence, ...]) -> None:
         from rdflib import Literal
@@ -349,6 +375,7 @@ class _Builder:
                 self._put(node, self._vocab("start"), item.span.start)
                 self._put(node, self._vocab("end"), item.span.end)
                 self._put(node, self._vocab("quote"), item.span.quote)
+            self._put(node, self._vocab("span_origin"), item.span_origin.value)
             self._put(node, self._vocab("tier"), item.tier.value)
             self._put(node, self._vocab("retrieved_at"), item.retrieved_at)
 
@@ -401,6 +428,10 @@ class _Builder:
             g.add((prop, RDF.type, OWL.ObjectProperty if edge else OWL.DatatypeProperty))
             if predicate.cardinality == "single":
                 g.add((prop, RDF.type, OWL.FunctionalProperty))
+            if predicate.symmetric:
+                g.add((prop, RDF.type, OWL.SymmetricProperty))
+            if predicate.inverse_of is not None:
+                g.add((prop, OWL.inverseOf, self._iri(sink.term_iri(predicate.inverse_of))))
             self._put(prop, RDFS.label, predicate.label)
             self._put(prop, RDFS.comment, predicate.description)
             for alias in predicate.aliases:

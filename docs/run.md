@@ -12,13 +12,18 @@ left as the pass-through.
 odke run examples/e2e/odke.yaml                          # run it and write the graph
 odke run examples/e2e/odke.yaml --dry-run                # load, extract and ground; print what would be written
 odke run examples/e2e/odke.yaml --model ollama/llama3.1  # every role on one model, whatever the config says
+odke run examples/e2e/odke.yaml --budget-usd 1.50        # stop cleanly before spending more, keeping what is done
+odke run --from-manifest examples/e2e/out                # run again what a run's manifest recorded
+odke run examples/e2e/odke.yaml --log-format json        # every stage, document and model call as a JSON line
+odke run examples/e2e/odke.yaml --batch-size 500         # stream: 500 documents at a time, in bounded memory
 ```
 
 | Exit status | Means |
 |---|---|
 | 0 | the run finished (a dry run included) |
 | 2 | the config cannot run: a bad key, a missing file, a missing extra |
-| 1 | the run failed: a provider error, or a file that could not be read or written |
+| 1 | the run failed: a provider error outside any one document, every document failing, or a file that could not be read or written |
+| 3 | the run stopped at its [budget](#budgets): what it kept was written, and the report says where it stopped |
 
 A YAML config (`.yaml`, `.yml`) needs the `yaml` extra; the same keys as JSON need
 nothing. [`examples/run.yaml`](https://github.com/deepskandpal/odke/blob/main/examples/run.yaml)
@@ -39,6 +44,9 @@ models:
   ground: {model: anthropic/claude-haiku-4-5-20251001, max_tokens: 256}
   replay: {extract: recorded/extract.json, ground: recorded/ground.json}
   meter: true
+  cache: .odke-cache               # answer a call asked before from here
+  budget: {usd: 1.50, calls: 2000} # stop cleanly here, keeping what is done
+  limits: {anthropic: 8}           # calls in flight per provider, every stage
 stages:
   chunker: {use: sentence, max_words: 120}
   extractor: hybrid                # the one required stage
@@ -47,9 +55,15 @@ stages:
   resolver: native
   corroborator: signature
   scorer: evidence
-  validator: verdict
+  gate: verdict
   sink: {use: jsonl, directory: out}
 bootstrap: false
+coverage: true
+reextract: {windows: 3}            # off unless named
+store_lookup: neo4j                # off unless named
+tenant: acme                       # key the store by tenant; off unless named
+manifest: runs/last.json           # the run manifest here too
+batch_size: 500                    # stream; off unless named
 ```
 
 | Key | Required | What it is |
@@ -57,9 +71,15 @@ bootstrap: false
 | `ontology` | yes | A JSON or YAML ontology (`.yaml`/`.yml` is read as YAML). Loaded strictly, so a schema with validation errors stops the run before anything is spent. |
 | `inputs` | yes, at least one | Files or directories. A string is a path read by the default loader; a mapping is `{path, loader}`. |
 | `pythonpath` | no | Directories put on `sys.path` before a `package.module:Name` stage is imported. |
-| `models` | no | Which model does which job, recorded responses, and the cost meter. |
+| `models` | no | Which model does which job, recorded responses, the cost meter, the response cache and the budget. |
 | `stages` | yes | Which implementation fills each of the thirteen stages. Only `extractor` is required. |
 | `bootstrap` | no, default `false` | Apply the ontology's constraints through the sink before the first write. |
+| `coverage` | no, default `true` | Count what extraction left behind in each document, with no model ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)). |
+| `reextract` | no, off by default | Hand those gaps back to the extractor and ground what returns: `true`, or `{windows: N}`, the most windows per document (default 3). The extractor must have a `reextract` method (`llm` and `hybrid` do). Not part of `odke eval ablation` ([the re-extract hook](grounding.md#handing-a-gap-back-the-re-extract-hook)). |
+| `store_lookup` | no, off by default | Resolve each batch against what the store already holds, without loading it: `neo4j`, or `package.module:Name` for a `StoreLookup` of your own ([below](#store_lookup)). |
+| `manifest` | no | Where the [run manifest](#the-run-manifest) is written, besides each JSONL sink's `manifest.json`. |
+| `batch_size` | no, off by default | Stream the run: load, run and write that many documents at a time ([Streaming](#streaming)). `--batch-size` overrides it. Not a Neo4j sink's own `batch_size`, which is rows per write transaction. |
+| `tenant` | no, off by default | Key everything the run writes to, and reads from, its store by this tenant, so two tenants' identical facts never merge ([Tenants](stores.md#tenants)). `--tenant` overrides it. Part of the config the run manifest hashes, so a replay keeps it, and `--from-manifest` takes no `--tenant`. |
 
 Every relative path (the ontology, each input, `pythonpath`, replay files, a sink's
 output) resolves against the directory the config file is in, so a config runs the
@@ -71,7 +91,7 @@ An input's `loader` is a stage spec like any other: a short name, with options a
 extra keys. An input without one is read by `stages.loader`, and when that is left
 out too, by the `directory` loader, which reads every suffix it knows and warns
 about and skips a file whose extra is missing
-([Loaders](loaders-and-extraction.md#directories)).
+([Loading documents](loading.md#directories)).
 
 **Document ids are source paths.** A document read from a file gets the file's path
 relative to the config as its id, plus `#L<line>` for a record with a source line
@@ -109,6 +129,14 @@ and it is sent exactly as written, `0` included.
 - **`meter: true`** wraps every model client in a `CostMeter` and puts calls,
   tokens, USD and latency per stage into the graph's stats. A cost no provider
   reported stays unknown rather than being counted as zero.
+- **`cache`** names a directory of model answers, so a call asked before is
+  answered from it for nothing ([the response cache](models.md#the-response-cache)).
+  `--cache DIR` overrides it for one run.
+- **`budget`** is the most the run may spend: `usd`, `calls`, `input_tokens`,
+  `output_tokens`, each optional ([Budgets](#budgets)). `--budget-usd` and
+  `--budget-calls` override it for one run.
+- **`limits`** caps the calls in flight to each provider it names, across every
+  stage: `{anthropic: 8}` ([Concurrency per provider](models.md#concurrency-per-provider)).
 
 ### `stages`
 
@@ -119,7 +147,7 @@ keyword argument, and an option it does not take is an error listing the ones it
 does.
 
 **A stage left out is the pass-through** from `openodke.stages`
-([DECISIONS #20](decisions.md)), and the stats say nothing about it.
+([DECISIONS #20](decisions.md#20)), and the stats say nothing about it.
 
 **The scorer is the exception.** Left out, `odke run` fills it with `evidence`
 (`EvidenceScorer`), because the pass-through leaves `Fact.confidence` at whatever
@@ -135,7 +163,7 @@ satisfy the stage's Protocol, which is checked when the config is built rather t
 discovered halfway through a run.
 
 **`delegated`**, with `to:`, marks a stage the store does itself
-([DECISIONS #21](decisions.md)): `resolver: {use: delegated, to: neo4j-graphrag:FuzzyMatchResolver}`.
+([DECISIONS #21](decisions.md#21)): `resolver: {use: delegated, to: neo4j-graphrag:FuzzyMatchResolver}`.
 Every stage but the chunker and the inferrer accepts it.
 
 **What `odke run` sets itself** is refused from the file with
@@ -149,14 +177,14 @@ would have to be a Python object, such as a corroborator's `source` callable.
 | `loader` | `directory`, `text`, `markdown`, `html`, `pdf`, `docx`, `csv`, `tsv`, `json`, `jsonl`, `parquet` | the `openodke.loaders` classes | `tier`, and each class's own: `encoding`, `modality`, `records`, `delimiter`, `columns`, `pattern`; `html`: `strip_boilerplate`; `pdf`: `per_page`, `page_separator` |
 | `chunker` | `sentence`, `passthrough` | `SentenceChunker` | `max_words`, `overlap` |
 | `router` | `passthrough`, `delegated` | — | your own is `package.module:Name` |
-| `extractor` | `pattern`, `llm`, `hybrid`, `triples` | `PatternExtractor`, `LLMExtractor`, `HybridExtractor`, `TriplesExtractor` | `pattern`: `mappings`, `subject_type`, `confidence`; `llm`: `types`, `snippet_limit`, `confidence`, `repairs`, `retry` and `max_workers` (as the grounder's); `hybrid`: `llm` (options, or `false`), `pattern` (options); `triples`: `path` (required), `extractor`, `confidence` — another extractor's output, [in the triples format](triples.md) |
-| `grounder` | `span`, `llm`, `passthrough`, `delegated` | `SpanGrounder`, `LLMGrounder` | `llm`: `max_workers`, `retry` (`attempts`, `base_delay`, `multiplier`, `max_delay`, `jitter`) |
+| `extractor` | `pattern`, `llm`, `hybrid`, `triples` | `PatternExtractor`, `LLMExtractor`, `HybridExtractor`, `TriplesExtractor` | `pattern`: `mappings`, `subject_type`, `confidence`; `llm`: `types`, `snippet_limit`, `confidence`, `repairs`, `retry` and `max_workers` (as the grounder's); `hybrid`: `llm` (options, or `false`), `pattern` (options); `triples`: `path` (required), `extractor`, `confidence` — another extractor's output, [in the triples format](inputs.md) |
+| `grounder` | `span`, `llm`, `passthrough`, `delegated` | `SpanGrounder`, `LLMGrounder` | `llm`: `max_workers`, `retry` (`attempts`, `base_delay`, `multiplier`, `max_delay`, `jitter`), `context`, `verdicts`, `locate` ([the span locator](grounding.md#locating-spans)), `widen` ([widen and retry](grounding.md#widen-and-retry); `odke run --widen` sets it) |
 | `normalizer` | `value`, `passthrough`, `delegated` | `ValueNormalizer` | `day_first`, `person_types` |
-| `resolver` | `native`, `passthrough`, `delegated` | `NativeResolver` | `threshold`, `nudge_up`, `nudge_down`, `max_block` |
-| `corroborator` | `signature`, `passthrough`, `delegated` | `SignatureCorroborator` | `half_life_days`, `freshness_floor`, `intervals` |
+| `resolver` | `native`, `passthrough`, `delegated` | `NativeResolver` | `threshold`, `nudge_up`, `nudge_down`, `max_block`, `judge` ([the pair judge](#the-pair-judge)), `normalize_batch` (default `false`; `true` merges [the batch's look-alikes](resolution-and-corroboration.md#normalising-mentions-in-a-batch)), `context_floor`; `odke run` hands it the ontology, for its types' aliases |
+| `corroborator` | `signature`, `passthrough`, `delegated` | `SignatureCorroborator` | `half_life_days`, `freshness_floor`, `intervals`, `near_duplicates` |
 | `scorer` | `evidence` (the default), `passthrough`, `delegated` | `EvidenceScorer` | `prior`, `verdict_weights` |
-| `validator` | `verdict`, `passthrough`, `delegated` | `VerdictValidator` | `refuse_not_found` |
-| `sink` | `jsonl`, `neo4j`, `cypher_file`, `neo4j_admin_csv`, `rdf`, `networkx` | the [sinks](sinks.md) | see [below](#sinks) |
+| `gate` | `verdict`, `passthrough`, `delegated` | `VerdictGate` | `refuse_not_found` |
+| `sink` | `jsonl`, `neo4j`, `cypher_file`, `neo4j_admin_csv`, `rdf`, `networkx` | the [sinks](stores.md) | see [below](#sinks) |
 | `constrainer` | `neo4j`, `passthrough`, `delegated` | `Neo4jConstrainer` | — |
 | `inferrer` | `passthrough` only | — | `odke run` never infers ([below](#the-inferrer)) |
 
@@ -166,12 +194,12 @@ would have to be a Python object, such as a corroborator's `source` callable.
 
 | `use` | Writes | Options |
 |---|---|---|
-| `jsonl` | [`JsonlSink`](sinks.md#jsonl) | `directory` (required) |
-| `neo4j` | [`Neo4jSink`](neo4j.md) | `uri` or `uri_env` (one required); `user` or `user_env` (default `neo4j`); `password_env` (default `NEO4J_PASSWORD`); `database`; `batch_size` (default 500) |
-| `cypher_file` | [`CypherFileSink`](sinks.md#cypher-file) | `path` (required); `batch_size` (default 500) |
-| `neo4j_admin_csv` | [`Neo4jAdminCsvSink`](sinks.md#neo4j-admin-csv) | `directory` (required); `delimiter` (default `,`); `array_delimiter` (default `;`) |
-| `rdf` | [`RdfSink`](sinks.md#rdf), needs `rdf` | `path` (required); `format` (`turtle`, `nt`, `json-ld`; default from the suffix); `base`; `schema` |
-| `networkx` | [`NetworkXSink`](sinks.md#networkx), needs `networkx` | `path`: where to write the filled graph as node-link JSON. Without it the graph is filled in memory and written nowhere, so give it a `path`. |
+| `jsonl` | [`JsonlSink`](stores.md#jsonl) | `directory` (required); `merge` (default `false`): keep what the files hold and [merge with it](stores.md#merge-with-the-store) |
+| `neo4j` | [`Neo4jSink`](stores.md#neo4j) | `uri` or `uri_env` (one required); `user` or `user_env` (default `neo4j`); `password_env` (default `NEO4J_PASSWORD`); `database`; `batch_size`, the most rows a write transaction holds (default 500); the run's `tenant` |
+| `cypher_file` | [`CypherFileSink`](stores.md#cypher-file) | `path` (required); `batch_size` (default 500) |
+| `neo4j_admin_csv` | [`Neo4jAdminCsvSink`](stores.md#neo4j-admin-csv) | `directory` (required); `delimiter` (default `,`); `array_delimiter` (default `;`) |
+| `rdf` | [`RdfSink`](stores.md#rdf), needs `rdf` | `path` (required); `format` (`turtle`, `nt`, `json-ld`; default from the suffix); `base`; `schema` |
+| `networkx` | [`NetworkXSink`](stores.md#networkx), needs `networkx` | `path`: where to write the filled graph as node-link JSON. Without it the graph is filled in memory and written nowhere, so give it a `path`. |
 
 `odke run` supplies the ontology to every sink but `jsonl`, so projections of
 multi-valued predicates are lists, the Cypher script opens with the constraint DDL,
@@ -196,13 +224,60 @@ with none, the config is refused. The DDL comes from `stages.constrainer`, or fr
 `Neo4jConstrainer` when that is left out. Every statement is `IF NOT EXISTS`, so
 bootstrapping on every run is safe.
 
+### `inverses`
+
+`inverses: false` turns off the inverse and symmetric partners
+([Concepts](concepts.md#inverse-and-symmetric-partners)). Left out, they are
+on exactly when the ontology declares an `inverse_of` or a `symmetric`
+predicate, and the run report prints how many were added.
+
+### `store_lookup`
+
+`store_lookup` hands the resolver a [store lookup](resolution-and-corroboration.md#resolving-against-the-store)
+([DECISIONS #31](decisions.md#31)). With no `stages.resolver`, it brings `native`;
+a resolver that cannot take a lookup is refused. `neo4j` reads the store the
+run's one neo4j sink writes to, on that sink's connection, after `bootstrap`
+has created the indexes it reads through. It reads the run's `tenant`, and a
+`tenant` of its own that differs is refused: a run looks up the tenant it
+writes. Its options are `limit` (hits per name token, default 100) and the
+sink's connection keys (`uri`, `uri_env`, `user`, `user_env`, `password_env`,
+`database`) to read a store the run does not write to. A lookup of your own is
+scoped to the run's tenant when it has `scoped(tenant)`.
+`package.module:Name` is constructed with its options, like a stage. A dry run
+opens no store, so it resolves each batch within itself and prints a warning
+saying so. `odke validate --config` reads the same key. The resolver's counts
+are `stages.resolver.store`: entities `looked_up`, store `candidates`, keys
+`rekeyed`, and links by kind.
+
+### The pair judge
+
+`resolver: {use: native, judge: true}` puts the pairs the resolver's rules leave
+open, scored from 0.7 up to its `threshold`, to a model in both orders
+([The pair judge](resolution-and-corroboration.md#the-pair-judge),
+[DECISIONS #34](decisions.md#34)). It is off unless named. A mapping sets its
+options: `low` (the band's start, default 0.7), `queue` (the JSONL file unsure
+pairs are appended to, for `odke label make pair`), `reviewed` (a person's
+labels, as `odke label read` writes them, which must exist), `max_workers` and
+`retry`, as the grounder's. Paths are relative to the config. It asks the
+`ground` role's model, through `models.replay.ground` when that is set, and
+`meter: true` counts its calls as their own row, `judge`. The texts it reads
+contexts from are the run's inputs. A dry run asks it, as it grounds, but
+writes no queue, and says so.
+
+```yaml
+stages:
+  resolver:
+    use: native
+    judge: {queue: review/pairs.jsonl, reviewed: review/reviewed.jsonl}
+```
+
 ### The inferrer
 
 `inferrer` accepts only `passthrough`. Anything else is refused:
 `odke run never infers an ontology`. Inference is a bootstrap, not a mode
-([DECISIONS #8](decisions.md)): run `odke ontology infer` once, review and freeze
+([DECISIONS #8](decisions.md#8)): run `odke ontology infer` once, review and freeze
 the result, and name the file under `ontology`. See
-[Ontology inference](inference.md).
+[Ontology](ontology.md#drafting-one-parked).
 
 ## Checked before anything runs
 
@@ -259,21 +334,313 @@ stage:
 | Key in `stats` | Holds |
 |---|---|
 | `documents`, `chunks`, `skipped`, `deferred`, `refused` | the pipeline's own counts |
+| `candidates` | the facts that reached resolution: extracted, grounded and normalised, from the documents that did not fail. The job's facts in ([Logs and traces](#logs-and-traces)) |
 | `graph` | `facts`, `edges`, `properties`, `entities`, and `links` by kind |
-| `stages.extractor` | `paths` (the hybrid's `PathReport` totals), `rejections` by reason, or `model_calls`; for `triples`, rows by how their evidence was made (`cited`, `quoted`, `quote_not_found`, `context`), `unmatched_rows` and `ambiguous_rows` |
-| `stages.grounder` | calls, retries, failures, a count per verdict, tokens, `cost_usd`, and the span check's own counts |
+| `stages.extractor` | `paths` (the hybrid's `PathReport` totals), `rejections` by reason, or `model_calls`; `prompts`, the keys of the [registered prompts](models.md#prompts) the model sent; for `triples`, rows by how their evidence was made (`cited`, `quoted`, `quote_not_found`, `context`), `unmatched_rows` and `ambiguous_rows` |
+| `stages.grounder` | calls, retries, failures, a count per verdict, tokens, `cost_usd`, `prompts`, `unasked` (facts a budget stop reached before their call), the span check's own counts, with `locate` the locator's, and with `widen`, under `widen`: `retried`, `recovered` and the retries' own calls, tokens and cost, which `cost` meters as their own row, `ground.widen` |
 | `stages.corroborator` | `conflicts`: how many facts `won`, `lost` or `tied` a contest |
-| `stages.validator` | `accepted`, and `refused` by reason |
+| `stages.resolver` | with `store_lookup`: under `store`, entities `looked_up`, store `candidates`, incoming keys `rekeyed` onto a stored one, and links to the store by kind; under `lookup`, the lookup's own counts. With `judge`: under `judge`, the pairs handed in and `asked`, `calls`, `swapped` calls, pairs whose orders `disagreed`, each decision, `person`, `queued`, `no_context`, `failed`, tokens and cost, `cached` calls, and after a budget stop `unasked` calls and `stopped`, which is the run's `stopped` when the judge reached it first; and `prompts`. With the batch normalised: under `batch`, the look-alike pairs (`alike`), those `merged`, the `groups` and `mentions` they made, the pairs kept apart by `numbers`, `forms`, `context`, as `ambiguous` or `refused`, and the sentences `embedded` |
+| `stages.validator` | the gate's `accepted`, and `refused` by reason. The key keeps its 0.2 name ([DECISIONS #26](decisions.md#26)) |
 | `stages.<name>` | anything else a stage reports by carrying a `stats` mapping, your own stages included |
-| `cost` | with `meter: true`: calls, tokens, USD and latency, in total and per role |
+| `cost` | with `meter: true`: calls, tokens, USD and latency, in total and per role, and `cached_calls`, the calls the response cache answered |
+| `cache` | with `models.cache`: the `directory`, and its `hits`, `misses` and `failed` calls |
+| `spent` | always: `calls` (the cache's `cached_calls` among them), `input_tokens`, `output_tokens`, and `usd`, `None` when any call went unpriced. The `cost` line |
+| `budget` | with `models.budget`: the limits set. The `budget` line, each against what was spent |
+| `failed` | the documents left out because something failed for them alone, each with its reason: `extract: ProviderError: …` ([below](#when-one-document-fails)). The `failed` line |
+| `stopped` | when the budget stopped the run: the `limit`, the `budget`, what was `spent`, the `stage` it stopped in, the chunks left `unextracted` and the facts left `unchecked`. The `stopped` line, first in the report |
+| `coverage` | with `coverage: true`, the default: totals, the relations never offered and never used, and each document's uncovered sentences and missed entities ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)) |
+| `reextract` | with `reextract`: `windows` asked, facts `returned`, `duplicates`, `kept`, `refused` by grounding, and their `verdicts` |
+| `batches` | with `batch_size`: the micro-batches run. Every count above is then the run's, summed over them ([Streaming](#streaming)) |
+| `writes` | once every sink has written: per sink (`0:Neo4jSink`), per kind, the rows `written` new, `merged` into what the store held, and `skipped`, and Neo4j's `transactions` ([the write report](stores.md#the-write-report)), for the whole run when it streams. The run manifest's `writes` and the `job.end` event carry it too. One `writes` line per sink, after the `wrote` lines |
 
 A `DoubleStageWarning` raised while the pipeline is built is printed as a
 `warning:` line on standard error.
 
-## The default gate: `VerdictValidator`
+## The run manifest
 
-The grounder stamps a verdict and drops nothing ([DECISIONS #20](decisions.md)), so
-something has to refuse. `validator: verdict` is that something:
+Every run writes one manifest: `odke run`, `odke validate`, `odke ground` and
+`Validator.validate` ([DECISIONS #40](decisions.md#40)). It says what the run
+was asked, what answered, and what it made, so a graph can be traced to the
+run that wrote it and the run made again.
+
+| Field | Holds |
+|---|---|
+| `manifest_version` | `1`, the format of the fields below |
+| `command`, `dry_run` | `run`, `validate` or `ground`; a dry run has a manifest and writes none |
+| `config`, `config_hash` | the config resolved, and the SHA-256 of it as canonical JSON. `odke run`'s is the run config with every key filled in and each model role as `ModelRoles` resolves it, so leaving a default out and naming it hash alike. `odke validate` and `odke ground` record their options and the `models` block; the Validator, its stages by class. No secret is in either |
+| `config_file`, `base_dir` | the config file, and the directory its relative paths resolve against |
+| `models` | per role: `model`, the provider-qualified id asked for, and `served`, the ids the provider said answered, provider-qualified. When the config names an alias, `served` is the pinned id |
+| `prompts` | each [registered prompt](models.md#prompts) key sent, with its SHA-256 |
+| `ontology_version`, `ontology_hash` | the ontology's label and its [`fingerprint`](ontology.md#freezing); `None` with no ontology |
+| `package` | `openodke`'s version, `python`'s and the `platform` |
+| `inputs` | `documents`, each id with the SHA-256 of its text; `facts`, the triples handed in (`rows`, `hash`); `hash`, one over both |
+| `cache`, `budget` | the response cache's directory and the budget's limits, or `None` |
+| `started_at`, `ended_at` | UTC; the end is after the sinks wrote |
+| `counts` | the command's own: the pipeline's and the graph's for `odke run`, the report's for `odke validate`, the summary's for `odke ground` |
+| `spent` | `calls`, `cached_calls`, `input_tokens`, `output_tokens`, and `usd`, `None` when any call went unpriced |
+| `stopped`, `failed` | where a [budget](#budgets) stopped the run, and the documents left out with why |
+| `run`, `job` | the id every [log event](#logs-and-traces) of the run carries, and the counts its `job.end` logs: a manifest and its log stream join on `run`, and say the same |
+
+**Where it goes.** Into each JSONL sink's `manifest.json`, beside the keys the
+sink has always written there: `ontology`, `created_at`, the counts and
+`stats`. An older reader finds what it found, and in a store that merges, those
+counts stay the files'. With `manifest:` in the config, there too; with neither,
+beside the config as `<name>.manifest.json`, so every run writes one.
+`odke validate` writes it into `-o`, and `odke ground` beside its summary. The
+report's `manifest` line names each file.
+
+**Secrets.** A value under a key that names one (`password`, `token`,
+`api_key`, `secret`, `authorization`) and the password in a URL are
+`<redacted>` before anything is hashed or written. A key that names where a
+secret is read, `password_env` or `api_key_env`, is kept.
+
+**Two runs of one config write the same manifest**, but for `started_at`,
+`ended_at`, the graph's `created_at`, the meter's latencies and the `run` id.
+`odke run --from-manifest PATH` runs one again: the config as it was resolved,
+from where it was read. It is refused, exit 2 and nothing written, when the
+ontology's fingerprint or any document's hash is not what the manifest
+recorded, naming each document that changed, and it takes none of `--model`,
+`--widen`, `--cache` or the budget flags, which would make it another run.
+A different openodke is a warning. With `models.cache`, the replay answers from
+the cache and calls nothing it called before.
+
+A manifest of `odke validate` or `odke ground` is run again the same way by
+hand: its `config` holds every option, so write `config.models` to a file as
+`{"models": ...}`, pass it as `--config`, and pass the rest as flags.
+
+```python
+from openodke.manifest import digest
+from openodke.run import execute, load_config
+
+manifest = execute(load_config("examples/e2e/odke.yaml"), dry_run=True).manifest
+assert manifest is not None and manifest.dry_run
+print(manifest.models["ground"])
+# model='anthropic/claude-haiku-4-5-20251001' served=('anthropic/claude-haiku-4-5-20251001',)
+assert list(manifest.prompts) == ["extract@1", "ground.span@1"]
+assert manifest.config_hash == digest(manifest.config)
+assert manifest.counts["facts"] == 25 and len(manifest.inputs.documents) == 8
+```
+
+`read_manifest(path)` reads one back, from the file or the directory holding
+it, and `from_manifest(path)` gives the `RunConfig` to run again with
+`execute(config, replaying=manifest)`.
+
+## Logs and traces
+
+`--log-format json` on `odke run`, `odke validate` and `odke ground` writes
+every event as one JSON object a line on standard error, while the report
+still prints to standard output ([DECISIONS #41](decisions.md#41)). Every
+event has the same keys, `null` where they do not apply: `ts` (UTC), `level`,
+`event`, `run` (one id for all of a job's events), `command`, `stage`,
+`document`, `counts`, `latency_s` and `cost`.
+
+| `event` | When | Its own |
+|---|---|---|
+| `job.start` | once, first | `dry_run` |
+| `stage` | once per stage: `chunk`, `extract`, `ground`, `reextract`, `normalize`, `resolve`, `derive`, `corroborate`, `gate`, `write` | `counts`: the stage's, such as `facts`, a count per verdict, `failed`; `cost`: its model calls' |
+| `document` | once per document grounded | `counts`: its `chunks`, `facts` and a count per verdict |
+| `document.failed` | once per document left out (a warning) | `reason`, as the report gives it |
+| `model.call` | once per model call; a failed one is a warning | `model`, asked for, and `served`, both provider-qualified; `cost`: `input_tokens`, `output_tokens`, `usd`, `cached`; `error`, by type alone |
+| `job.end` | once, last | `counts`, the job's; `cost`: `calls`, `cached_calls`, `input_tokens`, `output_tokens`, `usd`; `documents`, `failed`, `stopped` (the limit, or `null`) |
+| `log` | any other record a stage logs | `logger`, and `template`, the message before its arguments |
+
+```text
+{"ts":"2026-10-10T11:14:00.808Z","level":"info","event":"job.end","run":"259bdbe59782","command":"run","stage":null,"document":null,"counts":{"facts_in":36,"facts_out":25,"refused":1,"merged":10,"linked":4,"review":0},"latency_s":0.132401,"cost":{"calls":39,"cached_calls":0,"input_tokens":4764,"output_tokens":216,"usd":null},"documents":8,"failed":0,"stopped":null}
+```
+
+**A job's counts are its report's.** `job.end` counts facts `in` and `out`,
+`refused`, `merged`, `linked` and sent to `review`, read from the same numbers
+the report prints (`JobCounts`; `RunResult.job`, `ValidationReport.job`,
+`GroundSummary.job`):
+
+| | `odke run` | `odke validate` | `odke ground` |
+|---|---|---|---|
+| `facts_in` | `candidates` | `facts_in` | `rows` |
+| `facts_out` | `graph.facts` | `facts_out` | `facts` |
+| `refused` | `refused` | `refused` | the free checks' refusals: nothing is dropped |
+| `merged` | in, plus `derived`, less refused and out | `merged` | 0 |
+| `linked` | the links, of every kind | `linked` | 0 |
+| `review` | the pairs the [pair judge](resolution-and-corroboration.md) queued | `judge.queued` | 0 |
+
+**No text, no secret.** An event holds ids, names, counts, times and costs:
+never a passage, a quote, an entity's name, a prompt or a reply, and no
+config. A stage's own warning can quote a model's reply, so as JSON it keeps
+its `template` and drops its arguments; `--log-text` keeps a `message` too. A
+model call is named by its stage, not its document: a batch's calls run
+concurrently. A stage with a client of its own, a pair judge handed to the
+Validator say, sends no `model.call` events, though its spend is in `job.end`.
+
+**From Python**, `configure_logs("json", stream=...)` installs the handler on
+the `openodke` logger, and `configure_logs("text")` takes it off. Without a
+handler, an event goes nowhere.
+
+```python
+import io
+import json
+
+from openodke.observe import configure_logs
+from openodke.run import execute, load_config
+
+stream = io.StringIO()
+configure_logs("json", stream=stream)
+result = execute(load_config("examples/e2e/odke.yaml"), dry_run=True)
+configure_logs("text")
+events = [json.loads(line) for line in stream.getvalue().splitlines()]
+end = next(event for event in events if event["event"] == "job.end")
+print(end["counts"])
+# {'facts_in': 36, 'facts_out': 25, 'refused': 1, 'merged': 10, 'linked': 4, 'review': 0}
+assert end["counts"] == result.job.model_dump()
+assert [e["stage"] for e in events if e["event"] == "stage"][:3] == ["chunk", "extract", "ground"]
+```
+
+**OpenTelemetry**, with `pip install "openodke[otel]"`: each job is a span,
+`odke run`, each stage a child of it, `stage ground`, and each model call a
+child of its stage, `model ground`, with the events' counts and costs as
+`odke.*` attributes. The extra is the API alone, imported on first use: the
+spans go to the tracer provider your application configures, with the SDK and
+the exporter of its choosing, and with none they go nowhere and cost next to
+nothing. From the command line, `opentelemetry-instrument odke run ...` with
+`opentelemetry-distro` and an exporter configures one from the environment.
+`openodke.observe.TRACER_PROVIDER` overrides the global provider.
+
+## When one document fails
+
+A document whose chunking, extraction, grounding or normalising raises is left
+out of the graph whole, named with its reason in `stats["failed"]` and the
+report's `failed` line, and the rest of the batch goes on: a provider error
+that outlasted its retries, or a reply nothing could parse, costs one document,
+not the run. The built-in stages say which document failed, so nothing is
+asked twice; a stage of your own whose batch raises without saying is asked
+again one document at a time. With [the cache](models.md#the-response-cache),
+a rerun pays only for the documents that failed. A configuration error is nobody's document and still stops the
+run: a missing key, a missing provider adapter, a missing extra. So does a
+budget. When every document fails, the cause is almost certainly not in the
+documents, and the command exits 1.
+
+## Budgets
+
+`models: {budget: {usd: 1.50, calls: 2000, input_tokens: …, output_tokens: …}}`,
+or `--budget-usd` and `--budget-calls`, caps what one run may spend; a limit left
+out is no limit. `odke validate` and `odke ground` take the same block from
+`--config` and the same flags. One `Ledger` counts every call the run makes, from
+every stage and every thread, and stops the run cleanly at the first limit
+([DECISIONS #32](decisions.md#32)).
+
+- **Checked before each call**, against an estimate: one call; input tokens as
+  the characters of the messages and the schema over four, rounded up, plus four
+  a message; output tokens as the spec's `max_tokens`; USD as the run's own USD
+  per token so far, over the calls a provider priced, times both. A call that
+  fits beside the calls in flight goes out. One that fits only once they settle
+  waits for them. One that does not fit beside what is already spent stops the
+  run, and neither it nor any call after it is made.
+- **USD with nothing to estimate from**, before the first priced call, is
+  checked after each call instead: the call after the one that reached the
+  limit is refused. A provider that prices nothing, a local server say, never
+  reaches a USD limit, so give such a run `calls` or tokens too.
+- **A call that raised is not counted**, and a cache hit is free: neither
+  touches the budget. A budget stop is never retried.
+- **A stop keeps what the run has.** Every chunk extracted and every fact
+  grounded before it stays; a fact the stop reached first stays `unchecked`
+  and is counted, as is a chunk never extracted. The free checks and the cache
+  still answer after a stop, the deterministic stages run, the sinks write, the
+  report opens with a `stopped` line, and the command exits 3.
+
+Every run report has a `cost` line, metered or not: the calls (and how many the
+cache answered), the tokens, and the USD, or `USD unknown` when any call went
+unpriced. With a budget, a `budget` line sets each limit against what was spent.
+
+```text
+odke run
+stopped       at budget, calls 3 of 3, during ground: 4 facts left unchecked
+documents     2 (2 chunks; 0 skipped, 0 deferred, 0 empty)
+…
+grounder      facts 6, calls 2, prompt_tokens 254, completion_tokens 12, supported 2, unasked 4, …
+…
+cost          3 model calls, 886 tokens, USD unknown
+budget        calls 3 of 3
+wrote         jsonl → …/out: entities.jsonl 3, facts.jsonl 6, links.jsonl 0, manifest.json
+manifest      …/out/manifest.json
+```
+
+From Python, `Ledger(budget).client(inner)` holds any client to a budget, and
+`Pipeline.run` and `Validator.validate` return the partial graph with
+`stats["stopped"]` rather than raising:
+
+```python
+from openodke.llm import Budget, BudgetExceeded, Ledger, Message, ModelSpec, RecordedClient
+
+ledger = Ledger(Budget(calls=2, usd=1.50))
+client = ledger.client(RecordedClient([{"match": "Claim", "response": {"verdict": "supported"}}]))
+ask = [Message(content="Claim: … Passage: …")]
+for _ in range(2):
+    client.complete(ask, spec=ModelSpec(model="ollama/llama3.1"))
+try:
+    client.complete(ask, spec=ModelSpec(model="ollama/llama3.1"))
+except BudgetExceeded as exc:
+    print(exc)
+    assert exc.limit == "calls"
+# stopped at budget: calls 2 of 2; no further model call is made
+assert ledger.spent.calls == 2 and ledger.stopped is not None
+```
+
+## Streaming
+
+A batch is held whole: every chunk is extracted, then every document grounded,
+then resolution, corroboration and the gate run over all of it. `batch_size: N`
+(or `--batch-size N`) cuts the run into micro-batches instead
+([DECISIONS #45](decisions.md#45)): N documents are loaded, run through every
+stage and written, then the next, so memory follows the micro-batch, not the
+run. `odke validate` and `Validator.validate(..., batch_size=N)` read N triples
+rows at a time.
+
+- **Inputs are read as they are needed.** `read_triples` and the JSON Lines
+  loader are iterators, a directory is walked a file at a time, and every input
+  is checked before the first is read. Document ids are the ones one batch
+  gives.
+- **Each micro-batch is written as it is made.** A JSONL sink is written by the
+  first and appended to by the rest; its manifest's counts are its lines, and
+  its `stats` the run's so far. Neo4j merges each one. RDF, `cypher_file` and
+  `neo4j_admin_csv` rewrite a file of the whole graph on every write, so a
+  streamed run refuses them before anything runs. A sink of your own is
+  written once a micro-batch.
+- **One run, whatever its slices.** One ledger counts every call against the
+  [budget](#budgets), the [response cache](models.md#the-response-cache)
+  answers across micro-batches, one document's failure is its own, and the
+  report sums every micro-batch (`stats["batches"]` says how many). What
+  `execute` returns holds those stats and no facts, and a dry run prints the
+  first facts it would have written.
+- **The store joins micro-batches, not memory.** A fact two micro-batches both
+  state merges when the second is written, through a sink that says what it
+  holds ([merge with the store](stores.md#merge-with-the-store)): `odke
+  validate` does this, `odke run` does not yet. Without one, a JSONL file holds a
+  line for each, and a reader keeps the last. Entities resolve within a
+  micro-batch, and across them with [`store_lookup`](#store_lookup).
+- **The manifest is the run's.** `batch_size` is in the config the
+  [run manifest](#the-run-manifest) records and hashes. Its `counts`, `job` and
+  `spent` are the micro-batches' summed, with `batches`, and the `job.end` event
+  logs the same counts, and both carry the run's write report. Its inputs hash covers every micro-batch's documents
+  and rows, in the digest one batch takes of them, so the same inputs hash
+  alike streamed or not. `--from-manifest` replays a streamed run streamed:
+  it reads the inputs through once and refuses a change before the first
+  micro-batch is written. It takes no `--batch-size`, which would be another run.
+- **Rows stay with their text.** `odke validate` closes a micro-batch only where
+  the next row cites another text, so one text's rows, sorted together, are
+  grounded and measured once; a text with more than twice N rows is split
+  there. The texts are held, because a row may cite any of them. `odke run`
+  with a `triples` extractor holds its rows; stream them with `odke validate`.
+
+What a micro-batch cannot see: a rival value stated in another micro-batch is
+not contested (`check()` finds the pair in a Neo4j store), near-duplicate texts
+are compared within one, the coverage report knows its micro-batch's names and
+keeps the records of the first 100 documents with a gap, and a count summed
+over micro-batches counts an entity once in each. Measured on 25,000 and
+50,000 synthetic triples rows, every default stage and a scripted client, the
+peak RSS is the same, about 66 MB; 5,000 rows in one batch peak at 141 MB.
+
+## The default gate: `VerdictGate`
+
+The grounder stamps a verdict and drops nothing ([DECISIONS #20](decisions.md#20)), so
+something has to refuse. `gate: verdict` is that something:
 
 - **`contradicted` is always refused.** The cited passage was read, and it says
   something else.
@@ -291,9 +658,9 @@ Whether to refuse `not_found` on your corpus is a measurement:
 kept and lost.
 
 ```python
-from openodke import Entity, Fact, GroundingVerdict, Ontology, VerdictValidator
+from openodke import Entity, Fact, GroundingVerdict, Ontology, VerdictGate
 
-gate = VerdictValidator()
+gate = VerdictGate()
 ada = Entity(key="p:ada", type="Person")
 verdicts = [GroundingVerdict.SUPPORTED, GroundingVerdict.NOT_FOUND, GroundingVerdict.CONTRADICTED]
 actions = [
@@ -305,7 +672,7 @@ actions = [
 assert actions == ["accept", "accept", "refuse"]
 print(gate.stats)
 # {'accepted': 2, 'refused': {'contradicted': 1}}
-assert VerdictValidator(refuse_not_found=True).refused == {
+assert VerdictGate(refuse_not_found=True).refused == {
     GroundingVerdict.CONTRADICTED,
     GroundingVerdict.NOT_FOUND,
 }
@@ -358,14 +725,16 @@ odke run examples/e2e/odke.yaml
 ```text
 odke run
 documents     8 (8 chunks; 0 skipped, 0 deferred, 0 empty)
-extractor     paths (paths llm+pattern, chunks 8, pattern_facts 20, llm_facts 18, merged 2, model_calls 3), rejections (quote not in the passage 1)
-grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, supported 20, contradicted 1, not_found 15, span (facts 36, located 36)
+extractor     paths (paths llm+pattern, chunks 8, pattern_facts 20, llm_facts 18, merged 2, model_calls 3), rejections (quote not in the passage 1), prompts extract@1
+grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, supported 20, contradicted 1, not_found 15, prompts ground.span@1, span (facts 36, located 36)
 corroborator  conflicts (lost 1, won 2)
 validator     accepted 25, refused (contradicted 1)
 refused       1
+coverage      0 of 5 sentences naming two known entities uncovered, 0 entities in no fact, 0 relations never offered, 0 unused
 graph         25 facts (8 edges, 17 properties), 7 entities, 4 links (different 1, similar 3)
 cost          39 model calls, 4980 tokens, USD unknown
 wrote         jsonl → …/examples/e2e/out: entities.jsonl 7, facts.jsonl 25, links.jsonl 4, manifest.json
+manifest      …/examples/e2e/out/manifest.json
 ```
 
 Line by line:
@@ -390,14 +759,21 @@ Line by line:
   reduced confidence with the reason attached.
 - **validator.** The default gate refused the `contradicted` fact and kept
   `not_found`; refusing `not_found` here would throw away most of the register.
+- **coverage.** Every sentence in the prose that names two known entities is
+  cited by some fact, every known name the text mentions is in a fact of its
+  document, and the model was shown every predicate. A run on real prose is
+  rarely this clean ([the coverage report](grounding.md#what-extraction-left-behind-the-coverage-report)).
 - **graph.** 25 facts on 7 entities, and 4 links: one `DIFFERENT` between two
   companies that share a name and not a registration number, and three `SIMILAR`.
   Nothing was merged away.
 - **cost.** The recorded responses carry no price, so the cost is unknown rather
   than zero.
+- **manifest.** The [run manifest](#the-run-manifest), added to the JSONL sink's
+  `manifest.json`: the config and its hash, the two models, the two prompts,
+  the ontology's fingerprint and each document's hash.
 
 `odke.neo4j.yaml` is the same run with a Neo4j sink, `constrainer: neo4j` and
-`bootstrap: true`. Its dry run connects to nothing and prints the 15 statements the
+`bootstrap: true`. Its dry run connects to nothing and prints the 29 statements the
 bootstrap would apply and the 16 `UNWIND … MERGE` statements the sink would send;
 the example's README goes on to the Cypher that shows where each fact came from.
 The recorded responses were written by hand to exercise every path of the

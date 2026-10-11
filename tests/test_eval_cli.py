@@ -13,8 +13,8 @@ from typer.testing import CliRunner
 
 from openodke import Chunk, Document, Entity, Fact, Ontology
 from openodke.cli.main import app
-from openodke.eval import StageReport, dump_jsonl
-from openodke.eval.runner import evaluate_files, load_stage
+from openodke.eval import StageReport, dump_jsonl, read_report
+from openodke.eval.runner import evaluate_files, load_stage, report_files
 from openodke.stages import PassThroughRouter
 
 FIXTURES = Path(__file__).parent / "fixtures" / "eval"
@@ -194,11 +194,11 @@ def test_run_scores_an_importable_router_over_the_labels() -> None:
 def test_run_validate_needs_an_ontology_and_uses_it(tmp_path: Path) -> None:
     labels = FIXTURES / "validate.labels.jsonl"
     with pytest.raises(ValueError, match="needs --ontology"):
-        evaluate_files("validate", labels, run="openodke.stages:PassThroughValidator")
+        evaluate_files("validate", labels, run="openodke.stages:PassThroughGate")
     ontology = tmp_path / "ontology.json"
     ontology.write_text(json.dumps({"name": "demo"}))
     report = evaluate_files(
-        "validate", labels, run="openodke.stages:PassThroughValidator", ontology=ontology
+        "validate", labels, run="openodke.stages:PassThroughGate", ontology=ontology
     )
     # Accepting everything agrees on the three accept rows only.
     assert report.metrics["agreement"] == 0.5
@@ -242,3 +242,97 @@ def test_load_stage_instantiates_a_class_and_takes_an_instance_as_is(
     assert load_stage(f"{SUPPORT}:ROUTER") is support.ROUTER
     with pytest.raises(ValueError, match="package.module:Name"):
         load_stage("openodke.stages")
+
+
+# --------------------------------------------------------------------------- #
+# The eval report (#139)
+# --------------------------------------------------------------------------- #
+
+
+def test_report_files_scores_extract_as_evaluate_files_does_with_ranges() -> None:
+    labels, predictions = FIXTURES / "extract.labels.jsonl", FIXTURES / "extract.predictions.jsonl"
+    report = report_files("extract", labels, predictions)
+    assert report.stages == (evaluate_files("extract", labels, predictions),)
+    (row,) = report.rows
+    assert row.performance.f1.value == pytest.approx(0.4)
+    assert report.run.dataset is not None
+    assert (report.run.dataset.documents, report.run.dataset.labels) == (2, 5)
+
+
+@pytest.mark.parametrize("stage", ["route", "ground", "resolve", "score", "validate"])
+def test_report_files_carries_any_other_stage_with_no_rows(stage: str) -> None:
+    labels = FIXTURES / f"{stage}.labels.jsonl"
+    predictions = FIXTURES / f"{stage}.predictions.jsonl"
+    found = predictions if predictions.exists() else None
+    report = report_files(stage, labels, found)
+    assert report.stages == (evaluate_files(stage, labels, found),)
+    assert report.rows == () and report.bootstrap is None
+
+
+def test_extract_takes_an_ontology_for_conformance(tmp_path: Path) -> None:
+    ontology = tmp_path / "ontology.json"
+    ontology.write_text(json.dumps({"name": "demo", "predicates": {"born": {"range": "integer"}}}))
+    report = report_files(
+        "extract",
+        FIXTURES / "extract.labels.jsonl",
+        FIXTURES / "extract.predictions.jsonl",
+        ontology=ontology,
+    )
+    found = report.rows[0].conformance
+    # Only the two `born` facts have a predicate this ontology declares.
+    assert found is not None and (found.conformant, found.facts) == (2, 5)
+
+
+def test_odke_eval_writes_the_report_and_json_stays_a_stage_report(tmp_path: Path) -> None:
+    out = tmp_path / "report.json"
+    args = _files("extract")
+    result = runner.invoke(app, [*args, "--report", str(out)])
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("extract  (n=5)\n")
+    assert "0.400 [" in result.output and "95% ranges: 2 documents" in result.output
+    assert result.output.rstrip().endswith(f"wrote {out}")
+    assert read_report(out).rows[0].performance.f1.value == pytest.approx(0.4)
+
+    again = tmp_path / "again.json"
+    as_json = runner.invoke(app, [*args, "--json", "--report", str(again)])
+    assert as_json.exit_code == 0, as_json.output
+    assert StageReport.model_validate_json(as_json.output).metrics["f1"] == pytest.approx(0.4)
+    assert read_report(again) == read_report(out)
+
+
+@pytest.mark.parametrize("stage", ["route", "ground", "resolve", "score", "validate"])
+def test_every_stage_writes_a_report(tmp_path: Path, stage: str) -> None:
+    out = tmp_path / f"{stage}.json"
+    result = runner.invoke(app, [*_files(stage), "--report", str(out)])
+    assert result.exit_code == 0, result.output
+    report = read_report(out)
+    assert report.stages[0].stage == stage and report.rows == ()
+
+
+def test_odke_eval_spans_and_ablation_write_a_report(tmp_path: Path, example: Path) -> None:
+    out = tmp_path / "spans.json"
+    facts = FIXTURES / "spans.facts.jsonl"
+    result = runner.invoke(app, ["eval", "spans", "--facts", str(facts), "--report", str(out)])
+    assert result.exit_code == 0, result.output
+    assert read_report(out).stages[0].stage == "spans"
+
+    out = tmp_path / "ablation.json"
+    config, gold = str(example / "odke.yaml"), str(example / "gold.jsonl")
+    args = ["eval", "ablation", "--config", config, "--labels", gold, "--report", str(out)]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert len(read_report(out).rows) == 3
+
+
+def test_odke_eval_compare_writes_its_block_into_a_report(tmp_path: Path) -> None:
+    for name, extra in (("a", 0), ("b", 1)):
+        rows = [{"id": f"d{i}", "tp": 3 + (extra and i % 2), "fp": 1, "fn": 1} for i in range(10)]
+        (tmp_path / f"{name}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    out = tmp_path / "report.json"
+    args = ["eval", "compare", str(tmp_path / "a.jsonl"), str(tmp_path / "b.jsonl")]
+    result = runner.invoke(app, [*args, "--report", str(out)])
+    assert result.exit_code == 0, result.output
+    assert result.output.rstrip().endswith(f"wrote {out}")
+    report = read_report(out)
+    assert report.comparison is not None and report.comparison.metric == "f1"
+    assert (report.title, report.n, report.rows) == ("compare", 10, ())

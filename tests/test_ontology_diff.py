@@ -170,3 +170,31 @@ def test_identity_and_inheritance_changes_break_and_documentation_does_not() -> 
         ("changed", "types.Person.parents", True),
         ("changed", "types.Person.keys", True),
     ]
+
+
+def test_a_new_inverse_is_compatible_and_a_lost_one_breaks() -> None:
+    """Partners already stored from an inverse no longer follow once it is gone."""
+
+    def schema(inverse: str | None, symmetric: bool) -> Ontology:
+        return Ontology.from_dict(
+            {
+                "types": {"Place": {}},
+                "predicates": {
+                    "located_in": {"domain": ["Place"], "range": "Place", "inverse_of": inverse},
+                    "contains": {"domain": ["Place"], "range": "Place"},
+                    "borders": {"domain": ["Place"], "range": "Place", "symmetric": symmetric},
+                },
+            }
+        )
+
+    plain, declared = schema(None, False), schema("contains", True)
+    assert _changes(plain, declared) == [
+        ("changed", "predicates.located_in.inverse_of", False),
+        ("changed", "predicates.contains.inverse_of", False),
+        ("changed", "predicates.borders.symmetric", False),
+    ]
+    assert _changes(declared, plain) == [
+        ("changed", "predicates.located_in.inverse_of", True),
+        ("changed", "predicates.contains.inverse_of", True),
+        ("changed", "predicates.borders.symmetric", True),
+    ]
