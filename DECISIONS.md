@@ -888,9 +888,10 @@ takes its parent's merged list, so the two stay shared.
 
 **The Validator merges by default.** It hands every sink that is a
 `FactLookup` to its default corroborator. A corroborator passed in merges
-with the stores it was given, and a dry run reads no sink. `odke run` does
-not merge yet: its corroborator comes from the config, which has no key for a
-store.
+with the stores it was given, and a dry run reads no sink. `odke run` and
+`odke validate --config` hand a configured signature corroborator the sinks
+they open; `odke run`'s default corroborator passes facts through and does not
+merge.
 
 *Cost:* a read transaction before every write. A stored fact's receipts come
 back from the relationship's properties, which hold no quotes or mentions, so

@@ -197,6 +197,7 @@ def run_built(
                 applied = _bootstrap(built, opened)
             # After the bootstrap, so the indexes it creates are there to read through.
             built.open_lookup(opened)
+            built.open_store(opened)
 
         # What each sink had written before this run: its report is the difference.
         writes = Writes(opened)
