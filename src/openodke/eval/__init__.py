@@ -14,9 +14,10 @@ three things and never a fourth:
 
 **The fixtures are not a benchmark.** They exist to check the arithmetic;
 every expected number in the tests is computed by hand, and no result on them
-says anything about any extractor, grounder or resolver. There is no corpus,
-no gold slice and no leaderboard. Brier, B-cubed and P/R/F1 are arithmetic,
-so the subpackage adds no dependency to the base install (DECISIONS #1).
+says anything about any extractor, grounder or resolver. The public datasets
+are `openodke.eval.datasets`, which `odke bench` runs. Brier, B-cubed and
+P/R/F1 are arithmetic, so the subpackage adds no dependency to the base
+install (DECISIONS #1).
 
 Every run the Evaluator scores can also be written as one `EvalReport`: a
 versioned JSON document whose shape does not depend on the stage, with 95%

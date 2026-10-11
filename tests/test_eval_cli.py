@@ -86,10 +86,11 @@ def test_json_output_is_a_stage_report() -> None:
     assert report.metrics["f1"] == pytest.approx(0.4)
 
 
-def test_help_says_the_fixtures_are_not_a_benchmark() -> None:
+def test_help_points_to_odke_bench_for_a_public_benchmark() -> None:
     result = runner.invoke(app, ["eval", "--help"])
     assert result.exit_code == 0
-    assert "not a benchmark" in _flat(result.output)
+    assert "odke bench prepare" in _flat(result.output)
+    assert "never a corpus" not in _flat(result.output)
 
 
 def test_describe_prints_the_formats_without_labels() -> None:
