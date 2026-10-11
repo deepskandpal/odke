@@ -242,3 +242,45 @@ python bench/conflicts.py run data/erb --out runs/erb --budget-usd 1.00 \
     --ground-model anthropic/claude-haiku-4-5-20251001 --cache .odke-cache
 python bench/conflicts.py table runs/erb
 ```
+
+## Volume on EnterpriseRAG-Bench
+
+`volume.py` runs openodke on a uniform sample of EnterpriseRAG-Bench's corpus
+(#164): throughput, peak memory, cost per document, the response cache, and
+the reconciler. `fetch` streams the repository's archive at the commit
+`conflicts.py` pins and keeps a seeded sample, every record carrying the
+benchmark's canary; nothing else lands on disk. `cost` calls the real models,
+each document its own run, under one budget across them. The rest runs on
+`Simulated`, a model that answers from its prompt after a fixed wait per call,
+so it costs nothing. Each measured command runs in a fresh process, which
+reports its own peak RSS (`VmHWM`) and, from its JSON log, each stage's time
+and its write report. The results are in
+[docs/benchmarks.md](../docs/benchmarks.md#volume).
+
+| Subcommand | Measures | Main options |
+|---|---|---|
+| `fetch` | nothing: writes `slice.jsonl` and `slice.json` | `--documents` (30,000), `--seed` |
+| `cost` | USD per document by source type; with the same `--cache` again, the cache | `--per-type`, `--budget-usd`, `--extract-model`, `--ground-model`, `--cache`, `--limit` (a pilot), `--estimate` (price only) |
+| `throughput` | `odke run` and `odke validate` at each concurrency limit | `--levels` (4,16,64), `--per-call` (documents per unit of limit, 25), `--latency`, `--batch-size`, `--commands` |
+| `memory` | peak RSS as the slice grows | `--sizes`, `--batch-size`, `--commands` |
+| `reconcile` | a store, then updates and deletes | `--documents` (2,000), `--updated` (0.1), `--deleted` (0.02) |
+| `table` | the Markdown tables of everything under a runs folder | — |
+
+```bash
+python bench/volume.py fetch data/erb-volume
+python bench/volume.py cost data/erb-volume --out runs/volume/cost --per-type 5 \
+    --budget-usd 1.20 --extract-model anthropic/claude-sonnet-5-5 \
+    --ground-model anthropic/claude-haiku-4-5-20251001 --cache .odke-cache --estimate
+python bench/volume.py throughput data/erb-volume --out runs/volume/throughput
+python bench/volume.py throughput data/erb-volume --out runs/volume/throughput \
+    --commands run --batch-size 100
+python bench/volume.py memory data/erb-volume --out runs/volume/memory --sizes 1000,2500
+python bench/volume.py memory data/erb-volume --out runs/volume/memory \
+    --commands run --batch-size 1000
+python bench/volume.py reconcile data/erb-volume --out runs/volume/reconcile/2000
+python bench/volume.py table runs/volume
+```
+
+`cost` reads keys as `competitors.py` does: from the environment, or the
+`KEY=value` file `--env-file` or `ODKE_ENV_FILE` names. `odke validate` takes
+`--batch-size` in triples rows, `odke run` in documents.
