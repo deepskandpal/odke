@@ -81,7 +81,8 @@ nav:
       - "Write to a store": stores.md
       - "odke run": run.md
   - Evaluate:
-      - Evaluation: evaluation.md
+      - "Evaluate a pipeline": evaluation.md
+      - "Labels and judges": labels.md
       - Benchmarks: benchmarks.md
   - Reference:
       - "Models & providers": models.md
