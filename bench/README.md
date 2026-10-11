@@ -266,20 +266,33 @@ and its write report. The results are in
 | `reconcile` | a store, then updates and deletes | `--documents` (2,000), `--updated` (0.1), `--deleted` (0.02) |
 | `table` | the Markdown tables of everything under a runs folder | — |
 
+The published numbers come from these commands. `--estimate` on a `cost` line
+prices it and calls nothing.
+
 ```bash
-python bench/volume.py fetch data/erb-volume
+python bench/volume.py fetch data/erb-volume --documents 30000
+python bench/volume.py cost data/erb-volume --out runs/volume/cost-pilot --limit 3 \
+    --budget-usd 0.15 --extract-model anthropic/claude-sonnet-5-5 \
+    --ground-model anthropic/claude-haiku-4-5-20251001 --cache runs/volume/.odke-cache
 python bench/volume.py cost data/erb-volume --out runs/volume/cost --per-type 5 \
-    --budget-usd 1.20 --extract-model anthropic/claude-sonnet-5-5 \
-    --ground-model anthropic/claude-haiku-4-5-20251001 --cache .odke-cache --estimate
+    --budget-usd 1.00 --extract-model anthropic/claude-sonnet-5-5 \
+    --ground-model anthropic/claude-haiku-4-5-20251001 --cache runs/volume/.odke-cache
 python bench/volume.py throughput data/erb-volume --out runs/volume/throughput
 python bench/volume.py throughput data/erb-volume --out runs/volume/throughput \
     --commands run --batch-size 100
+python bench/volume.py throughput data/erb-volume --out runs/volume/throughput \
+    --commands validate --batch-size 1000
 python bench/volume.py memory data/erb-volume --out runs/volume/memory --sizes 1000,2500
 python bench/volume.py memory data/erb-volume --out runs/volume/memory \
     --commands run --batch-size 1000
+python bench/volume.py memory data/erb-volume --out runs/volume/memory \
+    --commands validate --batch-size 10000
 python bench/volume.py reconcile data/erb-volume --out runs/volume/reconcile/2000
 python bench/volume.py table runs/volume
 ```
+
+The cache row is the `cost` command run again into another `--out` with the
+same `--cache`.
 
 `cost` reads keys as `competitors.py` does: from the environment, or the
 `KEY=value` file `--env-file` or `ODKE_ENV_FILE` names. `odke validate` takes
