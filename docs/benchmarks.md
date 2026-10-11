@@ -233,6 +233,24 @@ Text2KGBench triple whose relation the sentence's gold never uses.
 - **`PatternExtractor` finds nothing in prose.** It reads records, pipe tables
   and `Key: value` blocks, and none of the datasets has any.
 
+### The span locator
+
+`bench/locator.py` runs the [span locator](grounding.md#locating-spans) on
+the Re-DocRED runs of the two extractors that cite nothing, and grounds each
+placed fact on its window in the same paper mode. The retest grounds 150 placed
+facts on the whole document again: the bench's own noise.
+
+| | LLMGraphTransformer | neo4j-graphrag |
+|---|---|---|
+| Facts placed | 583 of 781 (74.6%) | 474 of 657 (72.1%) |
+| Window, median characters (document) | 169 (984) | 168 (932) |
+| Verdicts agreeing with whole-document grounding (95% Wilson) | 93.1% [90.8, 94.9] | 91.6% [88.7, 93.7] |
+| Retest agreeing (95% Wilson) | 99.3% [96.3, 99.9] | 97.3% [93.3, 99.0] |
+| Precision, located minus whole document (95% paired bootstrap) | [-1.7, +1.1] points | [-1.3, +1.8] points |
+| USD per fact, located / whole document | 0.000352 / 0.000570 | 0.000351 / 0.000567 |
+
+A located fact costs 38% less to ground, at the same precision.
+
 ## Corroboration on T-REx
 
 80 abstracts (seed 0), 103,594 characters, 80 relations. 513 distinct gold
