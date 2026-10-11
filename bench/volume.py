@@ -53,7 +53,7 @@ import time
 import urllib.request
 import zlib
 from collections import Counter, defaultdict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -1011,9 +1011,12 @@ def table(runs: str | Path) -> str:
         parts.append(memory_table(_read(found)))
     if done := sorted(base.glob("reconcile/*/reconcile.json")):
         parts.append(reconcile_table([_read(path) for path in done]))
-    if (found := base / "cost" / "cost.json").exists():
-        data = _read(found)
-        parts.append(cost_table(data, _read(Path(data["slice"]) / "slice.json")))
+    # In the order they were written: a cache hit is priced by the run before it.
+    written = sorted(base.glob("cost*/cost.json"), key=lambda path: path.stat().st_mtime)
+    if runs_ := {path.parent.name: _read(path) for path in written}:
+        about = _read(Path(next(iter(runs_.values()))["slice"]) / "slice.json")
+        parts.append(cost_table(paid(runs_.values()), about))
+        parts.append(cache_table(runs_))
     return "\n\n".join(parts) + "\n"
 
 
@@ -1077,22 +1080,50 @@ def reconcile_table(results: Sequence[Mapping[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def cost_table(data: Mapping[str, Any], about: Mapping[str, Any]) -> str:
+def paid(results: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """Each document run once, priced by the run that paid for it: a cache hit costs 0.0."""
+    best: dict[str, Mapping[str, Any]] = {}
+    for data in results:
+        for row in data["documents"]:
+            if row.get("run") and (row["id"] not in best or row["usd"] > best[row["id"]]["usd"]):
+                best[row["id"]] = row
+    return list(best.values())
+
+
+def cost_table(rows: Sequence[Mapping[str, Any]], about: Mapping[str, Any]) -> str:
     """USD per 1,000 documents by source type, as `per_thousand` estimates it."""
     total = sum(about["corpus"].values())
     shares = {t: n / total for t, n in about["corpus"].items()}
-    found = per_thousand(data["documents"], about["mean_chars"], shares)
+    found = per_thousand(rows, about["mean_chars"], shares)
     lines = [
         "| Source type | Share of corpus | Documents run | Facts/document | USD per 1,000"
         " | 95% range |",
         "|---|---|---|---|---|---|",
     ]
-    for t, row in found.items():
+    for t in sorted(found, key=lambda t: (t == "corpus", -shares.get(t, 0.0))):
+        row = found[t]
         share = "100%" if t == "corpus" else f"{100 * shares[t]:.1f}%"
         low, high = row["range"]
         lines.append(
             f"| {t} | {share} | {row['documents']} | {row['facts_per_document']} |"
             f" {row['usd_per_1000']:.2f} | {low:.2f}–{high:.2f} |"
+        )
+    return "\n".join(lines)
+
+
+def cache_table(results: Mapping[str, Mapping[str, Any]]) -> str:
+    """Each cost run: its documents, the calls the cache answered and those made, its spend."""
+    lines = [
+        "| Run | Documents | Calls from the cache | Calls made | USD | Run seconds |",
+        "|---|---|---|---|---|---|",
+    ]
+    for name, data in results.items():
+        ran = [r for r in data["documents"] if r.get("run")]
+        stages = [v for r in ran for v in r["stages"].values()]
+        lines.append(
+            f"| {name} | {len(ran)} | {sum(v['cached'] for v in stages)} |"
+            f" {sum(v['calls'] for v in stages)} | {data['spent_usd']:.4f} |"
+            f" {sum(r['seconds'] for r in ran):.1f} |"
         )
     return "\n".join(lines)
 

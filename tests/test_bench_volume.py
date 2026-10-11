@@ -256,3 +256,18 @@ def test_each_stage_time_is_summed_from_the_json_log(tmp_path: Path) -> None:
     # Streamed, a stage logs once a micro-batch.
     found = volume.stage_seconds(log)
     assert found == {"ground": 1.75, "normalize": 0.5, "coverage": 3.0, "write": 0.2}
+
+
+def test_a_cached_document_is_priced_by_the_run_that_paid_for_it() -> None:
+    def run(usd: float, cached: int, calls: int) -> dict[str, Any]:
+        stage = {"cached": cached, "calls": calls}
+        row = {"id": "d1", "run": True, "usd": usd, "seconds": 2.0, "stages": {"extract": stage}}
+        return {"spent_usd": usd, "documents": [row, {"id": "d2", "run": False}]}
+
+    first, again = run(0.02, 0, 3), run(0.0, 3, 0)
+    assert [r["usd"] for r in volume.paid([first, again])] == [0.02]
+    lines = volume.cache_table({"first": first, "again": again}).splitlines()
+    assert lines[2:] == [
+        "| first | 1 | 0 | 3 | 0.0200 | 2.0 |",
+        "| again | 1 | 3 | 0 | 0.0000 | 2.0 |",
+    ]
