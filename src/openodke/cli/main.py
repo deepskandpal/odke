@@ -1578,9 +1578,9 @@ def eval_stage(
 ) -> None:
     """Score one stage against your own labelled data.
 
-    Bring your own labelled dataset: openodke ships the formats and the arithmetic,
-    never a corpus. The fixtures in its test suite are examples of the formats
-    and are not a benchmark. Run with --describe to see what to label.
+    Labels are JSONL rows in openodke's formats; run with --describe to see what
+    to label. For a public benchmark, `odke bench prepare` writes a set and
+    `pipeline --bench` scores against it.
 
     `ablation` runs a whole config three ways — extraction alone, + grounding,
     + corroboration — over your labelled extraction set.
@@ -2239,7 +2239,7 @@ def label_read(
     path: Path = typer.Argument(..., help="A sheet, or the directory `odke label make` wrote."),
     out: Path = typer.Option(..., "--out", "-o", help="Where to write the labels, as JSONL."),
 ) -> None:
-    """Read ticked sheets back as GroundingLabel, PairLabel or FactPairLabel rows.
+    """Read ticked sheets back as GroundingLabel, PairLabel, FactPairLabel or RefusalLabel rows.
 
     One tick is a label. No tick leaves the item unlabelled, and it is counted.
     Two ticks, or a heading the sidecar does not know, exits 2 with the file and
