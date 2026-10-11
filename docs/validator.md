@@ -2,15 +2,14 @@
 
 openodke is the verification layer between any extractor and the graph store
 ([DECISIONS #24](decisions.md#24)). The Validator is that layer as one class,
-`openodke.Validator`, and one command, `odke validate`. You give it another
-extractor's triples and the texts they came from. It grounds, normalises,
-resolves, corroborates, gates and writes them, and reports what each step did.
-`odke ground` is the grounding step on its own ([Grounding](grounding.md#a-graph-from-somewhere-else-odke-ground)).
+`openodke.Validator`, and one command, `odke validate`. Give it another
+extractor's triples and their texts: it grounds, normalises, resolves,
+corroborates, gates and writes them, and reports what each step did.
+`odke ground` is the [grounding step alone](grounding.md#a-graph-from-somewhere-else-odke-ground).
 
 ## One command
 
-The command takes the same facts `odke ground` takes. Here it is on the five
-triples in `examples/triples/`, with recorded answers and no key:
+On the five triples in `examples/triples/`, with recorded answers and no key:
 
 ```bash
 odke validate --facts examples/triples/triples.jsonl --texts examples/triples/texts \
@@ -34,33 +33,29 @@ writes        0:JsonlSink: entities 5 written; facts 5 written; links none
 manifest      out/manifest.json
 ```
 
-The two `not_found` facts are written, because the default gate refuses only
-what the text contradicts (see the stage table below). To keep them out, pass
-`VerdictGate(refuse_not_found=True, schema=True)`.
+The two `not_found` facts are written: the default gate refuses only what the
+text contradicts and what the ontology has no room for. To keep them out too,
+give the gate `refuse_not_found` ([the gate](grounding.md#the-gate-verdictgate)).
+Beside the graph, `-o` writes `refused.jsonl`, each refused fact with the gate's
+reason, which [`odke eval refusals`](evaluation.md#what-the-grounder-refused)
+samples for a person to judge.
 
-Beside the graph, `-o` writes `refused.jsonl`: each fact the gate refused in
-this run, with the gate's reason. Nothing reads what a gate throws away unless
-it is kept, and [`odke eval refusals`](evaluation.md#what-the-grounder-refused)
-draws a sample of it for a person to judge.
+| Flag | |
+|---|---|
+| `--facts`, `--texts`, `--adapter`, `--ontology` | The facts and their texts, as [`odke ground`](grounding.md#a-graph-from-somewhere-else-odke-ground) reads them |
+| `--config` | A run config whose extractor is `triples`: its inputs, ontology, models, stages and sinks, a stage it leaves out taking the Validator's default. With `--facts`, only its `models` block is read |
+| `-o` | Also write the graph here as JSONL |
+| `--merge` | [Merge](stores.md#merge-with-the-store) into the JSONL already at `-o` |
+| `--update` | The texts are new versions of ones the store cites: [retract](stores.md#reconcile) each first. Needs a sink that can retract; implies `--merge` |
+| `--locate` | The [span locator](grounding.md#locating-spans) |
+| `--dry-run` | The free checks, the locator and every deterministic stage: no model, no write |
+| `--model`, `--model-provider`, `--cache`, `--budget-usd`, `--budget-calls`, `--log-format`, `--log-text` | As [`odke run`](run.md) takes them |
+| `--batch-size` | [Stream](run.md#streaming) this many rows at a time |
+| `--tenant` | Key the store by this [tenant](stores.md#tenants) |
+| `--text-property`, `--user`, `--password-env`, `--database` | Neo4j, as `odke ground` takes them |
 
-`odke validate --config run.yaml` runs a run config instead, provided its
-extractor is `triples`. The config gives the inputs, the ontology, the models,
-the stages and the sinks, and a stage it leaves out gets the Validator's
-default, not the pass-through. With `--facts`, `--config` is read only for its
-`models` block, as `odke ground` reads it. `-o` adds a JSONL sink to whatever
-sinks the config names, and `--merge` makes it a store to
-[merge with](stores.md#merge-with-the-store): a fact it holds gains the
-batch's sources.
-
-`--update` says the texts are new versions of ones the store already cites:
-each is [retracted](stores.md#reconcile) from the sinks before the new facts
-are written, so a fact the new version no longer states loses that source.
-It needs a sink that can retract, and implies `--merge` for `-o`.
-
-`--dry-run` calls no model and writes nothing. It runs the free checks, the
-locator with `--locate`, and every deterministic stage, then prints what
-would be written. Exit 2 is input or a config that can't be read; exit 1 is a
-run that failed.
+Exit 2 is input or a config that cannot be read, exit 1 a failed run, exit 3 a
+run its budget stopped, which still writes what it kept.
 
 ## In Python
 
@@ -103,39 +98,20 @@ print(report.refused_by, report.calls)
 # {'contradicted': 1, 'predicate': 1} 4
 ```
 
-The run above did five things:
+The two refusals are the contradicted 2012, and `opened_in`, which is not in
+the ontology and so cost no call. Brittany's `located_in`, stated in both
+texts, merged into one fact with `support` 2, and its inverse partner `contains`
+was derived from each and merged too. `Halden Robotic` became a `SIMILAR` link
+to `Halden Robotics`.
 
-- **Refused two facts.** The text contradicts the 2012 founding year, and
-  `opened_in` isn't in the ontology. The free checks refused the second, so it
-  never cost a call: four calls for five facts.
-- **Merged two.** Brittany's `located_in` is stated in both texts, so it is one
-  fact with `support` 2.
-- **Derived two.** The ontology says `contains` is the inverse of
-  `located_in`, so France contains Brittany, once from each text, and the two
-  copies merge.
-- **Linked one.** The misspelt `Halden Robotic` is a `SIMILAR` link to
-  `Halden Robotics`, not a merge ([DECISIONS #16](decisions.md#16)).
-- **Returned the graph and a report.** `validate()` returns the
-  `KnowledgeGraph` and a `ValidationReport`, and writes the graph to every
-  sink in `sinks=`.
-
-`validate(rows, documents)` takes the following inputs:
-
-- any adapter's `(rows, documents)` ([Inputs](inputs.md#from-other-libraries));
-- a triples file and the texts it cites;
-- `Fact`s and their texts.
-
-`dry_run=True` is the command's dry run, and `update=True` its `--update`. A
-`Validator` keeps its stages between calls, and each report counts its own
-call.
-
-`batch_size=N` is its `--batch-size`: the rows are read N at a time, each
-micro-batch closed where the text its rows cite changes, run through every
-stage and written, so a batch of any size runs in the memory of one
-([Streaming](run.md#streaming)). The texts are held. The report sums the run
-and says how many micro-batches it took; the graph returned holds the stats
-and no facts, since the sinks hold those. A fact two micro-batches both state
-merges through a sink that says what it holds, as a rerun does.
+`validate(facts, documents=(), *, dry_run=False, extractor="triples",
+confidence=0.5, update=False, batch_size=None)` takes any adapter's
+`(rows, documents)` ([Inputs](inputs.md#from-other-libraries)), a triples file
+and its texts, or `Fact`s and their texts. Rows become facts named `extractor`,
+with `confidence` as their prior. It returns the `KnowledgeGraph` and a
+`ValidationReport`, writing the graph to every sink in `sinks=`. A `Validator` keeps its stages between calls, and each report counts
+its own call. `batch_size=N` [streams](run.md#streaming) the rows; the graph
+returned then holds the stats and no facts.
 
 ```python
 import tempfile
@@ -150,82 +126,56 @@ print(streamed.batches, streamed.restated)
 # 4 2
 ```
 
-`Validator(..., tenant="acme")` is `--tenant`: every sink and lookup that can
-be scoped writes and reads that tenant's facts alone ([Tenants](stores.md#tenants)).
-Once the sinks have written, `report.writes` says what each wrote, merged and
-skipped ([the write report](stores.md#the-write-report)).
-
 ## The stages
 
-Each stage defaults to what `odke run` builds under its usual name, with that
-name's default options:
+`Validator(ontology=None, *, ...)` builds each stage left out as `odke run`
+would, with that name's defaults. Passing a stage replaces its default, and a
+pass-through from `openodke.stages` turns it off.
 
-| Stage | Default |
+| Argument | Default |
 |---|---|
-| grounder | `LLMGrounder(roles, client=client, locate=locate)`, behind the free checks (`CheckedGrounder`) |
-| normalizer | `ValueNormalizer(ontology)` |
-| resolver | `NativeResolver(ontology=ontology)`. `normalize_batch=True` has it [normalise the batch](resolution-and-corroboration.md#normalising-mentions-in-a-batch): look-alikes the batch introduces become one entity when nothing keeps them apart, and `embed=` a function from texts to vectors compares their sentences. Off by default; with a resolver of your own, give it those instead |
-| corroborator | `SignatureCorroborator(ontology, store=...)`, handed every sink that can say what it holds, so a write [merges with the store](stores.md#merge-with-the-store) |
-| scorer | `EvidenceScorer()` |
-| gate | `VerdictGate(schema=True)`: refuses what the text contradicts, and what the free checks refused |
-| inverses | on when the ontology declares a pair ([DECISIONS #28](decisions.md#28)); `inverses=False` turns it off |
-| coverage | on: what extraction left behind ([Grounding](grounding.md#what-extraction-left-behind-the-coverage-report)); `coverage=False` turns it off |
-| lookup | none: resolve within the batch. `lookup=` a `StoreLookup` (`sink.lookup()`, `MemoryLookup`) resolves against the store as well ([Resolving against the store](resolution-and-corroboration.md#resolving-against-the-store)); with a resolver of your own, give it the lookup instead |
-| judge | none. `judge=` a `PairJudge` asks a model about the pairs the resolver's rules leave open, in both orders, reading its contexts from the texts given ([The pair judge](resolution-and-corroboration.md#the-pair-judge)); never in a dry run; with a resolver of your own, give it the judge instead |
-| sinks | none |
+| `grounder` | `LLMGrounder(roles, client=client, locate=locate)`. Any grounder runs behind the free checks (`CheckedGrounder`) |
+| `roles`, `client`, `locate` | `ModelRoles()`, resolved from the model, `False` |
+| `normalizer` | `ValueNormalizer(ontology)` |
+| `resolver` | `NativeResolver(ontology=ontology)`, given `lookup`, `judge`, `normalize_batch` and `embed`; with a resolver of your own, give it those instead |
+| `lookup` | none; a `StoreLookup` [resolves against the store](resolution-and-corroboration.md#resolving-against-the-store) |
+| `judge` | none; a `PairJudge` is [the pair judge](resolution-and-corroboration.md#the-pair-judge), never asked in a dry run |
+| `normalize_batch`, `embed` | `False`, none: [normalise the batch](resolution-and-corroboration.md#normalising-mentions-in-a-batch) |
+| `corroborator` | `SignatureCorroborator(ontology, store=...)`, given every sink that is a `FactLookup`, so a write [merges with the store](stores.md#merge-with-the-store) |
+| `scorer` | `EvidenceScorer()` |
+| `gate` | `VerdictGate(schema=True)`: refuses what the text contradicts and what the free checks on the ontology failed, since they leave the verdict alone |
+| `inverses` | on when the ontology declares a pair ([DECISIONS #28](decisions.md#28)) |
+| `coverage` | `True`: [what extraction left behind](grounding.md#what-extraction-left-behind-the-coverage-report) |
+| `sinks` | none |
+| `manifest` | none; a path to write the [run manifest](run.md#the-run-manifest) to as well |
+| `tenant` | none; scopes every sink and lookup to a [tenant](stores.md#tenants) |
 
-Passing a stage replaces its default, and a pass-through from `openodke.stages`
-turns that stage off. A grounder you pass in still runs behind the free checks.
-The default gate has `schema=True` because the free checks don't change a
-fact's verdict, so a gate that read only verdicts would write a fact the
-ontology has no room for. The ontology is optional; without one, the checks on
-the relation and the types have nothing to check.
+Without an ontology, the checks on the relation and the types have nothing to
+check.
 
 ## The report
 
-`ValidationReport` covers one `validate()` call:
+`ValidationReport` covers one `validate()` call. In + derived − refused −
+merged = out.
 
-- **Volumes.** `facts_in` (and `unmatched`, rows whose text wasn't given),
-  `refused` (and `refused_by`, the gate's reasons), `merged`, `linked` (and
-  `links` by kind), `derived` and `facts_out`. The arithmetic holds:
-  in + derived − refused − merged = out. `restated` counts the facts merged
-  with one the store already held; they are in `facts_out`. With `update`,
-  `retracted` holds what retracting the old versions did first.
-- **Grounding.** `verdicts` counts every fact in by the verdict grounding left
-  it with. `checked` is what the free checks refused.
-- **Cost.** `calls`, `tokens` and `cost_usd` (`None` until a provider reports
-  one), the grounder's and the judge's together, plus `prompts`, the
-  [registered prompts](models.md#prompts) sent.
-- **Coverage.** `coverage` holds what extraction left behind, as
-  `KnowledgeGraph.stats["coverage"]` keeps it.
-- **Store.** With a lookup, `store` counts the entities looked up, the store's
-  candidates, the incoming keys re-keyed onto a stored one, and the links to
-  the store by kind. A dry run still reads the store through it, and writes
-  nothing.
-- **Judge.** With a judge, `judge` counts the pairs in the band and those
-  asked, the calls and the swapped ones, the pairs whose two orders disagreed,
-  each decision, and those decided by a person, queued, without context or
-  failed, and the calls a budget refused (`unasked`). Its calls, tokens and
-  cost are in the totals, and its two prompt keys in `prompts`. A budget the
-  judge reaches first is the report's `stopped`, during resolve.
-- **Batch.** With the batch normalised, `batch` counts the look-alike pairs,
-  those merged, the entities and mentions they made, and the pairs kept apart:
-  by a number, a legal form or context, as alike to two entities kept apart,
-  or refused because a chain would join a pair kept apart.
+| Field | Holds |
+|---|---|
+| `documents`, `facts_in`, `unmatched` | texts, facts in, and rows whose text was not given |
+| `verdicts`, `checked` | every fact in by its verdict; what the free checks refused |
+| `refused`, `refused_by` | the gate's refusals, by reason |
+| `merged`, `restated` | facts merged by signature; of those, merged with the store |
+| `linked`, `links`, `derived` | resolver links, by kind; inverse partners added |
+| `facts_out`, `edges`, `properties`, `entities` | the graph |
+| `calls`, `cached`, `tokens`, `cost_usd`, `prompts` | the grounder's and judge's calls, `cost_usd` `None` until priced, and the [prompts](models.md#prompts) sent |
+| `coverage` | as `KnowledgeGraph.stats["coverage"]` |
+| `store`, `judge`, `batch` | with a lookup, a judge or batch normalisation: [their counts](resolution-and-corroboration.md#resolve) |
+| `retracted` | with `update`, what retracting the old versions did |
+| `stopped`, `failed`, `batches` | a budget stop, the texts left out, the micro-batches |
+| `tenant`, `writes`, `dry_run` | the tenant, [the write report](stores.md#the-write-report), and whether it was a dry run |
 
-The graph's `stats` carry the same report under `"validation"`, beside each
-stage's own counts under `"stages"`, so a JSONL sink's `manifest.json` keeps
-it too. Its JSON is versioned, `schema_version` (`"1.0"`), and
-`openodke/validation_report.schema.json` is its schema
-([Stability](stability.md#formats)).
-
-`report.manifest` is the job's [run manifest](run.md#the-run-manifest): the
-Validator's stages, the models and prompts, the ontology's fingerprint, the
-texts' and the facts' hashes, the times and the counts. Each `JsonlSink` gets
-it in its `manifest.json`, and `Validator(manifest=path)` writes it there too.
-It is not in the report's JSON, and two reports of one job are equal without
-it.
-
-The name `openodke.Validator` meant the gate until 1.0.0. That alias is gone.
-`openodke.Gate` is the gate, and `openodke.stages.Validator` still names it,
-with a warning ([DECISIONS #26](decisions.md#26)).
+The graph's `stats` carry the report under `"validation"`, beside each stage's
+counts under `"stages"`, so a JSONL sink's `manifest.json` keeps it. Its JSON
+is versioned by `schema_version` (`"1.0"`), with
+`openodke/validation_report.schema.json` as its schema
+([Stability](stability.md#formats)). `report.manifest` is the job's
+[run manifest](run.md#the-run-manifest), kept out of the JSON and of equality.

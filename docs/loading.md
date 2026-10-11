@@ -1,15 +1,13 @@
 # Loading documents
 
-A **loader** reads files into `Document`s and a **chunker** cuts each document
-into `Chunk`s. Every span later in the pipeline is a pair of character offsets
-into `Document.text` ([DECISIONS #3](decisions.md#3)). Both live in
-`openodke.loaders` and `openodke.chunking`.
+A **loader** (`openodke.loaders`) reads files into `Document`s, and a
+**chunker** (`openodke.chunking`) cuts each into `Chunk`s. Every span is a pair
+of character offsets into `Document.text` ([DECISIONS #3](decisions.md#3)).
 
 ## Loaders
 
 `load(source)` takes a path or bytes and returns documents. `JsonlLoader`
-returns an iterator, reading a file a line at a time as its documents are
-asked for, so a file of any size [streams](run.md#streaming).
+returns an iterator, so a file of any size [streams](run.md#streaming).
 
 | Loader | Suffix | One document per | `modality` | Extra |
 |---|---|---|---|---|
@@ -31,8 +29,11 @@ asked for, so a file of any size [streams](run.md#streaming).
 | `encoding` | CSV, TSV, JSON, JSONL | `utf-8-sig`, which drops a byte-order mark |
 | `modality` | Markdown, HTML, PDF, DOCX | as above |
 | `records` | `JsonLoader` | the top level; `"data.items"` names a nested array |
+| `delimiter`, `fieldnames` | `CsvLoader`, `TsvLoader` | `,` or tab; the header row |
+| `columns` | `ParquetLoader` | every column |
 | `strip_boilerplate` | `HtmlLoader` | `False`; `True` drops `nav` and `footer` |
-| `per_page` | `PdfLoader` | `False` |
+| `per_page`, `page_separator` | `PdfLoader` | `False`, `"\n\n"` |
+| `pattern`, `missing_extras`, `encoding` | `DirectoryLoader` | `"**/*"`, `"warn"`, each loader's own |
 
 ### Text and Markdown
 
@@ -55,8 +56,8 @@ assert heading_path(guide, guide.text.index("Run pip.")) == ("Guide", "Install")
 A record's `text` is one `path: value` line per leaf. `metadata["row"]` holds
 the record, `metadata["fields"]` the offset of each value, and
 `metadata["line"]` the line it starts on. A duplicate column name, or a row with
-more cells than the header, is refused. `record_document(mapping)` turns any
-mapping, such as a database row, into a document.
+more cells than the header, is refused. `record_document(mapping)` makes a
+document of any mapping, such as a database row.
 
 ```python
 from openodke.loaders import CsvLoader
@@ -110,18 +111,17 @@ hands each file to the loader for its suffix, in sorted order.
 - A file no loader claims is skipped.
 - A file whose extra is missing is skipped with a `MissingExtraWarning` naming
   the install command. `missing_extras="raise"` raises instead.
-- `loaders={".suffix": loader}` replaces the suffix table.
+- `loaders={".suffix": loader}` replaces the suffix table (Python only).
 
 ## Chunking
 
 `SentenceChunker(max_words=200, *, overlap=0)` packs whole sentences into
-chunks of at most `max_words` words. Without a chunker, a document is one chunk.
+chunks of at most `max_words` words; without a chunker, a document is one chunk.
 
 - A chunk ends at a paragraph break, or a sentence break if that would leave it
-  less than half full. It never splits a sentence
-  ([DECISIONS #19](decisions.md#19)).
+  under half full, and never splits a sentence ([DECISIONS #19](decisions.md#19)).
 - `chunk.text == doc.text[chunk.start:chunk.end]`, always.
-- `overlap` repeats that many sentences at the start of the next chunk.
+- `overlap` repeats that many sentences at the next chunk's start.
 
 ```python
 from openodke import Document, SentenceChunker
@@ -142,21 +142,20 @@ assert all(doc.text[c.start : c.end] == c.text for c in chunks)
 
 ## Routing
 
-A `Router` sees each chunk before extraction and returns a `RouteVerdict`. A
-chunk routed `skip` or `defer` is counted in `kg.stats` and never extracted.
+A `Router` returns a `RouteVerdict` for each chunk before extraction; a chunk
+routed `skip` or `defer` is counted in `kg.stats` and not extracted.
 
 | Field | Values |
 |---|---|
 | `action` | `extract`, `skip` or `defer` |
-| `label` | Your own word for the chunk's kind; the package ships no taxonomy |
-| `scope` | `chunk` (the default), or `document`: a `skip` or `defer` then stops the rest of the document |
-| `reason` | Optional text saying why |
+| `label` | Your own name for the chunk's kind |
+| `scope` | `chunk` (default), or `document`: a `skip` or `defer` stops the rest of the document |
+| `reason` | Optional: why |
 
 ## In a run config
 
-In an [`odke run`](run.md) config, a loader is its lower-case format name and
-the chunker is `sentence`. A bare path uses `stages.loader`, else the directory
-loader.
+In an [`odke run`](run.md#inputs) config, a loader is its lower-case format
+name with options as extra keys, and the chunker is `sentence`.
 
 ```yaml
 inputs:
