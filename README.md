@@ -41,7 +41,7 @@ That runs a small invented corpus through all thirteen stages on recorded model
 responses and writes the graph to `examples/e2e/out/`. The same run from Python:
 
 ```python
-from openodke import HybridExtractor, LLMExtractor, Ontology, Pipeline, VerdictValidator
+from openodke import HybridExtractor, LLMExtractor, Ontology, Pipeline, VerdictGate
 from openodke.ground import LLMGrounder
 from openodke.llm import RecordedClient, ReplayClient
 from openodke.loaders import DirectoryLoader
@@ -56,7 +56,7 @@ kg = Pipeline(
     ontology,
     HybridExtractor(LLMExtractor(client=extract), documents=docs),
     grounder=LLMGrounder(client=ground),  # a second model checks every cited span
-    validator=VerdictValidator(),  # refuses a fact its own span contradicts
+    gate=VerdictGate(),  # refuses a fact its own span contradicts
     sinks=[JsonlSink("out")],
 ).run(docs)
 print(len(kg.facts), "facts,", kg.stats["refused"], "refused")
@@ -81,9 +81,17 @@ labelled facts:
 The responses and the labels were written for the example, so the table shows
 what the harness reports, not how well any model does. On that fixture,
 grounding caught one of four wrong candidates, and normalisation did more for
-precision than grounding. Real-model numbers from public datasets are in
-[DECISIONS #24](DECISIONS.md), and [#104](https://github.com/deepskandpal/odke/issues/104) will publish them in full. The paper's
-98.8% is neither reproduced nor claimed. [What the example shows, and does not](examples/e2e/README.md#5-the-ablation-on-this-example).
+precision than grounding. The paper's 98.8% is neither reproduced nor claimed.
+[What the example shows, and does not](examples/e2e/README.md#5-the-ablation-on-this-example).
+
+On public data, [five extractors run with and without the layer](https://openodke.dev/benchmarks/#every-extractor-with-and-without-the-layer),
+with ODKE+'s [paper-mode grounder](https://openodke.dev/grounding/#paper-mode-the-odke-grounder-as-written)
+reading each whole document (Claude models, uncalibrated), not the Validator's
+default span prompt. On Re-DocRED's documents the grounder
+raised precision for all four model-based extractors, by 1.8 to 4.3 points, for
+one Haiku call per triple ($4.23 to $9.01 per 1,000 documents), with F1 unchanged
+within its interval. On Text2KGBench's single sentences it lowered precision for
+every extractor, by 0.6 to 2.2 points. The pattern extractor found nothing in prose.
 
 The harness is the point: run the same command on a slice of your own corpus
 that you have labelled, and it tells you whether grounding earns its calls there.
@@ -102,7 +110,7 @@ The three ideas worth taking from that paper:
 | Idea | What it does | Why the alternatives lose |
 |---|---|---|
 | **Ontology snippets** | Prompts the model with a small, ranked, per-type schema fragment rather than the whole ontology | A 200-predicate schema does not fit in a useful prompt. Snippets keep prompt size flat as the schema grows |
-| **Grounding verification** | A second, cheap model checks each candidate fact against its own evidence span and records `supported`, `contradicted` or `not_found` on the fact; a validator decides what is written | Extraction alone hallucinates. A yes/no check against a quoted span is cheap, and a verdict kept on the fact can be measured and re-gated later |
+| **Grounding verification** | A second, cheap model checks each candidate fact against its own evidence span and records `supported`, `contradicted` or `not_found` on the fact; a gate decides what is written | Extraction alone hallucinates. A yes/no check against a quoted span is cheap, and a verdict kept on the fact can be measured and re-gated later |
 | **Corroboration** | Merges the same claim across sources, and resolves conflicts on freshness × trust × agreement | Real corpora disagree with themselves. Without it you write both answers and cannot say which to believe |
 
 Other libraries turn text into a graph — [iText2KG](https://github.com/AuvaLab/itext2kg),
@@ -124,13 +132,13 @@ config, or a stage of yours.
 | load | `DirectoryLoader`, `TextLoader`, `MarkdownLoader`, `HtmlLoader`, `PdfLoader`, `DocxLoader`, `CsvLoader`, `TsvLoader`, `JsonLoader`, `JsonlLoader`, `ParquetLoader` | `directory` (every suffix), `text`, `markdown`, `html`, `pdf`, `docx`, `csv`, … | `directory` |
 | chunk | `SentenceChunker` — whole sentences, offsets intact | `sentence` | one chunk per document |
 | route | yours: skip marketing, policy, narrative | — | extract everything |
-| extract | `PatternExtractor`, `LLMExtractor`, `HybridExtractor` | `pattern`, `llm`, `hybrid` | required |
+| extract | `TriplesExtractor` (any extractor's triples), `PatternExtractor`, `LLMExtractor`, `HybridExtractor` | `triples`, `pattern`, `llm`, `hybrid` | required |
 | ground | `SpanGrounder` (free), `LLMGrounder` | `span`, `llm` | verdict `unchecked` |
 | normalise | `ValueNormalizer` — dates, numbers, units, name keys | `value` | unchanged |
 | resolve | `NativeResolver` — blocking, identifiers, links | `native` | keys as given |
 | corroborate | `SignatureCorroborator` | `signature` | every fact its own claim |
 | score | `EvidenceScorer` — verdict × support × extractor confidence | `evidence` | **`evidence`** under `odke run`; pass-through in a hand-built `Pipeline` |
-| validate | `VerdictValidator` — refuses `contradicted` | `verdict` | accept everything |
+| gate | `VerdictGate` — refuses `contradicted` | `verdict` | accept everything |
 | sink | `JsonlSink`, `Neo4jSink`, `CypherFileSink`, `Neo4jAdminCsvSink`, `RdfSink`, `NetworkXSink` | `jsonl`, `neo4j`, `cypher_file`, `neo4j_admin_csv`, `rdf`, `networkx` | nothing written |
 | constrain | `Neo4jConstrainer` — the ontology as DDL | `neo4j` | no constraints |
 | infer | `OntologyInferrer`; `odke ontology infer`, then review and `freeze` | — | never run: inference is a bootstrap (DECISIONS #8) |
@@ -164,6 +172,8 @@ missing one is named in the error.
 | `rdf` | rdflib | `RdfSink`, `Ontology.from_owl` |
 | `networkx` | networkx | `NetworkXSink` |
 | `docs` | pypdf, python-docx | The document readers together |
+| `bench` | NLTK | `odke bench` on Text2KGBench (its hallucination metrics) |
+| `otel` | the OpenTelemetry API | Spans per job, stage and model call |
 | `all` | all of the above | |
 
 Python 3.11–3.14.
@@ -188,7 +198,7 @@ stages:
   grounder: llm
   normalizer: value
   corroborator: signature
-  validator: verdict
+  gate: verdict
   sink: {use: neo4j, uri_env: NEO4J_URI, password_env: NEO4J_PASSWORD}
   constrainer: neo4j
 bootstrap: true
@@ -207,9 +217,9 @@ document's id is its path, so a label or a query can name it.
 
 ## Evaluate against your own labels
 
-openodke ships the formats and the arithmetic for scoring every stage, and never a
-corpus: a number computed against the pipeline's own output measures nothing.
-Bring your own labelled dataset.
+openodke ships the formats and the arithmetic for scoring every stage against
+your own labelled dataset; `odke bench` runs the public ones
+([Benchmarks](https://openodke.dev/benchmarks/)).
 
 ```bash
 odke eval extract --describe                           # what to label
@@ -292,25 +302,30 @@ and which reconcile (`start_time`), and that decides what counts as one claim.
 ## Honest limits
 
 - **The fixtures and the example are not benchmarks.** Their model responses are
-  hand-authored, and no precision or recall figure has been established against
-  a real model.
+  hand-authored. The numbers measured with real models are on
+  [Benchmarks](https://openodke.dev/benchmarks/).
 - **Live Neo4j needs 5.7 or later.** The constraint bootstrap uses relationship
   uniqueness constraints; Community edition is enough.
 - **Structured facts are grounded against their own cell.** The cell `Leeds`
   cannot say whose head office it is, so a careful grounder answers `not_found`
   and the call is spent for little. The default gate keeps `not_found` for this
   reason.
-- **The grounder sees the cited span, never the document.** That is what keeps
-  it cheap, and a span that leaves out the subject cannot support the claim.
-- **Resolution never merges on names.** Only a shared identifier re-keys an
-  entity; a name match is a `SIMILAR` link for someone to act on.
+- **The default grounder reads the cited span.** That is what keeps it cheap,
+  and a span that leaves out the subject cannot support the claim. Widen and
+  retry (`widen`, off by default) asks again against the sentence, and
+  `context: document` reads the whole document, as paper mode does.
+- **Resolution never merges a stored node on names.** Only a shared
+  identifier re-keys onto one; a name match is a `SIMILAR` link for someone to
+  act on. Asked to (`normalize_batch=True`, off by default), it makes a
+  batch's own look-alikes that nothing in their names or context keeps apart
+  one entity before anything is written (DECISIONS #43).
 - **Inference drafts; it never decides.** `odke ontology infer` proposes a small
   schema for a person to review and freeze, and nothing infers implicitly
   (DECISIONS #8).
 
 ## Documentation
 
-- [deepskandpal.github.io/odke](https://openodke.dev/) — the documentation site: concepts, ontology and inference, loaders and extraction, grounding, resolution and corroboration, sinks, `odke run`, evaluation
+- [openodke.dev](https://openodke.dev/) — the documentation site: concepts, the Validator and its inputs, loading documents, grounding, resolution and corroboration, stores, `odke run`, evaluation, labels and benchmarks, models, the ontology and the reference extractor
 - [examples/](examples/README.md) — the end-to-end example and the commented run config
 - [ROADMAP.md](ROADMAP.md) — milestones, what each one delivers, and the estimate
 - [CHANGELOG.md](CHANGELOG.md) — what landed, milestone by milestone

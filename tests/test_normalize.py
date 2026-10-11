@@ -6,10 +6,11 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from openodke import Entity, Fact, KnowledgeGraph, Normalizer, Ontology, Predicate
+from openodke import Entity, Evidence, Fact, KnowledgeGraph, Normalizer, Ontology, Predicate
 from openodke.corroborate import (
     NAME_KEY,
     SOURCE_FORM,
+    SignatureCorroborator,
     ValueNormalizer,
     name_key,
     normalize_date,
@@ -76,7 +77,7 @@ def test_impossible_dates_are_not_dates() -> None:
         ("3 million", 3_000_000),
         ("12.5%", "12.5 %"),
         ("12.5 percent", "12.5 %"),
-        ("$1,200", "1200 USD"),
+        ("US$1,200", "1200 USD"),
         ("USD 1,200", "1200 USD"),
         ("1200 USD", "1200 USD"),
         ("€5m", "5000000 EUR"),
@@ -92,10 +93,121 @@ def test_numbers_and_units_have_one_canonical_form(text: str, expected: object) 
     assert type(result) is type(expected)
 
 
-@pytest.mark.parametrize("text", ["0123", "1,2", "5 m", "10 Mb", "12 apples", "1.234,5"])
+@pytest.mark.parametrize("text", ["0123", "1,2", "5 bn", "10 Mb", "12 apples", "1.234,5"])
 def test_what_is_not_surely_a_quantity_is_refused(text: str) -> None:
-    """A leading zero is an identifier, 'm' alone is metres, 'Mb' is megabits."""
+    """A leading zero is an identifier, 'bn' scales only money, 'Mb' is megabits."""
     assert normalize_quantity(text) is None
+
+
+def test_one_length_in_four_spellings_is_one_value_and_one_claim() -> None:
+    """The #152 done-when: unit-bearing values merge across spellings."""
+    normalizer = ValueNormalizer()
+    spellings = ("5 km", "5,000 m", "5000 metres", "5 Kilometers")
+    facts = [normalizer.normalize(_fact(text)) for text in spellings]
+    assert {f.object_value for f in facts} == {"5000 m"}
+    assert len({f.signature for f in facts}) == 1
+    # The source's wording is kept beside the canonical form, as a date's is.
+    assert [f.qualifiers[SOURCE_FORM]["object_value"] for f in facts] == [
+        ("5 km",),
+        ("5,000 m",),
+        ("5000 metres",),
+        ("5 Kilometers",),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("12 mm", "0.012 m"), ("2 ft", "0.6096 m"), ("3 in", "0.0762 m"), ("1 mi", "1609.344 m"),
+        ("500 g", "0.5 kg"), ("2 lb", "0.90718474 kg"), ("1 oz", "0.028349523125 kg"),
+        ("1.5 t", "1500 kg"), ("250 ms", "0.25 s"), ("90 min", "5400 s"), ("1.5 h", "5400 s"),
+        ("2 days", "172800 s"), ("1 week", "604800 s"), ("5 yrs", "5 year"), ("1 KB", "1000 B"),
+        ("1 kilobyte", "1000 B"), ("1 KiB", "1024 B"), ("2 TB", "2000000000000 B"),
+        ("3 million km", "3000000000 m"), ("-400 m", "-400 m"),
+    ],
+)  # fmt: skip
+def test_each_dimension_has_one_canonical_unit_and_exact_factors(text: str, expected: str) -> None:
+    """Metres, kilograms, seconds, bytes: SI base units, with Decimal arithmetic."""
+    assert normalize_quantity(text) == expected
+    # Canonical forms read back as themselves.
+    assert normalize_quantity(expected) == expected
+
+
+def test_quantities_of_different_dimensions_never_meet() -> None:
+    normalizer = ValueNormalizer()
+    values = ("5 km", "5 kg", "5 h", "5 GB", "5 %", "5 years", "5 USD", "5 m", "5 g", "5 s")
+    facts = [normalizer.normalize(_fact(text)) for text in values]
+    assert len({f.object_value for f in facts}) == len(values)
+    assert len({f.signature for f in facts}) == len(values)
+
+
+def test_a_year_is_a_unit_of_its_own_and_data_sizes_follow_si() -> None:
+    """A year has no fixed length in seconds; a KB is 1000 bytes and a KiB 1024."""
+    assert normalize_quantity("5 years") == normalize_quantity("5 yr") == "5 year"
+    assert normalize_quantity("1 year") != normalize_quantity("365 days")
+    assert normalize_quantity("1 KB") == normalize_quantity("1 kB") == normalize_quantity("1000 B")
+    assert normalize_quantity("1 KB") != normalize_quantity("1 KiB")
+
+
+def test_currency_is_never_converted_and_an_ambiguous_symbol_is_kept() -> None:
+    """'$' is a dozen dollars and '¥' two currencies: the amount merges, the code is not guessed."""
+    assert normalize_quantity("$1.2bn") == normalize_quantity("$1,200 million") == "1200000000 $"
+    assert normalize_quantity("US$1.2bn") == normalize_quantity("1.2bn USD") == "1200000000 USD"
+    assert normalize_quantity("$1.2bn") != normalize_quantity("US$1.2bn")
+    assert normalize_quantity("¥500") == "500 ¥"
+    assert normalize_quantity("Rs. 500") == normalize_quantity("Rs 500") == "500 Rs"
+    assert normalize_quantity("€5") == normalize_quantity("5 €") == "5 EUR"
+    assert normalize_quantity("A$5") == "5 AUD"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["5 °C", "41 °F", "300 K", "5 pounds", "3 tons", "6 months", "2 d", "10 km/h", "5 KM",
+     "5 fl oz", "5 oz t", "1,5 km", "5 000 m", "1.234,5 kg"],
+)  # fmt: skip
+def test_a_unit_outside_the_table_stays_as_written(text: str) -> None:
+    """Temperature, 'pound', 'ton' and months are left out; so are a decimal comma
+    and space-grouped thousands, because the notation is English."""
+    assert normalize_quantity(text) is None
+    assert ValueNormalizer().normalize(_fact(text)).object_value == text
+
+
+def test_a_quantity_range_reads_units_and_nothing_else() -> None:
+    """`quantity` is text to the model, so the unit survives structured output."""
+    ontology = Ontology.from_dict(
+        {
+            "types": {"Race": {}},
+            "predicates": {
+                "distance": {"domain": ["Race"], "range": "quantity"},
+                "name": {"domain": ["Race"], "range": "string"},
+            },
+        }
+    )
+    assert ontology.validate() == []
+    schema = ontology.snippet("Race").json_schema()
+    assert schema["properties"]["distance"]["type"] == "string"
+    normalizer = ValueNormalizer(ontology)
+    race = Entity(key="r1", type="Race", label="City 5K")
+
+    def run(pred: str, value: str) -> object:
+        return normalizer.normalize(Fact(subject=race, predicate=pred, object_value=value))
+
+    assert run("distance", "5 kilometres").object_value == "5000 m"
+    assert run("distance", "1,234").object_value == 1234
+    assert run("distance", "Dec 10, 1815").object_value == "Dec 10, 1815"
+    assert run("name", "5 km").object_value == "5 km"
+
+
+def test_normalised_units_corroborate_into_one_claim() -> None:
+    normalizer = ValueNormalizer()
+    facts = [
+        normalizer.normalize(_fact(text, evidence=(Evidence(doc_id=doc),)))
+        for doc, text in (("d1", "5 km"), ("d2", "5,000 m"), ("d3", "5 kg"))
+    ]
+    length, mass = SignatureCorroborator().corroborate(facts)
+    assert (length.object_value, length.support) == ("5000 m", 2)
+    assert length.qualifiers[SOURCE_FORM] == {"object_value": ("5 km", "5,000 m")}
+    assert (mass.object_value, mass.support) == ("5 kg", 1)
 
 
 def test_the_ontology_range_decides_what_a_value_may_become() -> None:
@@ -137,7 +249,7 @@ def test_the_source_spelling_is_recorded_not_destroyed() -> None:
 
 def test_normalisation_is_idempotent() -> None:
     normalizer = ValueNormalizer()
-    for value in ("Dec 10, 1815", "$1.2bn", "12.5 percent", "1.5 GiB", "1,234", "Ada", 7):
+    for value in ("Dec 10, 1815", "$1.2bn", "12.5 percent", "1.5 GiB", "1,234", "5 km", "Ada", 7):
         once = normalizer.normalize(_fact(value))
         twice = normalizer.normalize(once)
         assert twice is once

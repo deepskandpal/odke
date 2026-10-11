@@ -1,118 +1,46 @@
-# Installation
-
-openodke needs Python 3.11, 3.12, 3.13 or 3.14.
-
-`openodke` is on [PyPI](https://pypi.org/project/openodke/); 0.2.1 is the
-current release.
+# Install
 
 ```bash
 pip install openodke
 pip install "openodke[neo4j,yaml]"   # with extras
 pip install "openodke[all]"          # every extra
-uv add "openodke[neo4j]"             # or with uv
+uv add openodke                      # with uv
 ```
 
-These pages track `main`. For changes not yet released, install from the
-repository: `pip install "openodke @ git+https://github.com/deepskandpal/odke"`.
+openodke runs on Python 3.11, 3.12, 3.13 and 3.14. The package is `openodke`;
+the command it installs is `odke`.
 
-## The base install talks to nothing
+To install what is on `main` but not yet released:
+`pip install "openodke @ git+https://github.com/deepskandpal/odke"`.
 
-The base install pulls in two dependencies, `pydantic` and `typer`: no model
-provider, no database driver, no HTTP client. Compiling and inspecting an
-ontology is useful offline, and it should not need credentials to exist
-([DECISIONS #1](decisions.md)). This is checked rather than promised:
-`scripts/verify.sh` step 8 imports the package with the base dependencies alone,
-in a throwaway environment, on every push.
+## The base install
 
-On the base install you already have:
-
-- the data model, the thirteen stage Protocols and `Pipeline`;
-- ontologies from dicts, JSON and pydantic models, plus `validate`, `diff`,
-  snippets, `freeze` and the `odke ontology` commands;
-- ontology inference with the deterministic proposers (`odke ontology infer --no-llm`,
-  writing a `.json` draft), and with a model over the standard-library client;
-- the loaders for text, Markdown, HTML, directories, JSON, JSONL, CSV and TSV, the
-  sentence chunker, and the extractors in `openodke.extract`;
-- `SpanGrounder`, and `LLMGrounder` over the standard-library OpenAI-compatible
-  client;
-- the normalise, resolve, corroborate and score stages in `openodke.corroborate`;
-- `JsonlSink`, `CypherFileSink` and `Neo4jAdminCsvSink`, and
-  `import openodke.sinks.neo4j` including printing its DDL and write plan (only
-  connecting to a server needs the driver);
-- `odke run` with a JSON config, and all of `openodke.eval` and `odke eval`.
+The base install depends on `pydantic` and `typer` alone, and runs offline: no
+model provider, no database driver, no network. Everything on these pages works
+on it except what the extras below add.
 
 ## Extras
 
-These are the extras `pyproject.toml` declares, exactly:
-
-| Extra | Pulls in | What uses it on `main` |
+| Extra | Installs | Needed for |
 |---|---|---|
-| `llm` | `litellm>=1.55,<2` | Model strings the built-in client does not serve (see below) |
+| `llm` | `litellm>=1.55,<2` | Model strings the built-in client does not serve |
 | `neo4j` | `neo4j>=5.20,<7` | `Neo4jSink` connecting to a server; `Ontology.from_neo4j` given a URI |
 | `rdf` | `rdflib>=7.0,<8` | `RdfSink`; `Ontology.from_owl` |
 | `networkx` | `networkx>=3.2,<4` | `NetworkXSink` |
-| `docs` | `pypdf>=5.0,<7`, `python-docx>=1.1,<2` | The document readers together, so it covers what `pdf` and `docx` do. HTML needs no extra: `HtmlLoader` runs on the standard library. This extra is not this site's tooling: that is the `docs` *dependency group* (below). |
-| `pdf` | `pypdf>=5.0,<7` | `PdfLoader`, which imports pypdf when it reads a file |
-| `docx` | `python-docx>=1.1,<2` | `DocxLoader`, which imports python-docx when it reads a file |
-| `yaml` | `pyyaml>=6,<7` | `Ontology.from_yaml`; YAML run configs; the `odke ontology` commands on `.yaml`/`.yml` files, including writing a YAML draft or frozen file |
-| `parquet` | `pyarrow>=15` | `ParquetLoader`, which imports pyarrow when it reads a file |
-| `all` | `llm`, `neo4j`, `rdf`, `networkx`, `docs`, `pdf`, `docx`, `yaml`, `parquet` | |
+| `docs` | `pypdf>=5.0,<7`, `python-docx>=1.1,<2` | `PdfLoader` and `DocxLoader` together |
+| `pdf` | `pypdf>=5.0,<7` | `PdfLoader` |
+| `docx` | `python-docx>=1.1,<2` | `DocxLoader` |
+| `yaml` | `pyyaml>=6,<7` | `Ontology.from_yaml`; YAML run configs |
+| `parquet` | `pyarrow>=15` | `ParquetLoader` |
+| `bench` | `nltk>=3.8,<4` | `odke bench` on Text2KGBench (its hallucination metrics) |
+| `otel` | `opentelemetry-api>=1.24,<2` | [Spans](run.md#logs-and-traces) per job, stage and model call |
+| `all` | every extra above | |
 
-### Which model strings need `llm`
+Nothing fails at import. A feature used without its extra raises an error that
+names the install line; `DirectoryLoader` warns and skips the file instead.
 
-Every model call goes through one `LLMClient` Protocol. A model string such as
-`ollama/llama3.1` is served by the first client that matches:
-
-1. an adapter you registered for that provider with `openodke.llm.register(provider, factory)`;
-2. the standard-library OpenAI-compatible client, when the provider has a default
-   endpoint or the `ModelSpec` sets a `base_url` (a proxy, a gateway or a local
-   server). This needs no extra;
-3. litellm, for everything else. This needs `openodke[llm]`.
-
-`odke models` prints which of the three serves each provider, in the environment
-you are in, and says which providers the missing extra excludes. Every provider,
-its key variable and how to address it is on one page:
+Which model strings need `llm`, and which key each provider reads, is on
 [Models and providers](models.md).
 
-`ModelRoles.single("ollama/llama3.1")` on the base install, with a local Ollama,
-is a complete setup.
-
-## A missing extra says which one
-
-Nothing fails at import. The error comes when the feature is used, and it names
-the fix:
-
-| Used without its extra | Raises |
-|---|---|
-| `Ontology.from_yaml` | `ImportError: PyYAML is not installed. Run: pip install "openodke[yaml]"` |
-| a YAML config in `odke run` | `ImportError: reading a YAML config needs PyYAML. Run: pip install "openodke[yaml]", or write the same keys as JSON` |
-| `Neo4jSink(uri, auth)` | `ImportError: the neo4j driver is not installed; run: pip install 'openodke[neo4j]'` |
-| `RdfSink(path)` | `ImportError: rdflib is not installed; run: pip install 'openodke[rdf]'` |
-| `Ontology.from_owl` | `ImportError: rdflib is not installed. Run: pip install "openodke[rdf]"` |
-| `NetworkXSink()` | `ImportError: networkx is not installed; run: pip install 'openodke[networkx]'` |
-| `PdfLoader`, reading a file | `MissingExtraError: reading PDF needs pypdf. Run: pip install "openodke[pdf]"` |
-| `DocxLoader`, reading a file | `MissingExtraError: reading Word documents needs python-docx. Run: pip install "openodke[docx]"` |
-| `ParquetLoader`, reading a file | `MissingExtraError: reading Parquet needs pyarrow. Run: pip install "openodke[parquet]"` |
-| `DirectoryLoader`, meeting one of those files | a `MissingExtraWarning` naming the file and the install line; the file is skipped and the walk goes on |
-| a model string that needs litellm | `ProviderNotInstalled`, listing `pip install "openodke[llm]"`, a `base_url`, or `openodke.llm.register` |
-| a short name in `odke run` whose extra is missing (`pdf`, `docx`, `parquet`, `rdf`, `networkx`) | exit 2 while the config is built, before anything is loaded or opened: `stages.sink: RdfSink needs rdflib, which is not installed. Run: pip install "openodke[rdf]"` |
-
-`MissingExtraError` is an `ImportError`.
-
-## Working on openodke
-
-```bash
-git clone https://github.com/deepskandpal/odke && cd odke
-./scripts/verify.sh                                  # the whole check: ten steps, same as CI
-uv run --group docs mkdocs serve                     # this site, at http://127.0.0.1:8000
-uv run --group docs mkdocs build --strict            # what the docs workflow runs
-```
-
-The site's tooling (`mkdocs` and `mkdocs-material`) is the `docs` dependency group,
-not the `docs` extra: a group never reaches a user's install, and groups and extras
-are separate namespaces.
-
-`verify.sh` needs [uv](https://docs.astral.sh/uv/). Its first step refuses to run
-if a provider key or `NEO4J_URI` / `NEO4J_PASSWORD` is in the environment, because
-the suite must never spend money or write to somebody's real graph. The tests
-that do need a real Neo4j run in their own CI job, against a throwaway container.
+To work on openodke itself, see
+[CONTRIBUTING](https://github.com/deepskandpal/odke/blob/main/CONTRIBUTING.md).

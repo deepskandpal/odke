@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "openodke triples row",
+  "description": "One triple per JSON Lines row, next to the text it came from. schema_version is major.minor: a minor version adds optional fields, a major one changes them. Left out, a row is read as the reader's version.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["doc", "subject", "predicate", "object"],
+  "dependentRequired": {"start": ["end"], "end": ["start"]},
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^1\\.[0-9]+$"},
+    "doc": {"type": "string", "minLength": 1},
+    "subject": {"type": "string", "minLength": 1},
+    "predicate": {"type": "string", "minLength": 1},
+    "object": {"type": ["string", "number", "boolean"]},
+    "subject_type": {"type": ["string", "null"]},
+    "object_type": {"type": ["string", "null"]},
+    "start": {"type": ["integer", "null"], "minimum": 0},
+    "end": {"type": ["integer", "null"], "minimum": 0},
+    "quote": {"type": ["string", "null"], "minLength": 1},
+    "polarity": {"enum": ["asserted", "denied", "partial"]},
+    "qualifiers": {"type": "object"},
+    "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "extractor": {"type": ["string", "null"]},
+    "id": {"type": ["string", "null"]}
+  }
+}

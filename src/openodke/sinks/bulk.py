@@ -127,10 +127,13 @@ class CypherFileSink:
     script run for its side effects would discard the answer.
 
     The file is rewritten on every `write`; a graph always compiles to the same
-    bytes, so two writes of one graph leave one identical file.
+    bytes, so two writes of one graph leave one identical file. So it does not
+    stream: a run in micro-batches would leave the last one.
     """
 
     profile = Neo4jSink.profile
+    # Each write is the whole graph (`openodke.stream.streams`).
+    streams = False
 
     def __init__(
         self,
@@ -225,10 +228,12 @@ class Neo4jAdminCsvSink:
 
     An import builds a new database rather than updating one; to extend a live
     graph use `Neo4jSink` or `CypherFileSink`. Files are rewritten on every
-    `write`, and one graph always produces the same bytes.
+    `write`, and one graph always produces the same bytes, so it does not
+    stream.
     """
 
     profile = Neo4jSink.profile
+    streams = False
 
     def __init__(
         self,

@@ -119,6 +119,8 @@ def test_a_malformed_reply_is_repaired_once_then_recorded(tmp_path: Path) -> Non
     )
     assert [t.name for t in repaired.propose(sample, found).types] == ["Person"]
     assert [c.repair for c in repaired.calls] == [False, True]
+    # Each call names the registered prompt it sent (DECISIONS #27).
+    assert [c.prompt for c in repaired.calls] == ["infer@1", "infer.repair@1"]
 
     broken = LLMProposer(client=ScriptedClient(["no", "still no"]), spec=SONNET)
     assert broken.propose(sample, found) == Proposals()

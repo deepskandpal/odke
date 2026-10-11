@@ -17,13 +17,19 @@ filter themselves.
 The paper's two front stages — the Initiator that decides what to refresh and
 the Retriever that fetches it — stay declared (DECISIONS #9). An SDK is usually
 handed its documents, so they are not among the thirteen.
+
+The tenth stage was `Validator` in 0.2. It is `Gate` now, because "Validator"
+names the whole verification layer (DECISIONS #26); `Validator` and
+`PassThroughValidator` still work here, with a warning, until 2.0.0 (#48).
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
-from typing import Any, Protocol, TypeAlias, runtime_checkable
+from collections.abc import Collection, Iterable, Mapping, Sequence
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
 
+from openodke._renamed import Renamed, module_getattr
 from openodke.ontology import Ontology
 from openodke.types import (
     Chunk,
@@ -41,8 +47,8 @@ from openodke.types import (
 # What a loader reads: a path, a URL, bytes, a row iterator. The loader decides.
 Source: TypeAlias = Any
 Corpus: TypeAlias = Iterable[Document]
-# The entities already known, by key. A dict on a first run; a store-backed
-# mapping once there is a graph to resolve against.
+# The entities already known, by key: the batch's own, as the pipeline passes it.
+# What the store holds is reached through a `StoreLookup`, never loaded into this.
 EntityIndex: TypeAlias = Mapping[str, Entity]
 # Constraints in the store's own language — Cypher `CREATE CONSTRAINT`
 # statements, SHACL shapes, SQL — one string per statement or document.
@@ -128,7 +134,7 @@ class Grounder(Protocol):
     This is the precision stage, and it is cheap by construction: a small
     model, one fact and one evidence span at a time, answering yes or no. It
     stamps rather than drops, so the ablation can count what would have gone;
-    the validator is the gate.
+    the gate decides what is written.
     """
 
     def ground(self, fact: Fact, doc: Document) -> Fact: ...
@@ -157,6 +163,53 @@ class Resolver(Protocol):
 
 
 @runtime_checkable
+class StoreLookup(Protocol):
+    """What the store already holds that may be one of these entities, without loading it.
+
+    Not a stage: the resolver's way into the store (DECISIONS #31). Returns,
+    by each entity's key, the store's entities that share a block key with it
+    — the same key, an external id, a domain, or the first or last token of a
+    name (`openodke.corroborate.block_keys`) — within its type, and within a
+    tenant when the lookup is scoped to one. A candidate is only compared; the
+    resolver decides. A lookup reads and never writes: the store's nodes are
+    the same after it as before.
+    """
+
+    def candidates(self, entities: Sequence[Entity]) -> Mapping[str, Sequence[Entity]]: ...
+
+
+@runtime_checkable
+class FactLookup(Protocol):
+    """What the store already holds of a batch of facts, by signature, without loading it.
+
+    Not a stage: the corroborator's way into the store, as `StoreLookup` is the
+    resolver's (#153). Returns, for each fact whose signature the store holds,
+    the stored fact: its evidence, support list, qualifiers, verdict,
+    confidence and clocks as the store has them. `Neo4jSink` reads its
+    relationships through their signature indexes, and `JsonlSink(merge=True)`
+    reads its file. A lookup reads and never writes.
+    """
+
+    def stored(self, facts: Sequence[Fact]) -> Mapping[tuple[Any, ...], Fact]: ...
+
+
+@runtime_checkable
+class Retractable(Protocol):
+    """A store that can retract a source: take its documents out of every fact they back.
+
+    Not a stage: what the reconciler runs a change on (#116). Each fact citing
+    one of `doc_ids` loses that document's evidence and its place in the
+    support list. A fact left with no source is retired at `at` and kept, or
+    removed when `hard`. Returns the counts `openodke.reconcile.COUNTS` names.
+    Retracting the same documents again changes nothing.
+    """
+
+    def retract(
+        self, doc_ids: Collection[str], *, at: datetime, hard: bool = False
+    ) -> Mapping[str, int]: ...
+
+
+@runtime_checkable
 class Corroborator(Protocol):
     """Merge the same claim across sources; count `support`; resolve conflicts."""
 
@@ -172,8 +225,12 @@ class Scorer(Protocol):
 
 
 @runtime_checkable
-class Validator(Protocol):
-    """Domain, range, cardinality and polarity against the ontology."""
+class Gate(Protocol):
+    """What gets written: domain, range, cardinality and polarity against the ontology.
+
+    `refuse` keeps a fact out of the graph and says why. The method keeps its
+    0.2 name, `validate`, so a gate written against 0.2 still satisfies this.
+    """
 
     def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict: ...
 
@@ -193,7 +250,7 @@ class PlatformProfile(Frozen):
     resolves: bool = False
     # Enforces the schema itself — uniqueness, cardinality, SHACL.
     constrains: bool = False
-    # Removes what the schema does not allow — what a Validator refuses here.
+    # Removes what the schema does not allow — what a Gate refuses here.
     prunes: bool = False
 
 
@@ -302,7 +359,7 @@ class PassThroughScorer:
         return fact
 
 
-class PassThroughValidator:
+class PassThroughGate:
     """Accepts everything. The store's own constraints are still the second half."""
 
     def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
@@ -337,7 +394,7 @@ class Delegated:
     place for that. A delegated resolver sets `Entity.resolution` to
     `Resolution(method="linker", linker=to)` on every entity that arrives
     unresolved, so a merge the store makes can be read back and scored the same
-    way as one made here. A delegated router or validator names `to` in the
+    way as one made here. A delegated router or gate names `to` in the
     verdict's `reason`. The fact-to-fact stages have no provenance slot and
     pass through unstamped; no surveyed platform grounds, normalises or scores,
     and the field can be added the day one does.
@@ -409,6 +466,19 @@ def _stamped(fact: Fact, stamp: Resolution) -> Fact:
     return fact.model_copy(update={"subject": mark(fact.subject), "object_entity": obj})
 
 
+if TYPE_CHECKING:
+    # What a type checker sees; at run time the 0.2 names come from `__getattr__`.
+    Validator = Gate
+    PassThroughValidator = PassThroughGate
+
+__getattr__ = module_getattr(
+    __name__,
+    {
+        "Validator": Renamed(Gate, "openodke.stages.Gate"),
+        "PassThroughValidator": Renamed(PassThroughGate, "openodke.stages.PassThroughGate"),
+    },
+)
+
 __all__ = [
     "DDL",
     "Chunker",
@@ -418,6 +488,8 @@ __all__ = [
     "Delegated",
     "EntityIndex",
     "Extractor",
+    "FactLookup",
+    "Gate",
     "Grounder",
     "Inferrer",
     "Initiator",
@@ -426,6 +498,7 @@ __all__ = [
     "PassThroughChunker",
     "PassThroughConstrainer",
     "PassThroughCorroborator",
+    "PassThroughGate",
     "PassThroughGrounder",
     "PassThroughInferrer",
     "PassThroughLoader",
@@ -436,10 +509,12 @@ __all__ = [
     "PassThroughValidator",
     "PlatformProfile",
     "Resolver",
+    "Retractable",
     "Retriever",
     "Router",
     "Scorer",
     "Sink",
     "Source",
+    "StoreLookup",
     "Validator",
 ]

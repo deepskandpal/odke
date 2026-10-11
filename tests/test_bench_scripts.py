@@ -27,7 +27,11 @@ def _load(name: str) -> ModuleType:
     return module
 
 
+batch_normalize = _load("batch_normalize")
 competitors = _load("competitors")
+inverses = _load("inverses")
+locator = _load("locator")
+store_lookup = _load("store_lookup")
 tables = _load("tables")
 
 
@@ -176,3 +180,229 @@ def test_rejected_by_grounder_is_what_the_gate_removed(tmp_path: Path) -> None:
     rows = [ln for ln in lines if " | + grounding | " in ln or " | + corroboration | " in ln]
     assert rows[0].startswith("|  | + grounding |") and rows[0].endswith("| 8 | 2 |")
     assert rows[1].endswith("| 6 | 2 |")
+
+
+# --------------------------------------------------------------------------- #
+# inverses.py
+# --------------------------------------------------------------------------- #
+
+
+def test_inverse_partners_are_scored_with_the_datasets_own_scorer(tmp_path: Path) -> None:
+    """Saved triples, no model: the partner the gold wants is recovered, and said to be."""
+    from openodke.eval.datasets import redocred
+    from openodke.eval.datasets._common import snake
+
+    located, contains = (redocred.RELATIONS[p] for p in ("P131", "P150"))
+    ontology = {
+        "types": {"Location": {}},
+        "predicates": {
+            snake(label): {"domain": ["Location"], "range": "Location"}
+            for label in redocred.RELATIONS.values()
+        },
+    }
+    labels = {snake(label): label for label in redocred.RELATIONS.values()}
+    _write(tmp_path, "ontology.json", ontology)
+    _write(tmp_path, "dataset.json", {"relation_labels": labels})
+    gold = {
+        "id": "test_0000",
+        "text": "Rennes is in Brittany. Brittany is in France.",
+        "entities": [["Rennes"], ["Brittany"], ["France"]],
+        "facts": [[1, located, 2], [2, contains, 1], [0, located, 1]],
+    }
+    (tmp_path / "gold.jsonl").write_text(json.dumps(gold) + "\n")
+    saved = {
+        "id": "test_0000",
+        "triples": [["Brittany", located, "France"], ["Rennes", located, "Paris"]],
+    }
+    (tmp_path / "predictions").mkdir()
+    (tmp_path / "predictions" / "extraction-alone.jsonl").write_text(json.dumps(saved) + "\n")
+
+    measured = inverses.measure_redocred(tmp_path)
+    first = measured["results"][0]
+    assert (first["pairs"], first["system"], first["row"]) == (
+        "#106's six",
+        "openodke",
+        "extraction alone",
+    )
+    assert (first["recall_before"], first["recall_after"]) == (1 / 3, 2 / 3)
+    assert (first["precision_before"], first["precision_after"]) == (1 / 2, 2 / 4)
+    assert first["partners"] == {"in gold": 1, "unlabelled": 0, "from a wrong fact": 1}
+    # The copy the pairs were added to loads strictly, and declares them.
+    issue = measured["ontologies"]["#106's six"]["predicates"]
+    assert issue[snake(located)]["inverse_of"] == snake(contains)
+    assert issue["spouse"]["symmetric"] is True
+
+
+# locator.py
+# --------------------------------------------------------------------------- #
+
+
+def _saved_run(tmp_path: Path) -> Path:
+    """A competitor's saved Re-DocRED run, three facts long: one kept, two refused."""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "test_0000.txt").write_text(
+        "Ada Lovelace was born in London. She died in Paris."
+    )
+    ontology = {
+        "name": "t",
+        "types": {"Person": {}, "City": {}},
+        "predicates": {"born_in": {"domain": ["Person"], "range": "City"}},
+    }
+    (tmp_path / "ontology.json").write_text(json.dumps(ontology))
+    (tmp_path / "dataset.json").write_text(json.dumps({"relation_labels": {"born_in": "born in"}}))
+    rows = [
+        {"doc": "test_0000", "subject": "Ada Lovelace", "predicate": "BORN_IN", "object": city}
+        for city in ("London", "Paris", "Rome")
+    ]
+    (tmp_path / "facts.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    (tmp_path / "predictions").mkdir()
+    kept = {"id": "test_0000", "triples": [["Ada Lovelace", "born in", "London"]]}
+    (tmp_path / "predictions" / "grounding.jsonl").write_text(json.dumps(kept) + "\n")
+    gold = {
+        "id": "test_0000",
+        "text": "",
+        "entities": [["Ada Lovelace"], ["London"], ["Paris"]],
+        "facts": [[0, "born in", 1]],
+    }
+    (tmp_path / "gold.jsonl").write_text(json.dumps(gold) + "\n")
+    return tmp_path
+
+
+def test_the_locator_bench_reads_the_saved_verdicts_and_places_facts(tmp_path: Path) -> None:
+    system = locator.System(_saved_run(tmp_path))
+    assert system.whole == ["supported", "not_found", "not_found"]
+    assert system.correct == [1, 0, 0]
+    placed, stats = locator.place(system)
+    # Paris is named in the sentence after the subject; Rome nowhere.
+    assert placed == [0, 1]
+    assert (stats["placed"], stats["two_sentence_windows"]) == (2, 1)
+
+
+def test_the_locator_bench_rule_passes_agreement_and_fails_a_lost_true_fact(
+    tmp_path: Path,
+) -> None:
+    system = locator.System(_saved_run(tmp_path))
+    same = locator.compare(system, [0, 1], ["supported", "not_found"], ["supported"], [0], {})
+    assert (same["agreement"], same["retest_agreement"], same["passes"]) == (1.0, 1.0, True)
+    assert same["confusion"] == {
+        "whole not_found / located not_found": 1,
+        "whole supported / located supported": 1,
+    }
+    lost = locator.compare(system, [0, 1], ["not_found", "not_found"], ["supported"], [0], {})
+    assert lost["agreement"] == 0.5 and lost["correct_kept_diff"][1] < 0
+    assert lost["passes"] is False
+    low, high = locator.wilson(95, 100)
+    assert low < 0.95 < high and round(low, 3) == 0.888
+
+
+# --------------------------------------------------------------------------- #
+# store_lookup.py
+# --------------------------------------------------------------------------- #
+
+
+def _mention(name: str, sentence: int, kind: str) -> dict[str, Any]:
+    return {"name": name, "sent_id": sentence, "pos": [0, 1], "type": kind}
+
+
+def test_the_store_lookup_bench_scores_links_into_each_documents_own_store(
+    tmp_path: Path,
+) -> None:
+    """First half stored, second half resolved against it, every pair of a document labelled."""
+    doc = {
+        "title": "Acme",
+        "sents": [["a"], ["b"], ["c"], ["d"]],
+        "vertexSet": [
+            # Named in both halves, differently: the link to find.
+            [_mention("Acme Corporation", 0, "ORG"), _mention("Acme Corp", 2, "ORG")],
+            # Stored only, and a near name of a different entity in the second half.
+            [_mention("Acme Widgets", 1, "ORG")],
+            [_mention("Acme Widget", 3, "ORG")],
+            # A value, neither stored nor looked up.
+            [_mention("1906", 0, "TIME"), _mention("1906", 3, "TIME")],
+            # A surname alone: the miss.
+            [_mention("Ada Lovelace", 0, "PER"), _mention("Lovelace", 3, "PER")],
+        ],
+        "labels": [],
+    }
+    data = tmp_path / "test_revised.json"
+    data.write_text(json.dumps([doc, doc]), encoding="utf-8")
+    result = store_lookup.run(data)
+
+    assert result["summary"]["stored_entities"] == 6 and result["findable"] == 4
+    by = {row["threshold"]: row for row in result["thresholds"]}
+    # At the default, one right link and one wrong one per document; the surname is missed.
+    assert (by[0.9]["links"], by[0.9]["link_precision"], by[0.9]["link_recall"]) == (4, 0.5, 0.5)
+    assert by[0.9]["kinds"] == {"similar": 4}
+    # A bar of 1.0 keeps only the exact name key: "Acme Corp" and "Acme Corporation" are "acme".
+    assert (by[1.0]["links"], by[1.0]["link_precision"]) == (2, 1.0)
+    # With no tenant, each document's mentions also link to the other's twin.
+    assert result["unscoped"]["links"] == 8 and result["unscoped"]["cross_document"] == 4
+    assert "| 0.9 (default) | 4 | 50.0 | 50.0 |" in store_lookup.table(result)
+
+
+# --------------------------------------------------------------------------- #
+# batch_normalize.py
+# --------------------------------------------------------------------------- #
+
+
+def _pair(doc: str, split: str, a: tuple[str, int], b: tuple[str, int]) -> dict[str, Any]:
+    """One R item, its label and its private row: two mentions with their clusters."""
+    sides = {
+        side: {"key": f"{doc}:{name}", "type": "Person", "label": name, "context": f"{name} ran."}
+        for side, (name, _) in (("a", a), ("b", b))
+    }
+    return {
+        "item": sides,
+        "label": {"a": sides["a"]["key"], "b": sides["b"]["key"], "same": a[1] == b[1]},
+        "private": {"doc": doc, "split": split, "clusters": [a[1], b[1]]},
+    }
+
+
+def test_the_batch_bench_scores_merged_pairs_on_each_split(tmp_path: Path) -> None:
+    """Two kings kept apart by their numbers; a surname only the perfect judge joins."""
+    rows = [
+        _pair("test_0001", "dev", ("Robert II", 1), ("Robert III", 2)),
+        _pair("test_0001", "dev", ("Ada Lovelace", 3), ("Lovelace", 3)),
+        _pair("test_0002", "gate", ("Velislaus Bible", 1), ("Velislav's Bible", 1)),
+    ]
+    for name, field in (
+        ("items.jsonl", "item"),
+        ("labels.jsonl", "label"),
+        ("items.private.jsonl", "private"),
+    ):
+        lines = "".join(json.dumps(row[field]) + "\n" for row in rows)
+        (tmp_path / name).write_text(lines, encoding="utf-8")
+    result = batch_normalize.run(tmp_path)
+    by = {row["setting"]: row for row in result["settings"]}
+
+    # The resolver as it was links the kings, counted as a merge, and a wrong one.
+    assert (by["current"]["dev"]["merged"], by["current"]["dev"]["right"]) == (1, 0)
+    assert (
+        by["batch, judge-free"]["dev"]["merged"],
+        by["batch, names alone"]["dev"]["merged"],
+    ) == (
+        0,
+        1,
+    )
+    assert by["batch + perfect judge"]["dev"]["right"] == 1
+    assert by["batch + perfect judge"]["stats"]["judge_calls"] == 0
+    assert all(row["gate"]["precision"] == 1.0 for row in result["settings"])
+    assert "| batch, judge-free | 0 (0 right) | — | 0.0% | 1 (1 right) | 100.0% | 100.0% |" in (
+        batch_normalize.table(result)
+    )
+
+    raw = [
+        {
+            "sents": [["x"]],
+            "vertexSet": [
+                [_mention("Acme Corp", 0, "ORG"), _mention("ACME Corporation", 0, "ORG")],
+                [_mention("Acme Corp.", 0, "ORG")],
+                [_mention("1906", 0, "TIME")],
+            ],
+        }
+    ]
+    natural = batch_normalize.natural(raw)
+    assert (natural["mentions"], natural["pairs"], natural["same"]) == (3, 3, 1)
+    rows_by = {row["setting"]: row for row in natural["settings"]}
+    # Three names with one key: the dataset's clusters call one pair of them one entity.
+    assert (rows_by["batch, judge-free"]["merged"], rows_by["batch, judge-free"]["right"]) == (3, 1)

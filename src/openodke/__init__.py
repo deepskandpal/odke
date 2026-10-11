@@ -8,7 +8,9 @@ NOTICE for the relationship to that paper.
 """
 
 import importlib.metadata
+from typing import TYPE_CHECKING
 
+from openodke._renamed import Renamed, module_getattr
 from openodke.chunking import SentenceChunker
 from openodke.corroborate import (
     EvidenceScorer,
@@ -17,6 +19,7 @@ from openodke.corroborate import (
     ValueNormalizer,
 )
 from openodke.extract import HybridExtractor, LLMExtractor, PatternExtractor
+from openodke.gate import VerdictGate
 from openodke.ontology import (
     Diagnostic,
     EntityType,
@@ -28,22 +31,26 @@ from openodke.ontology import (
     Qualifier,
 )
 from openodke.pipeline import DoubleStageWarning, Pipeline
+from openodke.reconcile import Reconciler, ReconcileReport
 from openodke.stages import (
     Chunker,
     Constrainer,
     Corroborator,
     Delegated,
     Extractor,
+    FactLookup,
+    Gate,
     Grounder,
     Inferrer,
     Loader,
     Normalizer,
     PlatformProfile,
     Resolver,
+    Retractable,
     Router,
     Scorer,
     Sink,
-    Validator,
+    StoreLookup,
 )
 from openodke.types import (
     Chunk,
@@ -61,13 +68,25 @@ from openodke.types import (
     SourceTier,
     Span,
     SpanOrigin,
+    Support,
     ValidationVerdict,
 )
-from openodke.validators import VerdictValidator
+from openodke.validator import Validated, ValidationReport, Validator
 
 # Read from the installed distribution, so pyproject.toml is the only place the
 # version is written and a wheel cannot report a release it is not.
 __version__ = importlib.metadata.version("openodke")
+
+if TYPE_CHECKING:
+    # What a type checker sees; at run time the 0.2 name comes from `__getattr__`.
+    VerdictValidator = VerdictGate
+
+# The gate's 0.2 name (DECISIONS #26). `openodke.Validator` named the gate too,
+# until 1.0.0 gave the name to the whole layer (#129); `stages.Validator` still
+# names the gate, with a warning.
+__getattr__ = module_getattr(
+    __name__, {"VerdictValidator": Renamed(VerdictGate, "openodke.VerdictGate")}
+)
 
 __all__ = [
     "Chunk",
@@ -85,6 +104,8 @@ __all__ = [
     "EvidenceScorer",
     "Extractor",
     "Fact",
+    "FactLookup",
+    "Gate",
     "Grounder",
     "GroundingVerdict",
     "HybridExtractor",
@@ -105,8 +126,11 @@ __all__ = [
     "Polarity",
     "Predicate",
     "Qualifier",
+    "ReconcileReport",
+    "Reconciler",
     "Resolution",
     "Resolver",
+    "Retractable",
     "RouteVerdict",
     "Router",
     "Scorer",
@@ -116,9 +140,14 @@ __all__ = [
     "SourceTier",
     "Span",
     "SpanOrigin",
+    "StoreLookup",
+    "Support",
+    "ValidationReport",
     "ValidationVerdict",
+    "Validated",
     "Validator",
     "ValueNormalizer",
+    "VerdictGate",
     "VerdictValidator",
     "__version__",
 ]

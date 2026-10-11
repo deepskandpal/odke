@@ -116,6 +116,14 @@ jobs:
           NEO4J_PASSWORD: ci-${{ github.run_id }}
         run: |
           uv run pytest tests/test_neo4j_sink.py tests/test_neo4j_constraints.py tests/test_bulk_sinks.py tests/test_ontology_neo4j.py tests/test_e2e.py \
+            tests/test_interop_graphrag.py \
+            tests/test_interop_neo4j.py \
+            tests/test_store_lookup.py \
+            tests/test_support.py \
+            tests/test_store_merge.py \
+            tests/test_reconcile.py \
+            tests/test_versions.py \
+            tests/test_tenants.py \
             -k live_neo4j -rA --junitxml=live-neo4j.xml
           python3 - <<'EOF'
           import xml.etree.ElementTree as ET

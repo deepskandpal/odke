@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -34,10 +35,12 @@ from openodke import (
     Sink,
     SourceTier,
     Span,
+    SpanOrigin,
 )
 from openodke.corroborate import CONFLICT, SignatureCorroborator
 from openodke.eval.sinks import assert_idempotent
 from openodke.sinks.neo4j import (
+    COUNTED,
     EXTRA_HINT,
     Neo4jSink,
     Statement,
@@ -52,14 +55,19 @@ from openodke.sinks.neo4j import (
 
 
 class _Result:
-    def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
+    def __init__(self, rows: list[dict[str, Any]] | None = None, counters: Any = None) -> None:
         self.rows = rows or []
+        self.counters = counters or SimpleNamespace(nodes_created=0, relationships_created=0)
 
-    def consume(self) -> None:
-        return None
+    def consume(self) -> Any:
+        return SimpleNamespace(counters=self.counters)
 
     def data(self) -> list[dict[str, Any]]:
         return self.rows
+
+
+# What makes a row the same node or relationship again: its MERGE keys.
+IDENTITY = ("key", "signature", "subject_key", "object_key", "source_key", "target_key")
 
 
 class _Tx:
@@ -70,7 +78,22 @@ class _Tx:
     def run(self, cypher: str, parameters: dict[str, Any] | None = None, **kw: Any) -> _Result:
         params = {**(parameters or {}), **kw}
         self.driver.calls.append((self.mode, cypher, params))
-        return _Result(self.driver.answer(cypher))
+        if not cypher.endswith(COUNTED) or any(n in cypher for n in self.driver.answers):
+            return _Result(self.driver.answer(cypher))
+        # A counted write: every row reaches its MERGE, and one never seen is made, as a
+        # store that honours MERGE would make it.
+        rows = params.get("rows", [])
+        made = 0
+        for row in rows:
+            identity = (cypher, tuple(row.get(k) for k in IDENTITY))
+            made += identity not in self.driver.seen
+            self.driver.seen.add(identity)
+        node = "MERGE (n:" in cypher
+        counters = SimpleNamespace(
+            nodes_created=made if node else 0,
+            relationships_created=0 if node or "SET s." in cypher else made,
+        )
+        return _Result([{"reached": len(rows)}], counters)
 
 
 class _Session:
@@ -107,6 +130,7 @@ class FakeDriver:
         self.fail_on: int | None = None
         self.closed = False
         self.answers = answers or {}
+        self.seen: set[tuple[str, tuple[Any, ...]]] = set()
 
     def session(self, **config: Any) -> _Session:
         return _Session(self, config)
@@ -119,7 +143,12 @@ class FakeDriver:
 
     @property
     def writes(self) -> list[tuple[str, dict[str, Any]]]:
-        return [(cypher, params) for mode, cypher, params in self.calls if mode == "write"]
+        """Each statement written, as planned: the sink adds `COUNTED` to count its rows."""
+        return [
+            (cypher.removesuffix(COUNTED), params)
+            for mode, cypher, params in self.calls
+            if mode == "write"
+        ]
 
 
 # --------------------------------------------------------------------------- #
@@ -129,10 +158,11 @@ class FakeDriver:
 WHEN = datetime(2026, 9, 1, tzinfo=UTC)
 
 
-def _evidence(doc: str, start: int, end: int) -> Evidence:
+def _evidence(doc: str, start: int, end: int, origin: SpanOrigin = SpanOrigin.CITED) -> Evidence:
     return Evidence(
         doc_id=doc,
         span=Span(doc_id=doc, start=start, end=end),
+        span_origin=origin,
         uri=f"https://example.com/{doc}",
         tier=SourceTier.AUTHORITATIVE,
         retrieved_at=WHEN,
@@ -181,7 +211,13 @@ def _graph() -> KnowledgeGraph:
             identity_keys=("percentile",),
             evidence=(_evidence("d3", 20, 25),),
         ),
-        Fact(subject=ada, predicate="name", object_value="Ada", evidence=(_evidence("d1", 0, 3),)),
+        # A bare triple: its span is the whole text it came from, not a citation.
+        Fact(
+            subject=ada,
+            predicate="name",
+            object_value="Ada",
+            evidence=(_evidence("d5", 0, 60, SpanOrigin.CONTEXT),),
+        ),
         Fact(
             subject=acme,
             predicate="sells",
@@ -309,14 +345,21 @@ PROVENANCE = {
     "verdict",
     "confidence",
     "support",
+    "support_sources",
+    "support_doc_ids",
+    "support_doc_sources",
+    "support_tiers",
+    "support_retrieved_at",
     "valid_from",
     "valid_to",
     "retrieved_at",
     "extracted_at",
+    "retired_at",
     "evidence_doc_ids",
     "evidence_uris",
     "evidence_starts",
     "evidence_ends",
+    "evidence_span_origins",
     "evidence_tiers",
 }
 
@@ -366,6 +409,16 @@ def test_provenance_traces_an_edge_to_a_document_and_a_character_range() -> None
     assert props["retrieved_at"] == WHEN
     assert props["extracted_at"] == graph.created_at
     assert props["fact_id"] == graph.facts[0].id
+
+
+def test_a_context_span_is_told_from_a_citation() -> None:
+    """A whole-text stand-in passes the span check but cites nothing (DECISIONS #25)."""
+    driver = _written(_graph())
+    (employer,) = _rows_where(driver, "[r:`employer`")
+    (name,) = _rows_where(driver, "[r:`name`")
+    assert employer["props"]["evidence_span_origins"] == ["cited", "cited"]
+    assert name["props"]["evidence_span_origins"] == ["context"]
+    assert (name["props"]["evidence_starts"], name["props"]["evidence_ends"]) == ([0], [60])
 
 
 def test_reconcilable_qualifiers_are_properties_and_never_overwrite_provenance() -> None:
@@ -549,21 +602,30 @@ def test_links_are_relationships_with_score_and_reason_and_never_merge_nodes() -
 # --------------------------------------------------------------------------- #
 
 
-def test_rows_are_written_in_batches_one_transaction_each() -> None:
+def test_rows_are_packed_into_transactions_of_at_most_the_batch_size() -> None:
+    """In write order, across statements: the node, then five claims, then the projection."""
     acme = Entity(key="c:acme", type="Company")
     facts = tuple(Fact(subject=acme, predicate="product", object_value=f"p{i}") for i in range(5))
     driver = _written(KnowledgeGraph(facts=facts), batch_size=2)
     claim_batches = [len(p["rows"]) for c, p in driver.writes if "MERGE (c:`Claim`" in c]
-    assert claim_batches == [2, 2, 1]
-    assert driver.transactions == len(driver.writes)
+    assert claim_batches == [1, 2, 2]
+    # Seven rows, two to a transaction: the node and a claim share the first.
+    assert driver.transactions == 4
+    by_transaction = [len(p["rows"]) for _, p in driver.writes]
+    assert sum(by_transaction) == 7 and max(by_transaction) <= 2
+    # One transaction for the lot when it fits.
+    assert _written(KnowledgeGraph(facts=facts)).transactions == 1
 
 
 def test_a_failed_transaction_propagates_and_stops_the_write() -> None:
     driver = FakeDriver()
     driver.fail_on = 2
+    sink = Neo4jSink(driver=driver, batch_size=3)
     with pytest.raises(RuntimeError, match="transaction failed"):
-        Neo4jSink(driver=driver).write(_graph())
-    assert len(driver.writes) == 1
+        sink.write(_graph())
+    # The first transaction's rows were written and counted; nothing after it.
+    assert sum(len(p["rows"]) for _, p in driver.writes) == 3
+    assert sink.writes.transactions == 1
 
 
 def test_names_from_the_ontology_are_quoted_so_they_cannot_inject_cypher() -> None:
@@ -662,6 +724,16 @@ def test_against_a_live_neo4j() -> None:
                 "AND size(r.evidence_doc_ids) = 0 RETURN count(r) AS n"
             ).records[0]["n"]
             assert untraced == 0
+            origins = driver.execute_query(
+                mine + "MATCH (n)-[r]->() WHERE r.signature IS NOT NULL "
+                "RETURN type(r) AS predicate, r.evidence_span_origins AS origins"
+            ).records
+            assert {(r["predicate"], tuple(r["origins"])) for r in origins} == {
+                ("employer", ("cited", "cited")),
+                ("uptime", ("cited",)),
+                ("name", ("context",)),
+                ("sells", ("cited",)),
+            }
         finally:
             driver.execute_query(mine + "DETACH DELETE n")
 

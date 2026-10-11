@@ -6,9 +6,9 @@ run config, scored against one labelled extraction set:
 1. **extraction alone** — the config's loaders, chunker, router and extractor.
    Every candidate is kept.
 2. **+ grounding** — the same candidates through the config's grounder, then its
-   gate: the configured validator, or `VerdictValidator` when it names none.
+   gate: the configured one, or `VerdictGate` when it names none.
 3. **+ corroboration** — the whole configured pipeline: normalise, resolve,
-   corroborate and score, then the same gate.
+   add inverse and symmetric partners, corroborate and score, then the same gate.
 
 Extraction runs once and grounding runs once. The later configurations replay the
 facts the earlier ones produced through the real `Pipeline`, so the rows differ
@@ -31,16 +31,28 @@ from __future__ import annotations
 import math
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from openodke.coverage import offered_by
+from openodke.coverage import summary as coverage_summary
+from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED
 from openodke.eval.cost import CallRecord, StageCost
+from openodke.eval.eval_report import (
+    Dataset,
+    EvalReport,
+    Run,
+    extraction_rows,
+    from_stage,
+    models_called,
+)
 from openodke.eval.extraction import evaluate_extraction, match_extraction, per_document
 from openodke.eval.formats import GoldFact, GroundingLabel
 from openodke.eval.grounding import DROPPED, grounding_ablation
 from openodke.eval.report import Metric, StageReport
 from openodke.ontology import Ontology
 from openodke.pipeline import Pipeline
-from openodke.types import Chunk, Document, Fact, GroundingVerdict
+from openodke.types import Chunk, Document, EntityLink, Fact, GroundingVerdict
 
 if TYPE_CHECKING:
     from openodke.run.config import RunConfig
@@ -76,6 +88,10 @@ class _Recording:
         facts = list(self.inner.extract(chunk, ontology))
         self.found[_key(chunk)] = facts
         return facts
+
+    def offered(self, ontology: Ontology) -> list[str] | None:
+        # What the coverage report reads: the inner extractor's, when it can say.
+        return offered_by(self.inner, ontology)
 
     def extract_many(self, chunks: Sequence[Chunk], ontology: Ontology) -> list[list[Fact]]:
         # Passed on whole, so a benchmark's extraction runs as concurrently as `odke run`'s.
@@ -115,7 +131,9 @@ class AblationRun:
     `run_ablation` scores them against your `GoldFact` labels; a public benchmark
     scores the same three sets with its own metrics (`openodke.eval.datasets`).
     `grounded` is every candidate with its verdict; `gated` is what the gate let
-    through, which is the "+ grounding" row.
+    through, which is the "+ grounding" row. `links` are the resolver's, from the
+    "+ corroboration" row, and `final_calls` every call the run made, a pair
+    judge's included.
     """
 
     documents: list[Document]
@@ -128,22 +146,49 @@ class AblationRun:
     all_calls: list[CallRecord]
     gate: Any
     notes: list[str] = field(default_factory=list)
+    # What extraction left behind (`CoverageReport.stats()`), measured on the candidates.
+    coverage: dict[str, Any] | None = None
+    # The registered prompt keys the stages sent, and role -> model as configured.
+    prompts: tuple[str, ...] = ()
+    models: dict[str, str] = field(default_factory=dict)
+    # What the extractor refused before anything was grounded (`Rejection`s,
+    # #109); None for an extractor that keeps no record of them.
+    rejections: list[Any] | None = None
+    links: tuple[EntityLink, ...] = ()
+    # None: no calls after grounding were recorded apart, so `all_calls` stands.
+    final_calls: list[CallRecord] | None = None
 
     def configurations(self) -> list[tuple[str, list[Fact], list[CallRecord]]]:
         """Each configuration's name, its facts, and the calls it took to get them."""
+        final = self.final_calls if self.final_calls is not None else self.all_calls
         return [
             (EXTRACTION, self.candidates, self.extraction_calls),
             (GROUNDING, self.gated, self.all_calls),
-            (CORROBORATION, self.corroborated, self.all_calls),
+            (CORROBORATION, self.corroborated, final),
         ]
+
+
+def rejections_of(extractor: Any) -> list[Any] | None:
+    """What an extractor refused, as it records it: its `rejections`, and its model path's.
+
+    None when neither keeps a list, so "none rejected" and "no record" stay apart.
+    """
+    found: list[Any] | None = None
+    for source in dict.fromkeys(
+        s for s in (extractor, getattr(extractor, "llm", None)) if s is not None
+    ):
+        kept = getattr(source, "rejections", None)
+        if isinstance(kept, list):
+            found = [*(found or []), *kept]
+    return found
 
 
 def ablate(config: RunConfig) -> AblationRun:
     """Run `config` three ways and keep the facts. Extraction and grounding run once."""
     # Imported here: `openodke.run` imports `openodke.eval.cost`, and so this package.
+    from openodke.gate import VerdictGate
     from openodke.run.build import build
-    from openodke.run.execute import register_documents
-    from openodke.validators import VerdictValidator
+    from openodke.run.execute import prompts_sent, register_documents
 
     # Metered whatever the config says: calls and cost are a column of the table.
     metered = config.model_copy(update={"models": config.models.model_copy(update={"meter": True})})
@@ -153,12 +198,20 @@ def ablate(config: RunConfig) -> AblationRun:
     docs = built.documents()
     stages = built.stages
     register_documents(stages["extractor"], docs)
+    register_documents(stages.get("corroborator"), docs)
+    register_documents(stages.get("resolver"), docs)
     ontology = built.ontology
-    route = {"chunker": stages["chunker"], "router": stages["router"]}
+    # The first two rows are what the extractor found and what the gate kept of
+    # it; inverse partners belong to the whole pipeline, the third row.
+    route = {"chunker": stages["chunker"], "router": stages["router"], "inverses": False}
     notes: list[str] = []
+    if config.reextract is not None:
+        notes.append("reextract is not ablated: every row is the first extraction pass")
 
     recording = _Recording(stages["extractor"])
-    candidates = list(Pipeline(ontology, recording, **route).run(docs).facts)
+    extracted = Pipeline(ontology, recording, coverage=True, **route).run(docs)
+    candidates = list(extracted.facts)
+    rejections = rejections_of(stages["extractor"])
     extraction_calls = list(meter.records)
 
     grounder = stages["grounder"]
@@ -168,31 +221,84 @@ def ablate(config: RunConfig) -> AblationRun:
     else:
         replay = _Replaying(recording.found)
         grounded = list(Pipeline(ontology, replay, grounder=grounder, **route).run(docs).facts)
-    gate = stages["validator"] if stages["validator"] is not None else VerdictValidator()
+    gate = stages["gate"] if stages["gate"] is not None else VerdictGate()
     gated = [f for f in grounded if gate.validate(f, ontology).action != "refuse"]
     all_calls = list(meter.records)
 
     full = built.pipeline(
-        extractor=_Replaying(recording.found), grounder=_Stamped(grounded), validator=gate
+        extractor=_Replaying(recording.found), grounder=_Stamped(grounded), gate=gate
     )
-    corroborated = list(full.run(docs).facts)
+    graph = full.run(docs)
     return AblationRun(
         documents=list(docs),
         ontology=ontology,
         candidates=candidates,
         grounded=grounded,
         gated=gated,
-        corroborated=corroborated,
+        corroborated=list(graph.facts),
         extraction_calls=extraction_calls,
         all_calls=all_calls,
         gate=gate,
         notes=notes,
+        coverage=extracted.stats.get("coverage"),
+        prompts=tuple(prompts_sent(stages)),
+        rejections=rejections,
+        models={
+            role: spec.model
+            for role in ("extract", "ground", "infer")
+            if (spec := getattr(config.models, role)) is not None
+        },
+        links=graph.links,
+        # A pair judge in the resolver calls a model in the last row alone.
+        final_calls=list(meter.records),
     )
 
 
 def run_ablation(config: RunConfig, gold: Sequence[GoldFact]) -> StageReport:
     """The three configurations of `config`, scored against `gold`. Writes nothing."""
+    return score_ablation(ablate(config), gold)
+
+
+def report_ablation(
+    config: RunConfig,
+    gold: Sequence[GoldFact],
+    *,
+    labels: str | Path | None = None,
+    resamples: int = RESAMPLES,
+    seed: int = SEED,
+    level: float = LEVEL,
+) -> EvalReport:
+    """`run_ablation` as an eval report: the three rows with their ranges. Writes nothing.
+
+    `labels` names the gold file in the report's dataset.
+    """
     run = ablate(config)
+    rows, how = extraction_rows(
+        run.configurations(),
+        gold,
+        ontology=run.ontology,
+        resamples=resamples,
+        seed=seed,
+        level=level,
+    )
+    dataset = Dataset(
+        name=Path(labels).name if labels is not None else "gold facts",
+        path=str(labels) if labels is not None else None,
+        documents=len({g.doc_id for g in gold}),
+        labels=len(gold),
+    )
+    return from_stage(
+        score_ablation(run, gold),
+        rows=rows,
+        bootstrap=how,
+        run=Run(
+            models=models_called(run.all_calls, run.models), prompts=run.prompts, dataset=dataset
+        ),
+    )
+
+
+def score_ablation(run: AblationRun, gold: Sequence[GoldFact]) -> StageReport:
+    """An `AblationRun` already made, scored against `gold`: `run_ablation` without the run."""
     notes = list(run.notes)
     candidates, grounded, docs, gate = run.candidates, run.grounded, run.documents, run.gate
 
@@ -217,6 +323,8 @@ def run_ablation(config: RunConfig, gold: Sequence[GoldFact]) -> StageReport:
         ),
     ]
     notes[2:2] = _gate_view(gold, candidates, grounded, docs, gate)
+    if run.coverage is not None:
+        notes.append(f"coverage of the candidates: {coverage_summary(run.coverage)}")
     notes.append("a fact merged across documents is scored once in each document it cites")
 
     metrics: dict[str, Metric] = {}
@@ -263,7 +371,7 @@ def _gate_view(
     else:
         drop = frozenset(DROPPED)
         notes.append(
-            "the configured validator does not say which verdicts it refuses, so the view "
+            "the configured gate does not say which verdicts it refuses, so the view "
             "below assumes contradicted and not_found"
         )
     off = grounding_ablation(labels, grounded, drop=drop).breakdown
@@ -309,4 +417,13 @@ def _fmt(value: Metric) -> str:
     return "—" if value is None else f"{value:.3f}"
 
 
-__all__ = ["CONFIGURATIONS", "DESCRIPTION", "AblationRun", "ablate", "per_document", "run_ablation"]
+__all__ = [
+    "CONFIGURATIONS",
+    "DESCRIPTION",
+    "AblationRun",
+    "ablate",
+    "per_document",
+    "report_ablation",
+    "run_ablation",
+    "score_ablation",
+]

@@ -23,12 +23,12 @@ from openodke import (
     Entity,
     EntityLink,
     Fact,
+    Gate,
     KnowledgeGraph,
     LinkKind,
     Ontology,
     Predicate,
     ValidationVerdict,
-    Validator,
 )
 from openodke.eval import ValidationLabel, ValidationPrediction, load_jsonl
 from openodke.eval.sinks import assert_idempotent, check_idempotency, jsonl_counts
@@ -77,7 +77,7 @@ def test_unjoined_rows_are_dropped_and_said_so() -> None:
     assert any("1 prediction(s) matched no labelled fact" in n for n in report.notes)
 
 
-class _DomainValidator:
+class _DomainGate:
     """Refuses an unknown predicate or a subject outside its domain. Blind to conflicts."""
 
     def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
@@ -97,17 +97,17 @@ ONTOLOGY = Ontology(
 )
 
 
-def test_run_validate_scores_a_validator_in_process() -> None:
-    validator = _DomainValidator()
-    assert isinstance(validator, Validator)
-    report = evaluate_validation(LABELS, run_validate(validator, LABELS, ONTOLOGY))
+def test_run_validate_scores_a_gate_in_process() -> None:
+    gate = _DomainGate()
+    assert isinstance(gate, Gate)
+    report = evaluate_validation(LABELS, run_validate(gate, LABELS, ONTOLOGY))
     # Right on v1-v5; v6 is a conflict it cannot see and accepts.
     assert report.metrics["agreement"] == pytest.approx(5 / 6)
     assert report.metrics["conflicts_missed"] == 1
     assert report.metrics["wrongly_refused"] == 0
 
 
-def test_a_delegated_validator_is_scored_the_same_way() -> None:
+def test_a_delegated_gate_is_scored_the_same_way() -> None:
     """A platform that prunes accepts everything here; the evaluator says what that costs."""
     predictions = run_validate(Delegated(to="shacl-store"), LABELS, ONTOLOGY)
     assert predictions[0].reason == "delegated to shacl-store"

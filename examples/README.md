@@ -28,7 +28,7 @@ odke run examples/e2e/odke.yaml
 ## Triples from another extractor
 
 [`triples/`](triples/README.md) grounds five hand-written triples in the
-[input format](../docs/triples.md) any extractor's output can be written in:
+[input format](../docs/inputs.md) any extractor's output can be written in:
 offsets, a quote, or nothing at all.
 
 ```bash
@@ -37,6 +37,10 @@ odke run examples/triples/odke.yaml
 
 ## Every key of a run config
 
-[`run.yaml`](run.yaml) is the same run with every key commented: inputs and
-loaders, model roles, recorded responses, the thirteen stages and their options,
-sinks and `bootstrap`.
+[`run.yaml`](run.yaml) checks the same triples with every Validator stage and
+comments every key: inputs and loaders, model roles, recorded responses, the
+thirteen stages and their options, sinks and `bootstrap`.
+
+```bash
+odke run examples/run.yaml --dry-run
+```

@@ -134,7 +134,7 @@ def accuracy(confusion: Mapping[str, Mapping[str, int]]) -> Metric:
 def cohen_kappa(confusion: Mapping[str, Mapping[str, int]]) -> Metric:
     """Agreement beyond what the two sides' class frequencies give by chance.
 
-    Accuracy alone flatters a validator that accepts everything on a slice
+    Accuracy alone flatters a gate that accepts everything on a slice
     that is mostly acceptable; kappa is zero for it.
     """
     total = sum(sum(row.values()) for row in confusion.values())

@@ -447,13 +447,13 @@ class _Collect:
 
 
 def test_end_to_end_a_contradicted_fact_never_reaches_the_sink() -> None:
-    """Stamp, then gate: the grounder marks it, the validator refuses it (DECISIONS #20)."""
+    """Stamp, then gate: the grounder marks it, the gate refuses it (DECISIONS #20)."""
     sink = _Collect()
     kg = Pipeline(
         Ontology(),
         _AdaExtractor(),
         grounder=_grounder(),
-        validator=_GateOnVerdict(),
+        gate=_GateOnVerdict(),
         sinks=[sink],
     ).run([CORPUS])
     assert [f.predicate for f in kg.facts] == ["wrote"]

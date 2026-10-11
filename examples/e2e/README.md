@@ -38,6 +38,7 @@ grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, sup
 corroborator  conflicts (lost 1, won 2)
 validator     accepted 25, refused (contradicted 1)
 refused       1
+coverage      0 of 5 sentences naming two known entities uncovered, 0 entities in no fact, 0 relations never offered, 0 unused
 graph         25 facts (8 edges, 17 properties), 7 entities, 4 links (different 1, similar 3)
 cost          39 model calls, 4980 tokens, USD unknown
 wrote         jsonl → …/examples/e2e/out: entities.jsonl 7, facts.jsonl 25, links.jsonl 4, manifest.json
@@ -68,6 +69,9 @@ Line by line:
   won, and Sheffield is kept at reduced confidence with the reason attached.
 - **validator.** The default gate refuses `contradicted` and keeps
   `not_found` — refusing `not_found` here would throw away most of the register.
+- **coverage.** What extraction left behind, counted with no model: no sentence
+  naming two known entities is left uncited, and the model was shown every
+  predicate. Real prose is rarely this clean.
 - **graph.** 25 facts on 7 entities, and 4 links between entities: one
   `DIFFERENT`, three `SIMILAR`. Nothing was merged away.
 
@@ -86,16 +90,16 @@ odke run examples/e2e/odke.neo4j.yaml --dry-run
 odke run examples/e2e/odke.neo4j.yaml
 ```
 
-The dry run connects to nothing. It prints the 15 statements `bootstrap: true`
+The dry run connects to nothing. It prints the 29 statements `bootstrap: true`
 will apply and the 16 `UNWIND … MERGE` statements the sink will send:
 
 ```text
-bootstrap     would apply 15 statements
+bootstrap     would apply 29 statements
   CREATE INDEX odke_entity_key IF NOT EXISTS FOR (n:`Entity`) ON (n.key)
   CREATE CONSTRAINT odke_claim_signature IF NOT EXISTS FOR (c:`Claim`) REQUIRE c.signature IS UNIQUE
   CREATE CONSTRAINT odke_key_Company IF NOT EXISTS FOR (n:`Company`) REQUIRE n.key IS UNIQUE
   …
-  CREATE CONSTRAINT odke_signature_headquarters IF NOT EXISTS FOR ()-[r:`headquarters`]-() REQUIRE r.signature IS UNIQUE
+  CREATE INDEX odke_ontology_registration_number IF NOT EXISTS FOR ()-[r:`registration_number`]-() ON (r.`odke.ontology`)
 would write   neo4j → $NEO4J_URI: 16 statements, 52 rows
        5 × MERGE (n:`Company` {key: row.key})
        2 × MERGE (n:`Person` {key: row.key})
@@ -167,12 +171,17 @@ threshold can be changed and the resolver re-run.
 The numbers came from `e2e_stages.py`, a stage of this example's own named in
 the config as `e2e_stages:RegistryResolver`. It is twenty lines: this corpus
 has an identifier, the package cannot know that, and a stage is how it says so.
+It also pins [normalising the batch](../../docs/resolution-and-corroboration.md#normalising-mentions-in-a-batch)
+off, as `NativeResolver` has it by default, because `gold.jsonl` keys each
+text's facts as they were extracted. With it on, *"Corvid Analytics"* in a note and
+the register's *"Corvid Analytics Ltd"* become one entity, and *"Halden
+Robotics"*, alike to two companies kept apart, merges with neither.
 
 ### A company with two head offices
 
 ```cypher
 MATCH (s)-[r:`headquarters`]->(o)
-WHERE r.polarity = 'asserted' AND r.valid_to IS NULL
+WHERE r.polarity = 'asserted' AND r.valid_to IS NULL AND r.retired_at IS NULL
 WITH s, collect(DISTINCT coalesce(o.key, o.value)) AS objects
 WHERE size(objects) > 1
 RETURN labels(s) AS labels, s.key AS subject, objects

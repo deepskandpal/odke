@@ -153,10 +153,12 @@ class SpanOrigin(StrEnum):
 class Evidence(Frozen):
     """Why we believe a fact: a document, and where in it.
 
-    `span` is the claim-bearing clause. A grounder is shown that span and
-    nothing else, so it has to state the fact when read on its own: asked
-    whether "Acme operates in Ireland" follows from the text `Ireland`, a
-    grounder correctly says `not_found` and a true fact is lost.
+    `span` is the claim-bearing clause. By default `LLMGrounder` reads the span
+    alone, so it should state the fact when read on its own: asked whether
+    "Acme operates in Ireland" follows from the text `Ireland`, a grounder
+    correctly says `not_found` and a true fact is lost. With
+    `context="document"` the grounder reads the whole document instead, and a
+    `context` span is the whole text, not a citation (DECISIONS #25).
 
     `mention` is the narrower span inside the clause that tells this fact from
     the others the same clause states — `Ireland` in a list of three regions.
@@ -178,6 +180,26 @@ class Evidence(Frozen):
     retrieved_at: datetime = Field(default_factory=_utcnow)
 
 
+class Support(Frozen):
+    """One independent source behind a fact: what the corroborator counted once.
+
+    `source` is the key the corroborator grouped the evidence on: the host of
+    a URI, `doc:<id>` for a document with none, or the least key of a group of
+    near-duplicate documents, which count as one source between them.
+    `doc_ids` are the documents of that source the fact cites, sorted. `tier`
+    is the best tier among their evidence and `retrieved_at` the newest clock:
+    the last time this source confirmed the claim.
+
+    A reconciler needs exactly this when a source changes or disappears: which
+    facts lose support, and whether anything is left.
+    """
+
+    source: str
+    doc_ids: tuple[str, ...] = ()
+    tier: SourceTier = SourceTier.UNVERIFIED
+    retrieved_at: datetime = Field(default_factory=_utcnow)
+
+
 # --------------------------------------------------------------------------- #
 # Facts
 # --------------------------------------------------------------------------- #
@@ -193,7 +215,7 @@ class GroundingVerdict(StrEnum):
 
 
 class ValidationVerdict(Frozen):
-    """What the validator concluded, checking a fact against the ontology.
+    """What the gate concluded, checking a fact against the ontology.
 
     `accept` is written. `refuse` is not, and `reason` says why. `conflict` is
     written and flagged: the fact is well-formed but disagrees with something
@@ -293,6 +315,15 @@ class Fact(Frozen):
     verdict: GroundingVerdict = GroundingVerdict.UNCHECKED
     # Filled by the corroborator: how many independent sources agreed.
     support: int = 1
+    # Which sources those are, one entry each, so `support` is its length
+    # whenever it is filled. Empty on a fact no corroborator merged, on one
+    # whose sources it could not name, and on a fact serialised by 0.2.x.
+    supported_by: tuple[Support, ...] = ()
+    # The transaction time the reconciler took away the fact's last source.
+    # A retired fact was not proven false: it lost its evidence, so the valid
+    # clock is left alone, and the fact is kept with no support. Not part of
+    # `signature`: a source that states it again brings it back.
+    retired_at: datetime | None = None
 
     @property
     def is_edge(self) -> bool:
@@ -391,3 +422,26 @@ class KnowledgeGraph(Frozen):
 
     def __len__(self) -> int:
         return len(self.facts)
+
+
+# `Frozen` is the base every model here shares, and stays out: it is not a
+# promise (DECISIONS #48).
+__all__ = [
+    "Chunk",
+    "Document",
+    "Entity",
+    "EntityLink",
+    "Evidence",
+    "Fact",
+    "GroundingVerdict",
+    "KnowledgeGraph",
+    "LinkKind",
+    "Polarity",
+    "Resolution",
+    "RouteVerdict",
+    "SourceTier",
+    "Span",
+    "SpanOrigin",
+    "Support",
+    "ValidationVerdict",
+]

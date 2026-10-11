@@ -314,6 +314,20 @@ def test_with_nothing_named_the_two_model_default_stands() -> None:
     assert ModelRoles(extract=ModelSpec(model="ollama/llama3.1"), ground=small).ground == small
 
 
+def test_the_defaults_are_pinned_ids_that_litellm_can_price() -> None:
+    """#137: a default changes only with a new calibration card (DECISIONS #7a).
+
+    Exact strings on purpose. Sonnet 5.5 has no dated id, so a regex for a date
+    cannot pin it; changing a default should mean changing this line too.
+    """
+    assert DEFAULT_EXTRACT == "anthropic/claude-sonnet-5-5"
+    assert DEFAULT_GROUND == "anthropic/claude-haiku-4-5-20251001"
+    litellm = pytest.importorskip("litellm")
+    for model in (DEFAULT_EXTRACT, DEFAULT_GROUND):
+        provider, name = model.split("/", 1)
+        assert litellm.model_cost[name]["litellm_provider"] == provider, model
+
+
 def test_single_uses_one_model_everywhere() -> None:
     """The right call for a local setup, and it must not silently keep a default."""
     roles = ModelRoles.single("ollama/llama3.1")

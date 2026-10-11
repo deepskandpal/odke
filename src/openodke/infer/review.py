@@ -174,7 +174,11 @@ def summary(inference: Inference) -> str:
         known = [c.cost_usd for c in inference.calls if c.cost_usd is not None]
         cost = f"${sum(known):.4f}" if len(known) == len(inference.calls) else "cost unknown"
         tokens = sum(c.prompt_tokens + c.completion_tokens for c in inference.calls)
-        lines.append(f"model calls: {len(inference.calls)}, {tokens} tokens, {cost}")
+        sent = ", ".join(dict.fromkeys(c.prompt for c in inference.calls if c.prompt))
+        lines.append(
+            f"model calls: {len(inference.calls)}, {tokens} tokens, {cost}"
+            + (f"; prompts {sent}" if sent else "")
+        )
     return "\n".join(lines)
 
 

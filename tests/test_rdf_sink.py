@@ -194,6 +194,18 @@ def test_provenance_is_queryable_down_to_a_document_and_a_character_range(
     assert retrieved == datetime(2026, 9, 1, tzinfo=UTC)
 
 
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_a_context_span_is_told_from_a_citation(tmp_path: Path, fmt: str) -> None:
+    """Ada's employer is cited; her name came from a bare triple, so its span is the whole text."""
+    g = _loaded(tmp_path, fmt)
+    assert _select(
+        g,
+        """SELECT ?doc ?origin WHERE {
+             ?st a odke:Fact ; rdf:subject ent:p%3Aada ; odke:evidence ?ev .
+             ?ev odke:doc_id ?doc ; odke:span_origin ?origin }""",
+    ) == {("d1", "cited"), ("d2", "cited"), ("d5", "context")}
+
+
 def test_forgetting_a_source_is_a_query(tmp_path: Path) -> None:
     g = _loaded(tmp_path, "turtle")
     graph = _graph()

@@ -9,17 +9,33 @@ import tempfile
 import urllib.request
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from openodke.coverage import summary as coverage_summary
 from openodke.eval.ablation import AblationRun
-from openodke.eval.cost import StageCost
+from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED, Range, bootstrap
+from openodke.eval.cost import CallRecord, StageCost
+from openodke.eval.diagnosis import View
+from openodke.eval.eval_report import (
+    Bootstrap,
+    Configuration,
+    Dataset,
+    EvalReport,
+    Row,
+    Run,
+    from_stage,
+    models_called,
+)
 from openodke.eval.report import Metric, StageReport
 from openodke.interop.triples import _file_name
 from openodke.types import Document, Fact
 
 Triple = tuple[str, str, str]
 Opener = Callable[[str], Any]
+# What a bench run writes beside `predictions/`: what the extractor refused (#109).
+REJECTIONS_FILE = "rejections.jsonl"
 
 # Literal ranges a dataset may name, in openodke's vocabulary (ontology value types).
 LITERALS = {
@@ -139,10 +155,10 @@ def run_config(
     model space to think; lower it for a model with a smaller output cap.
     """
     grounder: dict[str, Any] = {"use": "llm"}
-    validator: dict[str, Any] = {"use": "verdict"}
+    gate: dict[str, Any] = {"use": "verdict"}
     if paper:
         grounder |= {"context": "document", "verdicts": "binary"}
-        validator |= {"refuse_not_found": True}
+        gate |= {"refuse_not_found": True}
     config: dict[str, Any] = {
         "ontology": "ontology.json",
         "inputs": [{"path": "docs", "loader": "directory"}],
@@ -157,7 +173,7 @@ def run_config(
             # does normalise; on these datasets that would only measure the scorer.)
             "corroborator": "signature",
             "scorer": "evidence",
-            "validator": validator,
+            "gate": gate,
         },
     }
     models: dict[str, Any] = {}
@@ -208,64 +224,165 @@ def triples_by_doc(
 def report(
     stage: str,
     n: int,
-    rows: Sequence[tuple[str, Mapping[str, Metric], Sequence[Any], int]],
+    rows: Sequence[tuple[str, Mapping[str, Metric], Sequence[Any] | None, int]],
     notes: Sequence[str],
+    *,
+    labels: Sequence[str] = ("extraction", "grounding", "corroboration"),
 ) -> StageReport:
-    """The ablation table: one row per configuration, its metrics, calls and cost."""
+    """The ablation table: one row per configuration, its metrics, calls and cost.
+
+    `labels` name the rows in the summary metrics (`precision_extraction`, ...),
+    one per row. A row whose calls were not metered has no call or cost column.
+    """
     breakdown: dict[str, dict[str, Metric]] = {}
     for name, row, calls, facts in rows:
-        cost = StageCost.of(name, list(calls))
+        cost = None if calls is None else StageCost.of(name, list(calls))
         breakdown[name] = {
             **row,
             "facts": facts,
-            "model_calls": cost.calls,
-            "prompt_tokens": cost.prompt_tokens,
-            "completion_tokens": cost.completion_tokens,
-            "cost_usd": cost.cost_usd,
+            "model_calls": None if cost is None else cost.calls,
+            "prompt_tokens": None if cost is None else cost.prompt_tokens,
+            "completion_tokens": None if cost is None else cost.completion_tokens,
+            "cost_usd": None if cost is None else cost.cost_usd,
         }
     summary: dict[str, Metric] = {}
-    for label, (name, _, _, _) in zip(
-        ("extraction", "grounding", "corroboration"), rows, strict=True
-    ):
+    for label, (name, _, _, _) in zip(labels, rows, strict=True):
         for key in ("precision", "recall", "f1"):
             summary[f"{key}_{label}"] = breakdown[name].get(key)
     return StageReport(stage=stage, n=n, metrics=summary, breakdown=breakdown, notes=tuple(notes))
 
 
-def score_run(
+# A dataset's scoring, split so the eval report can resample it: one configuration's
+# triples by document -> one unit per document; units -> the dataset's metrics;
+# and a configuration's name, units, metrics, ranges and calls -> its report row.
+Units = Callable[[Mapping[str, Sequence[Triple]]], list[Any]]
+Aggregate = Callable[[Sequence[Any]], dict[str, Metric]]
+ToRow = Callable[
+    [str, Sequence[Any], Mapping[str, Metric], Mapping[str, Range], Sequence[CallRecord] | None],
+    Row,
+]
+# Triples written, and those a gate refused (None: no record) -> the diagnosis's view.
+ToView = Callable[[Mapping[str, Sequence[Triple]], Mapping[str, Sequence[Triple]] | None], View]
+
+
+@dataclass(frozen=True)
+class Scoring:
+    """How one prepared dataset scores facts: what each dataset module's `scoring` returns.
+
+    `units` takes one configuration's triples by document and scores each
+    document; `aggregate` turns those into the dataset's numbers, and is what
+    the bootstrap recomputes on each draw of documents; `row` makes the eval
+    report's row. `stage` names the set, and `dataset` describes it. `view`,
+    where the dataset has one, puts its gold and a configuration's triples in
+    the form the diagnosis reads (#140), matched as `units` matches them.
+    """
+
+    stage: str
+    meta: Mapping[str, Any]
+    units: Units
+    aggregate: Aggregate
+    row: ToRow
+    dataset: Dataset
+    view: ToView | None = None
+
+
+@dataclass(frozen=True)
+class Scored:
+    """Configurations scored: the stage table's rows, the eval report's, and the triples."""
+
+    table: list[tuple[str, dict[str, Metric], Sequence[CallRecord] | None, int]]
+    rows: list[Row]
+    predictions: dict[str, dict[str, list[Triple]]]
+
+
+def score_configurations(
+    configurations: Sequence[Configuration],
+    documents: Sequence[Document],
+    scoring: Scoring,
+    *,
+    resamples: int = RESAMPLES,
+    seed: int = SEED,
+    level: float = LEVEL,
+) -> Scored:
+    """Each `(name, facts, calls)` scored with a dataset's own metrics, ranges included.
+
+    Facts are read back as the dataset's triples: labels rather than keys, and
+    the dataset's own relation names, under each document they cite.
+    """
+    labels: Mapping[str, str] = scoring.meta["relation_labels"]
+    names = doc_names(documents)
+    scored = Scored(table=[], rows=[], predictions={})
+
+    def statistic(draw: Sequence[Any]) -> dict[str, Metric]:
+        found = scoring.aggregate(draw)
+        return {k: found[k] for k in ("precision", "recall", "f1")}
+
+    for name, facts, calls in configurations:
+        predicted = triples_by_doc(facts, names, lambda p: labels.get(p, p))
+        scored.predictions[name] = predicted
+        units = scoring.units(predicted)
+        metrics = scoring.aggregate(units)
+        ranges = bootstrap(units, statistic, resamples=resamples, seed=seed, level=level)
+        scored.table.append((name, metrics, calls, len(facts)))
+        scored.rows.append(scoring.row(name, units, metrics, ranges, calls))
+    return scored
+
+
+def report_run(
     ablation: AblationRun,
     gold: Sequence[Mapping[str, Any]],
-    meta: Mapping[str, Any],
+    scoring: Scoring,
     *,
-    stage: str,
-    score: Callable[[Mapping[str, Sequence[Triple]]], dict[str, Metric]],
     notes: Callable[[Mapping[str, Metric], Mapping[str, Metric], Mapping[str, Metric]], list[str]],
     save_to: Path | None = None,
-) -> StageReport:
+    resamples: int = RESAMPLES,
+    seed: int = SEED,
+    level: float = LEVEL,
+) -> EvalReport:
     """Each configuration of an `AblationRun` scored with a dataset's own metrics.
 
-    `score` takes one configuration's triples by document. `notes` takes the
-    three rows' metrics — extracted, after the gate, after corroboration — and
-    writes the dataset's lines beside the paper's numbers; the grounder's
-    verdicts and the run's own notes follow them.
+    `notes` takes the three rows' metrics — extracted, after the gate, after
+    corroboration — and writes the dataset's lines beside the paper's numbers;
+    the grounder's verdicts and the run's own notes follow them.
     """
-    labels: Mapping[str, str] = meta["relation_labels"]
+    scored = score_configurations(
+        ablation.configurations(),
+        ablation.documents,
+        scoring,
+        resamples=resamples,
+        seed=seed,
+        level=level,
+    )
     names = doc_names(ablation.documents)
-    rows = []
-    predictions = {}
-    for name, facts, calls in ablation.configurations():
-        predicted = triples_by_doc(facts, names, lambda p: labels.get(p, p))
-        predictions[name] = predicted
-        rows.append((name, score(predicted), calls, len(facts)))
     if save_to is not None:
-        save_predictions(save_to, predictions)
-    raw, gated, full = (metrics for _, metrics, _, _ in rows)
+        save_predictions(save_to, scored.predictions)
+        save_rejections(save_to, ablation.rejections or [], names)
+    raw, gated, full = (metrics for _, metrics, _, _ in scored.table)
     lines = [
         *notes(raw, gated, full),
         f"grounder verdicts on the candidates: {verdicts(ablation.grounded)}",
+        rejected(ablation.rejections, saved=save_to is not None),
         *ablation.notes,
     ]
-    return report(stage, len(gold), rows, lines)
+    if ablation.coverage is not None:
+        lines.append(f"coverage of the candidates: {coverage_summary(ablation.coverage)}")
+    stage = report(scoring.stage, len(gold), scored.table, lines)
+    if ablation.rejections is not None:
+        counts = Counter(str(r.reason) for r in ablation.rejections)
+        by_reason = {f"rejected: {why}": n for why, n in sorted(counts.items())}
+        stage = stage.model_copy(
+            update={"metrics": {**stage.metrics, "rejected": len(ablation.rejections), **by_reason}}
+        )
+    return from_stage(
+        stage,
+        rows=scored.rows,
+        bootstrap=Bootstrap(units=len(gold), resamples=resamples, seed=seed, level=level),
+        run=Run(
+            models=models_called(ablation.all_calls, ablation.models),
+            prompts=ablation.prompts,
+            dataset=scoring.dataset,
+        ),
+    )
 
 
 def verdicts(facts: Iterable[Fact]) -> str:
@@ -278,6 +395,50 @@ def verdicts(facts: Iterable[Fact]) -> str:
     counts = Counter(f.verdict.value for f in facts)
     order = ("supported", "not_found", "contradicted", "unchecked")
     return ", ".join(f"{v} {counts.get(v, 0)}" for v in order)
+
+
+def rejected(rejections: Sequence[Any] | None, *, saved: bool = False) -> str:
+    """What the extractor refused before grounding, by reason: the report's line for it."""
+    if rejections is None:
+        return "extractor rejections: none recorded; this extractor keeps no record of them"
+    counts = Counter(str(r.reason) for r in rejections)
+    by_reason = ", ".join(
+        f"{why} {n}" for why, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    )
+    where = f"; each in {REJECTIONS_FILE}" if saved and rejections else ""
+    return (
+        f"extractor rejections: {len(rejections)}"
+        + (f" ({by_reason})" if by_reason else "")
+        + where
+    )
+
+
+def save_rejections(
+    folder: Path, rejections: Iterable[Any], names: Mapping[str, str] | None = None
+) -> Path:
+    """`folder/rejections.jsonl`, beside `predictions/`: each candidate the extractor refused.
+
+    One row a rejection: the document, by the dataset's own id where `names`
+    has it, the chunk, the reason, and the candidate as the model wrote it
+    (`subject`, `predicate`, `value`, `quote`), as far as it got. Written on
+    every run, empty when nothing was refused, so a missing fact can be told
+    from one the extractor threw away.
+    """
+    rows = [
+        {
+            "doc": (names or {}).get(r.doc_id, r.doc_id),
+            "chunk": r.chunk_index,
+            "reason": r.reason,
+            "candidate": {
+                "subject": getattr(r, "subject", None),
+                "predicate": r.predicate,
+                "value": getattr(r, "value", None),
+                "quote": r.quote,
+            },
+        }
+        for r in rejections
+    ]
+    return write_jsonl(folder / REJECTIONS_FILE, rows)
 
 
 def save_predictions(folder: Path, predicted: Mapping[str, Mapping[str, Sequence[Triple]]]) -> None:

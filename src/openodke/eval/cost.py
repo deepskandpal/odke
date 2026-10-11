@@ -23,6 +23,10 @@ the extraction model grounding its own output — are two metered runs over the
 same documents, set side by side with `compare_costs`. Failed calls are not
 recorded; latency is the sum of per-call wall-clock time, which a concurrent
 run beats.
+
+A call the response cache answered (`openodke.llm.cache`) is recorded with
+`cached=True` and a cost of `0.0`: nothing was sent, so nothing was spent, and
+`cached_calls` says how many of the calls were those.
 """
 
 from __future__ import annotations
@@ -46,6 +50,8 @@ class CallRecord(Frozen):
     # None when the provider did not say. Never 0.0 standing in for that.
     cost_usd: float | None = None
     latency_s: float = 0.0
+    # Answered from the response cache: no call went out, and it cost 0.0.
+    cached: bool = False
 
 
 class StageCost(Frozen):
@@ -62,6 +68,8 @@ class StageCost(Frozen):
     unpriced_calls: int
     latency_s: float
     models: tuple[str, ...] = ()
+    # Calls the response cache answered, among `calls`.
+    cached_calls: int = 0
 
     @property
     def total_tokens(self) -> int:
@@ -81,6 +89,7 @@ class StageCost(Frozen):
             unpriced_calls=unpriced,
             latency_s=sum(r.latency_s for r in records),
             models=tuple(dict.fromkeys(r.model for r in records)),
+            cached_calls=sum(1 for r in records if r.cached),
         )
 
 
@@ -117,6 +126,7 @@ class CostReport(Frozen):
         breakdown: dict[str, dict[str, Metric]] = {
             name: {
                 "calls": cost.calls,
+                "cached_calls": cost.cached_calls,
                 "prompt_tokens": cost.prompt_tokens,
                 "completion_tokens": cost.completion_tokens,
                 "cost_usd": cost.cost_usd,
@@ -136,6 +146,7 @@ class CostReport(Frozen):
         metrics: dict[str, Metric] = {
             "documents": self.documents,
             "calls": total.calls,
+            "cached_calls": total.cached_calls,
             "prompt_tokens": total.prompt_tokens,
             "completion_tokens": total.completion_tokens,
             "cost_usd": total.cost_usd,
@@ -202,6 +213,7 @@ class MeteredClient:
                 completion_tokens=completion.completion_tokens,
                 cost_usd=completion.cost_usd,
                 latency_s=self.meter.clock() - start,
+                cached=completion.cached,
             )
         )
         return completion

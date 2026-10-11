@@ -1,258 +1,119 @@
 # Models and providers
 
-Every model call in openodke goes through one `LLMClient` protocol, and which
-client serves a call is decided by the *provider prefix* on the model string.
-Nothing else in the library imports a provider SDK or names a vendor
-([DECISIONS #7](decisions.md)).
+Every model call goes through one `LLMClient` protocol, and the provider prefix
+on the model string decides which client makes it
+([DECISIONS #7](decisions.md#7)). `odke models` lists every provider, its key
+variable, whether that variable is set, and which client serves it. It needs no
+key and no network.
 
-Picking a provider is therefore two decisions and no more: the model string, and
-the environment variable that holds the key.
+## Model strings
 
-```bash
-odke models
-```
-
-prints the whole table — every provider, the form its model string takes, the
-variable it reads, whether that variable is set *here*, and which client makes
-the call. It runs on the base install, with no key and no network, so it is the
-right first command when a run cannot reach a model.
-
-Values are never printed, not even masked, and openodke writes no key anywhere.
-The environment is the only place it reads one from.
-
-## Provider-qualified names
-
-A model string is `provider/model`:
-
-```python
-from openodke.llm import ModelRoles, ModelSpec
-
-ModelSpec(model="openai/gpt-5.5")
-ModelSpec(model="anthropic/claude-sonnet-5")
-ModelSpec(model="ollama/llama3.1")
-ModelSpec(model="azure/my-deployment")
-assert ModelSpec(model="groq/llama-3.3-70b").provider == "groq"
-```
-
-A string with no prefix is read as `openai`:
-
-```python
-assert ModelSpec(model="gpt-5.5").provider == "openai"
-```
-
-Some providers put a vendor inside the model name; only the first segment is the
-provider:
-
-```python
-assert ModelSpec(model="openrouter/anthropic/claude-sonnet-5").provider == "openrouter"
-```
-
-### Which client serves it
-
-In order, the first that matches:
-
-1. an adapter registered for that provider with `openodke.llm.register`;
-2. the standard-library OpenAI-compatible client, when the provider has a default
-   endpoint (the `built-in` rows of `odke models`) or the `ModelSpec` sets a
-   `base_url`. **No extra dependency**;
-3. litellm, for everything else. Needs `pip install "openodke[llm]"`.
-
-```python
-from openodke.llm import ModelSpec, OpenAICompatClient, resolve
-
-assert isinstance(resolve(ModelSpec(model="ollama/llama3.1")), OpenAICompatClient)
-assert isinstance(resolve(ModelSpec(model="groq/llama-3.3-70b")), OpenAICompatClient)
-```
-
-`odke models` says which of the three would serve each provider, and says plainly
-when the `[llm]` extra is missing and which providers that excludes.
-
-## Keys
-
-Each provider reads one variable, and openodke does not invent a scheme of its
-own: the names are the ones litellm and the vendors' own SDKs already use.
-
-| Provider | Model string | Key variable | Served by |
-|---|---|---|---|
-| `openai` | `openai/<model>` | `OPENAI_API_KEY` | built-in |
-| `openrouter` | `openrouter/<vendor>/<model>` | `OPENROUTER_API_KEY` | built-in |
-| `together` | `together/<vendor>/<model>` | `TOGETHER_API_KEY` | built-in |
-| `groq` | `groq/<model>` | `GROQ_API_KEY` | built-in |
-| `deepseek` | `deepseek/<model>` | `DEEPSEEK_API_KEY` | built-in |
-| `ollama` | `ollama/<model>` | none | built-in |
-| `vllm` | `vllm/<model>` | none | built-in |
-| `lmstudio` | `lmstudio/<model>` | none | built-in |
-| `llamacpp` | `llamacpp/<model>` | none | built-in |
-| `anthropic` | `anthropic/<model>` | `ANTHROPIC_API_KEY` | litellm |
-| `azure` | `azure/<deployment>` | `AZURE_API_KEY`, `AZURE_API_BASE`, `AZURE_API_VERSION` | litellm |
-| `bedrock` | `bedrock/<model>` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION_NAME` | litellm |
-| `vertex_ai` | `vertex_ai/<model>` | `GOOGLE_APPLICATION_CREDENTIALS`, `VERTEXAI_PROJECT`, `VERTEXAI_LOCATION` | litellm |
-| `gemini` | `gemini/<model>` | `GEMINI_API_KEY` | litellm |
-| `mistral` | `mistral/<model>` | `MISTRAL_API_KEY` | litellm |
-| `cohere` | `cohere/<model>` | `COHERE_API_KEY` | litellm |
-| `xai` | `xai/<model>` | `XAI_API_KEY` | litellm |
-| `perplexity` | `perplexity/<model>` | `PERPLEXITYAI_API_KEY` | litellm |
-| `fireworks_ai` | `fireworks_ai/<model>` | `FIREWORKS_AI_API_KEY` | litellm |
-| `cerebras` | `cerebras/<model>` | `CEREBRAS_API_KEY` | litellm |
-| `huggingface` | `huggingface/<model>` | `HF_TOKEN` | litellm |
-
-`odke models` prints this from the same table the code routes on, with a "set"
-column for the environment you are actually in. The table here will fall behind
-one day; the command cannot.
-
-**A key elsewhere.** `api_key_env` names a different variable for one spec — a
-second OpenAI account, a gateway's own token:
-
-```python
-ModelSpec(model="openai/gpt-5.5", api_key_env="OPENAI_API_KEY_EVAL")
-```
-
-**A missing key is an error that names the variable**, raised before the request
-rather than arriving as a provider's 401:
-
-```python
-from openodke.llm import MissingAPIKey, ModelSpec, require_key
-
-try:
-    require_key(ModelSpec(model="openai/gpt-5.5"))
-except MissingAPIKey as exc:
-    assert "OPENAI_API_KEY" in str(exc)
-```
-
-It is not raised where a key is genuinely optional: `base_url` means the caller
-owns that endpoint's authentication, and `bedrock` and `vertex_ai` accept their
-cloud's own credential chain. A `base_url` call is sent no key unless
-`api_key_env` names one, so an exported `OPENAI_API_KEY` never reaches a
-self-hosted server or a proxy.
-
-```python
-assert require_key(ModelSpec(model="openai/local", base_url="http://localhost:8000/v1")) == ""
-assert require_key(ModelSpec(model="ollama/llama3.1")) == ""
-```
-
-**There is no `set-apikey`.** openodke reads the environment and nothing else: no
-command writes a credential to disk, and no configuration file has a place to put
-one. A run config names models, never keys.
-
-## Choosing from the command line
-
-`odke run` and `odke ontology infer` take `--model` and `--model-provider`, which
-override the config's `models` block:
-
-```bash
-odke run odke.yaml --model openai/gpt-5.5
-odke run odke.yaml --model gpt-5.5 --model-provider openai      # the same run
-odke run odke.yaml --model llama3.1 --model-provider ollama     # entirely local
-odke ontology infer corpus/ -o draft.yaml --model ollama/llama3.1
-```
-
-`--model` puts **every role** on one model and prints which, so the run states
-what it called:
-
-```text
-models: every role on openai/gpt-5.5
-```
-
-Only the model string changes: grounding keeps its smaller `max_tokens`, so an
-override on the command line cannot quietly make the verification pass as dear as
-extraction ([DECISIONS #7a](decisions.md)). A per-role choice stays a config
-decision — see [`odke run`](run.md#models).
-
-`--model-provider` supplies the prefix when the string has none. A string that
-already names a *different* provider is a contradiction and is refused, rather
-than one of the two being picked silently.
-
-## OpenAI-compatible endpoints
-
-Anything that serves `/chat/completions` in the OpenAI shape works on the base
-install: point `base_url` at it. vLLM, LM Studio, llama.cpp's server,
-text-generation-inference, a LiteLLM proxy, an OpenRouter-compatible relay, or a
-corporate gateway.
-
-```python
-ModelSpec(model="vllm/meta-llama/Llama-3.1-70B-Instruct", base_url="http://gpu-01:8000/v1")
-ModelSpec(model="lmstudio/qwen2.5-7b-instruct", base_url="http://localhost:1234/v1")
-ModelSpec(
-    model="gateway/gpt-5.5",
-    base_url="https://llm.corp.internal/v1",
-    api_key_env="CORP_LLM_TOKEN",
-)
-```
-
-`vllm`, `lmstudio` and `llamacpp` have their usual local ports as defaults, so the
-`base_url` is only needed when the server is somewhere else. A `base_url` on any
-model string routes to the built-in client, whatever the provider is called — that
-is how a gateway keeps its own name in the logs.
-
-## Local models with Ollama
-
-The shortest complete setup, with no extra and no key:
-
-```python
-from openodke.llm import ModelRoles
-
-roles = ModelRoles.single("ollama/llama3.1")
-assert roles.extract.model == roles.ground.model == "ollama/llama3.1"
-```
-
-```yaml
-models:
-  extract: ollama/llama3.1
-  ground: ollama/qwen2.5:3b     # grounding is thousands of small yes/no questions
-```
-
-`ollama/…` defaults to `http://localhost:11434/v1`; set `base_url` for a host
-elsewhere. Leave `ground` out and it follows `extract`, at its own small
-`max_tokens`: naming one local model never sends a passage anywhere else.
-
-Mixing is normal — a capable hosted model to extract, a small local one to ground:
+A model string is `provider/model`. Only the first segment is the provider, and
+a string with no prefix is `openai`.
 
 ```python
 from openodke.llm import ModelSpec
 
-ModelRoles(
-    extract=ModelSpec(model="anthropic/claude-sonnet-5"),
-    ground=ModelSpec(model="ollama/qwen2.5:3b", max_tokens=256),
-)
+assert ModelSpec(model="ollama/llama3.1").provider == "ollama"
+assert ModelSpec(model="openrouter/anthropic/claude-sonnet-5").provider == "openrouter"
+assert ModelSpec(model="gpt-5.5").provider == "openai"
 ```
 
-## Azure
+## Which client serves a call
 
-Azure takes a deployment name where other providers take a model name, and three
-variables rather than one:
+The first that matches:
 
-```bash
-export AZURE_API_KEY=...
-export AZURE_API_BASE=https://my-resource.openai.azure.com
-export AZURE_API_VERSION=2024-10-21
-```
+1. a client registered for the provider with [`register`](#your-own-client);
+2. the standard-library OpenAI-compatible client, when the provider has a
+   default endpoint (`built-in` in `odke models`) or the spec sets `base_url`;
+3. litellm, which needs `pip install "openodke[llm]"`.
 
 ```python
-ModelRoles.single("azure/my-deployment")
+from openodke.llm import OpenAICompatClient, resolve
+
+assert isinstance(resolve(ModelSpec(model="ollama/llama3.1")), OpenAICompatClient)
 ```
 
-The API version can also travel with the spec, which is what `extra` is for —
-anything provider-specific that has no business in `ModelSpec`:
+## Keys
+
+Keys are read from the environment and nowhere else; openodke stores none.
+
+| Provider | Model string | Key variable | Served by |
+|---|---|---|---|
+| `openai` | `openai/<model>` | `OPENAI_API_KEY` | built-in |
+| `anthropic` | `anthropic/<model>` | `ANTHROPIC_API_KEY` | litellm |
+| `azure` | `azure/<deployment>` | `AZURE_API_KEY`, `AZURE_API_BASE`, `AZURE_API_VERSION` | litellm |
+| `ollama` | `ollama/<model>` | none | built-in |
+
+`odke models` lists the rest.
+
+- `api_key_env` names a different variable for one spec.
+- A spec with `base_url` sends a key only when `api_key_env` names one, so an
+  exported `OPENAI_API_KEY` never reaches a self-hosted server.
+- A missing key raises `MissingAPIKey`, naming the variable, before any request.
+  A missing key or provider stops a grounding run instead of leaving every fact
+  unchecked.
 
 ```python
-ModelSpec(model="azure/my-deployment", extra={"api_version": "2024-10-21"})
+from openodke.llm import MissingAPIKey, require_key
+
+try:
+    require_key(ModelSpec(model="openai/gpt-5.5", api_key_env="OPENAI_API_KEY_EVAL"))
+except MissingAPIKey as exc:
+    assert "OPENAI_API_KEY_EVAL" in str(exc)
+assert require_key(ModelSpec(model="openai/local", base_url="http://localhost:8000/v1")) == ""
 ```
 
-Azure is served by litellm, so it needs `pip install "openodke[llm]"`.
+## Roles and defaults
 
-## An internal gateway
+`ModelRoles` names a model per job. The defaults are pinned model ids, and
+change only with a new calibration card ([DECISIONS #7a](decisions.md#7a)).
 
-Many teams may only call models through their own audited proxy. `register`
-routes every model string for a provider through a client they supply — no fork,
-no subclass, one callable ([DECISIONS #7b](decisions.md)):
+| Role | Default | Used by |
+|---|---|---|
+| `extract` | `anthropic/claude-sonnet-5-5` | `LLMExtractor` |
+| `ground` | `anthropic/claude-haiku-4-5-20251001`, `max_tokens=256` | `LLMGrounder` |
+| `infer` | the `extract` model | `odke ontology infer` |
+
+Naming only `extract` grounds on that model too, at 256 output tokens.
+`ModelRoles.single(model)` puts every role on one model. In `odke run`, the
+`models` block or `--model` sets them ([`odke run`](run.md#models)).
 
 ```python
-from openodke.llm import LLMClient, ModelSpec, register, resolve, unregister
+from openodke.llm import ModelRoles
+
+roles = ModelRoles(extract=ModelSpec(model="ollama/llama3.1"))
+assert (roles.ground.model, roles.ground.max_tokens) == ("ollama/llama3.1", 256)
+```
+
+## Ollama and other local servers
+
+`ollama/…` calls `http://localhost:11434/v1` with no extra and no key. `vllm`,
+`lmstudio` and `llamacpp` default to their usual local ports. Set `base_url` for
+a server elsewhere, or for any endpoint that speaks the OpenAI
+`/chat/completions` shape.
+
+```yaml
+models:
+  extract: ollama/llama3.1
+  ground: ollama/qwen2.5:3b
+```
+
+## Your own client
+
+`register(provider, factory)` routes every `provider/…` string through your
+client, ahead of both built-in paths ([DECISIONS #7b](decisions.md#7b)). The
+client needs one method, `complete`, and must be thread-safe: the extractor and
+the grounder each keep up to 8 calls in flight. `ScriptedClient`,
+`RecordedClient` and `ReplayClient` in `openodke.llm.testing` answer without a
+network, for tests.
+
+```python
+from openodke.llm import LLMClient, register, unregister
 from openodke.llm.testing import ScriptedClient
 
 
 def audited(spec: ModelSpec) -> LLMClient:
-    """Whatever the team's own client is; it needs one method, `complete`."""
     return ScriptedClient(['{"entities": []}'])
 
 
@@ -261,39 +122,122 @@ assert isinstance(resolve(ModelSpec(model="acme/internal-large")), ScriptedClien
 unregister("acme")
 ```
 
-Register at import time — a `sitecustomize`, a package your configs already put on
-`pythonpath` — and every `acme/…` string in every config routes through it.
-Registration wins over both built-in paths, so a team that must send even Ollama
-through the proxy can take that over too.
+## Prompts
 
-`odke models` lists what has been registered, and marks a provider the registry
-has taken over.
+Every prompt openodke sends is registered in `openodke.prompts` as
+`id@version`, with its text, SHA-256 and source, and every model call records
+the key it sent ([DECISIONS #27](decisions.md#27)).
 
-## Testing without a provider
-
-`ReplayClient`, `RecordedClient` and `ScriptedClient` ship in the package, so a
-model-backed pipeline is testable with no key, no network and no bill. A run
-config's `models.replay` is the same thing from a file — see
-[`odke run`](run.md#models) and
-[Loaders & extraction](loaders-and-extraction.md).
+| Key | Sent by | Source |
+|---|---|---|
+| `ground.span@1` | `LLMGrounder`: one claim against its cited span | openodke |
+| `ground.paper@1` | `LLMGrounder(verdicts="binary")`, [paper mode](grounding.md#paper-mode-the-odke-grounder-as-written) | ODKE+ App. B, verbatim |
+| `extract@1` | `LLMExtractor`, followed by the ontology snippets | openodke |
+| `extract.repair@1` | `LLMExtractor`, after a reply that broke the contract | openodke |
+| `infer@1` | `LLMProposer` (`odke ontology infer`) | openodke |
+| `infer.repair@1` | `LLMProposer`, after a reply that broke the contract | openodke |
+| `reextract@1` | `LLMExtractor.reextract`, [the re-extract hook](grounding.md#handing-a-gap-back-the-re-extract-hook) | openodke, after GraphRAG's gleaning pass (Edge et al. 2024, arXiv 2404.16130), scoped to one window and grounded after |
+| `pair@1` | `PairJudge`, [the pair judge](resolution-and-corroboration.md#the-pair-judge): two mentions, one entity or two? | openodke, after LLM entity matching (Peeters, Steiner & Bizer 2023, arXiv 2310.11244), asked in both orders for position bias (Zheng et al. 2023, arXiv 2306.05685 §3.4) |
+| `pair.user@1` | `PairJudge`: the user message, a template filled in per pair and order | as `pair@1` |
 
 ```python
-from openodke.llm import Message, ModelSpec, ScriptedClient
+from openodke import prompts
 
-client = ScriptedClient([{"verdict": "supported"}])
-answer = client.complete([Message(content="…")], spec=ModelSpec(model="test/model"))
-assert answer.parsed == {"verdict": "supported"}
+span = prompts.get("ground.span@1")  # or get("ground.span", 1); no version is the latest
+assert (span.id, span.version, span.source) == ("ground.span", 1, "openodke")
+assert prompts.read_lock()[span.key] == span.sha256
 ```
 
-## What openodke does not ship
+The keys appear as `ModelCall.prompt`, `LLMExtractor.prompts`,
+`InferenceCall.prompt`, `LLMGrounder.stats["prompts"]` and
+`PairJudge.stats["prompts"]`, and on the extractor, grounder and resolver lines
+of [`odke run`](run.md#what-a-run-reports).
 
-- **No key storage.** No command writes a credential anywhere. The environment is
-  the whole mechanism.
-- **No model catalogue.** No table of context windows, prices or capabilities:
-  they change weekly and a copy shipped in a package is wrong by the next release.
-  `odke models` lists providers and how to address them, and
-  [`meter: true`](run.md#models) reports what a run actually cost, from what the
-  provider reported.
-- **No default temperature.** Which temperatures a model accepts is a per-model
-  fact openodke does not track, so the parameter is omitted entirely unless a
-  caller sets it ([DECISIONS #7](decisions.md)).
+**To change a prompt,** register the new text as the next version
+(`ground.span@2`) and keep the old one, then add the new key's hash to
+`src/openodke/prompts.lock.json`. The suite fails on an edited text with
+`bump the version: <id>`, and on a prompt that shares twelve words in a row with
+a benchmark gate split (`bench/labels/**/*gate*.jsonl`). The stages send the
+latest version.
+
+## The response cache
+
+`CachedClient` wraps any client and answers a request it has seen before from a
+store, so a rerun of an unchanged batch makes no call, costs nothing and needs
+no key ([DECISIONS #30](decisions.md#30)).
+
+- **The key** is the SHA-256 of one canonical JSON object: the
+  provider-qualified model and its `base_url`; every message, role and content,
+  in order; the response schema; `temperature`, `max_tokens` and `extra`; the
+  `id@version` of each [registered prompt](#prompts) the messages carry; and
+  `repeat`, the draw's index, when it is not 0, because
+  [gold adjudication](evaluation.md#is-the-gold-complete) asks one question
+  three times on purpose. Draw 0 adds nothing, so no key from before it existed
+  changed. `timeout` and `api_key_env` are not in it. Change anything else and
+  the request misses.
+- **An error is never stored**, so a failed call is made again next time. A reply
+  the caller rejects is stored: the repair turn after a malformed extraction has
+  its own messages, so its own key, and a rerun replays both.
+- **A hit** comes back with `cached=True`, no tokens and a cost of `0.0`. The
+  cost meter records it as a call with `cached: true`, and counts them as
+  `cached_calls`; the grounder's stats count them under `cached`, the extractor's
+  under `cached_calls`.
+- **`DirectoryCache(path)`** keeps one JSON file per key, at
+  `<path>/<first two characters>/<key>.json`. Each is written to a temporary
+  file beside it and renamed into place, so the thread pools, and several
+  processes, can share one directory without a torn entry. A file that does
+  not parse is a miss. **`MemoryCache`**, the default, lasts one process.
+- **Nothing expires.** A sample drawn at a temperature above zero replays as it
+  was drawn. Delete the directory, or point at a new one, to ask again.
+
+```python
+from openodke.llm import CachedClient, Message
+
+model = ScriptedClient(['{"verdict": "supported"}'])  # answers once, then fails
+cached = CachedClient(model)  # CachedClient(model, ".odke-cache") keeps it on disk
+ask = [Message(content="Claim: … Passage: …")]
+first = cached.complete(ask, spec=ModelSpec(model="ollama/llama3.1"))
+again = cached.complete(ask, spec=ModelSpec(model="ollama/llama3.1"))
+assert (again.text, again.cached, again.cost_usd) == (first.text, True, 0.0)
+assert cached.stats == {"hits": 1, "misses": 1, "failed": 0}
+```
+
+In `odke run`, `models: {cache: .odke-cache}` names the directory, relative to
+the config. `odke validate` and `odke ground` read the same key from `--config`,
+and all three take `--cache DIR`, which overrides it. The cache answers in front
+of `models.replay` and the provider alike, and a rerun answered entirely from it
+needs no provider adapter and no key. The run report gains a `cache` line, hits
+and misses, and `stats["cache"]`.
+
+## Concurrency per provider
+
+The extractor and the grounder each keep up to `max_workers` calls in flight,
+often against one provider account. `models: {limits: {anthropic: 8}}` caps
+the calls in flight to each provider it names, across every stage and every
+run in the process; `odke validate` and `odke ground` read the same key from
+`--config`.
+
+- **The key is the provider**, the model string's prefix, not the model: a
+  provider counts its rate limit per account, so an `anthropic/…` extractor
+  and an `anthropic/…` grounder share one limit. A provider with no limit is
+  not held back.
+- **The stricter wins.** A stage's own `max_workers` still applies, so a
+  grounder with 4 workers under a limit of 8 keeps 4 in flight.
+- **A `Retry-After` pauses the provider.** When a call fails with one, every
+  call to that provider waits it out, not only the one the retry policy will
+  repeat, capped at 30 seconds. The header is read as the
+  [retry policy](grounding.md) reads it.
+
+From Python, `set_limit(provider, n)` sets the process's limit (`None` lifts
+it), and `LimitedClient(client)` holds a client's calls to it. `odke run` wraps
+every model client this way.
+
+```python
+from openodke.llm import LimitedClient, ProviderLimits, set_limit
+
+limits = ProviderLimits()  # set_limit("ollama", 2) sets the process's own
+limits.set("ollama", 2)
+held = LimitedClient(ScriptedClient(['{"verdict": "supported"}']), limits)
+assert held.complete(ask, spec=ModelSpec(model="ollama/llama3.1")).text
+assert limits.limits == {"ollama": 2}
+```
