@@ -236,19 +236,23 @@ def test_the_tables_show_each_measurement(tmp_path: Path) -> None:
     lines = volume.table(tmp_path).splitlines()
     assert "| odke run | 4 | no | 100 | 1,050 | 480.2 | 467.5 | 0.21 | 2.2 |" in lines
     assert "| odke validate | 4 | 1,000 rows | 100 | 1,050 | 480.2 | 467.5 | 0.21 | 2.2 |" in lines
-    assert "| odke run | 100 | no | 900 | 120.0 | 480.2 | 0.21 |" in lines
+    assert "| odke run | 100 | no | 900 | 120 | 480.2 | 0.21 |" in lines
     # A second pass replaces its own rows and keeps the others.
     volume._record(tmp_path / "memory" / "memory.json", [{**row, "peak_rss_mb": 99.0}])
-    assert "| odke run | 100 | no | 900 | 99.0 | 480.2 | 0.21 |" in volume.table(tmp_path)
+    assert "| odke run | 100 | no | 900 | 99 | 480.2 | 0.21 |" in volume.table(tmp_path)
 
 
 def test_each_stage_time_is_summed_from_the_json_log(tmp_path: Path) -> None:
-    def stage(name: str, seconds: float) -> str:
-        return json.dumps({"event": "stage", "stage": name, "latency_s": seconds})
+    def stage(name: str, seconds: float, at: str) -> str:
+        ts = f"2026-10-10T11:00:{at}Z"
+        return json.dumps({"event": "stage", "stage": name, "latency_s": seconds, "ts": ts})
 
     log = tmp_path / "events.jsonl"
-    lines = [stage("ground", 1.25), "warning: a line as text", stage("ground", 0.5)]
-    lines += [stage("write", 0.2), json.dumps({"event": "job.end", "latency_s": 9.0})]
+    lines = [stage("ground", 1.25, "01.25"), "warning: a line as text"]
+    # Coverage runs between grounding's end and normalising's start: 3 s here.
+    lines += [stage("normalize", 0.5, "04.75"), stage("ground", 0.5, "05.25")]
+    lines += [stage("write", 0.2, "05.45"), json.dumps({"event": "job.end", "latency_s": 9.0})]
     log.write_text("\n".join(lines) + "\n")
     # Streamed, a stage logs once a micro-batch.
-    assert volume.stage_seconds(log) == {"ground": 1.75, "write": 0.2}
+    found = volume.stage_seconds(log)
+    assert found == {"ground": 1.75, "normalize": 0.5, "coverage": 3.0, "write": 0.2}

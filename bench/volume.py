@@ -54,6 +54,7 @@ import urllib.request
 import zlib
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -512,16 +513,30 @@ def spawn(
 
 
 def stage_seconds(log: Path) -> dict[str, float]:
-    """Each stage's seconds, summed over a job's `stage` events (once a micro-batch, streamed)."""
+    """Each stage's seconds, summed over a job's `stage` events (once a micro-batch, streamed).
+
+    The pipeline measures coverage after grounding and before normalising,
+    and logs no event for it, so `coverage` is the time between the two.
+    """
     took: Counter[str] = Counter()
+    last: dict[str, Any] | None = None
     with log.open(encoding="utf-8") as lines:
         for line in lines:
             if not line.startswith("{"):
                 continue  # a line printed as text, a warning say
             event = json.loads(line)
-            if event.get("event") == "stage":
-                took[event["stage"]] += event.get("latency_s") or 0.0
+            if event.get("event") != "stage":
+                continue
+            seconds = event.get("latency_s") or 0.0
+            took[event["stage"]] += seconds
+            if last is not None and (last["stage"], event["stage"]) == ("ground", "normalize"):
+                took["coverage"] += _at(event) - seconds - _at(last)
+            last = event
     return {stage: round(seconds, 2) for stage, seconds in took.items()}
+
+
+def _at(event: Mapping[str, Any]) -> float:
+    return datetime.fromisoformat(event["ts"].replace("Z", "+00:00")).timestamp()
 
 
 def _tidy(folder: Path) -> None:
@@ -1018,7 +1033,7 @@ def throughput_table(data: Mapping[str, Any]) -> str:
     for r in sorted(data["rows"], key=lambda r: (r["command"], r["concurrency"])):
         lines.append(
             f"| {r['command']} | {r['concurrency']} | {_streamed(r)} | {r['documents']:,} |"
-            f" {sum(r['calls'].values()):,} | {r['seconds']} | {r['bound_s']} |"
+            f" {sum(r['calls'].values()):,} | {r['seconds']:.1f} | {r['bound_s']:.1f} |"
             f" {r['documents_per_s']} | {r['calls_per_s']} |"
         )
     return "\n".join(lines)
@@ -1035,9 +1050,13 @@ def memory_table(data: Mapping[str, Any]) -> str:
     for r in order:
         lines.append(
             f"| {r['command']} | {r['documents']:,} | {_streamed(r)} | {r['facts']:,} |"
-            f" {r['peak_rss_mb']} | {r['seconds']} | {r['documents_per_s']} |"
+            f" {r['peak_rss_mb']:.0f} | {r['seconds']:.1f} | {r['documents_per_s']} |"
         )
     return "\n".join(lines)
+
+
+def _count(n: int | None) -> str:
+    return "—" if n is None else f"{n:,}"
 
 
 def reconcile_table(results: Sequence[Mapping[str, Any]]) -> str:
@@ -1051,8 +1070,8 @@ def reconcile_table(results: Sequence[Mapping[str, Any]]) -> str:
             done = s.get("retracted", {})
             lines.append(
                 f"| {data['documents']:,} | {name} | {s.get('documents', data['documents']):,} |"
-                f" {s['seconds']} | {s['peak_rss_mb']} | {done.get('cited', '—')} |"
-                f" {done.get('lost', '—')} | {done.get('retired', '—')} |"
+                f" {s['seconds']:.1f} | {s['peak_rss_mb']:.0f} | {_count(done.get('cited'))} |"
+                f" {_count(done.get('lost'))} | {_count(done.get('retired'))} |"
                 f" {s['store']['facts']:,} | {s['store']['retired']:,} |"
             )
     return "\n".join(lines)
