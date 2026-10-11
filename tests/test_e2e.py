@@ -151,13 +151,6 @@ def test_a_dry_run_into_neo4j_needs_no_database_and_no_password(
     assert "neo4j → $NEO4J_URI:" in result.output
 
 
-def test_the_reference_config_runs_the_same_example(example: Path) -> None:
-    """examples/run.yaml is the commented form of odke.yaml, and builds the same graph."""
-    reference = execute(load_config(example.parent / "run.yaml"), dry_run=True)
-    assert reference.stats["graph"]["facts"] == 25
-    assert reference.stats["stages"]["grounder"]["failed"] == 0
-
-
 def test_the_readme_quotes_every_query_and_query_4_is_the_compiled_check() -> None:
     readme = (EXAMPLE / "README.md").read_text(encoding="utf-8")
     found = queries()

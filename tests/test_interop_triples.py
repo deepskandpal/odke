@@ -24,7 +24,7 @@ from openodke.eval.spans import evaluate_spans, load_facts
 from openodke.ground import LLMGrounder
 from openodke.interop import THING, TripleRow, TriplesExtractor, read_triples, to_fact
 from openodke.llm.testing import RecordedClient
-from openodke.run import ConfigError, build, parse_config
+from openodke.run import ConfigError, build, execute, load_config, parse_config
 from openodke.types import Chunk
 
 runner = CliRunner()
@@ -376,6 +376,17 @@ def test_the_example_grounds_five_hand_written_triples(example: Path) -> None:
     report = runner.invoke(app, ["eval", "spans", "--facts", str(triples / "out")])
     assert report.exit_code == 0, report.output
     assert "3 of 5 fact(s) cite no span of their own" in report.output
+
+
+def test_the_reference_config_checks_the_same_triples_with_every_validator_stage(
+    example: Path,
+) -> None:
+    """examples/run.yaml comments every key, on the triples example and recorded responses."""
+    reference = execute(load_config(example.parent / "run.yaml"), dry_run=True)
+    assert reference.stats["graph"]["facts"] == 5
+    grounder = reference.stats["stages"]["grounder"]
+    assert (grounder["failed"], grounder["supported"], grounder["not_found"]) == (0, 3, 1)
+    assert {f.extractor for f in reference.graph.facts} == {"hand-written"}
 
 
 def _example_config(**extractor: Any) -> dict[str, Any]:
