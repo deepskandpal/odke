@@ -703,7 +703,7 @@ def test_the_commented_reference_config_is_a_valid_config() -> None:
     """examples/run.yaml documents every key; if it stops parsing, it documents nothing."""
     reference = Path(__file__).parent.parent / "examples" / "run.yaml"
     config = load_config(reference)
-    assert config.stages.extractor.use == "hybrid"
+    assert config.stages.extractor.use == "triples"
     assert config.base_dir == reference.parent.resolve()
 
 
