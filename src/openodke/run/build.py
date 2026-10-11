@@ -1206,6 +1206,18 @@ class Built:
         self.stages["resolver"].lookup = opened
         return opened
 
+    def open_store(self, sinks: Sequence[Sink]) -> None:
+        """Hand a signature corroborator the opened sinks that say what they hold (#153).
+
+        A merging store's restated fact then gains the run's sources rather than
+        being replaced by the run's copy, as in the Validator.
+        """
+        from openodke.validator import stores_of
+
+        corroborator = self.stages["corroborator"]
+        if isinstance(corroborator, SignatureCorroborator) and not corroborator.store:
+            corroborator.store = stores_of(sinks)
+
     def pipeline(self, *, sinks: Sequence[Sink] = (), **overrides: Any) -> Pipeline:
         if "validator" in overrides:
             deprecated("Built.pipeline(validator=...)", "Built.pipeline(gate=...)")

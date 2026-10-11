@@ -375,7 +375,9 @@ def test_bootstrap_applies_the_constraints_before_the_first_write(
     modes = [mode for mode, _, _ in driver.calls]
     first_write = modes.index("write")
     assert modes[:first_write] and set(modes[:first_write]) == {"auto"}
-    assert all("IF NOT EXISTS" in cypher for mode, cypher, _ in driver.calls if mode == "auto")
+    # Before the first write: the DDL, and the indexes the store merge reads through (#153).
+    auto = [cypher for mode, cypher, _ in driver.calls if mode == "auto"]
+    assert all("IF NOT EXISTS" in cypher or cypher.startswith("SHOW INDEXES") for cypher in auto)
     assert "applied" in result.output and "CREATE CONSTRAINT odke_key_Person" in result.output
     assert driver.closed
 

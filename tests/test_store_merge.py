@@ -12,6 +12,7 @@ when `NEO4J_URI` is set.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import uuid
@@ -215,6 +216,45 @@ def test_jsonl_with_merge_keeps_the_file_and_grows_a_restated_facts_support(
         (f.signature, f.supported_by)
         for f in (Fact.model_validate_json(line) for line in before.splitlines())
     ]
+
+
+def test_odke_run_with_merge_grows_a_restated_facts_support(tmp_path: Path) -> None:
+    # odke run hands its signature corroborator the store, as the Validator does:
+    # a second source's run adds to the stored fact rather than replacing it.
+    examples = Path(__file__).parent.parent / "examples/triples"
+    (tmp_path / "ontology.json").write_text(
+        (examples / "ontology.json").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    texts = {
+        "a": "Halden Robotics was founded in Leeds in 2014 by Mara Quist.",
+        "b": "Mara Quist, the engineer, founded Halden Robotics after leaving Arden Labs.",
+    }
+    (tmp_path / "texts").mkdir()
+    for doc in ("a", "b"):
+        (tmp_path / "texts" / f"{doc}.txt").write_text(texts[doc], encoding="utf-8")
+        row = {
+            "doc": doc,
+            "subject": "Halden Robotics",
+            "subject_type": "Company",
+            "predicate": "founder",
+            "object": "Mara Quist",
+            "object_type": "Person",
+        }
+        (tmp_path / f"{doc}.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+        (tmp_path / f"{doc}.yaml").write_text(
+            "ontology: ontology.json\n"
+            "inputs:\n  - path: texts\n    loader: {use: directory}\n"
+            "stages:\n"
+            f"  extractor: {{use: triples, path: {doc}.jsonl}}\n"
+            "  corroborator: signature\n"
+            "  sink: {use: jsonl, directory: out, merge: true}\n",
+            encoding="utf-8",
+        )
+    for doc in ("a", "b"):
+        result = CliRunner().invoke(app, ["run", str(tmp_path / f"{doc}.yaml")])
+        assert result.exit_code == 0, result.output
+    (founder,) = [f for f in _lines(tmp_path / "out") if f.predicate == "founder"]
+    assert len(founder.supported_by) == 2
 
 
 def test_jsonl_without_merge_replaces_the_file_and_reads_nothing(tmp_path: Path) -> None:

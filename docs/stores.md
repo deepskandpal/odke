@@ -120,7 +120,8 @@ predicate's uniqueness index, warning on a predicate without one; `JsonlSink(dir
 
 **The Validator merges by default** with every `FactLookup` sink
 (`report.restated` counts them), as does `odke validate` with a config's sinks
-and `-o --merge`; a dry run reads none. `odke run` does not merge; its `jsonl`
+and `-o --merge`; a dry run reads none. `odke run` merges when its config names
+`corroborator: signature`; with its default pass-through corroborator, a `jsonl`
 sink with `merge: true` replaces a restated fact.
 
 ```python
