@@ -86,6 +86,11 @@ BINARY_SCHEMA: dict[str, Any] = {
 
 Context = Literal["span", "document"]
 Verdicts = Literal["three_way", "binary"]
+# How the claim line of `ground.span`'s user message is written. "inline" is
+# `render_claim`, the line the label sheets and the other judges show.
+# "labelled" names the three parts and drops the types (`_render_labelled`).
+# Opt-in until the grounding calibration decides the default.
+ClaimFormat = Literal["inline", "labelled"]
 
 
 def render_claim(fact: Fact) -> str:
@@ -120,6 +125,37 @@ def render_claim(fact: Fact) -> str:
     return f"{claim}."
 
 
+def _render_labelled(fact: Fact) -> str:
+    """The claim with its three parts named and no types: `A | relation | B`.
+
+    The same claim as `render_claim` (identity qualifiers, spelled-out polarity),
+    in the shape a model is told how to read. On label set G (16 Oct 2026), a
+    small classifier shown the inline line (`A (Type) — rel — B (Type).`) called
+    13% of the facts the dataset's gold confirms "supported"; shown this one it
+    called 90% supported, and still rejected most planted false facts.
+    `bench/labels/claim_format.py` runs the same check on any grounder model.
+    """
+    subject = fact.subject.label or fact.subject.key
+    predicate = fact.predicate.replace("_", " ")
+    if fact.object_entity is not None:
+        obj = fact.object_entity.label or fact.object_entity.key
+    else:
+        obj = _literal(fact.object_value)
+    claim = f"{subject} | {predicate} | {obj}"
+    scoped = [
+        f"{key} = {_literal(fact.qualifiers[key])}"
+        for key in fact.identity_keys
+        if key in fact.qualifiers
+    ]
+    if scoped:
+        claim += f" ({', '.join(scoped)})"
+    if fact.polarity is Polarity.DENIED:
+        return f"It is NOT the case that: {claim}"
+    if fact.polarity is Polarity.PARTIAL:
+        return f"Only partially, or under a stated condition: {claim}"
+    return claim
+
+
 def render_triple(fact: Fact) -> str:
     """The fact in the paper's grounder shape: `<subject, predicate(qualifier: value), object>`.
 
@@ -149,12 +185,16 @@ def render_triple(fact: Fact) -> str:
     return f"<{subject}, {predicate}, {obj}>"
 
 
-def build_messages(fact: Fact, passage: str, *, binary: bool = False) -> list[Message]:
+def build_messages(
+    fact: Fact, passage: str, *, binary: bool = False, claim_format: ClaimFormat = "inline"
+) -> list[Message]:
     """Exactly what the model is sent: the claim and the passage, nothing more.
 
     By default the passage is the cited span — the question is whether *this
     span* supports the claim. `binary=True` sends the paper's prompt and triple
     instead; which passage it is asked against is the grounder's `context`.
+    `claim_format="labelled"` writes the claim line with its parts named
+    (`ClaimFormat`); the system prompt is the same.
     """
     if binary:
         return [
@@ -163,9 +203,13 @@ def build_messages(fact: Fact, passage: str, *, binary: bool = False) -> list[Me
                 role="user", content=f"**Context:\n{passage}\n**triple:\n{render_triple(fact)}"
             ),
         ]
+    if claim_format == "labelled":
+        claim = f"Claim (subject | relation | object): {_render_labelled(fact)}"
+    else:
+        claim = f"Claim: {render_claim(fact)}"
     return [
         Message(role="system", content=_SPAN.text),
-        Message(role="user", content=f"Claim: {render_claim(fact)}\n\nPassage:\n{passage}"),
+        Message(role="user", content=f"{claim}\n\nPassage:\n{passage}"),
     ]
 
 
@@ -273,6 +317,7 @@ class LLMGrounder:
         locate: bool = False,
         widen: bool = False,
         widen_client: LLMClient | None = None,
+        claim_format: ClaimFormat = "inline",
     ) -> None:
         if max_workers < 1:
             raise ValueError(f"max_workers must be at least 1, got {max_workers}")
@@ -280,12 +325,20 @@ class LLMGrounder:
             raise ValueError(f"context must be 'span' or 'document', got {context!r}")
         if verdicts not in ("three_way", "binary"):
             raise ValueError(f"verdicts must be 'three_way' or 'binary', got {verdicts!r}")
+        if claim_format not in ("inline", "labelled"):
+            raise ValueError(f"claim_format must be 'inline' or 'labelled', got {claim_format!r}")
+        if claim_format == "labelled" and verdicts == "binary":
+            raise ValueError(
+                "claim_format='labelled' rewrites ground.span's claim line; the paper's "
+                "binary prompt sends its own triple, so the two do not combine"
+            )
         if widen and context == "document":
             raise ValueError(
                 "widen=True re-asks against the sentence around a narrow span, and "
                 "context='document' already shows the model the whole document"
             )
         self.context: Context = context
+        self.claim_format: ClaimFormat = claim_format
         self.binary = verdicts == "binary"
         self.prompt: Prompt = _PAPER if self.binary else _SPAN
         self.roles = roles if roles is not None else ModelRoles()
@@ -466,7 +519,7 @@ class LLMGrounder:
 
     def _judge(self, fact: Fact, passage: str, *, widened: bool = False) -> GroundingVerdict | None:
         """The model's verdict on `fact` against `passage`, or None when there is none to read."""
-        messages = build_messages(fact, passage, binary=self.binary)
+        messages = build_messages(fact, passage, binary=self.binary, claim_format=self.claim_format)
         counts = self._widened if widened else self._counts
 
         def on_retry(attempt: int, exc: BaseException, wait: float) -> None:
@@ -547,6 +600,9 @@ class LLMGrounder:
             out["cost_usd"] = self._cost
         # The registered prompt the calls sent, by key: none when no call was made.
         out["prompts"] = [self.prompt.key] if out["calls"] else []
+        # How the claim line was written: code, not a registered text, so a
+        # calibration card needs it beside the prompt key.
+        out["claim_format"] = self.claim_format
         out["span"] = self.span_grounder.stats
         if self.locator is not None:
             out["locate"] = self.locator.stats
