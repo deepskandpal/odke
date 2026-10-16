@@ -407,6 +407,43 @@ def test_a_verdict_already_on_the_fact_costs_no_call() -> None:
     assert grounder.stats["skipped"] == 1
 
 
+def test_the_labelled_claim_names_its_parts_and_drops_the_types() -> None:
+    """Opt-in: the same claim, written the way the model is told to read it."""
+    passage = WROTE_IT.span.resolve(CORPUS)  # type: ignore[union-attr]
+    system, user = build_messages(WROTE, passage, claim_format="labelled")
+    assert system.content == SYSTEM_PROMPT
+    assert user.content == (
+        'Claim (subject | relation | object): Ada Lovelace | wrote | "the first algorithm"\n\n'
+        "Passage:\nAda Lovelace wrote the first algorithm in 1843."
+    )
+    _, denied = build_messages(DID_NOT_FINISH, "", claim_format="labelled")
+    assert denied.content.startswith(
+        "Claim (subject | relation | object): It is NOT the case that: "
+        "Charles Babbage | finished | Analytical Engine"
+    )
+    # The default is unchanged, so every recorded answer and label sheet still matches.
+    assert build_messages(WROTE, passage) == build_messages(WROTE, passage, claim_format="inline")
+
+
+def test_the_grounder_sends_the_labelled_claim_and_reports_it() -> None:
+    client = ScriptedClient(['{"verdict": "supported"}'])
+    grounder = LLMGrounder(client=client, claim_format="labelled")
+    grounder.ground(WROTE, CORPUS)
+    ((messages, _, _),) = client.calls
+    assert messages[1].content.startswith(
+        "Claim (subject | relation | object): Ada Lovelace | wrote"
+    )
+    assert grounder.stats["claim_format"] == "labelled"
+    assert _grounder().stats["claim_format"] == "inline"
+
+
+def test_claim_format_is_checked() -> None:
+    with pytest.raises(ValueError, match="claim_format"):
+        LLMGrounder(client=ScriptedClient(), claim_format="tabular")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="binary"):
+        LLMGrounder(client=ScriptedClient(), claim_format="labelled", verdicts="binary")
+
+
 def test_stats_are_the_stage_run_report() -> None:
     grounder = _grounder()
     for fact in (WROTE, BORN_IN_PARIS, BORN_IN_1815, _fact(INVENTED)):

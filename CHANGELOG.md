@@ -58,6 +58,12 @@ replacement, and is removed in 2.0.0 (#171, #217, DECISIONS #48).
 
 #### Validator: ground (0.3.0)
 
+- `LLMGrounder(claim_format="labelled")` writes the claim line of the
+  `ground.span` message with its parts named and no types
+  (`Claim (subject | relation | object): A | rel | B`). Opt-in: the default stays
+  `"inline"` until the grounding calibration on label set G decides it, and
+  `stats["claim_format"]` records which was sent. `bench/labels/claim_format.py`
+  compares the two on G against dataset gold and planted facts.
 - The triples input format: any extractor's output as one `TripleRow` per JSON
   Lines row, read by `read_triples` and replayed by `TriplesExtractor` (#121).
 - `Evidence.span_origin` (`cited`, `located` or `context`) says who chose a
