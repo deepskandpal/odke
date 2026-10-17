@@ -314,3 +314,12 @@ Once ticked, they are read back with `odke label read <vault>/labels/F -o
 bench/labels/F/labels.jsonl`, which writes each labelled row as given plus
 `same`, the unsure ones beside it. A label joins `items.private.jsonl` on `id`
 = `fact_id`.
+
+**Labelled (17 Oct 2026): sheets 01–02, the first 100 of the 300.** The items
+are shuffled, so these are a uniform random 100; a model labels all 300 and
+these hand labels correct it (prediction-powered inference). 90 are labelled
+(30 same, 60 different) and 10 unsure. Eight hinge on coreference the passage
+cannot settle ("The book" and *The Bad Beginning*, "2007" and *Eurovision Song
+Contest 2007*); two set a full date against its year alone ("June 1962" and
+"1962"), which the labeller left unsure rather than different. The passage is the gold fact's evidence sentence alone
+(`passage_for`), which is also all the judge is shown.
