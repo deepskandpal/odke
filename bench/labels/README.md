@@ -222,6 +222,20 @@ bench/labels/R/audit.labels.jsonl`, which writes each labelled pair as a
 `items.private.jsonl` on `audit` = its sheet id, and the dataset's label on the
 two keys.
 
+**Audited (17 Oct 2026): all 100.** 51 same, 45 different, 4 unsure. Against
+Re-DocRED's own label, on the 96 decided:
+
+| Stratum (dataset label) | Decided | Agree | Disagree | What a disagreement means |
+|---|---:|---:|---:|---|
+| same (same) | 48 | 41 | 7 (15%) | the dataset joined two things |
+| hard (different) | 39 | 29 | 10 (26%) | the dataset split one thing |
+| other (different) | 9 | 9 | 0 | |
+
+Weighted by stratum size (300, 200, 100), roughly 1 in 6 of R's 600 free labels
+is wrong, most of them among the hard negatives, as the sampling expected. So a
+pair judge scored on the free labels is scored partly against gold slips; its
+numbers have to be corrected with this audit, not read off the dataset.
+
 ## F: fact pairs (#143)
 
 300 pairs of facts from one passage, for the
