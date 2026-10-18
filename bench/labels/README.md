@@ -2,8 +2,9 @@
 
 Labels for what no public benchmark scores: whether a passage supports a fact
 (G), whether two mentions name one entity (R), and whether two facts state one
-fact (F). Each set keeps the script that drew it, so it can be drawn again, and
-quotes public data only, under its sources' licences ([LICENSES.md](LICENSES.md)).
+fact (F), and whether the grounder was right to refuse a fact (refusals). Each
+set keeps the script that drew it, so it can be drawn again (refusals keeps its
+rows instead), and quotes public data only, under its sources' licences ([LICENSES.md](LICENSES.md)).
 
 ## G: grounding (#133)
 
@@ -337,3 +338,52 @@ cannot settle ("The book" and *The Bad Beginning*, "2007" and *Eurovision Song
 Contest 2007*); two set a full date against its year alone ("June 1962" and
 "1962"), which the labeller left unsure rather than different. The passage is the gold fact's evidence sentence alone
 (`passage_for`), which is also all the judge is shown.
+
+## Refusals: what the grounder threw away (#118)
+
+100 of the 225 facts the grounder refused in the published comparison (PR #105):
+each extractor's triples before grounding that the grounded row dropped, on both
+datasets. The paper's binary grounder answers only "False" for a refusal, so
+every verdict is `not_found`. Drawn on 10 Oct 2026 with
+
+```bash
+odke eval refusals "$CMP/redocred" "$CMP/t2k" --make-sheet <vault>/labels/refusals   # n 100, seed 0
+```
+
+as evenly over dataset and extractor as each allows (all 8 of openodke's on
+Text2KGBench, 18 or 19 of every other), and spread over predicates. Today's
+code redraws 68 of the same 100, so the rows in `labels.jsonl`, not the
+command, are the record.
+
+- `refusals/labels.jsonl`: the 100 rows as labelled, each a `RefusalLabel`: the
+  claim as the grounder read it, the text, the verdict and its reason, whether
+  the gold lists the fact, and the owner's judgement. `source` is relative to
+  the bench workspace. Score it with
+  `odke eval refusals --labels bench/labels/refusals/labels.jsonl`.
+
+The sheets lived in the owner's vault at `deepanshu-kandpal/openodke.dev/labels/refusals/`
+and were read back with `odke label read`. The question on every item: does the
+text state the claim? `refusal correct` (it does not), `refusal wrong` (it
+states it or plainly implies it), `gold wrong` (the gold lists it and the text
+does not state it), `unsure`. The text alone decides, not what the labeller
+knows about the world.
+
+**Labelled (18 Oct 2026): all 100.** 25 refusal correct, 67 refusal wrong,
+3 gold wrong, 5 unsure. The refusal precision is the right refusals (`refusal
+correct` and `gold wrong`) over the 95 judged:
+
+| | Judged | Right refusals | Refusal precision [Wilson 95%] |
+|---|---:|---:|---|
+| **all** | 95 | 28 | **0.295 [0.212, 0.393]** |
+| Re-DocRED | 51 | 18 | 0.353 [0.236, 0.490] |
+| Text2KGBench | 44 | 10 | 0.227 [0.128, 0.370] |
+| openodke | 25 | 6 | 0.240 [0.115, 0.434] |
+| LGT | 36 | 11 | 0.306 [0.180, 0.469] |
+| neo4j-graphrag | 34 | 11 | 0.324 [0.191, 0.492] |
+
+So about 7 in 10 of these refusals lost a fact the text states. The grounder is
+too strict, and more so on Text2KGBench's one-sentence passages. The gold
+agrees: of the 22 refused facts it lists, the labeller found 15 stated in the
+text, 6 not (3 ticked `gold wrong`, 3 `refusal correct`; the precision
+counts both as right refusals) and 1 unsure. A grounding claim that quotes this set quotes
+the interval, not the point.
