@@ -107,6 +107,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/openodke"]
 
+[tool.uv]
+# Take a release only once it has been on PyPI for 7 days, so a hijacked upload
+# (litellm 1.107.0, 21 Oct 2026) is caught and removed before a lock or a build
+# can pick it up. A fix that can't wait: `uv lock --exclude-newer-package NAME=false`.
+exclude-newer = "7 days"
+
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
