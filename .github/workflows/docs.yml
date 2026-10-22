@@ -36,6 +36,11 @@ concurrency:
   # A newer push supersedes a PR build; a deploy already running is let finish.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# The same 7-day cooldown as pyproject's [tool.uv], for every uv call here,
+# including build environments and `--no-project` runs that skip the project.
+env:
+  UV_EXCLUDE_NEWER: "7 days"
+
 jobs:
   build:
     runs-on: ubuntu-latest
