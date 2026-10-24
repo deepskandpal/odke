@@ -170,8 +170,10 @@ class AblationRun:
     links: tuple[EntityLink, ...] = ()
     # None: no calls after grounding were recorded apart, so `all_calls` stands.
     final_calls: list[CallRecord] | None = None
-    # Each document that failed in some pass, and why: left out of every row scored.
+    # Each document that failed in some pass, and why; and where a budget stopped a pass.
+    # Either makes the run unscored (`score_ablation`).
     failed: dict[str, str] = field(default_factory=dict)
+    stopped: dict[str, Any] | None = None
 
     def configurations(self) -> list[tuple[str, list[Fact], list[CallRecord]]]:
         """Each configuration's name, its facts, and the calls it took to get them."""
@@ -256,6 +258,10 @@ def ablate(config: RunConfig) -> AblationRun:
     )
     graph = full.run(docs)
     failed |= {k: v for k, v in _failed(graph.stats).items() if k not in failed}
+    passes = [extracted.stats, graph.stats, *([] if grounder is None else [ran.stats])]
+    stopped = next(
+        (dict(st["stopped"]) for st in passes if isinstance(st.get("stopped"), Mapping)), None
+    )
     return AblationRun(
         documents=list(docs),
         ontology=ontology,
@@ -280,6 +286,7 @@ def ablate(config: RunConfig) -> AblationRun:
         # A pair judge in the resolver calls a model in the last row alone.
         final_calls=list(meter.records),
         failed=failed,
+        stopped=stopped,
     )
 
 
@@ -295,11 +302,17 @@ def _scorable(run: AblationRun) -> AblationRun:
     rows would score the failure as misses (rule R1). With the response cache
     on (`models.cache`), a rerun asks only the calls that failed.
     """
-    if not run.failed:
-        return run
     from openodke._batch import failed_summary
     from openodke.eval.harness import PipelineError
+    from openodke.llm.budget import stopped_summary
 
+    if run.stopped is not None:
+        raise PipelineError(
+            f"a budget stopped the ablation's run ({stopped_summary(run.stopped)}), so it is "
+            "not scored: what was left unasked would count as misses"
+        )
+    if not run.failed:
+        return run
     raise PipelineError(
         f"the ablation's run failed, so it is not scored: "
         f"{failed_summary(run.failed, of=len(run.documents))}. Run it again; with "

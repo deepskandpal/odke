@@ -397,8 +397,8 @@ class LenientRow(Frozen):
     matcher counted missed and a prediction it did not match, in one document,
     with the relation and one end in common. Each was asked in both orders:
     `same` were judged the same fact in both, `different` different in both,
-    `unsure` the rest (the orders disagreed, an answer could not be read, or a
-    budget stopped it), and `failed` (1.4) those whose calls failed, counted
+    `unsure` the rest (the orders disagreed, or an answer could not be read),
+    and `failed` (1.4) those whose calls failed or a budget stopped, counted
     neither way. `counted` is the misses counted
     found, at most once per gold fact and once per prediction. `strict` is the
     row's own performance, unchanged; `lenient` counts the `counted` pairs as

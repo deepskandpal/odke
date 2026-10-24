@@ -449,8 +449,10 @@ class Checked:
     # How the grounder wrote each claim, by its prompt key (`Run.claim_formats`).
     claim_formats: dict[str, str] = field(default_factory=dict)
     # Each text the Validator failed on, and why: a text it left out, or one holding a fact
-    # its grounding call failed on. A run with any is not scored (`evaluate`).
+    # its grounding call failed on; and where a budget stopped it. A run with either is not
+    # scored (`evaluate`).
     failed: dict[str, str] = field(default_factory=dict)
+    stopped: dict[str, Any] | None = None
 
 
 def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = None) -> Checked:
@@ -534,6 +536,7 @@ def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = Non
             if c.judge == "ground" and c.claim_format is not None
         },
         failed=failed,
+        stopped=dict(done.stopped) if done.stopped is not None else None,
     )
 
 
@@ -829,6 +832,13 @@ def evaluate(
     ran = f" in {output.seconds:.1f} s" if output.seconds is not None else ""
     notes.insert(0, f"{output.how}: {len(output.items)} row(s){ran}, {len(facts)} fact(s)")
     checked = check(facts, corpus, config) if validator else None
+    if checked is not None and checked.stopped is not None:
+        from openodke.llm.budget import stopped_summary
+
+        raise PipelineError(
+            f"a budget stopped the Validator's run ({stopped_summary(checked.stopped)}), so its "
+            "row is not scored: what was left unasked would read as checked"
+        )
     if checked is not None and checked.failed:
         # The row asked for is the Validator's, and its run failed: not scored (rule R1).
         raise PipelineError(
@@ -911,9 +921,9 @@ def adjudicated(
         # strict one, and read as "nothing missing from gold" (rule R1). A question the free
         # span check settled asked no model.
         raise PipelineError(
-            f"adjudication: every grounding call failed ({failed} of {len(entries)} question(s) "
-            "left open), so nothing was adjudicated; check the ground model and its key, and "
-            "run it again"
+            f"adjudication: no grounding call came back ({failed} of {len(entries)} question(s) "
+            "left without a verdict), so nothing was adjudicated; a grounder that asks no model "
+            "cannot adjudicate, and a model's calls that failed need its key and a rerun"
         )
     write_audit(audit, entries)
     listed = sum(entry.listed for entry in entries)
@@ -1006,7 +1016,9 @@ def judged_leniently(
         client = meter.client(roles.client_for("ground"), "judge")
     judge = FactJudge(roles, client=client, ontology=ontology)
     section, entries = lenient(rows, corpus.gold, corpus.documents, judge)
-    failed = sum(1 for e in entries if e.decision is not None and e.decision.decision == "failed")
+    failed = sum(
+        1 for e in entries if e.decision is None or e.decision.decision in ("failed", "unasked")
+    )
     if entries and failed == len(entries):
         # Every pair's calls failed: a lenient score would be the strict one (rule R1).
         raise PipelineError(
