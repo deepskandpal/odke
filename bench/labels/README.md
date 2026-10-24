@@ -127,6 +127,26 @@ bench/labels/G/labels.jsonl`, which writes each labelled row as given plus its
 `verdict`, and notes beside it. A label joins `items.private.jsonl` on
 `fact.id` = `fact_id`.
 
+**Labelled (20–24 Oct 2026): sheets 01–04, the first 200 of the 600.** The
+items are shuffled, so these are a uniform random 200: 163 real (59 dev, 104
+gate) and 37 planted. A model labels all 600 and these hand labels correct it
+(prediction-powered inference). All 200 are labelled: 148 supported, 28
+contradicted, 24 not found.
+
+- **Real items:** 140 of 163 supported. The text supports 52 of the 59 facts an
+  extractor wrote that the gold does not list (0.88 [0.77, 0.94], Wilson 95%),
+  so a fact missing from the gold is usually not a hallucination. Text2KGBench's
+  own gold is supported by its sentence on 7 of the 15 gold-only items.
+- **Planted items:** 29 of 37 are labelled `contradicted` or `not found`. Of
+  the 8 labelled `supported`, 4 deny a fact the passage states ("It is NOT the
+  case that…": a missed negation), 2 reverse a relation's direction, and 2 are
+  judgement calls (`country` for a novel's language, `present in work` for a
+  game's designer). The planted items are in neither split, so these labels
+  change no calibration figure; they measure the labeller.
+- **Notes:** two, in `labels.notes.jsonl`. A timer plugin's log line that landed
+  in one note field is left out.
+- **Self-agreement:** 33 of the 100 `selfagreement.ids` fall in these 200.
+
 ## R: entity pairs (#151)
 
 600 pairs of mentions, each with the text around it, for the
