@@ -308,6 +308,27 @@ def test_without_a_handler_an_event_goes_nowhere(capsys: pytest.CaptureFixture[s
         configure_logs("xml")  # type: ignore[arg-type]
 
 
+def test_a_warning_event_prints_nothing_without_a_handler() -> None:
+    """Text logs, the default: a failed document's event is not a bare `document.failed` on
+    stderr (release audit S1), while a stage's own warning still prints as it always has.
+
+    A fresh interpreter, because pytest's own handlers would catch either here.
+    """
+    import subprocess
+
+    script = (
+        "import logging\n"
+        "from openodke.observe import Observer\n"
+        "Observer('run').failed('extract', 'a.txt', 'extract: ProviderError: 503')\n"
+        "logging.getLogger('openodke.ground').warning('grounding call failed for fact f1')\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=60, check=True
+    )
+    assert done.stdout == ""
+    assert done.stderr == "grounding call failed for fact f1\n"
+
+
 # --------------------------------------------------------------------------- #
 # OpenTelemetry
 # --------------------------------------------------------------------------- #

@@ -52,6 +52,10 @@ from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
 from openodke.types import Frozen
 
 EVENTS = logging.getLogger("openodke.events")
+# Nothing is written until a handler is installed: without this, Python's last-resort
+# handler prints a warning event's bare name (`document.failed`) on stderr in text mode
+# (release audit S1). The stages' own warnings, on other loggers, still print.
+EVENTS.addHandler(logging.NullHandler())
 # What `configure_logs` installs its handler on: every logger the package has.
 ROOT = logging.getLogger("openodke")
 # The tracer provider spans go to; None is OpenTelemetry's global one.
