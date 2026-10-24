@@ -8,17 +8,27 @@ and this is the one `odke run` ships.
 
 In 0.2 it was `openodke.validators.VerdictValidator`. That name still works,
 with a warning, until 2.0.0 (DECISIONS #26, #48).
+
+A refusal on a grounding verdict is a judge's word, and a judge below its
+calibration bar is not trusted to drop facts (DECISIONS #54). So the gate either
+**drops** such a fact or **marks** it: writes it, with `qualifiers["odke.review"]`
+saying what it would have refused and why it did not. `on_refusal` chooses;
+left out, the grounder's calibration card does (`follow_card`), through
+`openodke.calibration.policy`. A refusal for the schema is code, not a judge,
+and is always made.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from openodke.ground.checks import schema_problem
 from openodke.ontology import Ontology
 from openodke.types import Fact, GroundingVerdict, ValidationVerdict
+
+OnRefusal = Literal["drop", "mark"]
 
 _REASONS = {
     GroundingVerdict.CONTRADICTED: "grounding verdict contradicted: the passage says otherwise",
@@ -42,15 +52,56 @@ class VerdictGate:
     the ontology has no room for: a predicate it does not declare, a subject
     outside the domain, an object outside the range (`schema_problem`, the free
     checks `CheckedGrounder` runs before any model). `stats` counts what it
-    accepted and why it refused, because the pipeline's own `refused` count
-    cannot say why.
+    accepted, why it refused, and what it marked, because the pipeline's own
+    `refused` count cannot say why.
+
+    `on_refusal` is what a refusal on a grounding verdict does: "drop" leaves
+    the fact out, "mark" writes it marked for review (DECISIONS #54). Left as
+    None, `follow_card(grounder)` sets it from the grounder's calibration card:
+    a card that meets its bar drops, one below it, or none, marks. A pipeline,
+    the Validator and `odke run` each call it with their grounder. A gate never
+    told its grounder drops, as it did before #54. `policy` says which applies
+    and why.
     """
 
-    def __init__(self, *, refuse_not_found: bool = False, schema: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        refuse_not_found: bool = False,
+        schema: bool = False,
+        on_refusal: OnRefusal | None = None,
+    ) -> None:
+        if on_refusal not in (None, "drop", "mark"):
+            raise ValueError(f"on_refusal must be 'drop' or 'mark', got {on_refusal!r}")
         self.refuse_not_found = refuse_not_found
         self.schema = schema
+        self.on_refusal: OnRefusal | None = on_refusal
+        # The default as the grounder's card resolved it (`follow_card`).
+        self._followed: tuple[OnRefusal, str] | None = None
         self._accepted = 0
         self._refused: dict[str, int] = {}
+        self._marked: dict[str, int] = {}
+
+    def follow_card(self, grounder: Any) -> VerdictGate:
+        """Take the default from `grounder`'s calibration card, unless `on_refusal` was given.
+
+        Called again with another grounder, it follows that one. Returns the gate.
+        """
+        if self.on_refusal is None:
+            from openodke.calibration import resolve, status_of
+
+            act, why = resolve(status_of(grounder))
+            self._followed = ("drop" if act else "mark", why)
+        return self
+
+    @property
+    def policy(self) -> tuple[OnRefusal, str]:
+        """What a refusal on a grounding verdict does, "drop" or "mark", and why."""
+        if self.on_refusal is not None:
+            return self.on_refusal, f"on_refusal={self.on_refusal!r} was given"
+        if self._followed is not None:
+            return self._followed
+        return "drop", "no grounder was named, so no card was read"
 
     @property
     def refused(self) -> frozenset[GroundingVerdict]:
@@ -67,6 +118,11 @@ class VerdictGate:
             return ValidationVerdict(action="refuse", reason=f"schema: {reason}")
         if fact.verdict in self.refused:
             key = fact.verdict.value
+            action, why = self.policy
+            if action == "mark":
+                self._marked[key] = self._marked.get(key, 0) + 1
+                self._accepted += 1
+                return ValidationVerdict(action="accept", reason=_REASONS[fact.verdict], review=why)
             self._refused[key] = self._refused.get(key, 0) + 1
             return ValidationVerdict(action="refuse", reason=_REASONS[fact.verdict])
         self._accepted += 1
@@ -74,7 +130,11 @@ class VerdictGate:
 
     @property
     def stats(self) -> dict[str, Any]:
-        return {"accepted": self._accepted, "refused": dict(self._refused)}
+        out: dict[str, Any] = {"accepted": self._accepted, "refused": dict(self._refused)}
+        if self._marked:
+            # Accepted, and written marked for review, in place of a refusal (#54).
+            out["marked"] = dict(self._marked)
+        return out
 
 
 # What `odke validate -o` writes beside the graph: `Kept.write`.
@@ -100,6 +160,17 @@ class Kept:
             self.refused.append((fact, verdict.reason or ""))
         return verdict
 
+    def follow_card(self, grounder: Any) -> Kept:
+        """The inner gate's `follow_card`, when it has one. Returns this gate."""
+        follow = getattr(self.gate, "follow_card", None)
+        if callable(follow):
+            follow(grounder)
+        return self
+
+    @property
+    def policy(self) -> Any:
+        return getattr(self.gate, "policy", None)
+
     @property
     def stats(self) -> Any:
         return getattr(self.gate, "stats", None)
@@ -116,4 +187,4 @@ class Kept:
         return target
 
 
-__all__ = ["REFUSED_FILE", "Kept", "VerdictGate"]
+__all__ = ["REFUSED_FILE", "Kept", "OnRefusal", "VerdictGate"]

@@ -221,10 +221,16 @@ class ValidationVerdict(Frozen):
     written and flagged: the fact is well-formed but disagrees with something
     already held, and that is a queue for a person or for the store's own
     constraints, not a reason to drop it silently.
+
+    `review` is set on an `accept` the gate would have been a `refuse`: the
+    judge that refused the fact is below its calibration bar, so the fact is
+    written and marked for a person (DECISIONS #54). `reason` is then the
+    refusal, and `review` why it was not made.
     """
 
     action: Literal["accept", "refuse", "conflict"]
     reason: str | None = None
+    review: str | None = None
 
 
 class Polarity(StrEnum):
