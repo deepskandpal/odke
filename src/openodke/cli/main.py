@@ -571,22 +571,20 @@ def _grounder(
 ) -> Any:
     """The model grounder `odke run` would build from these models, or the config's replay.
 
-    Every call holds a slot of its provider's limit, from the `models` block's
-    `limits`, process-wide. A budget, from the flags over the block's, counts
-    every call that goes out. The response cache is `--cache` when given, else
+    Its client is built as `odke run` builds one (`openodke.run.build.model_client`):
+    every call holds a slot of its provider's limit, from the `models` block's
+    `limits`, process-wide; a budget, from the flags over the block's, counts
+    every call that goes out; the response cache is `--cache` when given, else
     the block's, and answers in front of both, for nothing. The run manifest's
     `recorder` is told the models block as resolved, the cache and the budget,
     and sees every answer's model; the job's `observer` sees every call, a
     cached one too.
     """
     from openodke.ground import LLMGrounder
-    from openodke.llm.base import ProviderNotInstalled
     from openodke.llm.budget import Ledger
-    from openodke.llm.cache import CachedClient
-    from openodke.llm.limits import PROVIDER_LIMITS, LimitedClient
-    from openodke.llm.registry import resolve as resolve_client
+    from openodke.llm.limits import PROVIDER_LIMITS
     from openodke.run import ModelsConfig, load_models
-    from openodke.run.build import OnFirstCall, _replay_client, response_cache
+    from openodke.run.build import model_client, response_cache
 
     models, base = load_models(config) if config is not None else (ModelsConfig(), Path.cwd())
     if chosen is not None:
@@ -602,22 +600,13 @@ def _grounder(
     else:
         store = None
     replay = models.replay.get("ground")
-    client: Any
-    if replay is not None:
-        client = _replay_client(base / replay, "ground")
-    else:
-        try:
-            client = resolve_client(roles.ground)
-        except ProviderNotInstalled:
-            # Behind a cache, a rerun answered from it needs no adapter at all.
-            if store is None:
-                raise
-            client = OnFirstCall(roles.ground)
-    client = LimitedClient(client)
-    if models.budget is not None:
-        client = Ledger(models.budget).client(client)
-    if store is not None:
-        client = CachedClient(client, store)
+    client, _ = model_client(
+        roles.ground,
+        role="ground",
+        replay=base / replay if replay is not None else None,
+        cache=store,
+        ledger=Ledger(models.budget) if models.budget is not None else None,
+    )
     if recorder is not None:
         recorder.config["models"] = models.canonical()
         recorder.cache = store.directory if store is not None else None

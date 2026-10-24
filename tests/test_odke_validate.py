@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -93,6 +94,8 @@ def test_a_dry_run_calls_no_model_and_writes_nothing(
         raise AssertionError("a dry run built a model client or opened a store")
 
     monkeypatch.setattr("openodke.llm.registry.resolve", refuse)
+    # `openodke.run.build` the attribute is the function; the module is in sys.modules.
+    monkeypatch.setattr(sys.modules["openodke.run.build"], "resolve_client", refuse)
     monkeypatch.setattr(neo4j_module, "_connect", refuse)
     args = ["--facts", "triples/triples.jsonl", "--texts", "triples/texts", "-o", "out"]
     result = _validate(*args, "--dry-run", "--locate")
