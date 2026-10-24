@@ -446,17 +446,17 @@ class Pipeline:
         kept: list[Fact] = []
         marked = 0
         for fact in scored:
-            verdict = self.gate.validate(fact, self.ontology)
-            if verdict.action == "refuse":
+            gated = self.gate.validate(fact, self.ontology)
+            if gated.action == "refuse":
                 stats["refused"] += 1
                 continue
             # A refusal the gate did not make, because the judge is below its
             # bar, is written marked for a person; a fact now supported loses
             # an old mark, since what it waited on is settled.
-            review = getattr(verdict, "review", None)
+            review = getattr(gated, "review", None)
             if review is not None:
                 marked += 1
-                fact = stamp_review(fact, verdict.reason, review)
+                fact = stamp_review(fact, gated.reason, review)
             elif fact.verdict is GroundingVerdict.SUPPORTED:
                 fact = stamp_review(fact, None, None)
             kept.append(stamp_checked(fact, checked))
