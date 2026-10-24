@@ -102,12 +102,70 @@ def load_inputs(
     Split from scoring so one set of predictions can be both scored and written
     out per item (`odke eval --items`) without running a stage twice.
     """
+    rows, predicted, _ = _loaded(
+        stage, labels, predictions, run=run, ontology=ontology, documents=documents
+    )
+    return rows, predicted
+
+
+def _loaded(
+    stage: str,
+    labels: str | Path,
+    predictions: str | Path | None = None,
+    *,
+    run: str | None = None,
+    ontology: str | Path | None = None,
+    documents: str | Path | None = None,
+) -> tuple[list[Any], Any, Any]:
+    """`load_inputs`, and the stage `run` loaded and ran (None without one), for `_named`."""
     if stage not in STAGES:
         raise ValueError(f"unknown stage {stage!r}; expected one of: {', '.join(STAGES)}")
     if run is not None and predictions is not None:
         raise ValueError("pass --predictions or --run, not both")
     component = load_stage(run) if run is not None else None
+    rows, predicted = _inputs(stage, labels, predictions, component, ontology, documents)
+    return rows, predicted, component
 
+
+def _named(report: EvalReport, stage: str, component: Any) -> EvalReport:
+    """`report` naming what an in-process stage sent: its prompts, model and claim formats.
+
+    Read where the stages keep them, as `odke run` reads them (`prompts_sent`):
+    a grounder's `stats["prompts"]`, an extractor's `prompts`, a model's
+    `spec`. A calibration card is looked up by all three (release audit S18).
+    With nothing run, `report` as it is.
+    """
+    if component is None:
+        return report
+    from openodke.calibration import claim_formats
+    from openodke.calibration.lookup import judge_of
+    from openodke.llm.base import ModelSpec
+    from openodke.run.execute import prompts_sent
+
+    models: dict[str, str] = {}
+    for source in (component, getattr(component, "llm", None), judge_of(component)):
+        spec = getattr(source, "spec", None)
+        if isinstance(spec, ModelSpec):
+            models.setdefault(stage, spec.model)
+    sent = prompts_sent({stage: component})
+    run = report.run.model_copy(
+        update={
+            "prompts": tuple(dict.fromkeys([*report.run.prompts, *sent])),
+            "models": {**models, **report.run.models},
+            "claim_formats": {**claim_formats(component), **report.run.claim_formats},
+        }
+    )
+    return report.model_copy(update={"run": run})
+
+
+def _inputs(
+    stage: str,
+    labels: str | Path,
+    predictions: str | Path | None,
+    component: Any,
+    ontology: str | Path | None,
+    documents: str | Path | None,
+) -> tuple[list[Any], Any]:
     if stage == "route":
         route_rows = load_jsonl(labels, RouteLabel)
         if component is not None:
@@ -174,11 +232,11 @@ def report_files(
     seed: int = SEED,
     level: float = LEVEL,
 ) -> EvalReport:
-    """`evaluate_files` as an eval report."""
-    rows, predicted = load_inputs(
+    """`evaluate_files` as an eval report, naming what a `run` stage sent."""
+    rows, predicted, component = _loaded(
         stage, labels, predictions, run=run, ontology=ontology, documents=documents
     )
-    return report_inputs(
+    report = report_inputs(
         stage,
         rows,
         predicted,
@@ -188,6 +246,7 @@ def report_files(
         seed=seed,
         level=level,
     )
+    return _named(report, stage, component)
 
 
 def report_inputs(

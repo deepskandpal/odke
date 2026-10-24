@@ -1652,7 +1652,7 @@ def eval_stage(
     from openodke.eval.eval_report import Dataset, Run, from_stage
     from openodke.eval.formats import describe as describe_formats
     from openodke.eval.harness import PipelineError
-    from openodke.eval.runner import load_inputs, report_inputs
+    from openodke.eval.runner import _loaded, _named, report_inputs
     from openodke.llm.base import ProviderError
 
     inputs = (labels, predictions, run, ontology, documents, config, facts, items)
@@ -1865,7 +1865,7 @@ def eval_stage(
                 raise ValueError("--config is for ablation")
             if facts is not None:
                 raise ValueError("--facts is for spans")
-            rows, predicted = load_inputs(
+            rows, predicted, component = _loaded(
                 stage, labels, predictions, run=run, ontology=ontology, documents=documents
             )
             if stage == "extract":
@@ -1883,10 +1883,12 @@ def eval_stage(
                     texts=_texts(documents),
                     examples=examples,
                 )
+                report = _named(report, stage, component)
                 outcomes, _ = item_rows(stage, rows, predicted)
                 report, record = _record_fixes(report, outcomes, produced, track_record, report_to)
             else:
                 report = report_inputs(stage, rows, predicted, labels=labels, ontology=ontology)
+                report = _named(report, stage, component)
             if items is not None:
                 _write_items(items, stage, rows, predicted)
         if report_to is not None:
