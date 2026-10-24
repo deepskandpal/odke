@@ -1,11 +1,13 @@
 """The public surface, pinned, and every old name warning (DECISIONS #48).
 
-A name in a public module's `__all__`, a command or flag of `odke`, and a key of
-the run config are promises under semver. Each is held here to a deliberate
-list, `public_api.json` beside this file, so a change to any of them is a change
-to that file in the same diff, made on purpose and seen in review:
+A name in a public module's `__all__`, the parameters of each public callable (a
+model's are its fields), a command or flag of `odke`, and a key of the run
+config are promises under semver. Each is held here to a deliberate list,
+`public_api.json` beside this file, so a change to any of them is a change to
+that file in the same diff, made on purpose and seen in review:
 
-- adding a name, a flag or a key is a minor release, with a CHANGELOG line;
+- adding a name, an optional parameter, a flag or a key is a minor release,
+  with a CHANGELOG line;
 - removing or renaming one is a major release, after a minor that kept the old
   spelling working with a `DeprecationWarning` (listed in `OLD_NAMES` or
   `OLD_SPELLINGS` below, and tested to warn);
@@ -15,11 +17,15 @@ to that file in the same diff, made on purpose and seen in review:
 A module is public unless a part of its dotted path starts with `_`, or it is
 one of `PRIVATE`. A public module says what it exports in `__all__`; what it
 leaves out is private, whatever its spelling.
+
+After a deliberate change, `uv run python tests/test_public_api.py` rewrites
+`public_api.json` from the code; its diff is then the change to review.
 """
 
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import pkgutil
 import re
@@ -146,10 +152,110 @@ def config_surface() -> dict[str, list[str]]:
     return {"keys": sorted(set(keys)), **short, "use.sink": sorted(SINKS)}
 
 
+def _ours(function: Any) -> bool:
+    return (getattr(function, "__module__", None) or "").startswith("openodke")
+
+
+def _parameters(function: Any, *, bound: bool = False) -> str:
+    """`(a, b=, /, c=, *, d)`: each parameter's name and kind, `=` where it may be left out.
+
+    What a caller spells, and nothing else: no annotations, and no default values,
+    whose text is not always the same twice. `bound` drops `self` or `cls`.
+    """
+    params = list(inspect.signature(function).parameters.values())[1 if bound else 0 :]
+    kind = inspect.Parameter
+    out: list[str] = []
+    for i, param in enumerate(params):
+        if param.kind is kind.VAR_POSITIONAL:
+            out.append(f"*{param.name}")
+            continue
+        if param.kind is kind.VAR_KEYWORD:
+            out.append(f"**{param.name}")
+            continue
+        if param.kind is kind.KEYWORD_ONLY and not any(
+            p.kind in (kind.KEYWORD_ONLY, kind.VAR_POSITIONAL) for p in params[:i]
+        ):
+            out.append("*")
+        out.append(param.name + ("=" if param.default is not param.empty else ""))
+        if param.kind is kind.POSITIONAL_ONLY and (
+            i + 1 == len(params) or params[i + 1].kind is not kind.POSITIONAL_ONLY
+        ):
+            out.append("/")
+    return f"({', '.join(out)})"
+
+
+def _constructor(cls: type) -> str | None:
+    """What a call of `cls` takes, where openodke decides it; None where Python does.
+
+    A pydantic model takes its fields (pydantic's signature, which also reads an
+    `__init__` of ours). An enum, a Protocol, or an exception with no `__init__`
+    of its own takes what the standard library gives it, which differs between
+    Python versions, so it is not pinned here; its name is.
+    """
+    if issubclass(cls, BaseModel):
+        return _parameters(cls)
+    if issubclass(cls, tuple) and hasattr(cls, "_fields"):  # a NamedTuple
+        return _parameters(cls.__new__, bound=True)
+    init = next(vars(k)["__init__"] for k in cls.__mro__ if "__init__" in vars(k))
+    new = next(vars(k)["__new__"] for k in cls.__mro__ if "__new__" in vars(k))
+    if init is object.__init__ and new is object.__new__:
+        return "()"
+    if init is not object.__init__:
+        return _parameters(init, bound=True) if _ours(init) else None
+    return _parameters(new, bound=True) if _ours(new) else None
+
+
+def _methods(cls: type) -> Iterator[tuple[Any, bool]]:
+    """Each public method openodke defines on `cls` or a class it inherits from, and
+    whether it is bound (a static method is not)."""
+    for klass in cls.__mro__:
+        if not klass.__module__.startswith("openodke"):
+            continue
+        for name, value in vars(klass).items():
+            if name.startswith("_") and name != "__call__":
+                continue
+            if isinstance(value, staticmethod):
+                yield value.__func__, False
+            elif isinstance(value, classmethod):
+                yield value.__func__, True
+            elif inspect.isfunction(value):
+                yield value, True
+
+
+def signature_surface() -> dict[str, str]:
+    """Every public function, constructor and method, by where it is defined, with its
+    parameters. A name exported from several modules is one object, pinned once."""
+    found: dict[str, str] = {}
+
+    def pin(obj: Any, parameters: str) -> None:
+        key = f"{obj.__module__}.{obj.__qualname__}"
+        assert found.setdefault(key, parameters) == parameters, f"two callables are {key}"
+
+    for name in public_modules():
+        module = importlib.import_module(name)
+        for exported in module.__all__:
+            obj = getattr(module, exported)
+            if inspect.isfunction(obj) and _ours(obj):
+                pin(obj, _parameters(obj))
+            elif isinstance(obj, type) and _ours(obj):
+                constructor = _constructor(obj)
+                if constructor is not None:
+                    pin(obj, constructor)
+                for method, bound in _methods(obj):
+                    if _ours(method):
+                        pin(method, _parameters(method, bound=bound))
+    return found
+
+
 def surface() -> dict[str, Any]:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        return {"python": python_surface(), "cli": cli_surface(), "config": config_surface()}
+        return {
+            "python": python_surface(),
+            "signatures": signature_surface(),
+            "cli": cli_surface(),
+            "config": config_surface(),
+        }
 
 
 # --------------------------------------------------------------------------- #
@@ -157,13 +263,28 @@ def surface() -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
-def _changes(kind: str, pinned: dict[str, list[str]], found: dict[str, list[str]]) -> list[str]:
+def _changes(kind: str, pinned: dict[str, Any], found: dict[str, Any]) -> list[str]:
+    """What moved, in words. A list is a set of names; a string (a callable's
+    parameters) is compared whole, since their order and kinds are the promise."""
     lines = []
     for key in sorted(pinned.keys() - found.keys()):
         lines.append(f"  {kind} {key!r} is gone, and public_api.json promises it")
     for key in sorted(found.keys() - pinned.keys()):
         lines.append(f"  {kind} {key!r} is new, and not in public_api.json: {found[key]}")
     for key in sorted(pinned.keys() & found.keys()):
+        if isinstance(pinned[key], str) or isinstance(found[key], str):
+            if found[key] != pinned[key]:
+                was, now = (set(str(s).strip("()").split(", ")) for s in (pinned[key], found[key]))
+                moved = (
+                    f"lost {sorted(was - now)}, has {sorted(now - was)}"
+                    if was != now
+                    else "the same parameters, in another order"
+                )
+                lines.append(
+                    f"  {kind} {key!r} takes {found[key]}, and public_api.json promises "
+                    f"{pinned[key]}: {moved}"
+                )
+            continue
         added = sorted(set(found[key]) - set(pinned[key]))
         removed = sorted(set(pinned[key]) - set(found[key]))
         if added:
@@ -175,9 +296,11 @@ def _changes(kind: str, pinned: dict[str, list[str]], found: dict[str, list[str]
 
 HOW = (
     "\nThe public surface is a semver promise (DECISIONS #48). If this change is "
-    "deliberate, edit tests/public_api.json to match and add a CHANGELOG line: an "
-    "addition is a minor release; a removal or a rename keeps the old spelling "
-    "working with a DeprecationWarning until 2.0.0 (see OLD_NAMES in this file)."
+    "deliberate, rewrite tests/public_api.json with `uv run python "
+    "tests/test_public_api.py`, check its diff is only this change, and add a "
+    "CHANGELOG line: an addition (a name, an optional parameter) is a minor release; "
+    "a removal or a rename keeps the old spelling working with a DeprecationWarning "
+    "until 2.0.0 (see OLD_NAMES and OLD_SPELLINGS in this file)."
 )
 
 
@@ -193,7 +316,13 @@ def found() -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(
-    ("part", "kind"), [("python", "module"), ("cli", "command"), ("config", "config")]
+    ("part", "kind"),
+    [
+        ("python", "module"),
+        ("signatures", "callable"),
+        ("cli", "command"),
+        ("config", "config"),
+    ],
 )
 def test_the_public_surface_is_the_one_promised(
     pinned: dict[str, Any], found: dict[str, Any], part: str, kind: str
@@ -343,3 +472,10 @@ def test_every_old_spelling_warns_with_its_new_name_and_its_removal(
 ) -> None:
     with pytest.warns(DeprecationWarning, match=_says(old, new)):
         use(tmp_path)
+
+
+if __name__ == "__main__":
+    # The pin, rewritten from the code. Run it after a deliberate change, then read
+    # the diff: it should hold that change and nothing else.
+    PIN.write_text(json.dumps(surface(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"wrote {PIN}")
