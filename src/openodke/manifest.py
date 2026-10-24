@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import platform
 import re
 import threading
@@ -53,10 +52,10 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
-from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from openodke._files import write_whole
 from openodke._text import REDACTED, without_password
 from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
 from openodke.types import Document, Fact, Frozen, KnowledgeGraph
@@ -239,7 +238,7 @@ class RunManifest(Frozen):
     ) -> Path:
         """A manifest of its own at `path`: this run's fields, and the graph's beside them."""
         text = json.dumps(self.document(kg, shape=shape), indent=2)
-        return _write_whole(Path(path), text + "\n")
+        return write_whole(Path(path), text + "\n")
 
     def write_into(self, path: str | Path) -> Path:
         """This run's fields added to the `manifest.json` a JSONL sink has just written.
@@ -254,7 +253,8 @@ class RunManifest(Frozen):
             if isinstance(found, dict):
                 held = {key: found[key] for key in (*SINK_KEYS, *STORE_KEYS) if key in found}
         document = {**self.model_dump(mode="json"), **held}
-        return _write_whole(target, json.dumps(document, indent=2) + "\n")
+        # Whole, by rename: a second writer into the directory reads it complete (S15).
+        return write_whole(target, json.dumps(document, indent=2) + "\n")
 
     def differences(
         self, *, ontology: Ontology | None = None, inputs: Inputs | None = None
@@ -282,27 +282,6 @@ class RunManifest(Frozen):
         if self.inputs.facts != inputs.facts:
             problems.append("the facts handed in changed")
         return problems
-
-
-def _write_whole(target: Path, text: str) -> Path:
-    """`text` in `target`, whole or not at all: written beside it, then renamed over it.
-
-    `os.replace` is atomic within a directory, so a run killed while it writes
-    leaves the manifest that was there rather than half of one (release audit
-    S8). The file is opened as any other, so it takes the umask's permissions.
-    """
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(f".{target.name}.{uuid4().hex[:12]}.tmp")
-    try:
-        with temporary.open("x", encoding="utf-8") as fh:
-            fh.write(text)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(temporary, target)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
-    return target
 
 
 def read_manifest(path: str | Path) -> RunManifest:

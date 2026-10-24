@@ -16,6 +16,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
+from openodke._files import write_whole
 from openodke.reconcile import reconciled, tally
 from openodke.sinks.report import WriteReport
 from openodke.tenants import tenant_name
@@ -49,6 +50,11 @@ class JsonlSink:
     the sink's write report: each line written or appended is `written`, and
     with `merge` one that replaced a line held is `merged` instead
     (`openodke.sinks.report`).
+
+    Every file is written whole, so two writers into one directory at once
+    never leave a torn file for the other to read. A directory still has one
+    writer at a time: of two merging writes at once, the later one's files are
+    what stays.
 
     A merging store reads and rewrites its files whole on every write, so a
     streamed run into one takes time that grows with the square of the store:
@@ -146,9 +152,7 @@ class JsonlSink:
         self._manifest(added)
 
     def _manifest(self, manifest: Mapping[str, Any]) -> None:
-        (self.directory / "manifest.json").write_text(
-            json.dumps(manifest, indent=2), encoding="utf-8"
-        )
+        write_whole(self.directory / "manifest.json", json.dumps(manifest, indent=2))
 
     def _own_tenant(self) -> None:
         """Refuse a directory another tenant wrote: a store holds one tenant (#159)."""
@@ -203,7 +207,7 @@ class JsonlSink:
             found = json.loads(manifest.read_text(encoding="utf-8"))
             edges = sum(fact.is_edge for fact in kept)
             found.update(facts=len(kept), edges=edges, properties=len(kept) - edges)
-            manifest.write_text(json.dumps(found, indent=2), encoding="utf-8")
+            write_whole(manifest, json.dumps(found, indent=2))
         return counts
 
     def _read(self, name: str, model: type[M]) -> list[M]:
@@ -214,9 +218,17 @@ class JsonlSink:
             return [model.model_validate_json(line) for line in fh if line.strip()]
 
     def _write(self, name: str, rows: Iterable[BaseModel], *, mode: str = "w") -> None:
+        """The lines written whole: a file replaced by rename, or appended in one write.
+
+        So a second writer, or a reader, at the same moment never meets half a
+        file or half a line (release audit S15).
+        """
+        text = "".join(row.model_dump_json() + "\n" for row in rows)
+        if mode == "w":
+            write_whole(self.directory / name, text)
+            return
         with (self.directory / name).open(mode, encoding="utf-8") as fh:
-            for row in rows:
-                fh.write(row.model_dump_json() + "\n")
+            fh.write(text)
 
 
 def manifest_of(

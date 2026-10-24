@@ -482,7 +482,10 @@ stage counts and [run manifest](run.md#the-run-manifest) to `manifest.json`.
 a reader keeps a fact's last line. A merging store reads and rewrites itself
 whole on every micro-batch, so a streamed run into one takes time that grows
 with the square of the store (8,000 rows: 51 s); it warns once, and Neo4j is
-the store for that load. RDF, `cypher_file` and `neo4j_admin_csv`
+the store for that load. Every file is written whole (to a temporary file,
+then renamed), so two writers into one directory never crash on a torn file;
+a directory still has one writer at a time, and of two merging writes the
+later one's files stay. RDF, `cypher_file` and `neo4j_admin_csv`
 rewrite the whole graph (`streams = False`), so a streamed run refuses them.
 
 ## Your own sink
