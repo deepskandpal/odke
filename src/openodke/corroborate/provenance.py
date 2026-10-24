@@ -65,6 +65,13 @@ ONTOLOGY = "odke.ontology"
 SCHEMA_SLICE = "odke.schema_slice"
 
 
+# On Fact.qualifiers: a fact the gate would have refused and wrote instead,
+# because the judge that refused it is below its calibration bar or has no card
+# (DECISIONS #54) — {"reason": <the refusal>, "why": <why it was kept>}. For a
+# person to review: nothing is dropped on such a judge's word.
+REVIEW = "odke.review"
+
+
 def source_forms(value: Any) -> dict[str, tuple[str, ...]]:
     """`qualifiers["odke.source_form"]` read back — tuples in memory, lists after JSON."""
     if not isinstance(value, Mapping):
@@ -93,6 +100,23 @@ def checked_under(facts: Iterable[Fact], ontology: Ontology | str) -> list[Fact]
     """
     wanted = ontology if isinstance(ontology, str) else ontology.fingerprint
     return [fact for fact in facts if checked_by(fact) == wanted]
+
+
+def stamp_review(fact: Fact, reason: str | None, why: str | None) -> Fact:
+    """`fact` marked for review with `why` it was written anyway; unmarked when `why` is None.
+
+    The pipeline unmarks a fact a later run grounds as supported, so it is not
+    still waiting for a person.
+    """
+    if why is None:
+        if REVIEW not in fact.qualifiers:
+            return fact
+        rest = {k: v for k, v in fact.qualifiers.items() if k != REVIEW}
+        return fact.model_copy(update={"qualifiers": rest})
+    mark = {"reason": reason or "", "why": why}
+    if fact.qualifiers.get(REVIEW) == mark:
+        return fact
+    return fact.model_copy(update={"qualifiers": {**fact.qualifiers, REVIEW: mark}})
 
 
 def stamp_checked(fact: Fact, fingerprint: str | None) -> Fact:
@@ -130,6 +154,7 @@ __all__ = [
     "NAME_KEY",
     "NEAR_DUPLICATES",
     "ONTOLOGY",
+    "REVIEW",
     "SCHEMA_SLICE",
     "SCORE",
     "SOURCE_FORM",
@@ -138,5 +163,6 @@ __all__ = [
     "near_duplicates",
     "source_forms",
     "stamp_checked",
+    "stamp_review",
     "unstamped",
 ]

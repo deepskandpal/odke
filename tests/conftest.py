@@ -16,6 +16,23 @@ EXAMPLES = Path(__file__).parent.parent / "examples"
 
 
 @pytest.fixture(autouse=True)
+def no_shipped_cards(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No calibration card is read but a test's own (DECISIONS #54).
+
+    A card decides what a judge's default does, so a test of a default would
+    change meaning the day a card ships. Each test starts with none: the
+    package's directory points at an empty one and `ODKE_CARDS` is unset. A
+    test of the shipped cards reads them from their directory by name.
+    """
+    from openodke.calibration import lookup
+
+    monkeypatch.setattr(lookup, "CARDS_DIR", tmp_path_factory.mktemp("no-cards"))
+    monkeypatch.delenv(lookup.ENV, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def every_eval_report_is_sound(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Every `EvalReport` any test builds fits the schema, and its ranges hold its numbers (#139).
 

@@ -66,7 +66,7 @@ from typing import TYPE_CHECKING, Any
 from openodke._batch import incomplete, is_config_error, reason, told
 from openodke._renamed import Renamed, deprecated, module_getattr
 from openodke.corroborate.inverses import partners
-from openodke.corroborate.provenance import stamp_checked
+from openodke.corroborate.provenance import stamp_checked, stamp_review
 from openodke.coverage import measure as measure_coverage
 from openodke.coverage import offered_by
 from openodke.llm.budget import BudgetExceeded
@@ -176,6 +176,11 @@ class Pipeline:
         )
         self.scorer: Scorer = PassThroughScorer() if scorer is None else scorer
         self.gate: Gate = PassThroughGate() if gate is None else gate
+        # A gate whose default follows a calibration card reads its grounder's
+        # (DECISIONS #54): below the bar, a refused fact is marked, not dropped.
+        follow = getattr(self.gate, "follow_card", None)
+        if callable(follow):
+            follow(self.grounder)
         self.constrainer: Constrainer = (
             PassThroughConstrainer() if constrainer is None else constrainer
         )
@@ -439,11 +444,24 @@ class Pipeline:
         schema = self.ontology
         checked = schema.fingerprint if schema.types or schema.predicates else None
         kept: list[Fact] = []
+        marked = 0
         for fact in scored:
-            if self.gate.validate(fact, self.ontology).action == "refuse":
+            verdict = self.gate.validate(fact, self.ontology)
+            if verdict.action == "refuse":
                 stats["refused"] += 1
-            else:
-                kept.append(stamp_checked(fact, checked))
+                continue
+            # A refusal the gate did not make, because the judge is below its
+            # bar, is written marked for a person; a fact now supported loses
+            # an old mark, since what it waited on is settled.
+            review = getattr(verdict, "review", None)
+            if review is not None:
+                marked += 1
+                fact = stamp_review(fact, verdict.reason, review)
+            elif fact.verdict is GroundingVerdict.SUPPORTED:
+                fact = stamp_review(fact, None, None)
+            kept.append(stamp_checked(fact, checked))
+        if marked:
+            stats["marked"] = marked
         observer.end(begun, {"accepted": len(kept), "refused": stats["refused"]})
 
         kg = KnowledgeGraph(
