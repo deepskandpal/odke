@@ -1195,6 +1195,16 @@ a normaliser's: a pair whose ends `name_key` matches on neither side never
 reaches the judge, so the lenient score is a floor on what wording costs, not a
 measure of it.
 
+**Amended 24 Oct 2026 (release audit S20):** "takes its candidates from the
+same pre-filter" was not so where gold is keyed by ids and predictions by
+names. The lenient score compared an end's name with every name the gold end
+goes by; the diagnosis compared the scorer's keys alone, so Paris (Q90) and a
+prediction about "Paris" made a lenient pair and an "entity never extracted"
+miss. The diagnosis now reads an end as the lenient pre-filter does (the key,
+or a name whose `name_key` is one of the gold end's names; two values by their
+normalised form), with the pre-filter's own matcher. On the published
+Re-DocRED run it moves 1 of 1,495 misses.
+
 ### 40. A run writes its manifest after the sinks, and a replay refuses what changed
 
 A graph says what it holds, not how it was made. When a number moves, the
