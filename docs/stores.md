@@ -125,8 +125,8 @@ what the files hold.
 
 **Two writers at once** into one Neo4j keep each other's sources
 ([DECISIONS #51](decisions.md#51)). Every fact relationship carries
-`odke.version`, its write count. A write sends the version `stored()` read, and
-the store takes the row only if it still holds that version. A fact another job
+`odke.version`, a token each write renews. A write sends the token `stored()`
+read, and the store takes the row only if it still holds that token. A fact another job
 wrote, or the reconciler retracted from, in between is read again, merged with
 what this job brought, and scored again in the same write, with no model call.
 The reconciler locks what it retracts from.
