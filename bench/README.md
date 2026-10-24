@@ -56,8 +56,10 @@ some reasoning models refuse.
 
 ```bash
 uv venv --python 3.12 bench/.venv
-uv pip install --python bench/.venv/bin/python -e ".[llm,bench]" \
-    langchain-experimental json-repair neo4j-graphrag langextract
+# the libraries at the versions behind the published numbers (bench/requirements.in)
+uv pip install --python bench/.venv/bin/python -r bench/requirements.txt
+uv pip install --python bench/.venv/bin/python --no-deps -e .
+bench/.venv/bin/python -m pytest bench/test_competitors.py   # what CI's bench job runs
 
 # prepare the sets under $CMP/t2k/ont_* and $CMP/redocred, naming the models once:
 odke bench prepare text2kgbench data/t2k --ontology ont_1_movie --out "$CMP/t2k/ont_1_movie" \

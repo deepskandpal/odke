@@ -142,3 +142,46 @@ jobs:
           if ran < 1 or skipped or failed:
               raise SystemExit("the live Neo4j tests must run, not skip")
           EOF
+
+  # bench/test_competitors.py drives LLMGraphTransformer, neo4j-graphrag and
+  # LangExtract through bench/competitors.py, against a fake LiteLLM: no network
+  # and no key. The package never installs those libraries, and they need newer
+  # neo4j and pypdf than uv.lock holds, so this job builds the bench's own
+  # environment, pinned in bench/requirements.txt to the versions behind the
+  # published comparison, and runs the bench's tests in it. The bench scripts
+  # that need nothing more, bench/trex.py among them, are tested in verify
+  # (tests/test_bench_scripts.py).
+  bench:
+    name: bench competitors (python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: bench/requirements.txt
+
+      - name: Install the bench environment
+        run: |
+          uv venv --python 3.12 bench/.venv
+          uv pip install --python bench/.venv/bin/python -r bench/requirements.txt
+          uv pip install --python bench/.venv/bin/python --no-deps -e .
+
+      # A skipped test is a green tick that proved nothing, as in the live job.
+      - name: Competitor tests
+        run: |
+          bench/.venv/bin/python -m pytest bench/test_competitors.py -rA --junitxml=bench.xml
+          python3 - <<'EOF'
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("bench.xml").getroot()
+          suite = root if root.tag == "testsuite" else root.find("testsuite")
+          tests, skipped = int(suite.get("tests")), int(suite.get("skipped"))
+          failed = int(suite.get("failures")) + int(suite.get("errors"))
+          ran = tests - skipped
+          print(f"bench tests: {tests} selected, {ran} ran, {skipped} skipped, {failed} failed")
+          if ran < 1 or skipped or failed:
+              raise SystemExit("the bench tests must run, not skip")
+          EOF

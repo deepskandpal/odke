@@ -2,7 +2,8 @@
 
     bench/.venv/bin/python -m pytest bench/test_competitors.py
 
-Not in CI: it needs the competitor libraries, which the package never installs.
+It needs the competitor libraries, which the package never installs, so CI runs
+it in a job of its own, in the bench's pinned environment (bench/requirements.txt).
 """
 
 from __future__ import annotations
