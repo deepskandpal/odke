@@ -655,7 +655,8 @@ def _entity_cypher(label: str) -> str:
 # moved is left, and `write()` merges it again with what the store now holds.
 _COMPARE_AND_SET = (
     f"SET r.{_ident('odke.lock')} = true\n"
-    f"WITH r, row, coalesce(r.{_ident(VERSION)}, '') AS held, r.fact_id IS NULL AS fresh\n"
+    f"WITH r, row, coalesce(toString(r.{_ident(VERSION)}), '') AS held,\n"
+    "     r.fact_id IS NULL AS fresh\n"
     f"REMOVE r.{_ident('odke.lock')}\n"
     "WITH r, row, row.expect IS NULL\n"
     f"     OR (fresh AND row.expect = '{ABSENT}') OR (NOT fresh AND row.expect = held) AS fits\n"
@@ -1057,7 +1058,7 @@ class Neo4jSink:
         with self._driver.session(**self._session_config()) as session:
             for pieces in transactions(statements, self.batch_size):
                 counted, merged = session.execute_write(
-                    self._unwind, pieces, facts, read, kg.created_at
+                    self._unwind, pieces, facts, read, kg.created_at, rebased
                 )
                 # Counted once the transaction has committed, as are the facts it merged again.
                 rebased.update(merged)
@@ -1076,14 +1077,20 @@ class Neo4jSink:
             # A claim merged again holds other support, or none: each subject touched is
             # projected again from the claims the store now holds, as a retraction does.
             claims: dict[tuple[str, str], set[str]] = defaultdict(set)
-            for key in rebased:
-                fact = facts[key]
-                if fact.object_entity is None:
-                    claims[(fact.subject.type, fact.predicate)].add(
-                        scoped(fact.subject.key, self.tenant)
-                    )
+            for subject_type, predicate, key in self._moved_subjects(facts, rebased):
+                claims[(subject_type, predicate)].add(key)
             if claims:
                 session.execute_write(self._project_again, claims)
+
+    def _moved_subjects(
+        self, facts: Mapping[str, Fact], rebased: Mapping[str, Fact | None]
+    ) -> set[tuple[str, str, str]]:
+        """(type, predicate, stored key) of each subject one of whose claims was merged again."""
+        return {
+            (fact.subject.type, fact.predicate, scoped(fact.subject.key, self.tenant))
+            for key in rebased
+            if (fact := facts[key]).object_entity is None
+        }
 
     def _unwind(
         self,
@@ -1092,6 +1099,7 @@ class Neo4jSink:
         facts: Mapping[str, Fact],
         read: Mapping[str, tuple[str, Fact | None]],
         created_at: datetime,
+        earlier: Mapping[str, Fact | None] | None = None,
     ) -> tuple[list[_Ran], dict[str, Fact | None]]:
         """Each piece in one transaction; a fact row whose version moved, merged again.
 
@@ -1101,11 +1109,19 @@ class Neo4jSink:
         held. A fact the store now states, where this one was only derived, is
         dropped, as the store merge drops it (DECISIONS #28). Returns each piece's
         counts, and the facts it merged again, by signature key: a transaction
-        the driver retries starts them afresh.
+        the driver retries starts them afresh. A planned projection of a subject
+        whose claim was merged again, here or in an `earlier` transaction, is left
+        to `write()`, which projects it again from the store once all have run.
         """
         out: list[_Ran] = []
         rebased: dict[str, Fact | None] = {}
         for statement, rows in pieces:
+            if statement.kind == "projection":
+                later = self._moved_subjects(facts, {**(earlier or {}), **rebased})
+                rows = [r for r in rows if (*statement.names, r["subject_key"]) not in later]
+                if not rows:
+                    out.append(_Ran(0, 0, 0))
+                    continue
             ran = _run(tx, statement, rows)
             reached, nodes, relationships, moved = ran
             for _ in range(REBASES):

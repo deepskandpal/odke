@@ -390,6 +390,49 @@ def test_a_contradicting_text_never_holds_a_stored_fact_up(first: str, tmp_path:
     assert (gone.support, gone.supported_by, gone.retired_at is not None) == (0, (), True)
 
 
+def test_a_text_validated_again_is_no_longer_held_against_the_claim(tmp_path: Path) -> None:
+    """Review of release audit 2: b's record outlived b, and left out its new version.
+
+    a supports the claim and b contradicts it; b is retracted (an update does that
+    first) and validated again, and now says nothing either way: it is evidence
+    again, as in a store that never held the old b.
+    """
+    from openodke import GroundingVerdict
+
+    sink = JsonlSink(tmp_path, merge=True)
+    _validate(sink, "a", _employed("a", verdict=GroundingVerdict.SUPPORTED))
+    _validate(sink, "b", _employed("b", verdict=GroundingVerdict.CONTRADICTED))
+    Reconciler([sink]).delete(["b"])
+    _validate(sink, "b", _employed("b", verdict=GroundingVerdict.NOT_FOUND))
+    (fact,) = [f for f in _lines(tmp_path) if f.predicate == "employer"]
+    assert sorted(e.doc_id for e in fact.evidence) == ["a", "b"]
+    assert CONFLICT not in fact.qualifiers
+
+
+def test_a_partly_contradicting_batch_fact_brings_no_contradicting_clock_to_the_store() -> None:
+    """Review of release audit 2: through the store, a batch fact merged from a silent
+    text and a contradicting one carried the contradicting text's clock and confidence."""
+    from openodke import GroundingVerdict
+
+    when = datetime(2010, 1, 1, tzinfo=UTC)
+    (stored,) = SignatureCorroborator().corroborate(
+        [_employed("a", verdict=GroundingVerdict.SUPPORTED, qualifiers={"start_time": "2019"})]
+    )
+    batch = [
+        _employed("x", verdict=GroundingVerdict.NOT_FOUND),
+        _employed("b", verdict=GroundingVerdict.CONTRADICTED, confidence=0.99,
+                  valid_from=when, qualifiers={"start_time": "2010"}),
+    ]  # fmt: skip
+    (via_store,) = SignatureCorroborator(store=Held(stored)).corroborate(batch)
+    (together,) = SignatureCorroborator().corroborate([stored, *batch])
+
+    def shown(fact: Fact) -> Any:
+        return (sorted(e.doc_id for e in fact.evidence), fact.qualifiers.get("start_time"),
+                fact.valid_from, fact.confidence)  # fmt: skip
+
+    assert shown(via_store) == shown(together) == (["a", "x"], "2019", None, 0.8)
+
+
 def test_neo4j_keeps_the_record_of_a_contradicting_text_through_a_merge() -> None:
     """The record is JSON text on the relationship, and reads back to merge again."""
     from openodke import GroundingVerdict
@@ -724,7 +767,9 @@ class Versioned(FakeDriver):
                 made += 1
             self.ends[key] = (row["subject_key"], row["object_key"])
             held = self.rels[key]
-            fresh, token = held.get("fact_id") is None, held.get(VERSION) or ""
+            # As the Cypher reads it: `coalesce(toString(r.version), '')`.
+            fresh = held.get("fact_id") is None
+            token = "" if held.get(VERSION) is None else str(held[VERSION])
             expect = row.get("expect")
             if expect is None or (fresh and expect == ABSENT) or (not fresh and expect == token):
                 self.rels[key] = {**row["props"], VERSION: uuid.uuid4().hex}
@@ -1024,8 +1069,9 @@ def test_a_claim_retracted_meanwhile_does_not_get_its_projected_value_back() -> 
     reconciler = Reconciler([Neo4jSink(driver=store, ontology=ONTOLOGY)])
     job("a", meanwhile=lambda: reconciler.delete(["a"], at=WHEN))
     ((_, claim),) = store.rels.items()
-    # The claim stays retired, and its subject is projected again from what is left.
-    assert claim["retired_at"] == WHEN and projected()[-1] is None
+    # The claim stays retired, and its subject is projected again from what is left,
+    # never written its old value in between.
+    assert claim["retired_at"] == WHEN and projected() == ["Leeds", None, None]
 
 
 @pytest.mark.skipif(not os.environ.get("NEO4J_URI"), reason="NEO4J_URI is not set")
@@ -1078,7 +1124,7 @@ def test_two_writers_at_once_keep_every_source_in_a_live_neo4j() -> None:
             )  # fmt: skip
             return validator.validate([claim(doc)], [Document(id=doc, text=TEXT)])[1]
 
-        def held() -> tuple[int, list[str], int]:
+        def held() -> tuple[int, list[str], Any]:
             (record,) = driver.execute_query(
                 f"MATCH (:`{person}`)-[r:`{employer}`]->(:`{company}`) "
                 "RETURN r.support AS support, r.support_sources AS sources, "
@@ -1090,6 +1136,10 @@ def test_two_writers_at_once_keep_every_source_in_a_live_neo4j() -> None:
             first.bootstrap(ontology)
             driver.execute_query("CALL db.awaitIndexes(300)")
             job("doc-a")
+            # A version an early build wrote as a number is still read, as text.
+            driver.execute_query(
+                f"MATCH (:`{person}`)-[r:`{employer}`]->() SET r.`odke.version` = 3"
+            )
             failures: list[BaseException] = []
 
             def concurrently(doc: str) -> None:
@@ -1104,7 +1154,9 @@ def test_two_writers_at_once_keep_every_source_in_a_live_neo4j() -> None:
             for thread in threads:
                 thread.join()
             assert failures == []
-            assert held() == (3, ["doc:doc-a", "doc:doc-b", "doc:doc-c"], 3)
+            support, sources, version = held()
+            assert (support, sources) == (3, ["doc:doc-a", "doc:doc-b", "doc:doc-c"])
+            assert isinstance(version, str) and version != "3"
 
             # Deleted between a job's read and its write: it does not come back.
             def delete_c() -> None:
