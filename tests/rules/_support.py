@@ -7,6 +7,8 @@ network, no key, no bill.
 
 from __future__ import annotations
 
+import importlib
+import re
 import shutil
 import threading
 from collections.abc import Sequence
@@ -50,6 +52,35 @@ class LiveModel:
         return Completion(text=json.dumps(self.answer), parsed=dict(self.answer), model=spec.model)
 
 
-def python_files(*roots: Path) -> list[Path]:
-    """Every `.py` file under the roots, in a stable order."""
-    return sorted(p for root in roots for p in root.rglob("*.py"))
+# Every module that binds the registry's `resolve` when it is imported, and the name it binds.
+# A module imported for the first time while `resolve` is patched would keep the patch for
+# good, so each is imported before it is patched, and patched where it looks the name up.
+RESOLVERS = {
+    "openodke.llm.registry": "resolve",
+    "openodke.llm": "resolve",
+    "openodke.llm.roles": "resolve",
+    "openodke.run.build": "resolve_client",
+    "openodke.extract.llm": "resolve",
+    "openodke.infer.llm": "resolve",
+    "openodke.corroborate.judge": "resolve_client",
+    "openodke.eval.equivalence": "resolve_client",
+}
+
+
+def answer_every_model_with(monkeypatch: Any, client: Any) -> None:
+    """`client` wherever a provider's client is resolved, undone when the test ends."""
+    # All imported before any is patched: one imported later would bind the patch.
+    modules = {name: importlib.import_module(name) for name in RESOLVERS}
+    for name, attribute in RESOLVERS.items():
+        monkeypatch.setattr(modules[name], attribute, lambda spec, _client=client: _client)
+
+
+def bindings_of_resolve() -> set[str]:
+    """The modules under `src/` that bind `resolve` from the registry at import time."""
+    found = {"openodke.llm.registry"}
+    binding = re.compile(r"^from openodke\.llm\.registry import .*\bresolve\b", re.M)
+    for path in sorted(SRC.rglob("*.py")):
+        if binding.search(path.read_text(encoding="utf-8")):
+            parts = path.relative_to(SRC.parent).with_suffix("").parts
+            found.add(".".join(parts[:-1] if parts[-1] == "__init__" else parts))
+    return found

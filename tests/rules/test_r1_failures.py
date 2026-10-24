@@ -19,7 +19,6 @@ and `tables.py`. A new command that scores belongs in this file.
 
 from __future__ import annotations
 
-import importlib
 import json
 import sys
 from collections.abc import Iterator, Sequence
@@ -28,7 +27,7 @@ from typing import Any
 
 import pytest
 import yaml
-from _support import copy_example
+from _support import RESOLVERS, answer_every_model_with, bindings_of_resolve, copy_example
 from typer.testing import CliRunner
 
 from openodke.cli.main import app
@@ -73,11 +72,17 @@ def every_model_call_fails(monkeypatch: pytest.MonkeyPatch) -> Iterator[type[_Re
     _Refused.calls = 0
     for client in (testing.RecordedClient, testing.ReplayClient, testing.ScriptedClient):
         monkeypatch.setattr(client, "complete", _Refused.complete)
-    monkeypatch.setattr("openodke.llm.registry.resolve", lambda spec: _Refused())
-    # `openodke.run.build`, the module: `openodke.run` names a function `build` too.
-    built = importlib.import_module("openodke.run.build")
-    monkeypatch.setattr(built, "resolve_client", lambda spec: _Refused())
+    answer_every_model_with(monkeypatch, _Refused())
     yield _Refused
+
+
+def test_every_place_a_client_is_resolved_is_made_to_fail() -> None:
+    """A module that binds `resolve` and is not patched would reach a real provider here."""
+    assert bindings_of_resolve() == set(RESOLVERS), (
+        f"{sorted(bindings_of_resolve() ^ set(RESOLVERS))}: list every module that binds the "
+        "registry's `resolve` in RESOLVERS in tests/rules/_support.py, so the rules can make "
+        "every model call fail, or answer it, without a network."
+    )
 
 
 def _no_score(command: str, result: Any, written: Path | None = None) -> None:
@@ -245,22 +250,25 @@ from openodke import GroundingVerdict
 from openodke.llm import ProviderError
 
 
-class TimesOutOn:
-    """Grounds every fact as supported, except that `doc`'s calls time out."""
+class FailsOn:
+    """Grounds every fact as supported, except that every call about `doc` fails.
+
+    A 401, not a timeout: a timeout is retried with backoff, and the wait proves nothing.
+    """
 
     def __init__(self, doc: str = "") -> None:
         self.doc = doc
 
     def ground(self, fact, doc):
         if self.doc and self.doc in doc.id:
-            raise ProviderError("timed out")
+            raise ProviderError("401 unauthorized")
         return fact.model_copy(update={"verdict": GroundingVerdict.SUPPORTED})
 '''
 
 
 @RELEASE_13
 def test_an_update_whose_text_failed_exits_non_zero(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    every_model_call_fails: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = copy_example("triples", tmp_path)
     (project / "rule1_stages.py").write_text(STAGES, encoding="utf-8")
@@ -275,7 +283,7 @@ def test_an_update_whose_text_failed_exits_non_zero(
     config["pythonpath"] = ["."]
     config["models"].pop("replay")
     for name, doc in (("ok", ""), ("fails", "corvid")):
-        config["stages"]["grounder"] = {"use": "rule1_stages:TimesOutOn", "doc": doc}
+        config["stages"]["grounder"] = {"use": "rule1_stages:FailsOn", "doc": doc}
         (project / f"{name}.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
     monkeypatch.chdir(project)
     sys.modules.pop("rule1_stages", None)
