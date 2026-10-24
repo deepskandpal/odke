@@ -122,6 +122,8 @@ PRECISION: tuple[tuple[str, str], ...] = (
 )
 BUCKETS = dict(RECALL + PRECISION)
 UNCONFIRMED = "surface form (unconfirmed)"
+# How `gold_view` keys a literal end, so a value never equals a name.
+VALUE = "value:"
 
 
 # --------------------------------------------------------------------------- #
@@ -576,18 +578,24 @@ def _matches(g: GoldItem, p: Said) -> bool:
 
 
 def _near(g: GoldItem, made: Sequence[Said], *, judged: bool) -> list[Said]:
-    """The surface-form candidates: the fact-equivalence judge's pre-filter.
+    """The surface-form candidates: the fact-equivalence judge's pre-filter (DECISIONS #39).
 
     A prediction that is no hit, with the relation and exactly one end equal
-    as the scorer compares them (`openodke.eval.equivalence.candidate`, on the
-    scorer's keys). With no judge to ask, the other end must also be a near
-    name, so a plain wrong value is not counted as wording.
+    as `openodke.eval.equivalence.candidate` compares them: the scorer's key,
+    or a name whose `name_key` is one of the gold end's names (label, aliases,
+    key); two values by their normalised form. So gold keyed by ids and
+    predictions keyed by names make the pairs the lenient score asks about
+    (release audit S20). With no judge to ask, the other end must also be a
+    near name, so a plain wrong value is not counted as wording.
     """
     out = []
     for p in made:
         if p.relation != g.relation or p.hit:
             continue
-        subject, obj = p.subject in g.subject.keys, p.object in g.object.keys
+        subject, obj = (
+            _equal(p.subject, p.forms[0], g.subject),
+            _equal(p.object, p.forms[1], g.object),
+        )
         if subject == obj:
             continue
         if not judged:
@@ -598,6 +606,20 @@ def _near(g: GoldItem, made: Sequence[Said], *, judged: bool) -> list[Said]:
                 continue
         out.append(p)
     return out
+
+
+def _equal(key: str, form: str, end: Endpoint) -> bool:
+    """Whether a prediction's end is the gold end, as the lenient pre-filter compares ends.
+
+    The same key, or a name whose `name_key` is one of the end's names. Two
+    values compare by key alone, which is their normalised form.
+    """
+    from openodke.eval.equivalence import _matches
+
+    if key in end.keys:
+        return True
+    both_values = key.startswith(VALUE) and all(k.startswith(VALUE) for k in end.keys)
+    return not both_values and _matches(form or key, end.forms, name_key)
 
 
 def near(a: str, b: str) -> bool:
@@ -903,13 +925,13 @@ def _object_end(fact: Fact) -> Endpoint:
     if fact.object_entity is not None:
         return Endpoint(frozenset({fact.object_entity.key}), _forms(fact.object_entity))
     value = fact.object_value
-    return Endpoint(frozenset({f"value:{normalise_value(value)}"}), (str(value),))
+    return Endpoint(frozenset({f"{VALUE}{normalise_value(value)}"}), (str(value),))
 
 
 def _object_key(fact: Fact) -> str:
     if fact.object_entity is not None:
         return fact.object_entity.key
-    return f"value:{normalise_value(fact.object_value)}"
+    return f"{VALUE}{normalise_value(fact.object_value)}"
 
 
 def _detail(fact: Fact) -> Hashable:

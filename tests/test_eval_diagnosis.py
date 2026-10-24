@@ -206,6 +206,37 @@ def test_a_true_fact_about_the_pair_is_no_confusion() -> None:
     assert diagnose(gold_view(GOLD, SAID)).confusions[("works_for", "founded")] == 1
 
 
+def test_the_diagnosis_reads_the_lenient_score_s_pairs() -> None:
+    """Release audit S20: gold keyed by ids, predictions keyed by names (DECISIONS #39).
+
+    The lenient pre-filter compares an end's name with every name the gold end
+    goes by, so it pairs Paris (Q90) with the prediction about Paris. The
+    diagnosis compared keys alone and called the miss an entity never
+    extracted. Both read one pre-filter now.
+    """
+    from openodke.eval.equivalence import candidate
+
+    def place(key: str, label: str) -> Entity:
+        return Entity(key=key, type="Place", label=label)
+
+    cited = (Evidence(doc_id="d1"),)
+    keyed = Fact(
+        subject=place("Q90", "Paris"),
+        predicate="capital_of",
+        object_entity=place("Q142", "France"),
+        evidence=cited,
+    )
+    named = Fact(
+        subject=place("paris", "Paris"),
+        predicate="capital_of",
+        object_entity=place("france (country)", "France (country)"),
+        evidence=cited,
+    )
+    assert candidate(keyed, named) == "object"
+    found = diagnose(gold_view(gold(keyed), [named]))
+    assert assigned(found) == ["surface_form"]
+
+
 def test_near_names() -> None:
     assert near("Palamu", "Palamu region")
     assert near("The Loud Tour", "Loud Tour")
