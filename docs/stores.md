@@ -372,7 +372,8 @@ WHERE r.`odke.ontology` = $fingerprint
 RETURN s.key, coalesce(o.key, o.value) AS object, r.fact_id;
 ```
 
-`Neo4jSink.checked_under(ontology)` runs that per predicate in one transaction.
+`Neo4jSink.checked_under(ontology)` runs that per predicate in one transaction,
+for the sink's tenant alone when it has one.
 `checked_under(facts, ontology)` and `checked_by(fact)` in
 `openodke.corroborate` do it for facts in hand. Each takes an ontology or a
 fingerprint.

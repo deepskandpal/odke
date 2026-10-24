@@ -364,19 +364,27 @@ def stored_fact(fact: Fact, props: Mapping[str, Any]) -> Fact:
     return fact.model_copy(update=update)
 
 
-def relationship_fact(row: Mapping[str, Any]) -> Fact:
+def relationship_fact(row: Mapping[str, Any], tenant: str | None = None) -> Fact:
     """A fact relationship read back with its two ends, as the reconciler reads it.
 
     `row` holds the relationship's `predicate` and `props`, and each end's
     `key` and `labels`; a `:Claim` object also its `value`. The type of an end
     is its label other than `Entity` and `Claim`. The relationship's own
-    receipts are `stored_fact`'s.
+    receipts are `stored_fact`'s. A `tenant`'s ends come back under the keys
+    the tenant gave them, so the fact's signature is the one its extractor
+    made, and a derived fact's `odke.derived` stamp names it (#159).
     """
-    subject = Entity(key=str(row["subject_key"]), type=_end_type(row["subject_labels"]))
+    subject = Entity(
+        key=unscoped(str(row["subject_key"]), tenant), type=_end_type(row["subject_labels"])
+    )
     props = row["props"]
     claim = CLAIM_LABEL in (row.get("object_labels") or ())
     obj = (
-        None if claim else Entity(key=str(row["object_key"]), type=_end_type(row["object_labels"]))
+        None
+        if claim
+        else Entity(
+            key=unscoped(str(row["object_key"]), tenant), type=_end_type(row["object_labels"])
+        )
     )
     stated = Fact(
         subject=subject,
@@ -688,18 +696,20 @@ _RETRACTED = (
 )
 
 
-def checked_cypher(predicate: str) -> str:
+def checked_cypher(predicate: str, *, tenant: bool = False) -> str:
     """The facts on `predicate` one ontology last checked: `$fingerprint`, through its index.
 
     `odke.ontology` is the fact's qualifier (#163), a property of the
     relationship under its own name, so it is quoted. `bootstrap()` gives each
     predicate a range index on it, and the query names that index, so it is
-    read through it or not at all: never a scan.
+    read through it or not at all: never a scan. With `tenant`, only
+    `$tenant`'s facts (#159).
     """
     rel, prop = _ident(predicate), _ident(ONTOLOGY)
+    within = " AND r.tenant = $tenant" if tenant else ""
     return (
         f"MATCH (s)-[r:{rel}]->(o) USING INDEX r:{rel}({prop})\n"
-        f"WHERE r.{prop} = $fingerprint\n"
+        f"WHERE r.{prop} = $fingerprint{within}\n"
         "RETURN type(r) AS predicate, properties(r) AS props,\n"
         "       s.key AS subject_key, labels(s) AS subject_labels,\n"
         "       o.key AS object_key, labels(o) AS object_labels, o.value AS value"
@@ -1054,7 +1064,9 @@ class Neo4jSink:
         the old ontology checked are the ones to validate again. One read
         transaction, per relationship type through the `odke.ontology` index
         `bootstrap()` creates, never by a scan: a type with no such index is
-        not read, and warns.
+        not read, and warns. A sink with a tenant reads that tenant's facts
+        alone, keyed as the tenant keys them; one without reads the whole
+        store, as `check()` does (#159).
         """
         wanted = ontology if isinstance(ontology, str) else ontology.fingerprint
         reader = self._lookup()
@@ -1063,8 +1075,8 @@ class Neo4jSink:
             types = [row["name"] for row in session.run(_TYPES).data()]
             for name in sorted(set(types) - indexed - set(_LINK_TYPES)):
                 reader._unindexed(name, ONTOLOGY)
-            rows = session.execute_read(_checked, sorted(indexed & set(types)), wanted)
-        return [relationship_fact(row) for row in rows]
+            rows = session.execute_read(_checked, sorted(indexed & set(types)), wanted, self.tenant)
+        return [relationship_fact(row, self.tenant) for row in rows]
 
     def _retract(
         self, tx: Any, docs: list[str], names: list[str], at: datetime, hard: bool
@@ -1072,7 +1084,8 @@ class Neo4jSink:
         terms = " OR ".join(_phrase(doc) for doc in docs)
         asked = {"indexes": names, "terms": terms, "tenant": self.tenant}
         rows = tx.run(_citing(self.tenant), asked).data()
-        before = [relationship_fact(row) for row in rows]
+        # Under the tenant's own keys, so a derived fact's stamp names its parent (#159).
+        before = [relationship_fact(row, self.tenant) for row in rows]
         after = reconciled(before, set(docs), at)
         updates: dict[str, list[dict[str, Any]]] = defaultdict(list)
         deletes: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -1091,7 +1104,7 @@ class Neo4jSink:
                 changed[near] = props.get(near)
                 updates[new.predicate].append({"signature": signature, "props": changed})
             if new.object_entity is None:
-                claims[(new.subject.type, new.predicate)].add(new.subject.key)
+                claims[(new.subject.type, new.predicate)].add(scoped(new.subject.key, self.tenant))
         for predicate, batch in sorted(updates.items()):
             tx.run(_retract_cypher(predicate), rows=batch).consume()
         for predicate, batch in sorted(deletes.items()):
@@ -1733,10 +1746,16 @@ def _schema_name(kind: str, name: str) -> str:
     return f"odke_{kind}_{slug}"
 
 
-def _checked(tx: Any, predicates: list[str], fingerprint: str) -> list[dict[str, Any]]:
+def _checked(
+    tx: Any, predicates: list[str], fingerprint: str, tenant: str | None = None
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    asked: dict[str, Any] = {"fingerprint": fingerprint}
+    if tenant is not None:
+        asked["tenant"] = tenant
     for predicate in predicates:
-        rows.extend(tx.run(checked_cypher(predicate), {"fingerprint": fingerprint}).data())
+        cypher = checked_cypher(predicate, tenant=tenant is not None)
+        rows.extend(tx.run(cypher, asked).data())
     return rows
 
 

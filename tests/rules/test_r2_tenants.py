@@ -48,7 +48,6 @@ runner = CliRunner()
 
 TENANTS = ("acme", "globex")
 RELEASE_3 = pytest.mark.xfail(strict=True, reason="release audit finding 3; fixed in fix PR 1")
-RELEASE_20 = pytest.mark.xfail(strict=True, reason="release audit finding 20; fixed in fix PR 1")
 
 # --------------------------------------------------------------------------- #
 # Writes: one graph as two tenants, through every sink a store is loaded from
@@ -382,7 +381,7 @@ def _read_neo4j(store: TwoTenantStore, tenant: str | None) -> list[str]:
 # (#44), as no tenant. `checked_under`, `check()` and `read_neo4j` read the whole store
 # with no tenant, as documented, so they are read as acme only.
 READS = [
-    pytest.param(_read_checked_under, "acme", marks=RELEASE_20, id="Neo4jSink.checked_under"),
+    pytest.param(_read_checked_under, "acme", id="Neo4jSink.checked_under"),
     pytest.param(_read_stored, "acme", id="Neo4jSink.stored"),
     pytest.param(_read_stored, None, id="Neo4jSink.stored-no tenant"),
     pytest.param(_read_retract, "acme", id="Neo4jSink.retract"),
@@ -408,7 +407,6 @@ def test_reading_as_one_tenant_returns_nothing_of_anothers(read: Any, tenant: st
     )
 
 
-@RELEASE_20
 def test_odke_ontology_diff_store_reads_one_tenant(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

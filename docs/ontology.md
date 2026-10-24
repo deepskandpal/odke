@@ -234,6 +234,8 @@ Every fact a pipeline writes names the ontology that checked it, by its
 out` follows the changes with how many stored facts each ontology checked,
 and the first the old one did: the facts a breaking change may no longer fit
 ([Which ontology checked a fact](stores.md#which-ontology-checked-a-fact)).
+`--tenant acme` reads that tenant's facts alone; left out, a Neo4j store is
+read whole.
 
 ## Cardinality and its scope
 

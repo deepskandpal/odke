@@ -130,6 +130,7 @@
       "--fail-on-breaking",
       "--password-env",
       "--store",
+      "--tenant",
       "--user",
       "<new>",
       "<old>"

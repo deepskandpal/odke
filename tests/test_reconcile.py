@@ -49,6 +49,7 @@ from openodke.sinks.neo4j import (
     signature_of,
 )
 from openodke.stages import PassThroughGate, PassThroughGrounder
+from openodke.tenants import scoped
 from test_neo4j_sink import FakeDriver
 
 WHEN = datetime(2026, 9, 1, tzinfo=UTC)
@@ -301,15 +302,15 @@ def _evidence_index(predicate: str) -> dict[str, Any]:
     }
 
 
-def _row(i: int, fact: Fact) -> dict[str, Any]:
+def _row(i: int, fact: Fact, tenant: str | None = None) -> dict[str, Any]:
     obj = fact.object_entity
     return {
         "id": f"rel-{i}",
         "predicate": fact.predicate,
-        "props": provenance_of(fact, WHEN),
-        "subject_key": fact.subject.key,
+        "props": provenance_of(fact, WHEN, tenant),
+        "subject_key": scoped(fact.subject.key, tenant),
         "subject_labels": [fact.subject.type, "Entity"],
-        "object_key": obj.key if obj else None,
+        "object_key": scoped(obj.key, tenant) if obj else None,
         "object_labels": [obj.type, "Entity"] if obj else ["Claim"],
         "value": None if obj else fact.object_value,
     }
@@ -318,7 +319,7 @@ def _row(i: int, fact: Fact) -> dict[str, Any]:
 class Citing(FakeDriver):
     """A store whose evidence indexes find `held`, and which has a type no index covers."""
 
-    def __init__(self, *held: Fact) -> None:
+    def __init__(self, *held: Fact, tenant: str | None = None) -> None:
         types = ("employer", "hq", "SIMILAR", "unindexed")
         super().__init__(
             {
@@ -327,10 +328,11 @@ class Citing(FakeDriver):
             }
         )
         self.held = held
+        self.tenant = tenant
 
     def answer(self, cypher: str) -> list[dict[str, Any]]:
         if "queryRelationships" in cypher:
-            return [_row(i, fact) for i, fact in enumerate(self.held)]
+            return [_row(i, fact, self.tenant) for i, fact in enumerate(self.held)]
         return super().answer(cypher)
 
 
@@ -371,6 +373,24 @@ def test_neo4j_retracts_in_one_write_transaction_through_the_evidence_indexes() 
         assert Neo4jSink(driver=hard).retract(["doc-a"], at=AT, hard=True)["deleted"] == 1
     (deleted,) = [p for c, p in hard.writes if "DELETE r" in c]
     assert deleted["rows"] == [{"signature": signature_of(leeds)}]
+
+
+@pytest.mark.parametrize("tenant", [None, "acme"])
+def test_neo4j_retires_a_derived_fact_with_its_parent(tenant: str | None) -> None:
+    """Release audit S13: in a tenant's store the derived stamp never matched its parent."""
+    parent = _merged(_employed(_evidence("doc-a")))
+    (partner,) = partners([parent], ONTOLOGY)
+    # The partner holds a source of its own, so only its parent's retirement retires it.
+    partner = partner.model_copy(update={"evidence": (_evidence("doc-a"), _evidence("doc-z"))})
+    driver = Citing(parent, partner, tenant=tenant)
+    driver.answers["SHOW INDEXES"].append(_evidence_index("employs"))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        counts = Neo4jSink(driver=driver, tenant=tenant).retract(["doc-a"], at=AT)
+    assert counts == {"cited": 2, "lost": 0, "retired": 2, "deleted": 0}
+    updates = [p for c, p in driver.writes if "SET r += row.props" in c]
+    retired = {row["signature"]: row["props"]["retired_at"] for p in updates for row in p["rows"]}
+    assert retired == {signature_of(parent, tenant): AT, signature_of(partner, tenant): AT}
 
 
 def test_a_relationship_reads_back_as_the_fact_with_its_ends() -> None:
