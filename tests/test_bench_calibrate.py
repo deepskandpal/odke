@@ -194,9 +194,9 @@ def test_a_run_writes_cards_items_and_the_table(tmp_path: Path) -> None:
     assert "Gold adjudication" in table
     items = (out / "items" / HAIKU.replace("/", "--") / "ground-span-inline.jsonl").read_text()
     assert len(items.splitlines()) == 263
-    # Recorded answers spend nothing.
+    # Recorded answers spend nothing, and are cached apart from the live model's (R4).
     assert not ledger.exists()
-    # The answers are in the cache now: the estimate prices them at nothing.
+    assert list((tmp_path / "cache" / "replay").iterdir())
     estimated = calibrate.estimate(
         argparse.Namespace(
             cache=tmp_path / "cache",
@@ -210,4 +210,6 @@ def test_a_run_writes_cards_items_and_the_table(tmp_path: Path) -> None:
         [],
     )
     (job,) = estimated[HAIKU]
-    assert job["cached"] == job["calls"] == 789 and job["usd"] == 0.0
+    assert job["calls"] == 789 and job["cached"] == 0 and job["usd"] > 0
+    # Asked through the cache, a recorded answer is never served as the live model's.
+    assert not list((tmp_path / "cache").glob("[0-9a-f][0-9a-f]"))

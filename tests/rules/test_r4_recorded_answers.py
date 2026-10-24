@@ -49,6 +49,38 @@ def _without_replay(project: Path) -> Path:
     return path
 
 
+def _labels(project: Path) -> None:
+    """The example's triples as grounding labels, for `odke calibrate`: the same four questions."""
+    from openodke import Ontology
+    from openodke.eval.formats import GroundingLabel
+    from openodke.interop import to_fact
+    from openodke.interop.triples import TripleRow
+    from openodke.loaders import DirectoryLoader
+
+    example = project / "triples"
+    (doc,) = DirectoryLoader().load(example / "texts")
+    ontology = Ontology.from_json(example / "ontology.json")
+    rows = [
+        json.loads(line) for line in (example / "triples.jsonl").read_text("utf-8").splitlines()
+    ]
+    labels = [
+        GroundingLabel(
+            text=doc.text,
+            fact=to_fact(TripleRow.model_validate(row), doc, ontology),
+            doc_id=doc.id,
+            verdict="supported",
+        )
+        for row in rows
+    ]
+    (example / "labels.jsonl").write_text(
+        "".join(label.model_dump_json() + "\n" for label in labels), encoding="utf-8"
+    )
+
+
+# What an entry point needs beside the copied example before its first run.
+PREPARE = {"odke calibrate": _labels}
+CALIBRATE = ["calibrate", "triples/labels.jsonl", "--cache", "c", "-o", "cards"]
+
 # Each entry: the command, its first run (on the recording), its second (live).
 ENTRY_POINTS = {
     "odke run": (
@@ -63,6 +95,10 @@ ENTRY_POINTS = {
         ["validate", *TRIPLES, "--config", "triples/odke.yaml", "--cache", "c"],
         ["validate", *TRIPLES, "--config", "triples/live.yaml", "--cache", "c"],
     ),
+    "odke calibrate": (
+        [*CALIBRATE, "--config", "triples/odke.yaml"],
+        [*CALIBRATE, "--config", "triples/live.yaml"],
+    ),
 }
 
 
@@ -75,6 +111,8 @@ def test_a_rerun_without_the_recording_asks_the_live_model(
 ) -> None:
     copy_example("triples", tmp_path)
     _without_replay(tmp_path)
+    if command in PREPARE:
+        PREPARE[command](tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     recorded, live_args = ENTRY_POINTS[command]
@@ -99,11 +137,14 @@ def test_every_place_that_caches_a_model_is_an_entry_point_of_this_rule() -> Non
     """A new `CachedClient(...)` is a new way for a recording to pass for a model: list it here."""
     known = {
         "src/openodke/run/build.py",  # odke run
-        "src/openodke/cli/main.py",  # odke ground, odke validate
+        "src/openodke/cli/main.py",  # odke ground, odke validate, odke calibrate
         # The bench's grounding and label set G's claim-format check: a provider or the
         # cache, never a replay file.
         "bench/layer.py",
         "bench/labels/claim_format.py",
+        # The calibration runner: a provider behind the cache, or with --replay recorded
+        # answers cached apart, under <cache>/replay/<hash of the file> (test_bench_calibrate).
+        "bench/calibrate.py",
     }
     found = set()
     for path in [*SRC.rglob("*.py"), *BENCH.rglob("*.py")]:
