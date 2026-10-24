@@ -21,8 +21,8 @@ support lists (DECISIONS #33) make the change mechanical:
 Reconciling the same change twice changes nothing the second time: a fact
 that no longer cites the document is not touched, and a retired fact keeps
 the time it was first retired. The stores do the work, each through its own
-`retract()`: `JsonlSink` on its files and `Neo4jSink` in one write
-transaction through its evidence indexes. `Reconciler` runs one change over
+`retract()`: `JsonlSink` on its files and `Neo4jSink` through its evidence
+indexes, in one write transaction per slice of 500 documents. `Reconciler` runs one change over
 all of them.
 """
 

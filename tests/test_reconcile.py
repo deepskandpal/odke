@@ -7,7 +7,8 @@ changed text, and its old facts lose support while its new ones gain it; every
 step run twice gives the same store. JSONL runs here, and Neo4j in
 `test_the_reconciler_against_a_live_neo4j` when `NEO4J_URI` is set. The
 recording driver checks what `Neo4jSink.retract` sends: one write
-transaction, facts found through the evidence indexes, never a scan.
+transaction per slice of documents, facts found through the evidence indexes,
+never a scan.
 """
 
 from __future__ import annotations
@@ -391,6 +392,53 @@ def test_neo4j_retires_a_derived_fact_with_its_parent(tenant: str | None) -> Non
     updates = [p for c, p in driver.writes if "SET r += row.props" in c]
     retired = {row["signature"]: row["props"]["retired_at"] for p in updates for row in p["rows"]}
     assert retired == {signature_of(parent, tenant): AT, signature_of(partner, tenant): AT}
+
+
+class Held(FakeDriver):
+    """A store that keeps what a retraction writes, and finds a fact only by the documents asked."""
+
+    def __init__(self, *held: Fact) -> None:
+        super().__init__(
+            {
+                "SHOW INDEXES": [_evidence_index("employer")],
+                "db.relationshipTypes": [{"name": "employer"}],
+            }
+        )
+        self.rows = {signature_of(fact): _row(i, fact) for i, fact in enumerate(held)}
+        self.asked: list[int] = []
+
+    def answer(self, cypher: str) -> list[dict[str, Any]]:
+        params = self.calls[-1][2]
+        if "queryRelationships" in cypher:
+            terms = set(re.findall(r'"([^"]+)"', params["terms"]))
+            self.asked.append(len(terms))
+            return [
+                {**row, "props": dict(row["props"])}
+                for row in self.rows.values()
+                if terms & set(row["props"]["evidence_doc_ids"])
+            ]
+        if "SET r += row.props" in cypher:
+            for row in params["rows"]:
+                self.rows[row["signature"]]["props"].update(row["props"])
+        return super().answer(cypher)
+
+
+def test_a_large_retraction_goes_in_slices_and_counts_each_fact_once() -> None:
+    """Release audit S9: 5,000 documents were one query of 5,000 clauses, in one transaction.
+
+    Lucene's default limit is 1,024 clauses. A fact citing documents in two
+    slices is read in each, and counted once, as it ends.
+    """
+    docs = [f"doc-{i:04d}" for i in range(1100)]
+    spread = _merged(_employed(_evidence(docs[1]), _evidence(docs[1050])))
+    one = _merged(
+        _employed(_evidence(docs[2])).model_copy(update={"subject": ACME, "object_entity": ADA})
+    )
+    driver = Held(spread, one)
+    counts = Neo4jSink(driver=driver).retract(docs, at=AT)
+    assert driver.asked == [500, 500, 100] and driver.transactions == 3
+    assert counts == {"cited": 2, "lost": 0, "retired": 2, "deleted": 0}
+    assert all(row["props"]["retired_at"] == AT for row in driver.rows.values())
 
 
 def test_a_relationship_reads_back_as_the_fact_with_its_ends() -> None:
