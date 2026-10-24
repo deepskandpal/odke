@@ -698,6 +698,10 @@ def _citing(tenant: str | None) -> str:
     )
 
 
+# Documents retracted per full-text query and transaction: one clause each, under
+# Lucene's default limit of 1,024 (release audit S9).
+RETRACT_SLICE = 500
+
 # What a retraction changes on a relationship; everything else stays as written.
 _RETRACTED = (
     "support",
@@ -1050,7 +1054,13 @@ class Neo4jSink:
     def retract(
         self, doc_ids: Collection[str], *, at: datetime, hard: bool = False
     ) -> dict[str, int]:
-        """Take these documents out of every fact they back, in one write transaction (#116).
+        """Take these documents out of every fact they back, a slice of them a transaction (#116).
+
+        The documents go `RETRACT_SLICE` at a time, each slice one full-text
+        query and one write transaction, so a query never passes Lucene's
+        default limit of 1,024 clauses. Retracting is idempotent, so a slice
+        that fails is finished by running it again. A fact citing documents in
+        two slices is counted once, as it ends.
 
         The facts are found through the per-predicate full-text index over
         `evidence_doc_ids` that `bootstrap()` creates, never by a scan, and a
@@ -1076,8 +1086,15 @@ class Neo4jSink:
             names = sorted(indexes.evidence.values())
             if not docs or not names:
                 return dict.fromkeys(COUNTS, 0)
-            counts: dict[str, int] = session.execute_write(self._retract, docs, names, at, hard)
-        return counts
+            # Each fact as first read and as last written, by element id: across
+            # slices, and across two indexes that find one relationship.
+            first: dict[str, Fact] = {}
+            last: dict[str, Fact] = {}
+            for part in _batches(docs, RETRACT_SLICE):
+                for ident, old, new in session.execute_write(self._retract, part, names, at, hard):
+                    first.setdefault(ident, old)
+                    last[ident] = new
+        return tally(list(first.values()), [last[ident] for ident in first], hard=hard)
 
     def checked_under(self, ontology: Ontology | str) -> list[Fact]:
         """The facts the store holds that `ontology`, or the fingerprint given, last checked.
@@ -1102,7 +1119,8 @@ class Neo4jSink:
 
     def _retract(
         self, tx: Any, docs: list[str], names: list[str], at: datetime, hard: bool
-    ) -> dict[str, int]:
+    ) -> list[tuple[str, Fact, Fact]]:
+        """One slice: each fact citing `docs`, by element id, before and after; `is` if kept."""
         terms = " OR ".join(_phrase(doc) for doc in docs)
         asked = {"indexes": names, "terms": terms, "tenant": self.tenant}
         rows = tx.run(_citing(self.tenant), asked).data()
@@ -1132,7 +1150,8 @@ class Neo4jSink:
         for predicate, batch in sorted(deletes.items()):
             tx.run(_delete_cypher(predicate), rows=batch).consume()
         self._project_again(tx, claims)
-        return tally(before, after, hard=hard)
+        ids = [str(row["id"]) for row in rows]
+        return list(zip(ids, before, after, strict=True))
 
     def _project_again(self, tx: Any, claims: Mapping[tuple[str, str], set[str]]) -> None:
         """The projected value of each subject and predicate, from the claims it has left."""
