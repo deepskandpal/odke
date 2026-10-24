@@ -196,6 +196,27 @@ def test_a_manifest_runs_again_as_the_run_it_recorded(example: Path) -> None:
     assert _facts(example / "out") == facts
 
 
+def test_a_manifest_a_newer_minor_wrote_is_read_and_replayed(example: Path) -> None:
+    """A minor release may add an optional field anywhere (DECISIONS #48), and a different
+    openodke only warns (#40): this one reads the fields it knows (release audit 18)."""
+    assert _run(str(example / "odke.yaml")).exit_code == 0
+    path = example / "out" / "manifest.json"
+    written, known = _read(path), read_manifest(path)
+    newer = {
+        **written,
+        "package": {**written["package"], "openodke": "1.1.0"},
+        "retries": {"ground": 0},
+        "inputs": {**written["inputs"], "bytes": 1234},
+        "models": {role: {**use, "region": "eu"} for role, use in written["models"].items()},
+    }
+    path.write_text(json.dumps(newer), encoding="utf-8")
+    assert read_manifest(path) == known.model_copy(update={"package": newer["package"]})
+
+    result = _run("--from-manifest", str(example / "out"))
+    assert result.exit_code == 0, result.output
+    assert "written by openodke 1.1.0" in result.output
+
+
 def test_a_replay_is_refused_when_its_inputs_or_its_ontology_changed(example: Path) -> None:
     assert _run(str(example / "odke.yaml")).exit_code == 0
     recorded = (example / "out" / "manifest.json").read_text(encoding="utf-8")
