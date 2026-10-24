@@ -104,10 +104,11 @@ def match_extraction(gold: Sequence[GoldFact], predictions: Iterable[Fact]) -> l
     a fact corroboration merged across documents claims every one of them
     states it (`per_document`). One citing none is matched, after every
     document has been, against the gold facts still unmatched anywhere; one
-    citing only unlabelled documents is not scored. Within a scope, pairings
-    go exact match first, then same subject, then same claim about another
-    subject, each in file order, so the result does not depend on how a dict
-    happened to iterate.
+    citing only unlabelled documents is not scored. A triple stated twice in
+    one scope is one prediction there: a repeat is no second claim, and the
+    benchmark scorers drop it too. Within a scope, pairings go exact match
+    first, then same subject, then same claim about another subject, each in
+    file order, so the result does not depend on how a dict happened to iterate.
     """
     docs = list(dict.fromkeys(g.doc_id for g in gold))
     gold_by_doc: dict[str, list[Fact]] = {d: [] for d in docs}
@@ -115,8 +116,13 @@ def match_extraction(gold: Sequence[GoldFact], predictions: Iterable[Fact]) -> l
         gold_by_doc[g.doc_id].append(g.fact)
     cited: dict[str, list[Fact]] = {d: [] for d in docs}
     uncited: list[Fact] = []
+    stated: set[tuple[str | None, tuple[Any, ...]]] = set()
     for fact in per_document(predictions):
         cites = [e.doc_id for e in fact.evidence]
+        scope = (cites[0] if cites else None, _exact(fact))
+        if scope in stated:
+            continue
+        stated.add(scope)
         if not cites:
             uncited.append(fact)
         elif (home := next((d for d in cites if d in gold_by_doc), None)) is not None:
