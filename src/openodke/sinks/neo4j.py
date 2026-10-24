@@ -1026,10 +1026,11 @@ class Neo4jSink:
         statements = [_versioned(statement, read) for statement in self.statements(kg)]
         with self._driver.session(**self._session_config()) as session:
             for pieces in transactions(statements, self.batch_size):
-                counted = session.execute_write(
-                    self._unwind, pieces, facts, read, rebased, kg.created_at
+                counted, merged = session.execute_write(
+                    self._unwind, pieces, facts, read, kg.created_at
                 )
-                # Counted once the transaction has committed.
+                # Counted once the transaction has committed, as are the facts it merged again.
+                rebased.update(merged)
                 self.writes.transactions += 1
                 for (statement, rows), ran in zip(pieces, counted, strict=True):
                     kind = _COUNTED_AS.get(statement.kind)
@@ -1044,7 +1045,7 @@ class Neo4jSink:
                     )
             pieces = self._projected_again(facts, rebased)
             if pieces:
-                session.execute_write(self._unwind, pieces, facts, read, rebased, kg.created_at)
+                session.execute_write(self._unwind, pieces, facts, read, kg.created_at)
 
     def _projected_again(
         self, facts: Mapping[str, Fact], rebased: Mapping[str, Fact | None]
@@ -1073,18 +1074,20 @@ class Neo4jSink:
         pieces: Sequence[tuple[Statement, list[dict[str, Any]]]],
         facts: Mapping[str, Fact],
         read: Mapping[str, tuple[int, Fact | None]],
-        rebased: dict[str, Fact | None],
         created_at: datetime,
-    ) -> list[_Ran]:
+    ) -> tuple[list[_Ran], dict[str, Fact | None]]:
         """Each piece in one transaction; a fact row whose version moved, merged again.
 
         The compare-and-set left a moved row locked, so it is read again as the
         other writer committed it, merged with what this job's fact brought,
         scored again with no model call, and written against the version now
         held. A fact the store now states, where this one was only derived, is
-        dropped, as the store merge drops it (DECISIONS #28).
+        dropped, as the store merge drops it (DECISIONS #28). Returns each piece's
+        counts, and the facts it merged again, by signature key: a transaction
+        the driver retries starts them afresh.
         """
         out: list[_Ran] = []
+        rebased: dict[str, Fact | None] = {}
         for statement, rows in pieces:
             ran = _run(tx, statement, rows)
             reached, nodes, relationships, moved = ran
@@ -1104,7 +1107,7 @@ class Neo4jSink:
                     "again: what it brings is merged with what the store then holds"
                 )
             out.append(_Ran(reached, nodes, relationships))
-        return out
+        return out, rebased
 
     def _rebased(
         self,
