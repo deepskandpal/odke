@@ -1639,3 +1639,60 @@ codebase also find what no audit listed: R1 found five commands that score a
 run whose every model call failed, and R2 an RDF sink that writes two
 tenants' identical IRIs. They wait as strict xfails until the maintainer
 places them. And every known break is a marker someone has to delete.
+
+### 54. Below its bar, a judge still runs, and nothing is dropped on its word
+
+A judge's answer is a measurement, and its calibration card says how far it
+agrees with a person (#135, roadmap §9.4). The grounder's refusals were audited
+before any card existed: 7 in 10 of the facts it refused in the published
+comparison were true, stated by their text (#118, refusal precision 0.295).
+A gate that drops on such a judge's word loses true facts silently, and the
+loss shows nowhere but in an audit. So what a judge's answer does follows its
+card.
+
+**What changes, and what does not.** A judge below its bar, or with no card,
+still runs, and its answers are kept and reported. Only what its answer does
+changes:
+- the gate **marks** a fact the grounder refused instead of dropping it
+  (`VerdictGate(on_refusal="mark")`): the fact is written, with
+  `qualifiers["odke.review"] = {"reason": <the refusal>, "why": <the judge and
+  its standing>}`, for a person to review. A refusal for the schema is code, not
+  a judge, and is always made. A fact a later run grounds as supported loses its
+  mark. The gate cannot tell a `not_found` the free span check gave from a
+  model's, so under `refuse_not_found` both are marked;
+- the pair judge **sends every pair it decided to review**
+  (`PairJudge(on_decision="review")`): the decision is kept, links nothing,
+  merges nothing, and the pair is queued for a person. A person's decision
+  always links;
+- the fact-equivalence judge drops nothing anyway: its lenient score sits beside
+  the strict one (#39). Its card line says how far to read the gap.
+
+A judge whose card meets its bar acts: the gate drops, the pair judge links.
+
+**The default follows the card, and an option given always wins.** Left out,
+`on_refusal` and `on_decision` resolve from the judge's card through
+`openodke.calibration.policy`: the grounder's for the gate, read when a
+pipeline, the Validator or `odke run` is built with both (`follow_card`); the
+pair judge's own, on label set R. A gate never told its grounder drops, as it
+did before. A grounder of your own has no card, so under the card policy its
+refusals are marked until you say `on_refusal="drop"` or give it a card
+(`odke calibrate`, `ODKE_CARDS`).
+
+**One switch.** `openodke.calibration.policy.DEFAULT_POLICY` is `"card"` (the
+default from each judge's card), `"act"` (every judge acts, as before this
+entry) or `"hold"` (no judge acts on its own word). It reads `"act"` until the
+first cards are measured (the calibration runs of #134 and #135), so no run
+changes before there is a card to read; it is set from them, in one line, and
+can be moved again the same way.
+
+**Every report says so.** The run report (schema 1.1: `marked`,
+`calibration`), `odke run`'s and the eval report's `calibration` section print
+each model judge's card line, or UNCALIBRATED, and what its word did in that
+run and why.
+
+*Cost:* below the bar, a graph holds facts its grounder refused, marked but
+written, and a queue of pairs waits for a person: more review, in exchange for
+no silent loss. A query that wants only what the grounder kept filters on
+`odke.review`. And a card expires with its prompt version, its dated model id or
+its label set (§9.4), so a default can change with any of the three; the report
+line shows when it has.

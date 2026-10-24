@@ -386,3 +386,28 @@ def test_standing_reports_each_judge_with_what_its_word_did() -> None:
         "refusals marked for review, not dropped (on_refusal='mark' given)"
     )
     assert standing({"grounder": SpanGrounder(), "gate": gate}) == []
+
+
+# --------------------------------------------------------------------------- #
+# The eval report's section (#135)
+# --------------------------------------------------------------------------- #
+
+
+def test_an_eval_report_names_each_judge_its_run_called(tmp_path: Path) -> None:
+    from openodke.eval.eval_report import Run, from_stage, read_report
+    from openodke.eval.report import StageReport
+
+    run = Run(
+        models={"ground": HAIKU, "judge": HAIKU},
+        prompts=("extract@1", "ground.span@1", "pair@1", "pair.user@1"),
+    )
+    report = from_stage(StageReport(stage="validation", n=0, metrics={}), run=run)
+    assert [(c.judge, c.prompt, c.claim_format) for c in report.calibration] == [
+        ("ground", "ground.span@1", "inline"),
+        ("pair", "pair@1", None),
+    ]
+    assert all(UNCALIBRATED in c.line for c in report.calibration)
+    assert f"  calibration  ground.span@1 on {HAIKU} (inline): {UNCALIBRATED}" in report.render()
+    assert read_report(report.write(tmp_path / "r.json")) == report
+    # A run that called no judge has nothing to calibrate.
+    assert from_stage(StageReport(stage="x", n=0, metrics={}), run=Run()).calibration == ()

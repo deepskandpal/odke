@@ -132,6 +132,9 @@ the key it sent ([DECISIONS #27](decisions.md#27)).
 |---|---|---|
 | `ground.span@1` | `LLMGrounder`: one claim against its cited span | openodke |
 | `ground.paper@1` | `LLMGrounder(verdicts="binary")`, [paper mode](grounding.md#paper-mode-the-odke-grounder-as-written) | ODKE+ App. B, verbatim |
+| `ground.onyx@1` | `LLMGrounder(prompt="ground.onyx")`, a [challenger](grounding.md#the-challengers-prompt): the fact as a sentence, yes or no | EnterpriseRAG-Bench's `INDIVIDUAL_FACT_VALIDATOR_PROMPT`, verbatim (Onyx, arXiv 2605.05253; MIT, © 2026 DanswerAI, Inc.) |
+| `ground.statement@1` | `LLMGrounder(prompt="ground.statement")`, a [challenger](grounding.md#the-challengers-prompt): the same question, three ways, in JSON | openodke, after EnterpriseRAG-Bench's `INDIVIDUAL_FACT_VALIDATOR_PROMPT` (Onyx, arXiv 2605.05253, MIT), three-way |
+| `ground.statement.user@1` | `LLMGrounder(prompt="ground.statement")`: the user message, the passage and the statement | as `ground.statement@1` |
 | `extract@1` | `LLMExtractor`, followed by the ontology snippets | openodke |
 | `extract.repair@1` | `LLMExtractor`, after a reply that broke the contract | openodke |
 | `infer@1` | `LLMProposer` (`odke ontology infer`) | openodke |
@@ -139,6 +142,7 @@ the key it sent ([DECISIONS #27](decisions.md#27)).
 | `reextract@1` | `LLMExtractor.reextract`, [the re-extract hook](grounding.md#handing-a-gap-back-the-re-extract-hook) | openodke, after GraphRAG's gleaning pass (Edge et al. 2024, arXiv 2404.16130), scoped to one window and grounded after |
 | `pair@1` | `PairJudge`, [the pair judge](resolution-and-corroboration.md#the-pair-judge): two mentions, one entity or two? | openodke, after LLM entity matching (Peeters, Steiner & Bizer 2023, arXiv 2310.11244), asked in both orders for position bias (Zheng et al. 2023, arXiv 2306.05685 §3.4) |
 | `pair.user@1` | `PairJudge`: the user message, a template filled in per pair and order | as `pair@1` |
+| `fact_equiv@1`, `fact_equiv.user@1` | `FactJudge`, [the fact-equivalence judge](evaluation.md#surface-forms-the-lenient-score), and its user message | openodke, after reference-guided judging (Zheng et al. 2023) and EnterpriseRAG-Bench's rule that quantities must match |
 
 ```python
 from openodke import prompts
@@ -159,6 +163,23 @@ of [`odke run`](run.md#what-a-run-reports).
 `bump the version: <id>`, and on a prompt that shares twelve words in a row with
 a benchmark gate split (`bench/labels/**/*gate*.jsonl`). The stages send the
 latest version.
+
+## Calibration: which models are measured
+
+A model's answers are only as good as their agreement with a person, so each
+judge prompt on each dated model gets a [calibration card](calibration.md):
+κ against hand labels, with its interval, and the bar it must clear to be a
+default. Three levels:
+
+| Level | What it means |
+|---|---|
+| **Calibrated** | A card ships for the judge on this model id. Reports print its line; its default follows the card ([DECISIONS #54](decisions.md#54)). Anthropic's default grounder model is the first, with 1.0 |
+| **Runs, uncalibrated** | Every other model either client reaches. It works; reports print UNCALIBRATED for it, and `odke calibrate` makes a card of your own from your labels |
+| **Contract-tested** | Both clients, in CI, on recorded replies only: every prompt's parse and repair path |
+
+A card names an exact model id. `anthropic/claude-haiku-4-5` or a model given
+without its provider is another model to a card, and reads UNCALIBRATED. A
+default model changes only with a new card ([DECISIONS #7a](decisions.md#7a)).
 
 ## The response cache
 
