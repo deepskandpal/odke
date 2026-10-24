@@ -305,3 +305,18 @@ def test_a_person_s_decision_always_links() -> None:
     judge = PairJudge(client=ScriptedClient([]), reviewed=reviewed, on_decision="review")
     (link,) = _resolve(judge)
     assert link.reason == "person: same, from the review queue"
+
+
+def test_the_ablation_s_rows_read_one_gate_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The replayed verdicts name the grounder that stamped them, so its card decides."""
+    from openodke.calibration import judge_of
+    from openodke.eval.ablation import _Stamped
+
+    grounder = CheckedGrounder(LLMGrounder(client=ScriptedClient([])), ontology=Ontology())
+    assert judge_of(_Stamped([], grounder)) is grounder.grounder
+    monkeypatch.setattr(policy, "DEFAULT_POLICY", "card")
+    gate = VerdictGate().follow_card(grounder)
+    assert gate.follow_card(_Stamped([], grounder)).policy == (
+        "mark",
+        "it has no card, DECISIONS #54",
+    )
