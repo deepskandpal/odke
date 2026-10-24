@@ -294,7 +294,8 @@ def test_a_rerun_merges_on_the_same_keys_though_ids_and_clocks_change() -> None:
 def test_nothing_is_created_unconditionally_and_nothing_is_deleted() -> None:
     for cypher, _ in _written(_graph()).writes:
         assert cypher.startswith("UNWIND $rows AS row\n")
-        assert "CREATE" not in cypher
+        # A node's tenant is set when the MERGE makes it, and only then.
+        assert "CREATE" not in cypher.replace("ON CREATE SET n.tenant = row.tenant", "")
         assert "DELETE" not in cypher
         # A statement either MERGEs or only SETs on nodes it matched.
         assert "MERGE" in cypher or ("MATCH" in cypher and "SET s." in cypher)

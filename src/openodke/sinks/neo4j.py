@@ -409,6 +409,7 @@ def _entity_row(entity: Entity, tenant: str | None = None) -> dict[str, Any]:
         attributes[TENANT] = tenant
     return {
         "key": scoped(entity.key, tenant),
+        **_tenant_of(tenant),
         "label": entity.label,
         "aliases": list(entity.aliases),
         "external_id": entity.external_id,
@@ -474,7 +475,10 @@ def plan(
     Within each kind the groups are sorted, so one graph always compiles to the
     same statements. With a `tenant`, every key and signature is the tenant's
     (`openodke.tenants`) and every node and fact names it; the Cypher is the
-    same.
+    same. Every row of a tenant's carries `tenant`, and a node is
+    written or matched only where its `tenant` is the row's, so a key with no
+    tenant that reads `acme/...` never lands on acme's node, nor acme's on
+    one no tenant wrote (#159).
     """
     statements: list[Statement] = []
 
@@ -492,7 +496,12 @@ def plan(
     for fact in kg.facts:
         props = provenance_of(fact, kg.created_at, tenant)
         subject = key(fact.subject.key)
-        row = {"subject_key": subject, "signature": props["signature"], "props": props}
+        row = {
+            "subject_key": subject,
+            "signature": props["signature"],
+            "props": props,
+            **_tenant_of(tenant),
+        }
         if fact.object_entity is not None:
             group = (fact.subject.type, fact.predicate, fact.object_entity.type)
             edges.setdefault(group, []).append({**row, "object_key": key(fact.object_entity.key)})
@@ -511,13 +520,16 @@ def plan(
         statements.append(Statement(cypher, rows, "claim", (subject_type, predicate)))
     for (subject_type, predicate), rows in sorted(projections(kg, ontology).items()):
         cypher = _projection_cypher(subject_type, predicate)
-        rows = [{**row, "subject_key": key(row["subject_key"])} for row in rows]
+        owner = _tenant_of(tenant)
+        rows = [{**row, "subject_key": key(row["subject_key"]), **owner} for row in rows]
         statements.append(Statement(cypher, rows, "projection", (subject_type, predicate)))
 
     links: dict[str, list[dict[str, Any]]] = {}
     for link in kg.links:
         row = link_row(link)
-        row.update(source_key=key(link.source_key), target_key=key(link.target_key))
+        row.update(
+            source_key=key(link.source_key), target_key=key(link.target_key), **_tenant_of(tenant)
+        )
         links.setdefault(link.kind.value.upper(), []).append(row)
     for kind, rows in sorted(links.items()):
         statements.append(Statement(_link_cypher(kind), rows, "link", (kind,)))
@@ -600,10 +612,24 @@ def link_row(link: EntityLink) -> dict[str, Any]:
     }
 
 
+# A node is the row's only when it is the row's tenant's: a key with no tenant that
+# reads `acme/...` is never acme's node, nor acme's key one no tenant wrote (#159).
+# A row with no tenant has no `tenant`, which Cypher reads as null.
+def _owned(variable: str) -> str:
+    return f"coalesce({variable}.tenant, '') = coalesce(row.tenant, '')"
+
+
+def _tenant_of(tenant: str | None) -> dict[str, str]:
+    """What a row says of its tenant: nothing for none, so an untenanted row is as it was."""
+    return {} if tenant is None else {TENANT: tenant}
+
+
 def _entity_cypher(label: str) -> str:
     return (
         "UNWIND $rows AS row\n"
         f"MERGE (n:{_ident(label)} {{key: row.key}})\n"
+        "ON CREATE SET n.tenant = row.tenant\n"
+        f"WITH n, row WHERE {_owned('n')}\n"
         f"SET n:{_ident(ENTITY_LABEL)}, n += row.attributes,\n"
         "    n.label = row.label, n.aliases = row.aliases, n.external_id = row.external_id,\n"
         "    n.resolution_method = row.resolution_method,\n"
@@ -618,8 +644,8 @@ def _edge_cypher(subject_type: str, predicate: str, object_type: str) -> str:
     # props carry the signature, so the key the MERGE matched on survives.
     return (
         "UNWIND $rows AS row\n"
-        f"MATCH (s:{_ident(subject_type)} {{key: row.subject_key}})\n"
-        f"MATCH (o:{_ident(object_type)} {{key: row.object_key}})\n"
+        f"MATCH (s:{_ident(subject_type)} {{key: row.subject_key}}) WHERE {_owned('s')}\n"
+        f"MATCH (o:{_ident(object_type)} {{key: row.object_key}}) WHERE {_owned('o')}\n"
         f"MERGE (s)-[r:{_ident(predicate)} {{signature: row.signature}}]->(o)\n"
         "SET r = row.props"
     )
@@ -628,7 +654,7 @@ def _edge_cypher(subject_type: str, predicate: str, object_type: str) -> str:
 def _claim_cypher(subject_type: str, predicate: str) -> str:
     return (
         "UNWIND $rows AS row\n"
-        f"MATCH (s:{_ident(subject_type)} {{key: row.subject_key}})\n"
+        f"MATCH (s:{_ident(subject_type)} {{key: row.subject_key}}) WHERE {_owned('s')}\n"
         f"MERGE (c:{_ident(CLAIM_LABEL)} {{signature: row.signature}})\n"
         "SET c.predicate = row.predicate, c.subject_key = row.subject_key,\n"
         "    c.subject_type = row.subject_type, c.value = row.value\n"
@@ -640,7 +666,7 @@ def _claim_cypher(subject_type: str, predicate: str) -> str:
 def _projection_cypher(subject_type: str, predicate: str) -> str:
     return (
         "UNWIND $rows AS row\n"
-        f"MATCH (s:{_ident(subject_type)} {{key: row.subject_key}})\n"
+        f"MATCH (s:{_ident(subject_type)} {{key: row.subject_key}}) WHERE {_owned('s')}\n"
         f"SET s.{_ident(projection_property(predicate))} = row.value"
     )
 
@@ -650,8 +676,8 @@ def _link_cypher(kind: str) -> str:
     # about, and it can point at nodes an earlier run wrote.
     return (
         "UNWIND $rows AS row\n"
-        f"MATCH (a:{_ident(ENTITY_LABEL)} {{key: row.source_key}})\n"
-        f"MATCH (b:{_ident(ENTITY_LABEL)} {{key: row.target_key}})\n"
+        f"MATCH (a:{_ident(ENTITY_LABEL)} {{key: row.source_key}}) WHERE {_owned('a')}\n"
+        f"MATCH (b:{_ident(ENTITY_LABEL)} {{key: row.target_key}}) WHERE {_owned('b')}\n"
         f"MERGE (a)-[l:{_ident(kind)}]->(b)\n"
         "SET l += row.props"
     )
@@ -1132,7 +1158,10 @@ class Neo4jSink:
                 row["subject_key"]: row["value"]
                 for row in projections(graph, self.ontology).get((subject_type, predicate), ())
             }
-            rows = [{"subject_key": key, "value": values.get(key)} for key in sorted(keys)]
+            rows = [
+                {"subject_key": key, "value": values.get(key), **_tenant_of(self.tenant)}
+                for key in sorted(keys)
+            ]
             tx.run(_projection_cypher(subject_type, predicate), rows=rows).consume()
 
     def _lookup(self) -> Neo4jLookup:

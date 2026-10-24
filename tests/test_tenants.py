@@ -354,6 +354,66 @@ def test_a_tenant_is_in_the_hashed_config_and_survives_a_streamed_replay(example
     assert result.exit_code == 2 and "--tenant" in result.output
 
 
+def test_every_node_a_write_reaches_must_be_the_rows_tenants() -> None:
+    """Release audit S14: a key with no tenant reading `acme/...` merged onto acme's node.
+
+    A key is `<tenant>/<key>` in the store, so the key alone cannot tell the
+    two apart: every statement checks the node's `tenant` against the row's.
+    A row with no tenant says nothing, as it always has.
+    """
+    for tenant in (None, "acme"):
+        for statement in plan(_graph(), tenant=tenant):
+            assert all(row.get("tenant") == tenant for row in statement.rows)
+            if tenant is None:
+                assert all("tenant" not in row for row in statement.rows)
+            # Every entity a statement finds or makes; a claim node's key is the salted signature.
+            for node in re.findall(r"(?:MATCH|MERGE) \((\w+):(?!`Claim`)", statement.cypher):
+                assert f"coalesce({node}.tenant, '') = coalesce(row.tenant, '')" in (
+                    statement.cypher
+                ), statement.cypher
+
+
+@pytest.mark.skipif(not os.environ.get("NEO4J_URI"), reason="NEO4J_URI is not set")
+def test_a_key_with_no_tenant_never_lands_on_a_tenants_node_in_a_live_neo4j() -> None:
+    """Release audit S14, on a real server: either order, the two never meet on one node."""
+    pytest.importorskip("neo4j")
+    person = f"Person_{uuid.uuid4().hex[:8]}"
+    ada = Entity(key="p:ada", type=person, label="Ada Lovelace")
+    # With no tenant, a key that reads as acme's key for Ada.
+    other = Entity(key="acme/p:ada", type=person, label="Somebody Else")
+    auth = (os.environ.get("NEO4J_USER", "neo4j"), os.environ.get("NEO4J_PASSWORD", ""))
+
+    def named(entity: Entity, name: str) -> KnowledgeGraph:
+        fact = Fact(subject=entity, predicate="full_name", object_value=name)
+        return KnowledgeGraph(entities=(entity,), facts=(fact,))
+
+    with Neo4jSink(os.environ["NEO4J_URI"], auth) as plain:
+        driver = plain._driver
+        acme = plain.scoped("acme")
+        held = (
+            f"MATCH (n:`{person}`) OPTIONAL MATCH (n)-[r]->() "
+            "RETURN n.key AS key, n.label AS label, n.tenant AS tenant, "
+            "n.full_name AS name, collect(r.tenant) AS facts"
+        )
+        try:
+            for first, second in ((acme, plain), (plain, acme)):
+                driver.execute_query(f"MATCH (n:`{person}`) DETACH DELETE n")
+                driver.execute_query("MATCH (c:Claim) WHERE c.subject_type = $t DETACH DELETE c",
+                                     t=person)  # fmt: skip
+                first.write(named(ada if first is acme else other, "first"))
+                before = driver.execute_query(held).records[0].data()
+                second.write(named(ada if second is acme else other, "second"))
+                (after,) = [r.data() for r in driver.execute_query(held).records]
+                # The second writer's node, fact and projection are skipped, not merged in.
+                assert after == before and after["name"] == "first", after
+                report = second.writes.as_dict()
+                assert report["entities"]["skipped"] >= 1 and report["facts"]["skipped"] >= 1
+        finally:
+            driver.execute_query(f"MATCH (n:`{person}`) DETACH DELETE n")
+            driver.execute_query("MATCH (c:Claim) WHERE c.subject_type = $t DETACH DELETE c",
+                                 t=person)  # fmt: skip
+
+
 # --------------------------------------------------------------------------- #
 # Done when: two tenants and a rerun in a live Neo4j
 # --------------------------------------------------------------------------- #
