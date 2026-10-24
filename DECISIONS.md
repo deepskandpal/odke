@@ -901,6 +901,16 @@ back from the relationship's properties, which hold no quotes or mentions, so
 its evidence returns without them. A store never bootstrapped has no
 signature index, so nothing merges with it, and the warning is the only sign.
 
+**Amended 24 Oct 2026 (release audit 2, 4, S16):** a member that contradicts a
+claim another member supports is no source for it. It stays out of the evidence,
+the support list, the confidence and the valid time, and `odke.conflict` records
+its documents as `contradicted_in`; the record outlives later merges, and goes
+for a document that comes back supporting the claim. Delete the supporting text,
+and the fact is retired, not held up by the one that contradicts it. The write
+after the merge compares and sets the version it read (#51). And a store never
+bootstrapped, or missing a declared predicate's index, is refused rather than
+warned about (#53).
+
 ### 36. Without gold, the judge is corrected, the strict number stands, and pooled recall overstates
 
 Three evaluators score a pipeline where gold is missing or incomplete (#144,
@@ -1012,6 +1022,14 @@ validates, so a run that fails in between leaves the old version retracted
 and the new one unwritten; running it again finishes it. The reconciler does
 not rescore, so a fact that lost a source keeps its confidence until it is
 next validated.
+
+**Amended 24 Oct 2026 (release audit 13, S9):** `Neo4jSink.retract` goes 500
+documents at a time, a full-text query and a write transaction each, under
+Lucene's default limit of 1,024 clauses, and counts each relationship once, as
+it ends. It locks what it found before it rewrites (#51). With `--update`, a
+text that fails on its own after its retraction is named in the report,
+`<id>: retracted, not rewritten; run it again`, and `odke validate` exits 1.
+
 ### 38. A miss goes where its evidence first points, and a fix is priced by arithmetic
 
 A recall number says how much a pipeline lost. The Evaluator also says where
@@ -1373,6 +1391,15 @@ An unscoped `check()` reports the whole store, keyed as stored. And the
 `RETURN count(*)` each write statement ends with is one more row per
 statement, which `CypherFileSink` does not write.
 
+**Amended 24 Oct 2026 (release audit 3, 20, S13, S14, and R2's RDF finding):**
+every sink a store is loaded from takes the tenant: the Cypher file, neo4j-admin
+CSV and RDF (`tenant=`, `scoped()`, set from the run's). `checked_under` and
+`odke ontology diff --store --tenant` read one tenant's facts; with no tenant
+they read the whole store, as `check()` does. A read gives the tenant's own keys
+back, so a derived fact finds its parent. And a node is written or matched only
+where its `tenant` is the row's, so a key with no tenant that reads `acme/...`
+never lands on acme's node.
+
 ### 45. A large run is micro-batches, and the store joins them
 
 A batch is held whole. The pipeline runs each phase over all of it, every
@@ -1429,6 +1456,11 @@ counts with `batches`, and inputs hashed as one batch hashes them, so a replay
 streams.
 Measured with every default stage and a scripted client, 50,000 rows peak at
 the RSS of 25,000, about 66 MB, against 141 MB for 5,000 rows in one batch.
+
+**Amended 24 Oct 2026 (release audit S10):** a streamed run into a merging
+JSONL store reads and rewrites the store whole on every micro-batch, so it is
+quadratic (2,000, 4,000 and 8,000 rows: 3, 9 and 51 s). It is kept, and warns
+once; Neo4j is the store for that load.
 
 ### 46. Corroboration is scored on the graph, by support, with checked alignments as sources
 
@@ -1639,6 +1671,89 @@ codebase also find what no audit listed: R1 found five commands that score a
 run whose every model call failed, and R2 an RDF sink that writes two
 tenants' identical IRIs. They wait as strict xfails until the maintainer
 places them. And every known break is a marker someone has to delete.
+
+### 51. Two writers merge through a version on each fact, compared when it is set
+
+The store merge (#35) reads a stored fact, the corroborator adds the batch's
+sources, and the sink writes the whole relationship back. Nothing guarded the
+gap between the read and the write, so two jobs writing one Neo4j at once could
+lose a source: B and C both read [a], B writes [a, b], C writes [a, c], and b is
+gone. Or bring one back: B reads [a, x], the reconciler retracts x, and B writes
+[a, b, x] (release audit 4). A few batch jobs writing one store at once is the
+load openodke is built for, so "one writer per tenant at a time" was not a rule
+to ship with.
+
+Four calls come with it.
+
+**A version on every fact relationship, compared when it is set.**
+`odke.version` counts a relationship's writes, the reconciler's rewrites
+included. `stored()` keeps the version it read under each signature. The next
+`write()` sends it with the row, and the statement writes the row only where the
+store still holds that version, and makes it one more. A row read with nothing
+stored expects 0. A row the sink never read is written as it always was, and
+counted.
+
+**The lock comes before the read.** Under Neo4j's read-committed isolation, a
+check that reads the version before it takes the lock passes for both writers.
+So each fact statement first sets a throwaway property, which takes the write
+lock, and then reads the version: the documented way to avoid a lost update in
+Cypher. A plain "never drop a stored source" check would not do: both writers
+pass it, and it lets a deleted source back in.
+
+**A moved row is merged again, in the same write.** The row the compare left is
+still locked by the write's transaction. So it is read again as the other
+writer committed it, and merged with what this job's fact brought
+(`SignatureCorroborator.rebase`: what the store dropped since the read goes,
+what it gained comes in). It is scored again by the job's scorer, with no model
+call, and written against the version it now holds. A derived fact the store now
+states is dropped (#28). A fact every source of which was retracted meanwhile is
+not written: the reconciler's state stands. The Validator, `Pipeline` and
+`odke run` hand the sink their corroborator and scorer (`merges_with`). The
+loop is bounded: a write that still finds a fact moved after three merges fails,
+saying why, and its transaction writes nothing.
+
+**The reconciler locks first.** `retract()` reads and rewrites in one
+transaction, so it locks every relationship its full-text query found, reads
+each again, and retracts from what it read. Its rewrite counts as a write.
+
+*Cost:* a lock and a property read for every fact row of every write, and one
+more property on every fact relationship. The contest's decision is not taken
+again when a fact moves: it stays as this job made it, as #45 accepts for a
+micro-batch. A Cypher file or a CSV import carries no version, so a script
+replays as before, and the next driver write compares from there. The fake
+driver proves both races; CI's live Neo4j job runs two threads that meet
+between their read and their write. A JSONL directory still has one writer at
+a time.
+
+### 53. A store never bootstrapped refuses the merge, and names the bootstrap
+
+The store merge reads through each predicate's signature index (#35), and a
+read that scans is a load (#31). So a predicate with no index was not read: it
+warned, and the write went on. Every rerun then replaced the stored support
+list with the batch's, and the warning was the only sign (release audit S16).
+The maintainer's call was to refuse.
+
+Three calls come with it.
+
+**Refused where the read is, before anything is written.** `Neo4jSink.stored()`
+raises when the store shows no bootstrap at all (no `:Entity(key)` index), or
+lacks the signature index of a predicate the sink's ontology declares. The
+message names the fix: `bootstrap: true` in a run config, or
+`Neo4jSink.bootstrap(ontology)`. `odke validate` exits 2 with it.
+
+**An undeclared predicate still warns.** A bootstrap makes indexes only for what
+the ontology declares, so a predicate it does not declare can never have one,
+and the gate's schema check refuses such a fact by default. Refusing the whole
+write for it would refuse every batch that holds one. So its facts are not read,
+as before, and it warns.
+
+**A write that reads nothing is unchanged.** A bare `write()`, a Cypher file and
+a CSV import merge with nothing, so they do not ask. `bootstrap()` stays the
+first step the docs give, for the uniqueness constraints concurrent writers
+need (#16).
+
+*Cost:* a first run into a fresh store must bootstrap before it merges, and a
+notebook that wrote into an empty store without one now stops and says so.
 
 ### 54. Below its bar, a judge still runs, and nothing is dropped on its word
 

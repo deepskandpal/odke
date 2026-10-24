@@ -123,6 +123,14 @@ stored support lists. A predicate no ontology declares gets no index, so its
 facts are not read, with a warning. `JsonlSink(directory, merge=True)` keeps
 what the files hold.
 
+**Two writers at once** into one Neo4j keep each other's sources
+([DECISIONS #51](decisions.md#51)). Every fact relationship carries
+`odke.version`, its write count. A write sends the version `stored()` read, and
+the store takes the row only if it still holds that version. A fact another job
+wrote, or the reconciler retracted from, in between is read again, merged with
+what this job brought, and scored again in the same write, with no model call.
+The reconciler locks what it retracts from.
+
 **The Validator merges by default** with every `FactLookup` sink
 (`report.restated` counts them), as does `odke validate` with a config's sinks
 and `-o --merge`; a dry run reads none. `odke run` merges when its config names
