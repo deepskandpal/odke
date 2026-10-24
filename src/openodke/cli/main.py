@@ -566,6 +566,8 @@ def _grounder(
     budget_calls: int | None = None,
     recorder: Any = None,
     observer: Any = None,
+    prompt: str | None = None,
+    claim_format: str = "inline",
 ) -> Any:
     """The model grounder `odke run` would build from these models, or the config's replay.
 
@@ -624,6 +626,10 @@ def _grounder(
     if observer is not None:
         client = observer.client(client, "ground")
     mode: dict[str, Any] = {"context": "document", "verdicts": "binary"} if paper else {}
+    if prompt is not None:
+        mode["prompt"] = prompt
+    if claim_format != "inline":
+        mode["claim_format"] = claim_format
     return LLMGrounder(roles, client=client, locate=locate, **mode)
 
 
@@ -2257,6 +2263,138 @@ def label_read(
     typer.echo(reading.summary())
     for target, n in written:
         typer.echo(f"wrote {target}: {_count(n, 'row')}")
+
+
+# --------------------------------------------------------------------------- #
+# odke calibrate — a calibration card from your own labels
+# --------------------------------------------------------------------------- #
+
+
+@app.command("calibrate")
+def calibrate_command(
+    labels: Path = typer.Argument(
+        ...,
+        help="Grounding labels, JSONL: each a fact, the text it cites and your verdict "
+        "(odke label read writes them).",
+    ),
+    prompt: str | None = typer.Option(
+        None,
+        "--prompt",
+        help="The grounder prompt: ground.span (the default), ground.onyx or ground.statement, "
+        "by id or id@version.",
+    ),
+    claim_format: str = typer.Option(
+        "inline", "--claim-format", help="ground.span's claim line: inline or labelled."
+    ),
+    config: Path | None = typer.Option(None, "--config", help=CONFIG_HELP),
+    model: str | None = typer.Option(None, "--model", help=MODEL_HELP),
+    model_provider: str | None = typer.Option(None, "--model-provider", help=MODEL_PROVIDER_HELP),
+    runs: int = typer.Option(
+        1, "--runs", min=1, help="Ask each fact this many times: the card's rerun flip rate."
+    ),
+    planted: Path | None = typer.Option(
+        None,
+        "--planted",
+        help="More labels, of facts false by construction: the card's planted-error catch rate.",
+    ),
+    label_set: str | None = typer.Option(
+        None, "--label-set", help="The label set's name on the card; the labels file's by default."
+    ),
+    labels_version: str = typer.Option("1", "--labels-version", help="The label set's version."),
+    split: str = typer.Option("all", "--split", help="Which split of the label set these are."),
+    out: Path = typer.Option(
+        Path("."), "--out", "-o", help="Where the card goes: a .json file, or a directory."
+    ),
+    cache: Path | None = typer.Option(None, "--cache", help=CACHE_HELP),
+    budget_usd: float | None = typer.Option(None, "--budget-usd", min=0, help=BUDGET_USD_HELP),
+    budget_calls: int | None = typer.Option(None, "--budget-calls", min=0, help=BUDGET_CALLS_HELP),
+) -> None:
+    """Make a calibration card for one grounder prompt on one model, from your own labels.
+
+    Grounds every labelled fact against its text with the prompt and model
+    given (the models block of --config, or --model), --runs times, and holds
+    each verdict to yours: κ on keep against refuse with its 95% interval, the
+    three-way κ, the confusion matrix, fail-recall and false refusals with
+    their intervals, the abstain rate, the rerun flip rate, and the results by
+    passage length. Prints the card and writes it as JSON.
+
+    Point ODKE_CARDS at the card's directory and every run reads it: its
+    reports print the card's line, and a gate left to its default drops a
+    refusal only when the card meets its bar (DECISIONS #54). Cards and bars:
+    docs/calibration.md. Exit 2 is labels it cannot read, exit 1 a provider
+    error, exit 3 a budget that stopped it.
+    """
+    from openodke.calibration import LabelSet, Made, grounding_card, label_hash
+    from openodke.calibration.judging import describe, ground_labelled
+    from openodke.eval.formats import GroundingLabel, load_jsonl
+    from openodke.llm.base import ProviderError
+    from openodke.llm.budget import BudgetExceeded
+    from openodke.run import ConfigError
+
+    chosen = _qualified(model, model_provider)
+    try:
+        if claim_format not in ("inline", "labelled"):
+            raise ValueError(f"--claim-format is inline or labelled, got {claim_format!r}")
+        rows = load_jsonl(labels, GroundingLabel)
+        fakes = load_jsonl(planted, GroundingLabel) if planted is not None else []
+        if not rows:
+            raise ValueError(f"{labels}: no labels")
+        grounder = _grounder(
+            config,
+            chosen,
+            locate=False,
+            paper=False,
+            cache=cache,
+            budget_usd=budget_usd,
+            budget_calls=budget_calls,
+            prompt=prompt,
+            claim_format=claim_format,
+        )
+    except (ValueError, ConfigError, LookupError, ImportError, OSError) as exc:
+        _data_error(exc)
+    except ProviderError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    every = [*rows, *fakes]
+    try:
+        judged = ground_labelled(
+            every, grounder, runs=runs, planted=[False] * len(rows) + [True] * len(fakes)
+        )
+    except BudgetExceeded as exc:
+        typer.echo(f"error: the budget stopped the run: {exc}", err=True)
+        raise typer.Exit(EXIT_BUDGET) from exc
+    except ProviderError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    facts = [f for f in judged.facts if not f.planted]
+    cost = judged.cost_usd
+    per_1000 = cost / (len(every) * runs) * 1000 if cost is not None and not judged.cached else None
+    shown = describe(grounder)
+    made = Made(
+        **shown,
+        labels=LabelSet(
+            name=label_set or labels.stem,
+            version=labels_version,
+            sha256=label_hash((f.id, f.label) for f in facts),
+            split=split,
+            n=len(facts),
+        ),
+        cost_per_1000=per_1000,
+        notes=(
+            ("cost unknown: some answers came from the cache",)
+            if judged.cached and cost is not None
+            else ()
+        ),
+    )
+    try:
+        card = grounding_card(facts, made, planted=[f for f in judged.facts if f.planted])
+        target = out if out.suffix == ".json" else out / f"{card.id}.json"
+        written = card.write(target)
+    except (ValueError, OSError) as exc:
+        _data_error(exc)
+    typer.echo(card.render())
+    typer.echo("")
+    typer.echo(f"wrote {written}")
 
 
 # --------------------------------------------------------------------------- #

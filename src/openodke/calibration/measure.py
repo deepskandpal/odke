@@ -231,19 +231,19 @@ def grounding_card(
                     low=low,
                     high=high,
                     n=len(inside),
-                    kappa=band["kappa"],
-                    fail_recall=band["fail_recall"],
-                    false_refusals=band["false_refusals"],
+                    kappa=band.kappa,
+                    fail_recall=band.fail_recall,
+                    false_refusals=band.false_refusals,
                 )
             )
     grounding = Grounding(
-        kappa=results["kappa"],
-        kappa_three_way=results["kappa_three_way"],
-        confusion=results["confusion"],
-        fail_recall=results["fail_recall"],
-        false_refusals=results["false_refusals"],
+        kappa=results.kappa,
+        kappa_three_way=results.kappa_three_way,
+        confusion=results.confusion,
+        fail_recall=results.fail_recall,
+        false_refusals=results.false_refusals,
         planted=caught,
-        abstain=results["abstain"],
+        abstain=results.abstain,
         flips=found[0] if found else None,
         flips_keep_refuse=found[1] if found else None,
         runs=count,
@@ -267,7 +267,17 @@ def grounding_card(
     )
 
 
-def _grounding(items: Sequence[JudgedFact], vote: Vote) -> dict[str, object]:
+@dataclass(frozen=True)
+class _Results:
+    kappa: Kappa
+    kappa_three_way: Kappa
+    confusion: dict[str, dict[str, int]]
+    fail_recall: Share
+    false_refusals: Share
+    abstain: Share
+
+
+def _grounding(items: Sequence[JudgedFact], vote: Vote) -> _Results:
     pairs = [(item.label, voted(item.runs, vote)) for item in items]
     decided = [(p, j) for p, j in pairs if j != UNCHECKED]
     keep = [
@@ -276,17 +286,17 @@ def _grounding(items: Sequence[JudgedFact], vote: Vote) -> dict[str, object]:
     ]
     unsupported = [j for p, j in pairs if p != "supported"]
     supported = [j for p, j in pairs if p == "supported"]
-    confusion = {p: {j: 0 for j in (*VERDICTS, UNCHECKED)} for p in VERDICTS}
+    confusion = {p: dict.fromkeys((*VERDICTS, UNCHECKED), 0) for p in VERDICTS}
     for p, j in pairs:
         confusion[p][j] += 1
-    return {
-        "kappa": kappa(keep, ("keep", "refuse")),
-        "kappa_three_way": kappa(decided, VERDICTS),
-        "confusion": confusion,
-        "fail_recall": share(sum(1 for j in unsupported if _refused(j)), len(unsupported)),
-        "false_refusals": share(sum(1 for j in supported if _refused(j)), len(supported)),
-        "abstain": share(sum(1 for _, j in pairs if j == UNCHECKED), len(pairs)),
-    }
+    return _Results(
+        kappa=kappa(keep, ("keep", "refuse")),
+        kappa_three_way=kappa(decided, VERDICTS),
+        confusion=confusion,
+        fail_recall=share(sum(1 for j in unsupported if _refused(j)), len(unsupported)),
+        false_refusals=share(sum(1 for j in supported if _refused(j)), len(supported)),
+        abstain=share(sum(1 for _, j in pairs if j == UNCHECKED), len(pairs)),
+    )
 
 
 def pair_card(

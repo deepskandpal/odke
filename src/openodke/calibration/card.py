@@ -275,9 +275,9 @@ class Card(_Read):
                 + (f", vote {g.vote}" if g.vote != "single" else ""),
             ]
             for band in g.by_length:
-                top = f"{band.high}" if band.high is not None else "+"
+                span = f"{band.low}-{band.high}" if band.high is not None else f"{band.low}+"
                 lines.append(
-                    f"  {band.name:<11} {band.low}-{top} words, n {band.n}: κ {band.kappa.text()}, "
+                    f"  {band.name:<11} {span} words, n {band.n}: κ {band.kappa.text()}, "
                     f"fail-recall {_v(band.fail_recall)}, false refusals {_v(band.false_refusals)}"
                 )
             lines.append(f"  confusion   {_confusion(g.confusion)}")
