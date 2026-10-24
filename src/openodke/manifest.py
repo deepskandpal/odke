@@ -51,9 +51,9 @@ import threading
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from openodke._text import REDACTED, without_password
 from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
@@ -302,8 +302,33 @@ def read_manifest(path: str | Path) -> RunManifest:
     version = data.get("manifest_version")
     if version != FORMAT:
         raise ValueError(f"{source}: manifest_version {version!r}; this openodke reads {FORMAT}")
-    own = {k: v for k, v in data.items() if k not in SINK_KEYS and k not in STORE_KEYS}
-    return RunManifest.model_validate(own)
+    # The fields this version knows, at every level: the sink's beside them are left too.
+    return RunManifest.model_validate(_known(RunManifest, data))
+
+
+def _known(model: type[BaseModel], data: Any) -> Any:
+    """`data` with only the fields `model` knows, in it and in every model it holds.
+
+    A minor release may add an optional field anywhere (DECISIONS #48), and a
+    manifest written by another openodke only warns (#40). So the reader keeps
+    what it knows and leaves the rest, rather than refusing a newer manifest
+    (release audit finding 18).
+    """
+    if not isinstance(data, Mapping):
+        return data
+    fields = model.model_fields
+    return {name: _within(fields[name].annotation, data[name]) for name in fields if name in data}
+
+
+def _within(annotation: Any, value: Any) -> Any:
+    """`value` as `annotation` holds it: a model, a mapping of models, or a model or None."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return _known(annotation, value)
+    args = get_args(annotation)
+    if get_origin(annotation) is dict and len(args) == 2 and isinstance(value, Mapping):
+        return {key: _within(args[1], item) for key, item in value.items()}
+    models = [arg for arg in args if isinstance(arg, type) and issubclass(arg, BaseModel)]
+    return _within(models[0], value) if len(models) == 1 else value
 
 
 # --------------------------------------------------------------------------- #
