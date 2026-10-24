@@ -266,3 +266,31 @@ def test_a_run_in_which_a_document_failed_is_not_scored() -> None:
         PipelineError, match=r"1 of 2 documents left out: b \(extract: ProviderError"
     ):
         score_ablation(run, [])
+
+
+def test_a_run_a_budget_stopped_is_not_scored() -> None:
+    """A budget stop leaves what it reached unasked, and the pipeline carries on (#32)."""
+    from openodke.eval.ablation import AblationRun, score_ablation
+    from openodke.eval.harness import PipelineError
+
+    run = AblationRun(
+        documents=[Document(id="a", text="t")],
+        ontology=Ontology(),
+        candidates=[],
+        grounded=[],
+        gated=[],
+        corroborated=[],
+        extraction_calls=[],
+        all_calls=[],
+        gate=None,
+        stopped={
+            "limit": "usd",
+            "budget": {"usd": 1.0},
+            "spent": {"calls": 40, "priced_usd": 1.0},
+            "stage": "ground",
+            "unextracted": 0,
+            "unchecked": 12,
+        },
+    )
+    with pytest.raises(PipelineError, match="a budget stopped the ablation's run"):
+        score_ablation(run, [])

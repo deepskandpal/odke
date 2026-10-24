@@ -713,7 +713,9 @@ def lenient(
         predictions: set[int] = set()
         for doc_id, g_at, p_at, key in found[name]:
             decision = asked[key].decision
-            said = decision.decision if decision is not None else "unsure"
+            # No answer, a call that failed or one a budget stopped, is no decision.
+            said = decision.decision if decision is not None else "failed"
+            said = "failed" if said == "unasked" else said
             tally[said if said in tally else "unsure"] += 1
             if said == "same" and g_at not in golds and p_at not in predictions:
                 golds.add(g_at)
