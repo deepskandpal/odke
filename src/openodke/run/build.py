@@ -865,7 +865,7 @@ class _WriterPlan(SinkPlan):
     def _construct(
         self, cls: Callable[..., Any], options: Mapping[str, Any], reserved: Sequence[str] = ()
     ) -> Any:
-        injected = {"ontology": self.ontology}
+        injected: dict[str, Any] = {"ontology": self.ontology}
         if self.tenanted:
             injected["tenant"] = self.tenant
         return construct(cls, options, self.where, injected=injected, reserved=reserved)
