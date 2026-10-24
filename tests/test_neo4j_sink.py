@@ -410,7 +410,7 @@ def test_a_rewritten_fact_replaces_its_properties_rather_than_adding_to_them() -
     }
     for cypher, params in fact_statements:
         # `=`, not `+=`, where the version read is still held (DECISIONS #51).
-        assert cypher.endswith("SET r = row.props, r.`odke.version` = held + 1)")
+        assert cypher.endswith("SET r = row.props, r.`odke.version` = randomUUID())")
         # Replacing keeps what the MERGE matched on: the key is in the payload.
         assert all(row["props"]["signature"] == row["signature"] for row in params["rows"])
 

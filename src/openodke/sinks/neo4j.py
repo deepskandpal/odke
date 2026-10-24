@@ -98,13 +98,17 @@ _PROVENANCE = frozenset(
         "evidence_retrieved_at",
         # The tenant a store keys the fact under (#159).
         TENANT,
-        # How many times the relationship was written: the compare-and-set's (DECISIONS #51).
+        # A token every write of the relationship renews: the compare-and-set's (#51).
         "odke.version",
     }
 )
-# A fact relationship's write count. A write that read version n writes only where
-# the store still holds n, and makes it n + 1; the reconciler's rewrite counts too.
+# A fact relationship's version: a fresh token on every write, the reconciler's
+# rewrite included. A write that read token t writes only where the store still holds
+# t. A token, not a count: a fact deleted and made again never reads as the same.
 VERSION = "odke.version"
+# What a write expects of a relationship it read nothing under: none, or only one its
+# own MERGE has just made, which holds no fact yet.
+ABSENT = "absent"
 # Node property names the sink writes from `Entity` fields; an attribute or a
 # projected predicate with one of these names is prefixed, never merged into.
 _ENTITY_FIELDS = frozenset(
@@ -642,18 +646,21 @@ def _entity_cypher(label: str) -> str:
 
 # The compare-and-set every fact statement ends with (DECISIONS #51). The lock comes
 # first: under read-committed, a version read before it can be stale, and two writers
-# would both pass. A row whose `version` is the one held is written, `=` not `+=`, so a
-# rewritten fact replaces what its relationship says (a conflict stamp from a run that
-# had a rival does not outlive the rival), and the version counts the write. A row
-# with no `version` read nothing first, and is written as it always was. One whose
-# version moved is left, and `write()` merges it again with what the store now holds.
+# would both pass. A row is written where the store holds what it `expect`s: the token
+# it read, "" for a fact written before versions, or, for `ABSENT`, a relationship the
+# MERGE has just made and that holds no fact. `=` not `+=`, so a rewritten fact
+# replaces what its relationship says (a conflict stamp from a run that had a rival
+# does not outlive the rival), and the write takes a fresh token. A row with no
+# `expect` read nothing first, and is written as it always was. One whose version
+# moved is left, and `write()` merges it again with what the store now holds.
 _COMPARE_AND_SET = (
     f"SET r.{_ident('odke.lock')} = true\n"
-    f"WITH r, row, coalesce(r.{_ident(VERSION)}, 0) AS held\n"
+    f"WITH r, row, coalesce(r.{_ident(VERSION)}, '') AS held, r.fact_id IS NULL AS fresh\n"
     f"REMOVE r.{_ident('odke.lock')}\n"
-    "WITH r, row, held, row.version IS NULL OR row.version = held AS fits\n"
+    "WITH r, row, row.expect IS NULL\n"
+    f"     OR (fresh AND row.expect = '{ABSENT}') OR (NOT fresh AND row.expect = held) AS fits\n"
     "FOREACH (ignored IN CASE WHEN fits THEN [1] ELSE [] END |\n"
-    f"  SET r = row.props, r.{_ident(VERSION)} = held + 1)"
+    f"  SET r = row.props, r.{_ident(VERSION)} = randomUUID())"
 )
 
 
@@ -675,6 +682,19 @@ def _claim_cypher(subject_type: str, predicate: str) -> str:
         "SET c.predicate = row.predicate, c.subject_key = row.subject_key,\n"
         "    c.subject_type = row.subject_type, c.value = row.value\n"
         f"MERGE (s)-[r:{_ident(predicate)} {{signature: row.signature}}]->(c)\n" + _COMPARE_AND_SET
+    )
+
+
+def _dropped_cypher(predicate: str) -> str:
+    """The relationships a write's MERGE made for facts it then had nothing to write for:
+    gone, with a `:Claim` left with no relationship, in the same transaction."""
+    return (
+        "UNWIND $rows AS row\n"
+        f"MATCH ()-[r:{_ident(predicate)} {{signature: row.signature}}]->(o)\n"
+        "WHERE r.fact_id IS NULL\n"
+        "DELETE r\n"
+        f"WITH o WHERE o:{_ident(CLAIM_LABEL)} AND NOT EXISTS {{ (o)--() }}\n"
+        "DELETE o"
     )
 
 
@@ -795,7 +815,7 @@ def _retract_cypher(predicate: str) -> str:
     return (
         "UNWIND $rows AS row\n"
         f"MATCH ()-[r:{_ident(predicate)} {{signature: row.signature}}]->()\n"
-        f"SET r += row.props, r.{_ident(VERSION)} = coalesce(r.{_ident(VERSION)}, 0) + 1"
+        f"SET r += row.props, r.{_ident(VERSION)} = randomUUID()"
     )
 
 
@@ -890,20 +910,30 @@ def _run(tx: Any, statement: Statement, rows: list[dict[str, Any]]) -> _Ran:
     )
 
 
-def _versioned(statement: Statement, read: Mapping[str, tuple[int, Fact | None]]) -> Statement:
-    """A fact statement whose rows carry the version `stored()` read under their signature."""
+def _versioned(statement: Statement, read: Mapping[str, tuple[str, Fact | None]]) -> Statement:
+    """A fact statement whose rows carry the version `stored()` read under their signature.
+
+    Only the first row with a signature: a graph holding a claim twice writes the
+    second over the first, as it always did, rather than read it as moved.
+    """
     if statement.kind not in _FACTS or not read:
         return statement
-    rows = [
-        {**row, "version": read[row["signature"]][0]} if row["signature"] in read else row
-        for row in statement.rows
-    ]
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in statement.rows:
+        key = row["signature"]
+        if key in read and key not in seen:
+            row = {**row, "expect": read[key][0]}
+        seen.add(key)
+        rows.append(row)
     return statement._replace(rows=rows)
 
 
-def version_of(props: Mapping[str, Any] | None) -> int:
-    """How many times a fact relationship was written; 0 for one never written, or before #51."""
-    return int((props or {}).get(VERSION) or 0)
+def expected(props: Mapping[str, Any] | None) -> str:
+    """What a write expects to find of a relationship read as `props` (DECISIONS #51)."""
+    if not props or props.get("fact_id") is None:
+        return ABSENT
+    return str(props.get(VERSION) or "")
 
 
 class Neo4jSink:
@@ -1006,7 +1036,7 @@ class Neo4jSink:
         self._reader: Neo4jLookup | None = None
         # What `stored()` read, by signature key, for the next write to compare against
         # (DECISIONS #51): the version held, and the stored fact, or None for none.
-        self._read: dict[str, tuple[int, Fact | None]] = {}
+        self._read: dict[str, tuple[str, Fact | None]] = {}
         # How a moved fact is merged and scored again: the job's stages (`merges_with`).
         self._merging: Any = None
         self._scoring: Any = None
@@ -1043,37 +1073,24 @@ class Neo4jSink:
                         merged=max(0, ran.reached - made),
                         skipped=max(0, len(rows) - ran.reached),
                     )
-            pieces = self._projected_again(facts, rebased)
-            if pieces:
-                session.execute_write(self._unwind, pieces, facts, read, kg.created_at)
-
-    def _projected_again(
-        self, facts: Mapping[str, Fact], rebased: Mapping[str, Fact | None]
-    ) -> list[tuple[Statement, list[dict[str, Any]]]]:
-        """The projections of the subjects whose claims were merged again: their support moved."""
-        claims = [f for f in rebased.values() if f is not None and f.object_entity is None]
-        if not claims:
-            return []
-        touched = {
-            (f.subject.type, f.predicate, scoped(f.subject.key, self.tenant)) for f in claims
-        }
-        now = [rebased.get(key, fact) for key, fact in facts.items()]
-        graph = KnowledgeGraph(facts=tuple(f for f in now if f is not None))
-        out: list[tuple[Statement, list[dict[str, Any]]]] = []
-        for statement in plan(graph, ontology=self.ontology, tenant=self.tenant):
-            if statement.kind != "projection":
-                continue
-            rows = [r for r in statement.rows if (*statement.names, r["subject_key"]) in touched]
-            if rows:
-                out.append((statement, rows))
-        return out
+            # A claim merged again holds other support, or none: each subject touched is
+            # projected again from the claims the store now holds, as a retraction does.
+            claims: dict[tuple[str, str], set[str]] = defaultdict(set)
+            for key in rebased:
+                fact = facts[key]
+                if fact.object_entity is None:
+                    claims[(fact.subject.type, fact.predicate)].add(
+                        scoped(fact.subject.key, self.tenant)
+                    )
+            if claims:
+                session.execute_write(self._project_again, claims)
 
     def _unwind(
         self,
         tx: Any,
         pieces: Sequence[tuple[Statement, list[dict[str, Any]]]],
         facts: Mapping[str, Fact],
-        read: Mapping[str, tuple[int, Fact | None]],
+        read: Mapping[str, tuple[str, Fact | None]],
         created_at: datetime,
     ) -> tuple[list[_Ran], dict[str, Fact | None]]:
         """Each piece in one transaction; a fact row whose version moved, merged again.
@@ -1094,7 +1111,11 @@ class Neo4jSink:
             for _ in range(REBASES):
                 if not moved:
                     break
-                again = self._rebased(tx, statement, rows, moved, facts, read, rebased, created_at)
+                again, dropped = self._rebased(
+                    tx, statement, rows, moved, facts, read, rebased, created_at
+                )
+                # A relationship its MERGE made for a fact now written nowhere is gone again.
+                relationships -= dropped
                 retried = _run(tx, statement, again) if again else _Ran(0, 0, 0)
                 reached += retried.reached
                 nodes += retried.nodes
@@ -1116,36 +1137,43 @@ class Neo4jSink:
         rows: Sequence[dict[str, Any]],
         moved: Sequence[str],
         facts: Mapping[str, Fact],
-        read: Mapping[str, tuple[int, Fact | None]],
+        read: Mapping[str, tuple[str, Fact | None]],
         rebased: dict[str, Fact | None],
         created_at: datetime,
-    ) -> list[dict[str, Any]]:
-        """The moved rows again: each fact merged with what the store holds now, and its version."""
+    ) -> tuple[list[dict[str, Any]], int]:
+        """The moved rows again: each fact merged with what the store holds now, and what to
+        expect of it; and how many relationships the MERGE made that are now deleted."""
+        predicate = statement.names[1]
         asked = [{"signature": key} for key in dict.fromkeys(moved)]
-        found = tx.run(_held_cypher(statement.names[1]), rows=asked).data()
+        found = tx.run(_held_cypher(predicate), rows=asked).data()
         now = {str(row["signature"]): row["props"] for row in found}
         again: list[dict[str, Any]] = []
+        empty: list[dict[str, Any]] = []
         wanted = set(moved)
         for row in rows:
             key = str(row["signature"])
             if key not in wanted:
                 continue
+            wanted.discard(key)
             fact = facts[key]
             props = now.get(key)
             # A relationship this write's MERGE made and did not fill holds no fact yet.
-            held = stored_fact(fact, props) if props and props.get("fact_id") else None
-            merged = self._rebase(fact, read.get(key, (0, None))[1], held)
+            held = stored_fact(fact, props) if props and expected(props) != ABSENT else None
+            merged = self._rebase(fact, read.get(key, (ABSENT, None))[1], held)
             rebased[key] = merged
-            if merged is None:
-                continue
-            again.append(
-                {
-                    **row,
-                    "props": provenance_of(merged, created_at, self.tenant),
-                    "version": version_of(props),
-                }
-            )
-        return again
+            if merged is not None:
+                again.append(
+                    {
+                        **row,
+                        "props": provenance_of(merged, created_at, self.tenant),
+                        "expect": expected(props),
+                    }
+                )
+            elif held is None:
+                empty.append({"signature": key})
+        if empty:
+            tx.run(_dropped_cypher(predicate), rows=empty).consume()
+        return again, len(empty)
 
     def _rebase(self, fact: Fact, read: Fact | None, now: Fact | None) -> Fact | None:
         """`fact`, which merged with `read`, merged with `now` instead, and scored again."""
@@ -1273,13 +1301,17 @@ class Neo4jSink:
         version of each relationship it read, and the next `write()` writes a
         fact only where the store still holds that version (DECISIONS #51).
         """
-        held = self._lookup().held(facts)
+        reader = self._lookup()
+        held = reader.held(facts)
+        # A predicate with no signature index was not read: nothing to compare against.
+        indexed = reader.indexes().signatures
         out: dict[tuple[Any, ...], Fact] = {}
         for fact in facts:
             key = signature_of(fact, self.tenant)
             props = held.get(key)
             twin = stored_fact(fact, props) if props is not None else None
-            self._read[key] = (version_of(props), twin)
+            if fact.predicate in indexed:
+                self._read[key] = (expected(props), twin)
             if twin is not None:
                 out.setdefault(fact.signature, twin)
         return out

@@ -52,6 +52,7 @@ from openodke.corroborate import (
 from openodke.sinks import JsonlSink
 from openodke.sinks import neo4j as neo4j_module
 from openodke.sinks.neo4j import (
+    ABSENT,
     SHOW_INDEXES,
     VERSION,
     Neo4jConstrainer,
@@ -695,9 +696,9 @@ class Versioned(FakeDriver):
     """One predicate's relationships by signature, as a store that compares and sets holds them.
 
     A write MERGEs (an unseen signature makes an empty relationship) and then
-    writes a row only where the version it read is the one held; the reader,
-    the reconciler's full-text query, its lock-and-read and its rewrite see
-    and change the same relationships.
+    writes a row only where the store holds what it expects; every write takes a
+    fresh token. The reader, the reconciler's full-text query, its lock-and-read,
+    its rewrite and its hard delete see and change the same relationships.
     """
 
     def __init__(self) -> None:
@@ -722,9 +723,11 @@ class Versioned(FakeDriver):
                 self.rels[key] = {"signature": key}
                 made += 1
             self.ends[key] = (row["subject_key"], row["object_key"])
-            held = int(self.rels[key].get(VERSION) or 0)
-            if row.get("version") is None or row["version"] == held:
-                self.rels[key] = {**row["props"], VERSION: held + 1}
+            held = self.rels[key]
+            fresh, token = held.get("fact_id") is None, held.get(VERSION) or ""
+            expect = row.get("expect")
+            if expect is None or (fresh and expect == ABSENT) or (not fresh and expect == token):
+                self.rels[key] = {**row["props"], VERSION: uuid.uuid4().hex}
                 reached += 1
             else:
                 moved.append(key)
@@ -757,7 +760,14 @@ class Versioned(FakeDriver):
             for row in params["rows"]:
                 held = self.rels[row["signature"]]
                 held.update(row["props"])
-                held[VERSION] = int(held.get(VERSION) or 0) + 1
+                held[VERSION] = uuid.uuid4().hex
+            return []
+        if "DELETE r" in cypher:
+            # A hard delete; or a relationship a write made, and found nothing to write to.
+            empty_only = "r.fact_id IS NULL" in cypher
+            for key in asked:
+                if key in self.rels and not (empty_only and self.rels[key].get("fact_id")):
+                    del self.rels[key]
             return []
         if "RETURN row.signature AS signature, properties(r) AS props" in cypher:
             return [{"signature": k, "props": dict(self.rels[k])} for k in asked if k in self.rels]
@@ -801,7 +811,6 @@ def test_two_writers_that_read_one_fact_both_keep_their_source() -> None:
     report = _job(store, "b", meanwhile=lambda: _job(store, "c"))
     held = store.held()
     assert held["support_sources"] == ["doc:a", "doc:b", "doc:c"] and held["support"] == 3
-    assert held[VERSION] == 3
     assert report.writes is not None and report.writes["0:Neo4jSink"]["facts"]["merged"] == 1
 
     # The same three jobs one after another write the same fact, score included.
@@ -851,8 +860,7 @@ def test_a_write_that_keeps_finding_the_fact_moved_gives_up_and_says_so() -> Non
         def write_fact(self, cypher: str, rows: list[dict[str, Any]]) -> tuple[Any, Any]:
             for row in rows:
                 if row["signature"] in self.rels:
-                    held = self.rels[row["signature"]]
-                    held[VERSION] = int(held.get(VERSION) or 0) + 1
+                    self.rels[row["signature"]][VERSION] = uuid.uuid4().hex
             return super().write_fact(cypher, rows)
 
     store = Restless()
@@ -867,10 +875,157 @@ def test_a_write_that_read_nothing_writes_as_it_always_did() -> None:
     sink = Neo4jSink(driver=store, ontology=WORKS)
     (fact,) = SignatureCorroborator().corroborate([_employed("a")])
     sink.write(KnowledgeGraph(facts=(fact,)))
+    first = store.held()[VERSION]
     sink.write(KnowledgeGraph(facts=(fact,)))
-    assert store.held()[VERSION] == 2
+    assert store.held()[VERSION] != first  # every write takes a fresh token
     rows = [row for _, params in store.writes for row in params.get("rows", ()) if "props" in row]
-    assert rows and all("version" not in row for row in rows)
+    assert rows and all("expect" not in row for row in rows)
+
+
+def test_a_fact_deleted_and_made_again_meanwhile_never_reads_as_the_one_read() -> None:
+    """Review of #51: a counter reset by a hard delete let a stale write through (ABA).
+
+    B reads [x]; x is hard-deleted, and C writes [c] afresh; B's write must see a
+    fact it never read. The same for a fact written before versions, deleted
+    meanwhile: B's own MERGE makes the relationship again, and that is not it.
+    """
+    store = Versioned()
+    _job(store, "x")
+
+    def delete_x_then_c() -> None:
+        Reconciler([Neo4jSink(driver=store)], hard_delete=True).delete(["x"], at=WHEN)
+        assert store.rels == {}
+        _job(store, "c")
+
+    _job(store, "b", meanwhile=delete_x_then_c)
+    assert store.held()["support_sources"] == ["doc:b", "doc:c"]
+
+    old = Versioned()
+    _job(old, "x")
+    for props in old.rels.values():
+        props.pop(VERSION)  # written before #51, or by a script or an import
+    _job(old, "b", meanwhile=lambda: Reconciler([Neo4jSink(driver=old)], hard_delete=True)
+         .delete(["x"], at=WHEN))  # fmt: skip
+    assert old.held()["support_sources"] == ["doc:b"]
+
+
+def test_a_fact_with_nothing_left_to_write_leaves_no_empty_relationship() -> None:
+    """Review of #51: B restates only what a hard delete took; its MERGE's empty edge goes."""
+    store = Versioned()
+    _job(store, "a")
+    report = _job(
+        store,
+        "a",
+        meanwhile=lambda: Reconciler([Neo4jSink(driver=store)], hard_delete=True).delete(["a"]),
+    )
+    assert store.rels == {}
+    assert report.writes is not None
+    facts = report.writes["0:Neo4jSink"]["facts"]
+    assert (facts["written"], facts["merged"], facts["skipped"]) == (0, 0, 1)
+
+
+def test_another_writers_review_mark_survives_as_it_would_one_job_after_the_other() -> None:
+    """Review of #51: the re-merge kept only this job's gate stamps, and dropped C's mark."""
+    from openodke.types import ValidationVerdict
+
+    class Marks(PassThroughGate):
+        def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
+            return ValidationVerdict(action="accept", reason="judge refused", review="below bar")
+
+    def marked(store: Versioned, doc: str) -> None:
+        sink = Neo4jSink(driver=store, ontology=WORKS)
+        Validator(WORKS, grounder=PassThroughGrounder(), gate=Marks(), sinks=[sink]).validate(
+            [_employed(doc)], [Document(id=doc, text=TEXT)]
+        )
+
+    alone = Versioned()
+    marked(alone, "c")
+    _job(alone, "b")
+    store = Versioned()
+    _job(store, "b", meanwhile=lambda: marked(store, "c"))
+    assert "odke.review" in alone.held() and "odke.review" in store.held()
+
+
+def test_a_predicate_the_store_has_no_index_for_is_not_compared_either() -> None:
+    """Review of #51: an unindexed predicate was not read, yet its write was read as moved."""
+    bob = Entity(key="p:bob", type="Person", label="Bob")
+    store = Versioned()
+
+    def job(doc: str) -> Any:
+        fact = _employed(doc).model_copy(update={"predicate": "advises", "object_entity": bob})
+        sink = Neo4jSink(driver=store, ontology=WORKS)
+        validator = Validator(
+            WORKS, grounder=PassThroughGrounder(), gate=PassThroughGate(), sinks=[sink]
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return validator.validate([fact], [Document(id=doc, text=TEXT)])[1]
+
+    job("a")
+    before = len(store.calls)
+    job("b")
+    held = "RETURN row.signature AS signature, properties(r) AS props"
+    assert not [c for _, c, _ in store.calls[before:] if held in c and "advises" in c]
+
+
+def test_two_facts_with_one_signature_after_a_read_write_as_before() -> None:
+    """Review of #51: the second of two rows with one signature always read as moved."""
+    store = Versioned()
+    _job(store, "a")
+    sink = Neo4jSink(driver=store, ontology=WORKS)
+    one, two = _employed("b"), _employed("c")
+    sink.stored([one, two])
+    sink.write(KnowledgeGraph(facts=(one, two)))  # the later one is what stays, as before
+    assert store.held()["evidence_doc_ids"] == ["c"]
+
+
+class Claims(Versioned):
+    """`Versioned` for one literal predicate, `hq`: a fact's object is a `:Claim`."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.answers["SHOW INDEXES"] = [
+            *self.answers["SHOW INDEXES"],
+            _signature_index("hq"),
+            {"name": "odke_evidence_hq", "type": "FULLTEXT", "entityType": "RELATIONSHIP",
+             "labelsOrTypes": ["hq"], "properties": ["evidence_doc_ids"]},
+        ]  # fmt: skip
+        self.answers["db.relationshipTypes"] = [{"name": "employer"}, {"name": "hq"}]
+
+    def write_fact(self, cypher: str, rows: list[dict[str, Any]]) -> tuple[Any, Any]:
+        rows = [{**row, "object_key": row.get("object_key") or "claim"} for row in rows]
+        return super().write_fact(cypher, rows)
+
+    def _row(self, key: str) -> dict[str, Any]:
+        return {**super()._row(key), "predicate": "hq", "object_labels": ["Claim"],
+                "value": "Leeds", "subject_labels": ["Company", "Entity"]}  # fmt: skip
+
+
+def test_a_claim_retracted_meanwhile_does_not_get_its_projected_value_back() -> None:
+    """Review of #51: the projection planned before the re-merge put the value back."""
+    store = Claims()
+
+    def job(doc: str, meanwhile: Any = None) -> None:
+        sink = Neo4jSink(driver=store, ontology=ONTOLOGY)
+        Validator(
+            ONTOLOGY, grounder=PassThroughGrounder(), gate=Meanwhile(meanwhile), sinks=[sink]
+        ).validate([_hq(doc)], [Document(id=doc, text=TEXT)])
+
+    def projected() -> list[Any]:
+        return [
+            row["value"]
+            for mode, cypher, params in store.calls
+            if mode == "write" and "SET s.`hq`" in cypher
+            for row in params["rows"]
+        ]
+
+    job("a")
+    assert projected() == ["Leeds"]
+    reconciler = Reconciler([Neo4jSink(driver=store, ontology=ONTOLOGY)])
+    job("a", meanwhile=lambda: reconciler.delete(["a"], at=WHEN))
+    ((_, claim),) = store.rels.items()
+    # The claim stays retired, and its subject is projected again from what is left.
+    assert claim["retired_at"] == WHEN and projected()[-1] is None
 
 
 @pytest.mark.skipif(not os.environ.get("NEO4J_URI"), reason="NEO4J_URI is not set")
