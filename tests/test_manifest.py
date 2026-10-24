@@ -288,6 +288,28 @@ def test_the_config_hash_is_of_the_config_as_resolved(example: Path) -> None:
     assert again.canonical() == config.canonical()
 
 
+def test_one_pipeline_written_three_ways_is_one_config(tmp_path: Path) -> None:
+    """A stage left out, its pass-through named, and the scorer `odke run` fills named: one
+    run, one hash (DECISIONS #40, release audit S4). A pass-through the run reads otherwise
+    stays its own config."""
+    base = {"ontology": "o.json", "inputs": ["c"], "stages": {"extractor": "pattern"}}
+
+    def hashed(**stages: Any) -> str:
+        config = {**base, "stages": {**base["stages"], **stages}}
+        canonical = parse_config(config, base_dir=tmp_path).canonical()
+        assert parse_config(canonical, base_dir=tmp_path).canonical() == canonical
+        return digest(canonical)
+
+    left_out = hashed()
+    assert hashed(router="passthrough") == left_out
+    assert hashed(scorer="evidence") == left_out
+    assert hashed(normalizer="passthrough", resolver="passthrough") == left_out
+    # Left out, odke run scores with `evidence`, so a pass-through scorer is another run; and
+    # a Neo4j bootstrap reads a constrainer left out as Neo4jConstrainer.
+    assert hashed(scorer="passthrough") != left_out
+    assert hashed(constrainer="passthrough") != left_out
+
+
 def test_a_role_left_to_its_default_and_one_naming_it_are_one_config(tmp_path: Path) -> None:
     base = {"ontology": "o.json", "inputs": ["c"], "stages": {"extractor": "llm"}}
     left = parse_config(base, base_dir=tmp_path).canonical()

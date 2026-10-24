@@ -73,7 +73,7 @@ from openodke.observe import Observer
 from openodke.ontology import Ontology, OntologyLoadError
 from openodke.pipeline import Pipeline
 from openodke.reextract import Reextract
-from openodke.run.config import STAGES, ConfigError, InputSpec, RunConfig, StageSpec
+from openodke.run.config import DEFAULTS, STAGES, ConfigError, InputSpec, RunConfig, StageSpec
 from openodke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink
 from openodke.sinks.jsonl import JsonlSink
 from openodke.sinks.neo4j import Neo4jConstrainer, Neo4jLookup, Neo4jSink, is_check, plan
@@ -617,17 +617,6 @@ for _stage, _cls in _PASSTHROUGH.items():
     # never chunks, and `Delegated` would stand in as a no-split chunker.
     if _stage not in {"chunker", "inferrer"}:
         BUILTINS[_stage]["delegated"] = _delegated
-
-# What `odke run` fills a stage with when the config leaves it out, where the
-# pass-through would be a worse answer than an opinion. The library keeps its
-# pass-through default (DECISIONS #20); this is the CLI's, and a config that
-# names the stage — `passthrough` included — always wins.
-#
-# `scorer`: without one, `Fact.confidence` arrives at the sink as whatever the
-# extractor put there, one constant for every fact whatever the grounder found,
-# and a threshold set against it silently accepts everything (#81).
-# `EvidenceScorer` is the formula the package already documents.
-DEFAULTS: dict[str, StageSpec] = {"scorer": StageSpec(use="evidence")}
 
 
 def build_stage(stage: str, spec: StageSpec, ctx: Context, where: str) -> Any:
