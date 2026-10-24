@@ -1256,11 +1256,13 @@ class Built:
         A merging store's restated fact then gains the run's sources rather than
         being replaced by the run's copy, as in the Validator.
         """
-        from openodke.validator import stores_of
+        from openodke.validator import _merging, stores_of
 
         corroborator = self.stages["corroborator"]
         if isinstance(corroborator, SignatureCorroborator) and not corroborator.store:
             corroborator.store = stores_of(sinks)
+        # A fact that moved in the store is merged and scored again by these (#51).
+        _merging(sinks, self.stages)
 
     def pipeline(self, *, sinks: Sequence[Sink] = (), **overrides: Any) -> Pipeline:
         if "validator" in overrides:

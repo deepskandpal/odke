@@ -65,6 +65,8 @@ from openodke.corroborate.provenance import (
     CONFLICT,
     DERIVED,
     NEAR_DUPLICATES,
+    ONTOLOGY,
+    REVIEW,
     SOURCE_FORM,
     contradicted_in,
     contradiction,
@@ -426,6 +428,56 @@ class SignatureCorroborator:
             out.append(fact)
         return _shared(out)
 
+    def rebase(self, fact: Fact, read: Fact | None, now: Fact | None) -> Fact | None:
+        """`fact`, which merged with `read` from the store, merged with `now` instead.
+
+        What a write does when the stored fact moved between its read and its
+        write (DECISIONS #51). The documents the store dropped since the read,
+        which a reconciler retracted, go from `fact`; what it gained, another
+        writer's sources, merges in as a stored twin does (#153). A derived fact
+        the store now states is dropped, None, as the store merge drops it; a
+        retired twin is nothing to merge with (#116). The stamps made after the
+        merge stay as `fact` has them: the contest's decision, the ontology that
+        checked it, a review mark. The scorer then scores it again; no model is
+        asked. A fact all of whose sources were retracted meanwhile is None too:
+        what the reconciler left stands.
+        """
+        from openodke.reconcile import retract
+
+        read = read if read is not None and read.retired_at is None else None
+        now = now if now is not None and now.retired_at is None else None
+        derived = DERIVED in fact.qualifiers
+        if derived and now is not None and DERIVED not in now.qualifiers:
+            return None
+        merged = unstamped(fact)
+        gone = _documents(read) - _documents(now)
+        if gone:
+            merged = retract(merged, gone, datetime.now(UTC))
+            if merged.retired_at is not None and fact.retired_at is None:
+                # Every source this job brought was retracted while it ran: the
+                # store's state stands, and nothing is written.
+                return None
+        if now is not None and (DERIVED in now.qualifiers) == derived:
+            merged = self._merge([merged, unstamped(now)], None)
+        qualifiers = dict(merged.qualifiers)
+        for key in (ONTOLOGY, REVIEW):
+            if key in fact.qualifiers:
+                qualifiers[key] = fact.qualifiers[key]
+            else:
+                qualifiers.pop(key, None)
+        update: dict[str, Any] = {"qualifiers": qualifiers}
+        decided = fact.qualifiers.get(CONFLICT)
+        if isinstance(decided, Mapping) and decided.get("status") in ("won", "lost", "tied"):
+            # The contest's decision, over the support now held; its penalty again on a loser.
+            conflict = {k: v for k, v in decided.items() if k != "contradicted_in"}
+            if refuted := contradicted_in(merged):
+                conflict["contradicted_in"] = list(refuted)
+            if conflict["status"] == "lost" and isinstance(conflict.get("ratio"), int | float):
+                conflict["confidence_before"] = merged.confidence
+                update["confidence"] = merged.confidence * float(conflict["ratio"])
+            qualifiers[CONFLICT] = conflict
+        return merged.model_copy(update=update)
+
     @staticmethod
     def _strength(fact: Fact) -> tuple[float, datetime]:
         tier = max((e.tier.weight for e in fact.evidence), default=SourceTier.UNVERIFIED.weight)
@@ -609,6 +661,13 @@ class SignatureCorroborator:
             f"trust, freshness, and agreement discounted by how much each source asserts: "
             f"{won.rank:.2f} to {lost.rank:.2f}."
         )
+
+
+def _documents(fact: Fact | None) -> set[str]:
+    """Every document a fact cites, in its evidence or its support list."""
+    if fact is None:
+        return set()
+    return {e.doc_id for e in fact.evidence} | {d for s in fact.supported_by for d in s.doc_ids}
 
 
 def _shared(facts: list[Fact]) -> list[Fact]:

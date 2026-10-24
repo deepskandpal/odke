@@ -332,8 +332,13 @@ class Citing(FakeDriver):
         self.tenant = tenant
 
     def answer(self, cypher: str) -> list[dict[str, Any]]:
+        rows = [_row(i, fact, self.tenant) for i, fact in enumerate(self.held)]
         if "queryRelationships" in cypher:
-            return [_row(i, fact, self.tenant) for i, fact in enumerate(self.held)]
+            return rows
+        if "odke.lock" in cypher and "RETURN elementId(r)" in cypher:
+            # Each found relationship, locked and read again: as found, here.
+            asked = {row["signature"] for row in self.calls[-1][2]["rows"]}
+            return [row for row in rows if row["props"]["signature"] in asked]
         return super().answer(cypher)
 
 
@@ -355,7 +360,7 @@ def test_neo4j_retracts_in_one_write_transaction_through_the_evidence_indexes() 
     (citing,) = [(c, p) for c, p in writes if "queryRelationships" in c]
     assert citing[1]["indexes"] == ["odke_evidence_employer", "odke_evidence_hq"]
     assert citing[1]["terms"] == '"doc-a"'
-    updates = [(c, p) for c, p in writes if c.endswith("SET r += row.props")]
+    updates = [(c, p) for c, p in writes if "SET r += row.props" in c]
     assert [c.split("\n")[1] for c, _ in updates] == [
         "MATCH ()-[r:`employer` {signature: row.signature}]->()",
         "MATCH ()-[r:`hq` {signature: row.signature}]->()",
@@ -417,6 +422,9 @@ class Held(FakeDriver):
                 for row in self.rows.values()
                 if terms & set(row["props"]["evidence_doc_ids"])
             ]
+        if "odke.lock" in cypher and "RETURN elementId(r)" in cypher:
+            asked = {row["signature"] for row in params["rows"]}
+            return [{**r, "props": dict(r["props"])} for s, r in self.rows.items() if s in asked]
         if "SET r += row.props" in cypher:
             for row in params["rows"]:
                 self.rows[row["signature"]]["props"].update(row["props"])
