@@ -37,7 +37,6 @@ from openodke.llm import Completion, Message, ModelSpec, ProviderError
 runner = CliRunner()
 
 RELEASE_12 = pytest.mark.xfail(strict=True, reason="release audit finding 12; fixed in fix PR 5")
-RELEASE_13 = pytest.mark.xfail(strict=True, reason="release audit finding 13; fixed in fix PR 1")
 
 
 def _found_here(what: str, pr: int) -> pytest.MarkDecorator:
@@ -293,7 +292,6 @@ class FailsOn:
 '''
 
 
-@RELEASE_13
 def test_an_update_whose_text_failed_exits_non_zero(
     every_model_call_fails: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

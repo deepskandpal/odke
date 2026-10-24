@@ -208,3 +208,15 @@ def test_the_locator_is_the_grounders_when_one_is_given() -> None:
     kg, report = Validator(locate=True).validate([uncited], [A], dry_run=True)
     assert kg.facts[0].evidence[0].span_origin == "located"
     assert isinstance(report, ValidationReport) and report.facts_out == 1
+
+
+def test_an_update_names_each_text_it_retracted_and_could_not_write_again() -> None:
+    """Release audit 13: an update's failed text read as retired, with nothing to say so."""
+    counts = {"cited": 2, "lost": 0, "retired": 2, "deleted": 0}
+    failed = {"b": "ProviderError: timed out"}
+    report = ValidationReport(documents=2, failed=failed, retracted=counts)
+    assert report.unrewritten == ("b",)
+    assert "              b: retracted, not rewritten; run it again" in report.render()
+    # Without an update nothing was retracted first, so the text is only left out.
+    plain = ValidationReport(documents=2, failed=failed)
+    assert plain.unrewritten == () and "retracted, not rewritten" not in plain.render()

@@ -909,7 +909,9 @@ def validate_command(
     skipped.
 
     Exit 2 is input or a config that cannot be read, exit 1 a run that failed,
-    exit 3 a run its budget stopped, which still wrote what it kept.
+    or an --update one of whose texts failed after it was retracted (the report
+    names it: run the update again), exit 3 a run its budget stopped, which
+    still wrote what it kept.
     """
     # Imported here so `odke --version` and the ontology commands stay light.
     from openodke import Retractable, SignatureCorroborator, Validator
@@ -1151,6 +1153,14 @@ def validate_command(
     if report.stopped:
         raise typer.Exit(EXIT_BUDGET)
     _every_document_failed(report.failed, report.documents)
+    if report.unrewritten:
+        # Retracted before they failed, so their facts read as retired (DECISIONS #37).
+        typer.echo(
+            f"error: {_count(len(report.unrewritten), 'text')} retracted and not rewritten: "
+            f"{', '.join(report.unrewritten)}; run the update again",
+            err=True,
+        )
+        raise typer.Exit(1)
 
 
 def _every_document_failed(failed: Any, documents: int) -> None:
