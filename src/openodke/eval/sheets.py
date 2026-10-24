@@ -22,9 +22,10 @@ than opening a formula.
 
 Reading back is strict where a slip would corrupt the labels and lenient where
 it would not. An item with no tick is unlabelled, counted and reported. An item
-with two ticks, or a heading the sidecar does not know, is an error naming the
-file and the line of the item's heading, and nothing is written until every
-sheet reads cleanly.
+with two ticks, a heading the sidecar does not know, a heading that appears
+twice, or a line that looks like an item's heading but is not one, is an error
+naming the file and the line, and nothing is written until every sheet reads
+cleanly.
 """
 
 from __future__ import annotations
@@ -389,6 +390,10 @@ class SheetError(ValueError):
 
 
 _HEADING = re.compile(r"^###\s+(\S+)\s*$")
+# A line a person means as an item's heading that the reader would not take for
+# one ("#### G-0002", "### G-0002 (copy)"): what is ticked under it would count
+# for the item above it. Item text never starts a line with `#`: it is escaped.
+_LIKE_HEADING = re.compile(r"^\s*#+\s*([A-Z]+-\d+)\b")
 _BOX = re.compile(r"^\s*[-*+]\s+\[(.)\]\s+(.*?)\s*$")
 
 
@@ -435,6 +440,15 @@ def _marks(sheet: Path, known: set[str], kind: Kind, problems: list[str]) -> dic
                 problems.append(f"{sheet}:{number}: {item_id} appears twice")
             else:
                 current = found[item_id] = _Marked(number, [])
+            continue
+        like = _LIKE_HEADING.match(line)
+        if like:
+            problems.append(
+                f"{sheet}:{number}: {line.strip()!r} is not an item heading, so a tick under "
+                f"it would count for the item above it; write '### {like.group(1)}' alone on "
+                "its line"
+            )
+            current = None
             continue
         if current is None:
             continue

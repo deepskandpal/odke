@@ -277,6 +277,60 @@ def test_two_ticks_fail_on_the_line_of_the_item_heading(tmp_path: Path) -> None:
     ]
 
 
+def _repeat(sheet: Path, item_id: str, *, after: str, heading: str | None = None) -> None:
+    """Paste an unticked copy of `item_id` after `after`'s block, as a paste or a sync
+    conflict leaves one; `heading` replaces the copy's heading line."""
+    copy = f"### {item_id}\n{_item(sheet, item_id)}".replace("- [x] ", "- [ ] ")
+    if heading is not None:
+        copy = copy.replace(f"### {item_id}", heading, 1)
+    block = f"### {after}\n{_item(sheet, after)}"
+    text = sheet.read_text(encoding="utf-8")
+    sheet.write_text(text.replace(block, f"{block}\n{copy}", 1), encoding="utf-8")
+
+
+def test_an_item_heading_that_appears_twice_is_refused_on_the_copy_s_line(tmp_path: Path) -> None:
+    # Read in order, the copy would stand for the item, and the first copy's tick
+    # would be lost without a word (release audit S25).
+    items = _jsonl(tmp_path / "items.jsonl", [_grounding(n) for n in range(3)])
+    (sheet,) = make_sheets("grounding", items, tmp_path / "s").sheets
+    _tick(sheet, "G-0002", "supported")
+    _repeat(sheet, "G-0002", after="G-0002")
+    lines = sheet.read_text(encoding="utf-8").splitlines()
+    first, second = (n for n, line in enumerate(lines, start=1) if line == "### G-0002")
+    assert "- [x] supported" in "\n".join(lines[first:second])  # the tick is the first copy's
+
+    with pytest.raises(SheetError) as caught:
+        read_sheets(sheet)
+    assert caught.value.problems == [f"{sheet}:{second}: G-0002 appears twice"]
+
+    out = tmp_path / "labels.jsonl"
+    result = runner.invoke(app, ["label", "read", str(sheet), "--out", str(out)])
+    assert result.exit_code == 2
+    assert f"error: {sheet}:{second}: G-0002 appears twice" in result.output
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("heading", ["### G-0003 (copy)", "#### G-0003", "###G-0003"])
+def test_a_line_that_looks_like_an_item_heading_but_is_not_one_is_refused(
+    tmp_path: Path, heading: str
+) -> None:
+    # A copy of G-0003 under G-0001, its heading edited, and ticked: not a heading
+    # to the reader, so the tick would have labelled G-0001, the item above it.
+    items = _jsonl(tmp_path / "items.jsonl", [_grounding(n) for n in range(3)])
+    (sheet,) = make_sheets("grounding", items, tmp_path / "s").sheets
+    _repeat(sheet, "G-0003", after="G-0001", heading=heading)
+    head, tail = sheet.read_text(encoding="utf-8").split(f"{heading}\n", 1)
+    tail = tail.replace("- [ ] contradicted", "- [x] contradicted", 1)
+    sheet.write_text(f"{head}{heading}\n{tail}", encoding="utf-8")
+
+    with pytest.raises(SheetError) as caught:
+        read_sheets(sheet)
+    assert caught.value.problems == [
+        f"{sheet}:{_line(sheet, heading)}: {heading!r} is not an item heading, so a tick "
+        "under it would count for the item above it; write '### G-0003' alone on its line"
+    ]
+
+
 def test_every_problem_is_reported_at_once(tmp_path: Path) -> None:
     items = _jsonl(tmp_path / "items.jsonl", [_grounding(n) for n in range(4)])
     sheets = make_sheets("grounding", items, tmp_path / "s", per_sheet=2).sheets
