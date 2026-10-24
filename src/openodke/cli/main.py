@@ -2234,7 +2234,7 @@ app.add_typer(label_app, name="label")
 
 @label_app.command("make")
 def label_make(
-    kind: str = typer.Argument(..., help="grounding, pair or fact."),
+    kind: str = typer.Argument(..., help="grounding, pair, fact or refusal."),
     items: Path = typer.Argument(..., help="The rows to label, as JSONL."),
     out: Path = typer.Option(..., "--out", "-o", help="A directory with no sheets in it yet."),
     per_sheet: int = typer.Option(
@@ -2247,7 +2247,8 @@ def label_make(
     text it cites. A pair row is two mentions, `a` and `b`, each a key and a
     type with an optional label and context. A fact row is a FactPair: an
     `id`, a relation and its description, two facts and their passage, with
-    nothing that says which is gold. Each item gets a heading, what to
+    nothing that says which is gold. A refusal row is a Refusal, as
+    `odke eval refusals --make-sheet` writes it. Each item gets a heading, what to
     judge and one box per answer; sheet-NN.items.jsonl keeps its rows. The same
     rows write the same sheets, byte for byte, and a directory that already
     holds sheets is refused. Exit 2 is a row or a directory it cannot use.
