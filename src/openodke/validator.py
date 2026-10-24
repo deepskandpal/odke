@@ -489,6 +489,7 @@ class Validator:
         if update and not dry_run:
             retracted = Reconciler(sinks).delete([doc.id for doc in docs]).counts()
         stages = self._stages(dry_run, recorder, observer, sinks)
+        _merging(sinks, stages)
         # The corroborator reads the texts to count a near-duplicate copy once,
         # and the pair judge reads its contexts from them.
         register_documents(stages["corroborator"], docs)
@@ -602,6 +603,7 @@ class Validator:
         if update and not dry_run:
             retracted = Reconciler(sinks).delete([doc.id for doc in docs]).counts()
         stages = self._stages(dry_run, recorder, observer, sinks)
+        _merging(sinks, stages)
         # A stage given is kept between calls, so its counts are read as a difference.
         before = _Before(stages)
         stand_ins = [_StandIn(getattr(sink, "profile", None)) for sink in sinks]
@@ -1061,6 +1063,14 @@ def _named(stage: Any) -> str | None:
         return None
     kind = type(stage)
     return f"{kind.__module__}.{kind.__qualname__}"
+
+
+def _merging(sinks: Iterable[Any], stages: Mapping[str, Any]) -> None:
+    """Each store that compares and sets, told the job's corroborator and scorer (#51)."""
+    for sink in sinks:
+        merging = getattr(sink, "merges_with", None)
+        if callable(merging):
+            merging(stages["corroborator"], stages["scorer"])
 
 
 def stores_of(sinks: Iterable[Any]) -> tuple[FactLookup, ...]:

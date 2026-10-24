@@ -35,6 +35,7 @@ from openodke import (
     FactLookup,
     KnowledgeGraph,
     Ontology,
+    Reconciler,
     SourceTier,
     Span,
     Validator,
@@ -52,6 +53,7 @@ from openodke.sinks import JsonlSink
 from openodke.sinks import neo4j as neo4j_module
 from openodke.sinks.neo4j import (
     SHOW_INDEXES,
+    VERSION,
     Neo4jConstrainer,
     Neo4jSink,
     provenance_of,
@@ -370,7 +372,7 @@ def test_a_contradicting_text_never_holds_a_stored_fact_up(first: str, tmp_path:
     The stored fact is supported by a alone, b is recorded against it, and once
     a is deleted the fact is retired: b, which says otherwise, does not keep it.
     """
-    from openodke import GroundingVerdict, Reconciler
+    from openodke import GroundingVerdict
 
     sink = JsonlSink(tmp_path, merge=True)
     supports = ("a", _employed("a", verdict=GroundingVerdict.SUPPORTED))
@@ -670,6 +672,292 @@ def test_a_rerun_of_one_claim_from_a_second_source_adds_support_only_in_a_live_n
                     operators
                 )
                 assert not any("Scan" in op for op in operators), operators
+        finally:
+            driver.execute_query(mine + "DETACH DELETE n")
+            for match in created:
+                if match and suffix in match.group(2):
+                    driver.execute_query(f"DROP {match.group(1)} {match.group(2)} IF EXISTS")
+
+
+# --------------------------------------------------------------------------- #
+# Two writers at once (release audit 4, DECISIONS #51)
+# --------------------------------------------------------------------------- #
+
+WORKS = Ontology.from_dict(
+    {
+        "types": {"Person": {}, "Company": {}},
+        "predicates": {"employer": {"domain": ["Person"], "range": "Company"}},
+    }
+)
+
+
+class Versioned(FakeDriver):
+    """One predicate's relationships by signature, as a store that compares and sets holds them.
+
+    A write MERGEs (an unseen signature makes an empty relationship) and then
+    writes a row only where the version it read is the one held; the reader,
+    the reconciler's full-text query, its lock-and-read and its rewrite see
+    and change the same relationships.
+    """
+
+    def __init__(self) -> None:
+        indexes = [
+            {"name": "odke_entity_key", "type": "RANGE", "entityType": "NODE",
+             "labelsOrTypes": ["Entity"], "properties": ["key"]},
+            _signature_index("employer"),
+            {"name": "odke_evidence_employer", "type": "FULLTEXT", "entityType": "RELATIONSHIP",
+             "labelsOrTypes": ["employer"], "properties": ["evidence_doc_ids"]},
+        ]  # fmt: skip
+        super().__init__({"SHOW INDEXES": indexes, "db.relationshipTypes": [{"name": "employer"}]})
+        self.rels: dict[str, dict[str, Any]] = {}
+        self.ends: dict[str, tuple[str, str]] = {}
+
+    def write_fact(self, cypher: str, rows: list[dict[str, Any]]) -> tuple[Any, Any]:
+        from types import SimpleNamespace
+
+        made, reached, moved = 0, 0, []
+        for row in rows:
+            key = row["signature"]
+            if key not in self.rels:
+                self.rels[key] = {"signature": key}
+                made += 1
+            self.ends[key] = (row["subject_key"], row["object_key"])
+            held = int(self.rels[key].get(VERSION) or 0)
+            if row.get("version") is None or row["version"] == held:
+                self.rels[key] = {**row["props"], VERSION: held + 1}
+                reached += 1
+            else:
+                moved.append(key)
+        counters = SimpleNamespace(nodes_created=0, relationships_created=made)
+        return [{"reached": reached, "moved": moved}], counters
+
+    def _row(self, key: str) -> dict[str, Any]:
+        subject, obj = self.ends[key]
+        return {
+            "id": f"rel-{key[:8]}",
+            "predicate": "employer",
+            "props": dict(self.rels[key]),
+            "subject_key": subject,
+            "subject_labels": ["Person", "Entity"],
+            "object_key": obj,
+            "object_labels": ["Company", "Entity"],
+            "value": None,
+        }
+
+    def answer(self, cypher: str) -> list[dict[str, Any]]:
+        params = self.calls[-1][2]
+        asked = [row.get("signature") for row in params.get("rows", ())]
+        if "queryRelationships" in cypher:
+            terms = set(re.findall(r'"([^"]+)"', params["terms"]))
+            return [self._row(k) for k, props in self.rels.items()
+                    if terms & set(props.get("evidence_doc_ids") or ())]  # fmt: skip
+        if "odke.lock" in cypher and "RETURN elementId(r)" in cypher:
+            return [self._row(k) for k in asked if k in self.rels]
+        if "SET r += row.props" in cypher:
+            for row in params["rows"]:
+                held = self.rels[row["signature"]]
+                held.update(row["props"])
+                held[VERSION] = int(held.get(VERSION) or 0) + 1
+            return []
+        if "RETURN row.signature AS signature, properties(r) AS props" in cypher:
+            return [{"signature": k, "props": dict(self.rels[k])} for k in asked if k in self.rels]
+        return super().answer(cypher)
+
+    def held(self) -> dict[str, Any]:
+        (props,) = [p for p in self.rels.values() if p.get("fact_id")]
+        return props
+
+
+class Meanwhile(PassThroughGate):
+    """A gate that, once, runs another job between this job's store read and its write."""
+
+    def __init__(self, then: Any = None) -> None:
+        self.then = then
+
+    def validate(self, fact: Fact, ontology: Ontology) -> Any:
+        then, self.then = self.then, None
+        if then is not None:
+            then()
+        return super().validate(fact, ontology)
+
+
+def _job(store: Any, doc: str, meanwhile: Any = None, **options: Any) -> Any:
+    """One job validating the claim from `doc` into `store`, through a sink of its own."""
+    sink = Neo4jSink(driver=store, ontology=WORKS, **options)
+    validator = Validator(
+        WORKS, grounder=PassThroughGrounder(), gate=Meanwhile(meanwhile), sinks=[sink]
+    )
+    return validator.validate([_employed(doc)], [Document(id=doc, text=TEXT)])[1]
+
+
+def test_two_writers_that_read_one_fact_both_keep_their_source() -> None:
+    """Release audit 4, the lost source: B and C read [a]; C writes [a, c]; B wrote [a, b].
+
+    B's write finds the version it read has moved, reads the fact again, merges
+    its own source into it and scores it again, all in the same write.
+    """
+    store = Versioned()
+    _job(store, "a")
+    report = _job(store, "b", meanwhile=lambda: _job(store, "c"))
+    held = store.held()
+    assert held["support_sources"] == ["doc:a", "doc:b", "doc:c"] and held["support"] == 3
+    assert held[VERSION] == 3
+    assert report.writes is not None and report.writes["0:Neo4jSink"]["facts"]["merged"] == 1
+
+    # The same three jobs one after another write the same fact, score included.
+    alone = Versioned()
+    for doc in ("a", "c", "b"):
+        _job(alone, doc)
+    after = alone.held()
+    for key in ("support", "support_sources", "confidence", "verdict"):
+        assert held[key] == after[key], key
+    assert sorted(held["evidence_doc_ids"]) == sorted(after["evidence_doc_ids"])
+
+
+def test_a_source_retracted_meanwhile_does_not_come_back() -> None:
+    """Release audit 4, the verifier's race: B reads [a, x]; x is deleted; B wrote [a, b, x]."""
+    store = Versioned()
+    _job(store, "a")
+    _job(store, "x")
+    assert store.held()["support_sources"] == ["doc:a", "doc:x"]
+
+    def delete_x() -> None:
+        Reconciler([Neo4jSink(driver=store)]).delete(["x"], at=WHEN)
+
+    _job(store, "b", meanwhile=delete_x)
+    held = store.held()
+    assert held["support_sources"] == ["doc:a", "doc:b"]
+    assert "x" not in held["evidence_doc_ids"] and held["support"] == 2
+
+
+def test_a_fact_retracted_whole_meanwhile_is_not_written_back() -> None:
+    """Every source this job brought was deleted while it ran: the reconciler's state stands."""
+    store = Versioned()
+    _job(store, "a")
+
+    def delete_a() -> None:
+        Reconciler([Neo4jSink(driver=store)]).delete(["a"], at=WHEN)
+
+    report = _job(store, "a", meanwhile=delete_a)
+    held = store.held()
+    assert (held["support"], held["retired_at"]) == (0, WHEN)
+    assert report.writes is not None and report.writes["0:Neo4jSink"]["facts"]["skipped"] == 1
+
+
+def test_a_write_that_keeps_finding_the_fact_moved_gives_up_and_says_so() -> None:
+    class Restless(Versioned):
+        """Another writer gets in before every write."""
+
+        def write_fact(self, cypher: str, rows: list[dict[str, Any]]) -> tuple[Any, Any]:
+            for row in rows:
+                if row["signature"] in self.rels:
+                    held = self.rels[row["signature"]]
+                    held[VERSION] = int(held.get(VERSION) or 0) + 1
+            return super().write_fact(cypher, rows)
+
+    store = Restless()
+    _job(store, "a")
+    with pytest.raises(RuntimeError, match=r"moved under another writer again after 3 merges"):
+        _job(store, "b")
+
+
+def test_a_write_that_read_nothing_writes_as_it_always_did() -> None:
+    """No store merge, no version to compare: the row is written, and the version counts it."""
+    store = Versioned()
+    sink = Neo4jSink(driver=store, ontology=WORKS)
+    (fact,) = SignatureCorroborator().corroborate([_employed("a")])
+    sink.write(KnowledgeGraph(facts=(fact,)))
+    sink.write(KnowledgeGraph(facts=(fact,)))
+    assert store.held()[VERSION] == 2
+    rows = [row for _, params in store.writes for row in params.get("rows", ()) if "props" in row]
+    assert rows and all("version" not in row for row in rows)
+
+
+@pytest.mark.skipif(not os.environ.get("NEO4J_URI"), reason="NEO4J_URI is not set")
+def test_two_writers_at_once_keep_every_source_in_a_live_neo4j() -> None:
+    """Release audit 4 on a real server: two jobs read one fact, then write it at once.
+
+    Both have read [a] before either writes (a barrier between the store merge
+    and the write); then the one that finds the fact moved merges again. Then
+    the verifier's race: a source deleted between a job's read and its write
+    stays deleted. Types and predicates are suffixed, so a shared server is
+    left as found.
+    """
+    import threading
+
+    pytest.importorskip("neo4j")
+    suffix = uuid.uuid4().hex[:8]
+    person, company, employer = f"Person_{suffix}", f"Company_{suffix}", f"employer_{suffix}"
+    ontology = Ontology.from_dict(
+        {
+            "types": {person: {}, company: {}},
+            "predicates": {employer: {"domain": [person], "range": company}},
+        }
+    )
+    ada = ADA.model_copy(update={"type": person, "key": f"p:ada:{suffix}"})
+    acme = ACME.model_copy(update={"type": company, "key": f"c:acme:{suffix}"})
+
+    def claim(doc: str) -> Fact:
+        return Fact(subject=ada, predicate=employer, object_entity=acme, evidence=(_evidence(doc),))
+
+    mine = f"MATCH (n) WHERE n:`{person}` OR n:`{company}` "
+    created = [
+        re.search(r"CREATE (?:FULLTEXT )?(CONSTRAINT|INDEX) (\S+) IF NOT EXISTS", s)
+        for s in Neo4jConstrainer().schema(ontology)
+    ]
+    auth = (os.environ.get("NEO4J_USER", "neo4j"), os.environ.get("NEO4J_PASSWORD", ""))
+    with Neo4jSink(os.environ["NEO4J_URI"], auth, ontology=ontology) as first:
+        driver = first._driver
+        barrier = threading.Barrier(2, timeout=60)
+
+        class Together(PassThroughGate):
+            def validate(self, fact: Fact, ontology: Ontology) -> Any:
+                barrier.wait()
+                return super().validate(fact, ontology)
+
+        def job(doc: str, gate: Any = None) -> Any:
+            sink = Neo4jSink(driver=driver, ontology=ontology)
+            validator = Validator(
+                ontology, grounder=PassThroughGrounder(), gate=gate or PassThroughGate(),
+                sinks=[sink],
+            )  # fmt: skip
+            return validator.validate([claim(doc)], [Document(id=doc, text=TEXT)])[1]
+
+        def held() -> tuple[int, list[str], int]:
+            (record,) = driver.execute_query(
+                f"MATCH (:`{person}`)-[r:`{employer}`]->(:`{company}`) "
+                "RETURN r.support AS support, r.support_sources AS sources, "
+                "r.`odke.version` AS version"
+            ).records
+            return record["support"], sorted(record["sources"]), record["version"]
+
+        try:
+            first.bootstrap(ontology)
+            driver.execute_query("CALL db.awaitIndexes(300)")
+            job("doc-a")
+            failures: list[BaseException] = []
+
+            def concurrently(doc: str) -> None:
+                try:
+                    job(doc, Together())
+                except BaseException as exc:  # noqa: BLE001 - every failure is the finding
+                    failures.append(exc)
+
+            threads = [threading.Thread(target=concurrently, args=(d,)) for d in ("doc-b", "doc-c")]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            assert failures == []
+            assert held() == (3, ["doc:doc-a", "doc:doc-b", "doc:doc-c"], 3)
+
+            # Deleted between a job's read and its write: it does not come back.
+            def delete_c() -> None:
+                Reconciler([Neo4jSink(driver=driver)]).delete(["doc-c"])
+
+            job("doc-d", Meanwhile(delete_c))
+            support, sources, _ = held()
+            assert (support, sources) == (3, ["doc:doc-a", "doc:doc-b", "doc:doc-d"])
         finally:
             driver.execute_query(mine + "DETACH DELETE n")
             for match in created:

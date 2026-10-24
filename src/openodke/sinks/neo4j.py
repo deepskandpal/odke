@@ -98,8 +98,13 @@ _PROVENANCE = frozenset(
         "evidence_retrieved_at",
         # The tenant a store keys the fact under (#159).
         TENANT,
+        # How many times the relationship was written: the compare-and-set's (DECISIONS #51).
+        "odke.version",
     }
 )
+# A fact relationship's write count. A write that read version n writes only where
+# the store still holds n, and makes it n + 1; the reconciler's rewrite counts too.
+VERSION = "odke.version"
 # Node property names the sink writes from `Entity` fields; an attribute or a
 # projected predicate with one of these names is prefixed, never merged into.
 _ENTITY_FIELDS = frozenset(
@@ -635,16 +640,30 @@ def _entity_cypher(label: str) -> str:
     )
 
 
+# The compare-and-set every fact statement ends with (DECISIONS #51). The lock comes
+# first: under read-committed, a version read before it can be stale, and two writers
+# would both pass. A row whose `version` is the one held is written, `=` not `+=`, so a
+# rewritten fact replaces what its relationship says (a conflict stamp from a run that
+# had a rival does not outlive the rival), and the version counts the write. A row
+# with no `version` read nothing first, and is written as it always was. One whose
+# version moved is left, and `write()` merges it again with what the store now holds.
+_COMPARE_AND_SET = (
+    f"SET r.{_ident('odke.lock')} = true\n"
+    f"WITH r, row, coalesce(r.{_ident(VERSION)}, 0) AS held\n"
+    f"REMOVE r.{_ident('odke.lock')}\n"
+    "WITH r, row, held, row.version IS NULL OR row.version = held AS fits\n"
+    "FOREACH (ignored IN CASE WHEN fits THEN [1] ELSE [] END |\n"
+    f"  SET r = row.props, r.{_ident(VERSION)} = held + 1)"
+)
+
+
 def _edge_cypher(subject_type: str, predicate: str, object_type: str) -> str:
-    # `=`, not `+=`: a rewritten fact replaces what its relationship says, so a
-    # conflict stamp from a run that had a rival does not outlive the rival. The
-    # props carry the signature, so the key the MERGE matched on survives.
+    # The props carry the signature, so the key the MERGE matched on survives.
     return (
         "UNWIND $rows AS row\n"
         f"MATCH (s:{_ident(subject_type)} {{key: row.subject_key}}) WHERE {_owned('s')}\n"
         f"MATCH (o:{_ident(object_type)} {{key: row.object_key}}) WHERE {_owned('o')}\n"
-        f"MERGE (s)-[r:{_ident(predicate)} {{signature: row.signature}}]->(o)\n"
-        "SET r = row.props"
+        f"MERGE (s)-[r:{_ident(predicate)} {{signature: row.signature}}]->(o)\n" + _COMPARE_AND_SET
     )
 
 
@@ -655,8 +674,17 @@ def _claim_cypher(subject_type: str, predicate: str) -> str:
         f"MERGE (c:{_ident(CLAIM_LABEL)} {{signature: row.signature}})\n"
         "SET c.predicate = row.predicate, c.subject_key = row.subject_key,\n"
         "    c.subject_type = row.subject_type, c.value = row.value\n"
-        f"MERGE (s)-[r:{_ident(predicate)} {{signature: row.signature}}]->(c)\n"
-        "SET r = row.props"
+        f"MERGE (s)-[r:{_ident(predicate)} {{signature: row.signature}}]->(c)\n" + _COMPARE_AND_SET
+    )
+
+
+def _held_cypher(predicate: str) -> str:
+    """What the store holds under some signatures of `predicate`: inside a write, the rows
+    a compare-and-set just locked, read again."""
+    return (
+        "UNWIND $rows AS row\n"
+        f"MATCH ()-[r:{_ident(predicate)} {{signature: row.signature}}]->()\n"
+        "RETURN row.signature AS signature, properties(r) AS props"
     )
 
 
@@ -743,12 +771,31 @@ def checked_cypher(predicate: str, *, tenant: bool = False) -> str:
     )
 
 
+def _locked_cypher(predicate: str) -> str:
+    """The relationships a retraction found, each locked, then read again (DECISIONS #51).
+
+    Found by signature through the uniqueness constraint's index. Once locked,
+    no other writer can change one before the retraction commits, and what it
+    reads is what the last writer committed, so it retracts from that.
+    """
+    return (
+        "UNWIND $rows AS row\n"
+        f"MATCH (s)-[r:{_ident(predicate)} {{signature: row.signature}}]->(o)\n"
+        f"SET r.{_ident('odke.lock')} = true\n"
+        f"REMOVE r.{_ident('odke.lock')}\n"
+        "RETURN elementId(r) AS id, type(r) AS predicate, properties(r) AS props,\n"
+        "       s.key AS subject_key, labels(s) AS subject_labels,\n"
+        "       o.key AS object_key, labels(o) AS object_labels, o.value AS value"
+    )
+
+
 def _retract_cypher(predicate: str) -> str:
-    # Found again by its MERGE key, through the uniqueness constraint's index.
+    # Found again by its MERGE key, through the uniqueness constraint's index; the
+    # version counts the rewrite, so a writer that read before it merges again.
     return (
         "UNWIND $rows AS row\n"
         f"MATCH ()-[r:{_ident(predicate)} {{signature: row.signature}}]->()\n"
-        "SET r += row.props"
+        f"SET r += row.props, r.{_ident(VERSION)} = coalesce(r.{_ident(VERSION)}, 0) + 1"
     )
 
 
@@ -806,27 +853,57 @@ def _connect(uri: str, auth: Any) -> Any:
 
 # What `write()` adds to each statement it runs: how many rows reached the MERGE.
 COUNTED = "\nRETURN count(*) AS reached"
+# What it adds to a fact statement: the rows written, and the signatures whose
+# version moved since they were read (DECISIONS #51).
+COMPARED = (
+    "\nRETURN count(CASE WHEN fits THEN 1 END) AS reached,\n"
+    "       collect(CASE WHEN fits THEN null ELSE row.signature END) AS moved"
+)
 # Which statements' rows the write report counts, and as what.
 _COUNTED_AS = {"entity": "entities", "edge": "facts", "claim": "facts", "link": "links"}
+_FACTS = ("edge", "claim")
+# How many times a write merges a moved fact again before it gives up. Inside one
+# transaction the rows it merged again are locked, so the first try holds.
+REBASES = 3
 
 
-def _unwind(
-    tx: Any, pieces: Sequence[tuple[str, list[dict[str, Any]]]]
-) -> list[tuple[int, int, int]]:
-    """Each piece in one transaction: rows that reached its MERGE, nodes and relationships made."""
-    out: list[tuple[int, int, int]] = []
-    for cypher, rows in pieces:
-        result = tx.run(cypher + COUNTED, rows=rows)
-        found = result.data()
-        counters = getattr(result.consume(), "counters", None)
-        out.append(
-            (
-                int(found[0]["reached"]) if found else 0,
-                int(getattr(counters, "nodes_created", 0)),
-                int(getattr(counters, "relationships_created", 0)),
-            )
-        )
-    return out
+class _Ran(NamedTuple):
+    """What one statement's rows did: reached its write, nodes and relationships made, and
+    for a fact statement the signatures whose version moved since they were read."""
+
+    reached: int
+    nodes: int
+    relationships: int
+    moved: tuple[str, ...] = ()
+
+
+def _run(tx: Any, statement: Statement, rows: list[dict[str, Any]]) -> _Ran:
+    fact = statement.kind in _FACTS
+    result = tx.run(statement.cypher + (COMPARED if fact else COUNTED), rows=rows)
+    found = result.data()
+    counters = getattr(result.consume(), "counters", None)
+    return _Ran(
+        int(found[0]["reached"]) if found else 0,
+        int(getattr(counters, "nodes_created", 0)),
+        int(getattr(counters, "relationships_created", 0)),
+        tuple(str(m) for m in found[0].get("moved") or ()) if found and fact else (),
+    )
+
+
+def _versioned(statement: Statement, read: Mapping[str, tuple[int, Fact | None]]) -> Statement:
+    """A fact statement whose rows carry the version `stored()` read under their signature."""
+    if statement.kind not in _FACTS or not read:
+        return statement
+    rows = [
+        {**row, "version": read[row["signature"]][0]} if row["signature"] in read else row
+        for row in statement.rows
+    ]
+    return statement._replace(rows=rows)
+
+
+def version_of(props: Mapping[str, Any] | None) -> int:
+    """How many times a fact relationship was written; 0 for one never written, or before #51."""
+    return int((props or {}).get(VERSION) or 0)
 
 
 class Neo4jSink:
@@ -927,6 +1004,12 @@ class Neo4jSink:
         self.ontology = ontology
         # What `stored()` reads through; made on first use, and again after a bootstrap.
         self._reader: Neo4jLookup | None = None
+        # What `stored()` read, by signature key, for the next write to compare against
+        # (DECISIONS #51): the version held, and the stored fact, or None for none.
+        self._read: dict[str, tuple[int, Fact | None]] = {}
+        # How a moved fact is merged and scored again: the job's stages (`merges_with`).
+        self._merging: Any = None
+        self._scoring: Any = None
         if ontology is not None:
             ontology.warn_if_unreviewed("Neo4jSink will shape its writes")
 
@@ -935,26 +1018,161 @@ class Neo4jSink:
         return plan(kg, ontology=self.ontology, tenant=self.tenant)
 
     def write(self, kg: KnowledgeGraph) -> None:
+        """Write the graph; a fact whose stored version moved since `stored()` read it is merged
+        again with what the store now holds, in the same transaction (DECISIONS #51)."""
+        read, self._read = self._read, {}
+        facts = {signature_of(fact, self.tenant): fact for fact in kg.facts}
+        rebased: dict[str, Fact | None] = {}
+        statements = [_versioned(statement, read) for statement in self.statements(kg)]
         with self._driver.session(**self._session_config()) as session:
-            for pieces in transactions(self.statements(kg), self.batch_size):
+            for pieces in transactions(statements, self.batch_size):
                 counted = session.execute_write(
-                    _unwind, [(statement.cypher, rows) for statement, rows in pieces]
+                    self._unwind, pieces, facts, read, rebased, kg.created_at
                 )
                 # Counted once the transaction has committed.
                 self.writes.transactions += 1
-                for (statement, rows), (reached, nodes, relationships) in zip(
-                    pieces, counted, strict=True
-                ):
+                for (statement, rows), ran in zip(pieces, counted, strict=True):
                     kind = _COUNTED_AS.get(statement.kind)
                     if kind is None:
                         continue
-                    made = nodes if statement.kind == "entity" else relationships
+                    made = ran.nodes if statement.kind == "entity" else ran.relationships
                     self.writes.add(
                         kind,
                         written=made,
-                        merged=max(0, reached - made),
-                        skipped=max(0, len(rows) - reached),
+                        merged=max(0, ran.reached - made),
+                        skipped=max(0, len(rows) - ran.reached),
                     )
+            pieces = self._projected_again(facts, rebased)
+            if pieces:
+                session.execute_write(self._unwind, pieces, facts, read, rebased, kg.created_at)
+
+    def _projected_again(
+        self, facts: Mapping[str, Fact], rebased: Mapping[str, Fact | None]
+    ) -> list[tuple[Statement, list[dict[str, Any]]]]:
+        """The projections of the subjects whose claims were merged again: their support moved."""
+        claims = [f for f in rebased.values() if f is not None and f.object_entity is None]
+        if not claims:
+            return []
+        touched = {
+            (f.subject.type, f.predicate, scoped(f.subject.key, self.tenant)) for f in claims
+        }
+        now = [rebased.get(key, fact) for key, fact in facts.items()]
+        graph = KnowledgeGraph(facts=tuple(f for f in now if f is not None))
+        out: list[tuple[Statement, list[dict[str, Any]]]] = []
+        for statement in plan(graph, ontology=self.ontology, tenant=self.tenant):
+            if statement.kind != "projection":
+                continue
+            rows = [r for r in statement.rows if (*statement.names, r["subject_key"]) in touched]
+            if rows:
+                out.append((statement, rows))
+        return out
+
+    def _unwind(
+        self,
+        tx: Any,
+        pieces: Sequence[tuple[Statement, list[dict[str, Any]]]],
+        facts: Mapping[str, Fact],
+        read: Mapping[str, tuple[int, Fact | None]],
+        rebased: dict[str, Fact | None],
+        created_at: datetime,
+    ) -> list[_Ran]:
+        """Each piece in one transaction; a fact row whose version moved, merged again.
+
+        The compare-and-set left a moved row locked, so it is read again as the
+        other writer committed it, merged with what this job's fact brought,
+        scored again with no model call, and written against the version now
+        held. A fact the store now states, where this one was only derived, is
+        dropped, as the store merge drops it (DECISIONS #28).
+        """
+        out: list[_Ran] = []
+        for statement, rows in pieces:
+            ran = _run(tx, statement, rows)
+            reached, nodes, relationships, moved = ran
+            for _ in range(REBASES):
+                if not moved:
+                    break
+                again = self._rebased(tx, statement, rows, moved, facts, read, rebased, created_at)
+                retried = _run(tx, statement, again) if again else _Ran(0, 0, 0)
+                reached += retried.reached
+                nodes += retried.nodes
+                relationships += retried.relationships
+                moved = retried.moved
+            if moved:
+                raise RuntimeError(
+                    f"{len(moved)} facts on {statement.names[1]!r} moved under another writer "
+                    f"again after {REBASES} merges; this transaction wrote nothing. Run the job "
+                    "again: what it brings is merged with what the store then holds"
+                )
+            out.append(_Ran(reached, nodes, relationships))
+        return out
+
+    def _rebased(
+        self,
+        tx: Any,
+        statement: Statement,
+        rows: Sequence[dict[str, Any]],
+        moved: Sequence[str],
+        facts: Mapping[str, Fact],
+        read: Mapping[str, tuple[int, Fact | None]],
+        rebased: dict[str, Fact | None],
+        created_at: datetime,
+    ) -> list[dict[str, Any]]:
+        """The moved rows again: each fact merged with what the store holds now, and its version."""
+        asked = [{"signature": key} for key in dict.fromkeys(moved)]
+        found = tx.run(_held_cypher(statement.names[1]), rows=asked).data()
+        now = {str(row["signature"]): row["props"] for row in found}
+        again: list[dict[str, Any]] = []
+        wanted = set(moved)
+        for row in rows:
+            key = str(row["signature"])
+            if key not in wanted:
+                continue
+            fact = facts[key]
+            props = now.get(key)
+            # A relationship this write's MERGE made and did not fill holds no fact yet.
+            held = stored_fact(fact, props) if props and props.get("fact_id") else None
+            merged = self._rebase(fact, read.get(key, (0, None))[1], held)
+            rebased[key] = merged
+            if merged is None:
+                continue
+            again.append(
+                {
+                    **row,
+                    "props": provenance_of(merged, created_at, self.tenant),
+                    "version": version_of(props),
+                }
+            )
+        return again
+
+    def _rebase(self, fact: Fact, read: Fact | None, now: Fact | None) -> Fact | None:
+        """`fact`, which merged with `read`, merged with `now` instead, and scored again."""
+        from openodke.corroborate.merge import SignatureCorroborator
+        from openodke.corroborate.provenance import SCORE
+        from openodke.corroborate.score import EvidenceScorer
+
+        merging = self._merging
+        if not callable(getattr(merging, "rebase", None)):
+            merging = SignatureCorroborator(self.ontology)
+        merged: Fact | None = merging.rebase(fact, read, now)
+        if merged is None:
+            return None
+        scoring = self._scoring
+        if scoring is None and SCORE in fact.qualifiers:
+            scoring = EvidenceScorer()
+        scored: Fact = scoring.score(merged) if scoring is not None else merged
+        return scored
+
+    def merges_with(self, corroborator: Any, scorer: Any = None) -> None:
+        """The stages that merged and scored what this sink writes, to do it again (#51).
+
+        A fact whose stored version moved between `stored()` and `write()` is
+        merged again by `corroborator.rebase` (a `SignatureCorroborator`'s, by
+        default one on the sink's ontology) and scored again by `scorer` (an
+        `EvidenceScorer` when the fact carries its stamp). The Validator,
+        `Pipeline` and `odke run` hand over their own.
+        """
+        self._merging = corroborator
+        self._scoring = scorer
 
     def scoped(self, tenant: str | None) -> Neo4jSink:
         """This sink's connection, reading and writing `tenant` alone (#159).
@@ -1048,9 +1266,20 @@ class Neo4jSink:
         This makes the sink a `FactLookup`: the Validator hands it to the
         corroborator, which merges each incoming fact with the one stored under
         its signature before anything is written (#153). One read transaction,
-        through the signature indexes `bootstrap()` creates.
+        through the signature indexes `bootstrap()` creates. The sink keeps the
+        version of each relationship it read, and the next `write()` writes a
+        fact only where the store still holds that version (DECISIONS #51).
         """
-        return self._lookup().stored(facts)
+        held = self._lookup().held(facts)
+        out: dict[tuple[Any, ...], Fact] = {}
+        for fact in facts:
+            key = signature_of(fact, self.tenant)
+            props = held.get(key)
+            twin = stored_fact(fact, props) if props is not None else None
+            self._read[key] = (version_of(props), twin)
+            if twin is not None:
+                out.setdefault(fact.signature, twin)
+        return out
 
     def retract(
         self, doc_ids: Collection[str], *, at: datetime, hard: bool = False
@@ -1124,7 +1353,16 @@ class Neo4jSink:
         """One slice: each fact citing `docs`, by element id, before and after; `is` if kept."""
         terms = " OR ".join(_phrase(doc) for doc in docs)
         asked = {"indexes": names, "terms": terms, "tenant": self.tenant}
-        rows = tx.run(_citing(self.tenant), asked).data()
+        found = tx.run(_citing(self.tenant), asked).data()
+        # Each locked, then read again: what another writer committed meanwhile is what
+        # this retracts from, and nobody changes it before this commits (DECISIONS #51).
+        by_predicate: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in found:
+            by_predicate[str(row["predicate"])].append({"signature": row["props"]["signature"]})
+        rows: list[dict[str, Any]] = []
+        for predicate, asked_rows in sorted(by_predicate.items()):
+            unique = list({r["signature"]: r for r in asked_rows}.values())
+            rows.extend(tx.run(_locked_cypher(predicate), rows=unique).data())
         # Under the tenant's own keys, so a derived fact's stamp names its parent (#159).
         before = [relationship_fact(row, self.tenant) for row in rows]
         after = reconciled(before, set(docs), at)
@@ -1603,9 +1841,17 @@ class Neo4jLookup:
         rather than add to it. A predicate the ontology does not declare gets
         no index from a bootstrap, so its facts are not read, and it warns once.
         """
-        by_key: dict[str, list[Fact]] = defaultdict(list)
+        held = self.held(facts)
+        out: dict[tuple[Any, ...], Fact] = {}
         for fact in facts:
-            by_key[signature_of(fact, self.tenant)].append(fact)
+            props = held.get(signature_of(fact, self.tenant))
+            if props is not None:
+                out.setdefault(fact.signature, stored_fact(fact, props))
+        return out
+
+    def held(self, facts: Sequence[Fact]) -> dict[str, Mapping[str, Any]]:
+        """The properties of each relationship the store holds under these facts' signatures,
+        by signature key: what `stored()` reads facts back from."""
         queries = self.fact_statements(facts)
         if not queries:
             return {}
@@ -1613,12 +1859,13 @@ class Neo4jLookup:
             results = session.execute_read(_read_all, queries)
         self.stats["transactions"] += 1
         self.stats["statements"] += len(queries)
-        out: dict[tuple[Any, ...], Fact] = {}
-        for rows in results:
-            for row in rows:
-                for fact in by_key.get(row["signature"], ()):
-                    out.setdefault(fact.signature, stored_fact(fact, row["props"]))
-        return out
+        # A relationship a refused write made and never filled holds no fact.
+        return {
+            str(row["signature"]): row["props"]
+            for rows in results
+            for row in rows
+            if row["props"].get("fact_id") is not None
+        }
 
     def fact_statements(self, facts: Sequence[Fact]) -> list[LookupQuery]:
         """What `stored()` would read, without reading it (the indexes are read once)."""

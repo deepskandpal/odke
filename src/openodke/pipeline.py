@@ -185,6 +185,12 @@ class Pipeline:
             PassThroughConstrainer() if constrainer is None else constrainer
         )
         self.sinks = tuple(sinks)
+        # A store that compares and sets merges a fact that moved again with this
+        # pipeline's own corroborator and scorer (DECISIONS #51).
+        for sink in self.sinks:
+            merging = getattr(sink, "merges_with", None)
+            if callable(merging):
+                merging(self.corroborator, self.scorer)
         # On whenever the ontology declares a pair, unless the caller says not.
         self.inverses = bool(ontology.inverses) if inverses is None else inverses
         self.coverage = coverage

@@ -40,6 +40,7 @@ from openodke import (
 from openodke.corroborate import CONFLICT, SignatureCorroborator
 from openodke.eval.sinks import assert_idempotent
 from openodke.sinks.neo4j import (
+    COMPARED,
     COUNTED,
     EXTRA_HINT,
     Neo4jSink,
@@ -78,7 +79,12 @@ class _Tx:
     def run(self, cypher: str, parameters: dict[str, Any] | None = None, **kw: Any) -> _Result:
         params = {**(parameters or {}), **kw}
         self.driver.calls.append((self.mode, cypher, params))
-        if not cypher.endswith(COUNTED) or any(n in cypher for n in self.driver.answers):
+        # A store that keeps versions answers a compare-and-set itself.
+        write_fact = getattr(self.driver, "write_fact", None)
+        if cypher.endswith(COMPARED) and callable(write_fact):
+            return _Result(*write_fact(cypher, params.get("rows", [])))
+        counted = cypher.endswith((COUNTED, COMPARED))
+        if not counted or any(n in cypher for n in self.driver.answers):
             return _Result(self.driver.answer(cypher))
         # A counted write: every row reaches its MERGE, and one never seen is made, as a
         # store that honours MERGE would make it.
@@ -93,7 +99,8 @@ class _Tx:
             nodes_created=made if node else 0,
             relationships_created=0 if node or "SET s." in cypher else made,
         )
-        return _Result([{"reached": len(rows)}], counters)
+        # A fact statement compares and sets: here no version ever moves.
+        return _Result([{"reached": len(rows), "moved": []}], counters)
 
 
 class _Session:
@@ -150,7 +157,7 @@ class FakeDriver:
     def writes(self) -> list[tuple[str, dict[str, Any]]]:
         """Each statement written, as planned: the sink adds `COUNTED` to count its rows."""
         return [
-            (cypher.removesuffix(COUNTED), params)
+            (cypher.removesuffix(COUNTED).removesuffix(COMPARED), params)
             for mode, cypher, params in self.calls
             if mode == "write"
         ]
@@ -402,7 +409,8 @@ def test_a_rewritten_fact_replaces_its_properties_rather_than_adding_to_them() -
         "`sells`",
     }
     for cypher, params in fact_statements:
-        assert cypher.endswith("SET r = row.props")
+        # `=`, not `+=`, where the version read is still held (DECISIONS #51).
+        assert cypher.endswith("SET r = row.props, r.`odke.version` = held + 1)")
         # Replacing keeps what the MERGE matched on: the key is in the payload.
         assert all(row["props"]["signature"] == row["signature"] for row in params["rows"])
 
