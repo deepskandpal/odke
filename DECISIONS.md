@@ -1605,9 +1605,11 @@ what needs a person (`HUMAN.md`).
 `tests/rules/`: R1, a failure never becomes a number; R2, the tenant goes
 everywhere; R3, a metric is computed in one place; R4, a recorded answer
 never passes for a real one; R5, secrets stay home; R6, intervals behave.
-Each lists its entry points, every command that scores, every sink and read
-path, every place a client is cached or resolved, and a check beside it fails
-when a new one appears that the rule does not list. A failure message is the
+Each lists its entry points: every command that scores, every sink and read
+path, every place a client is cached or resolved. Where the list can be read
+off the code (the sinks a run can write, the places a client is cached, the
+modules that bind the model registry), a check beside the rule fails when a
+new one appears that the rule does not list. A failure message is the
 fix ("Every read path must filter on `tenant`"), so an agent reads the fix in
 the error. The rules run on recorded answers, with no network, in about
 fifteen seconds, after every edit under `src/` (`.claude/settings.json`) and
@@ -1633,7 +1635,7 @@ of it. Merging stays the maintainer's.
 *Cost:* fifteen seconds on every edit to `src/` and in every CI run. R2's
 store is a fake that honours only the tenant filters this codebase writes, so
 a read written another way has to be taught to it. Rules over the whole
-codebase also find what no audit listed: R1 found three commands that score a
-run whose every model call failed, which wait as strict xfails until the
-maintainer places them. And every known break is a marker someone has to
-delete.
+codebase also find what no audit listed: R1 found five commands that score a
+run whose every model call failed, and R2 an RDF sink that writes two
+tenants' identical IRIs. They wait as strict xfails until the maintainer
+places them. And every known break is a marker someone has to delete.
