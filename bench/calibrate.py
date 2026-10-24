@@ -75,7 +75,7 @@ from openodke.ground.llm import LLMGrounder, _schema_for, build_messages, render
 from openodke.ground.span import located
 from openodke.llm import CachedClient, Completion, ModelRoles, ModelSpec, RecordedClient
 from openodke.llm.base import LLMClient, Message
-from openodke.llm.budget import estimate_tokens
+from openodke.llm.budget import Budget, BudgetExceeded, Ledger, estimate_tokens
 from openodke.llm.cache import cache_key, replay_directory
 from openodke.llm.roles import DEFAULT_GROUND
 from openodke.prompts import get as get_prompt
@@ -253,11 +253,15 @@ class Meter:
                 int(stored.get("prompt_tokens") or 0),
                 int(stored.get("completion_tokens") or 0),
             )
+        usage = completion.raw.get("usage") if isinstance(completion.raw, dict) else None
+        details = usage.get("completion_tokens_details") if isinstance(usage, dict) else None
+        reasoning = details.get("reasoning_tokens") if isinstance(details, dict) else None
         with self._lock:
             if not completion.cached:
                 self.live["calls"] += 1
                 self.live["input_tokens"] += completion.prompt_tokens
                 self.live["output_tokens"] += completion.completion_tokens
+                self.live["reasoning_tokens"] += int(reasoning or 0)
                 self.live["usd"] += completion.cost_usd or 0.0
                 self.live["unpriced"] += completion.cost_usd is None
             draw = self.priced[spec.repeat]
@@ -274,7 +278,9 @@ class Meter:
         return spend.cost(model, tokens_in, tokens_out) / calls * 1000
 
 
-def client_for(model: str, cache: Path | None, replay: Path | None = None) -> Meter:
+def client_for(
+    model: str, cache: Path | None, replay: Path | None = None, ledger: Ledger | None = None
+) -> Meter:
     """The model's client behind the cache, or, with `replay`, recorded answers (no call).
 
     Recorded answers are cached apart, under `<cache>/replay/<the file's hash>`,
@@ -283,7 +289,12 @@ def client_for(model: str, cache: Path | None, replay: Path | None = None) -> Me
     caches the same recording in (`openodke.llm.cache.replay_directory`).
     """
     if replay is None:
-        return Meter(CachedClient(roles_for(model).client_for("ground"), cache))
+        inner: LLMClient = roles_for(model).client_for("ground")
+        if ledger is not None:
+            # The run's budget, in front of the provider and behind the cache: a
+            # cached answer costs nothing, and a call past the budget is never made.
+            inner = ledger.client(inner)
+        return Meter(CachedClient(inner, cache))
     recorded = RecordedClient.from_fixture(replay)
     return Meter(
         CachedClient(recorded, replay_directory(cache, replay) if cache is not None else None)
@@ -387,19 +398,31 @@ def plan_facts(model: str, items: Sequence[FItem], store: Any) -> Plan:
     return found
 
 
-def priced(model: str, plans: Sequence[Plan]) -> list[dict[str, Any]]:
-    """Each plan's calls and estimated USD, with the schema overhead the cache measured.
+def priced(
+    model: str,
+    plans: Sequence[Plan],
+    *,
+    overhead: float | None = None,
+    scale: float = 1.0,
+    max_tokens: int = 256,
+) -> list[dict[str, Any]]:
+    """Each plan's calls and estimated USD, and the worst case.
 
-    Without a cached answer to measure it on, a schema costs what its
-    characters reckon to.
+    Input tokens are the reckoning plus the schema overhead the cache measured
+    (`overhead`, a provider's own when this model has no cached answer to
+    measure), times `scale`: a model with another tokenizer counts the same text
+    as more or fewer tokens, measured with the provider's own counter. Without
+    any measured overhead, a schema costs what its characters reckon to. The
+    worst case is every uncached reply running to `max_tokens`.
     """
-    overheads = [o for p in plans for o in p.overheads]
-    overhead = sum(overheads) / len(overheads) if overheads else None
+    own = [o for p in plans for o in p.overheads]
+    measured = sum(own) / len(own) if own else overhead
     out = []
     for p in plans:
-        framing = round(p.schema_calls * overhead) if overhead is not None else p.schema_tokens
-        tokens_in = p.input_tokens + framing
-        usd = spend.cost(model, tokens_in, p.output_tokens) if model in spend.PRICES else None
+        framing = round(p.schema_calls * measured) if measured is not None else p.schema_tokens
+        tokens_in = round((p.input_tokens + framing) * scale)
+        asked = p.calls - p.cached
+        priceable = model in spend.PRICES
         out.append(
             {
                 "job": p.job,
@@ -407,8 +430,12 @@ def priced(model: str, plans: Sequence[Plan]) -> list[dict[str, Any]]:
                 "cached": p.cached,
                 "input_tokens": tokens_in,
                 "output_tokens": p.output_tokens,
-                "usd": usd,
-                "schema_overhead": None if overhead is None else round(overhead, 1),
+                "usd": spend.cost(model, tokens_in, p.output_tokens) if priceable else None,
+                "worst_usd": (
+                    spend.cost(model, tokens_in, asked * max_tokens) if priceable else None
+                ),
+                "schema_overhead": None if measured is None else round(measured, 1),
+                "scale": scale,
             }
         )
     return out
@@ -550,17 +577,42 @@ def run_model(
     noise: Mapping[str, Any],
     f: list[FItem],
 ) -> dict[str, Any]:
-    """Every asked judge on one model: cards, items, and the results the table reads."""
+    """Every asked judge on one model: cards, items, and the results the table reads.
+
+    What each job spent goes in the ledger even when a job stops partway (a
+    budget stop, a provider error). A job with a failed or unasked call makes
+    no card (rule R1): its numbers would score answers that were never given.
+    """
+    result: dict[str, Any] = {"model": model, "grounding": {}, "cards": [], "failed": []}
+    spent_rows: list[tuple[str, Meter]] = []
+    try:
+        _judge_all(model, args, out, g, r, noise, f, result, spent_rows)
+    finally:
+        result["spent"] = _record(model, args, spent_rows)
+    return result
+
+
+def _judge_all(
+    model: str,
+    args: argparse.Namespace,
+    out: Path,
+    g: list[GItem],
+    r: list[RItem],
+    noise: Mapping[str, Any],
+    f: list[FItem],
+    result: dict[str, Any],
+    spent_rows: list[tuple[str, Meter]],
+) -> None:
     slug = Card.model_construct(prompt="", model=model).id.split("__")[1]  # type: ignore[call-arg]
-    result: dict[str, Any] = {"model": model, "grounding": {}, "cards": []}
     by_id = {item.id: item for item in g}
-    spent_rows = []
+    ledger = args.ledgers.get(spend.provider(model))
     if "ground" in args.judges:
         per_variant: dict[str, list[JudgedFact]] = {}
         meters = {}
-        for variant in args.variants:
-            meter = client_for(model, args.cache, args.replay)
+        for variant in variants_for(args, model):
+            meter = client_for(model, args.cache, args.replay, ledger)
             meters[variant] = meter
+            spent_rows.append((f"ground {variant}", meter))
             grounder = grounder_for(model, variant, meter)
             judged = ground_labelled(
                 [item.row for item in g],
@@ -569,9 +621,12 @@ def run_model(
                 planted=[item.planted for item in g],
                 ids=[item.id for item in g],
             )
-            per_variant[variant] = judged.facts
             _write_items(out / "items" / slug / f"ground-{variant}.jsonl", judged.facts, by_id)
-            spent_rows.append((f"ground {variant}", meter))
+            failed = sum(int(each.stats.get("failed", 0)) for each in judged.grounders)
+            if failed:
+                result["failed"].append(f"ground {variant}: {failed} failed call(s), no card")
+                continue
+            per_variant[variant] = judged.facts
         for variant, facts in per_variant.items():
             prompt, claim_format = VARIANTS[variant]
             grounder = grounder_for(model, variant, meters[variant])
@@ -609,6 +664,7 @@ def run_model(
         dev = {
             v: [x for x in facts if by_id[x.id].split == "dev"] for v, facts in per_variant.items()
         }
+        result["by_variant"] = per_variant
         if P1 in per_variant:
             result["contest"] = contest(gate)
             result["contest_dev"] = contest(dev)
@@ -616,10 +672,11 @@ def run_model(
                 result["adjudication"] = adjudication(per_variant[P1], by_id)
             result["p1"] = per_variant[P1]
     if "pair" in args.judges and r:
-        meter = client_for(model, args.cache, args.replay)
+        meter = client_for(model, args.cache, args.replay, ledger)
+        spent_rows.append(("pair judge", meter))
         judge = PairJudge(roles_for(model), client=meter, on_decision="link")
         decisions = judge.judge_many([(i.a, i.b, None) for i in r])
-        judged = [
+        judged_pairs = [
             JudgedPair(
                 id=i.id,
                 same=i.same,
@@ -628,29 +685,35 @@ def run_model(
             )
             for i, d in zip(r, decisions, strict=True)
         ]
-        made = Made(
-            prompt=pair_module.PROMPT.key,
-            prompts=prompt_hashes([pair_module.PROMPT.key, pair_module.FRAME.key]),
-            model=model,
-            labels=LabelSet(
-                name="R",
-                version=R_VERSION,
-                sha256=label_hash((i.id, i.same) for i in r),
-                split="gate",
-                n=len(r),
-            ),
-            cost_per_1000=meter.per_1000(model),
-        )
-        card = pair_card(judged, made, audited=int(noise["audited"]), label_noise=noise["noise"])
-        card.write(out / "cards")
-        result["pair"] = card
-        _write_pairs(out / "items" / slug / "pair.jsonl", judged)
-        spent_rows.append(("pair judge", meter))
+        _write_pairs(out / "items" / slug / "pair.jsonl", judged_pairs)
+        broken = int(judge.stats.get("failed", 0)) + int(judge.stats.get("unasked", 0))
+        if broken:
+            result["failed"].append(f"pair judge: {broken} failed or unasked call(s), no card")
+        else:
+            made = Made(
+                prompt=pair_module.PROMPT.key,
+                prompts=prompt_hashes([pair_module.PROMPT.key, pair_module.FRAME.key]),
+                model=model,
+                labels=LabelSet(
+                    name="R",
+                    version=R_VERSION,
+                    sha256=label_hash((i.id, i.same) for i in r),
+                    split="gate",
+                    n=len(r),
+                ),
+                cost_per_1000=meter.per_1000(model),
+            )
+            card = pair_card(
+                judged_pairs, made, audited=int(noise["audited"]), label_noise=noise["noise"]
+            )
+            card.write(out / "cards")
+            result["pair"] = card
     if "fact" in args.judges and f:
-        meter = client_for(model, args.cache, args.replay)
-        judge = FactJudge(roles_for(model), client=meter)
-        decided = judge.judge_rows([item.row for item in f])
-        judged = [
+        meter = client_for(model, args.cache, args.replay, ledger)
+        spent_rows.append(("fact-equivalence judge", meter))
+        fact_judge = FactJudge(roles_for(model), client=meter)
+        decided = fact_judge.judge_rows([item.row for item in f])
+        judged_facts = [
             JudgedPair(
                 id=item.id,
                 same=bool(item.same),
@@ -659,19 +722,27 @@ def run_model(
             )
             for item, e in zip(f, decided, strict=True)
         ]
-        _write_pairs(out / "items" / slug / "fact.jsonl", judged)
+        _write_pairs(out / "items" / slug / "fact.jsonl", judged_facts)
+        broken = int(fact_judge.stats.get("failed", 0)) + int(fact_judge.stats.get("unasked", 0))
+        if broken:
+            result["failed"].append(
+                f"fact-equivalence judge: {broken} failed or unasked call(s), no card"
+            )
+            return
         labelled = {item.id: item for item in f}
         result["fact"] = {}
         for split in ("gate", "dev"):
             scored = [
                 j
-                for j in judged
+                for j in judged_facts
                 if labelled[j.id].same is not None and labelled[j.id].split == split
             ]
             if not scored:
                 continue
             unsure = [
-                j for j in judged if labelled[j.id].same is None and labelled[j.id].split == split
+                j
+                for j in judged_facts
+                if labelled[j.id].same is None and labelled[j.id].split == split
             ]
             made = Made(
                 prompt=fact_module.PROMPT.key,
@@ -692,18 +763,27 @@ def run_model(
             card = equivalence_card(scored, made)
             card.write(out / ("cards" if split == "gate" else "cards-dev"))
             result["fact"][split] = card
-        spent_rows.append(("fact-equivalence judge", meter))
-    result["spent"] = []
+
+
+def _record(
+    model: str, args: argparse.Namespace, spent_rows: Sequence[tuple[str, Meter]]
+) -> list[dict[str, Any]]:
+    """One ledger row per job that made a live call: the model and what it cost."""
+    rows = []
     for job, meter in spent_rows:
         live = meter.live
-        if live.get("calls") and args.replay is None:
-            usd = (
-                live["usd"]
-                if not live.get("unpriced")
-                else spend.cost(model, int(live["input_tokens"]), int(live["output_tokens"]))
-            )
-            row = spend.record(
-                f"calibration #134/#135: {job}{f' ({args.who})' if args.who else ''}",
+        if not live.get("calls") or args.replay is not None:
+            continue
+        usd = (
+            live["usd"]
+            if not live.get("unpriced")
+            else spend.cost(model, int(live["input_tokens"]), int(live["output_tokens"]))
+        )
+        reasoning = int(live.get("reasoning_tokens", 0))
+        note = f", {reasoning} of them reasoning" if reasoning else ""
+        rows.append(
+            spend.record(
+                f"calibration #134/#135: {job}{note}{f' ({args.who})' if args.who else ''}",
                 model,
                 calls=int(live["calls"]),
                 input_tokens=int(live["input_tokens"]),
@@ -711,8 +791,8 @@ def run_model(
                 usd=usd,
                 ledger=args.ledger,
             )
-            result["spent"].append(row)
-    return result
+        )
+    return rows
 
 
 def _write_items(path: Path, facts: Sequence[JudgedFact], items: Mapping[str, GItem]) -> None:
@@ -811,9 +891,17 @@ def table(results: Sequence[Mapping[str, Any]], extra: Mapping[str, Any]) -> str
             lines += ["### Pair judge (R gate)", "", f"- {found['pair'].line()}", ""]
         for split, card in (found.get("fact") or {}).items():
             lines += [f"### Fact-equivalence judge (F {split})", "", f"- {card.line()}", ""]
+        for failed in found.get("failed", ()):
+            lines.append(f"- **failed, no card:** {failed}")
         for row in found.get("spent", ()):
             lines.append(f"- spent: {row['who']}: {row['calls']} calls, ${row['usd']}")
         lines.append("")
+    if extra.get("head_to_head"):
+        lines += ["## Model against model, same prompt, gate split, run 1", ""]
+        for name, compared in extra["head_to_head"].items():
+            lines += [f"### {name}", "", "```text", compared.render(), "```", ""]
+    if extra.get("stopped"):
+        lines += [f"**Stopped:** {extra['stopped']}", ""]
     if extra.get("self_preference"):
         sp = extra["self_preference"]
         lines += ["## Self-preference: P1's fail-recall on the same facts", ""]
@@ -834,6 +922,8 @@ def _jsonable(value: Any) -> Any:
         return value.model_dump(mode="json")
     if isinstance(value, Comparison):
         return value.model_dump(mode="json")
+    if isinstance(value, Mapping) and "by_variant" in value:
+        value = {k: v for k, v in value.items() if k != "by_variant"}
     if isinstance(value, JudgedFact):
         return {"id": value.id, "label": value.label, "runs": list(value.runs)}
     if isinstance(value, Mapping):
@@ -853,17 +943,46 @@ def estimate(
 ) -> dict[str, list[dict[str, Any]]]:
     """Per model, each job's calls, the share the cache holds, tokens and USD. No call is made."""
     store = CachedClient(_Never(), args.cache).store if args.cache is not None else None
-    out = {}
+    planned: dict[str, list[Plan]] = {}
     for model in args.model:
         plans: list[Plan] = []
         if "ground" in args.judges:
-            plans += [plan_grounding(model, v, g, args.runs, store) for v in args.variants]
+            plans += [
+                plan_grounding(model, v, g, args.runs, store) for v in variants_for(args, model)
+            ]
         if "pair" in args.judges:
             plans.append(plan_pairs(model, r, store))
         if "fact" in args.judges:
             plans.append(plan_facts(model, f, store))
-        out[model] = priced(model, plans)
-    return out
+        planned[model] = plans
+    # A provider's schema overhead, from any of its models' cached answers.
+    by_provider: dict[str, list[int]] = defaultdict(list)
+    for model, plans in planned.items():
+        by_provider[spend.provider(model)] += [o for p in plans for o in p.overheads]
+    if store is not None:
+        for provider, model in getattr(args, "overhead_from", {}).items():
+            if not by_provider.get(provider):
+                plans = [plan_grounding(model, P1, g, 1, store)] if g else []
+                by_provider[provider] += [o for p in plans for o in p.overheads]
+    return {
+        model: priced(
+            model,
+            plans,
+            overhead=(
+                sum(by_provider[spend.provider(model)]) / len(by_provider[spend.provider(model)])
+                if by_provider[spend.provider(model)]
+                else None
+            ),
+            scale=getattr(args, "scale", {}).get(model, 1.0),
+            max_tokens=roles_for(model).ground.max_tokens,
+        )
+        for model, plans in planned.items()
+    }
+
+
+def variants_for(args: argparse.Namespace, model: str) -> list[str]:
+    """The grounder variants `model` runs: `--only`'s for it, else every one asked."""
+    return list(getattr(args, "only", {}).get(model, args.variants))
 
 
 class _Never:
@@ -871,6 +990,16 @@ class _Never:
 
     def complete(self, messages: Any, *, spec: Any, schema: Any = None) -> Completion:
         raise RuntimeError("an estimate makes no call")
+
+
+def _pairs(given: Sequence[str], what: str) -> dict[str, str]:
+    out = {}
+    for item in given:
+        key, sep, value = item.partition("=")
+        if not sep:
+            raise SystemExit(f"{what} takes KEY=VALUE, got {item!r}")
+        out[key] = value
+    return out
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -881,6 +1010,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--runs", type=int, default=RUNS)
     parser.add_argument("--judges", default="ground,pair,fact", help="ground, pair, fact")
     parser.add_argument("--variants", default=",".join(VARIANTS), help=", ".join(VARIANTS))
+    parser.add_argument(
+        "--only", action="append", default=[], help="MODEL=v1,v2: the variants that model runs"
+    )
+    parser.add_argument(
+        "--scale",
+        action="append",
+        default=[],
+        help="MODEL=FACTOR: its input tokens against the reckoning, measured with the "
+        "provider's token counter (a newer tokenizer counts more)",
+    )
     parser.add_argument("--every", action="store_true", help="ground G's unlabelled facts too")
     parser.add_argument("--estimate", action="store_true", help="print the estimate and stop")
     parser.add_argument(
@@ -895,32 +1034,44 @@ def main(argv: Sequence[str] | None = None) -> int:
     args.model = args.model or [DEFAULT_GROUND]
     args.judges = {j.strip() for j in args.judges.split(",") if j.strip()}
     args.variants = [v.strip() for v in args.variants.split(",") if v.strip()]
-    unknown = [v for v in args.variants if v not in VARIANTS]
+    args.only = {
+        m: [v.strip() for v in vs.split(",") if v.strip()]
+        for m, vs in _pairs(args.only, "--only").items()
+    }
+    args.scale = {m: float(v) for m, v in _pairs(args.scale, "--scale").items()}
+    args.overhead_from = {"anthropic": DEFAULT_GROUND}
+    asked = [*args.variants, *(v for vs in args.only.values() for v in vs)]
+    unknown = [v for v in asked if v not in VARIANTS]
     if unknown or not args.judges <= {"ground", "pair", "fact"}:
         parser.error(f"unknown variant or judge: {unknown or sorted(args.judges)}")
-    caps = {}
-    for given in args.cap:
-        name, _, usd = given.partition("=")
-        caps[name] = float(usd)
+    caps = {name: float(usd) for name, usd in _pairs(args.cap, "--cap").items()}
 
     g = load_g(every=args.every) if "ground" in args.judges else []
     r, noise = load_r() if "pair" in args.judges else ([], {"noise": None, "audited": 0})
     f = load_f() if "fact" in args.judges else []
     estimated = estimate(args, g, r, f)
     by_provider: dict[str, float] = defaultdict(float)
+    calls: dict[str, int] = defaultdict(int)
     for model, jobs in estimated.items():
         print(
             f"\n{model}: {len(g)} G items, {len(r)} R pairs, {len(f)} F pairs, {args.runs} run(s)"
+            + (f", input scaled ×{args.scale[model]}" if model in args.scale else "")
         )
         for job in jobs:
             usd = "unpriced" if job["usd"] is None else f"${job['usd']:.3f}"
+            worst = "" if job["worst_usd"] is None else f" (worst ${job['worst_usd']:.3f})"
             print(
                 f"  {job['job']:<52} {job['calls']:>5} calls, {job['cached']:>5} cached, "
-                f"{job['input_tokens']:>8} in, {job['output_tokens']:>6} out  {usd}"
+                f"{job['input_tokens']:>8} in, {job['output_tokens']:>6} out  {usd}{worst}"
             )
             by_provider[spend.provider(model)] += job["usd"] or 0.0
+            calls[spend.provider(model)] += job["calls"] - job["cached"]
+        total = sum(j["usd"] or 0.0 for j in jobs)
+        worst_total = sum(j["worst_usd"] or 0.0 for j in jobs)
+        print(f"  {'total':<52} ${total:.3f} (worst ${worst_total:.3f})")
     if args.estimate:
         return 0
+    args.ledgers = {}
     for name, usd in by_provider.items() if args.replay is None else ():
         model = next(m for m in args.model if spend.provider(m) == name)
         try:
@@ -928,9 +1079,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         except spend.SpendRefused as refused:
             print(f"refused: {refused}", file=sys.stderr)
             return 3
+        # The cap holds during the run too: a call that would pass it is never made.
+        limit = caps.get(name, spend.CAPS.get(name))
+        left = (limit or 0.0) - spend.spent(args.ledger).get(name, 0.0)
+        args.ledgers[name] = Ledger(Budget(usd=max(left, 0.0), calls=2 * calls[name] + 100))
     args.out.mkdir(parents=True, exist_ok=True)
-    results = [run_model(model, args, args.out, g, r, noise, f) for model in args.model]
-    extra: dict[str, Any] = {}
+    results = []
+    stopped: str | None = None
+    for model in args.model:
+        try:
+            results.append(run_model(model, args, args.out, g, r, noise, f))
+        except BudgetExceeded as exc:
+            stopped = f"{model}: the budget stopped the run, no card from it: {exc}"
+            print(f"stopped: {stopped}", file=sys.stderr)
+            break
+    extra: dict[str, Any] = {"head_to_head": head_to_head(results, g)}
     claude = [x for x in results if spend.provider(x["model"]) == "anthropic" and "p1" in x]
     others = [x for x in results if spend.provider(x["model"]) != "anthropic" and "p1" in x]
     if claude and others:
@@ -938,6 +1101,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         a = [x for x in claude[0]["p1"] if x.id in gate]
         b = [x for x in others[0]["p1"] if x.id in gate]
         extra["self_preference"] = self_preference(a, b, (claude[0]["model"], others[0]["model"]))
+    if stopped:
+        extra["stopped"] = stopped
     (args.out / "results.md").write_text(table(results, extra) + "\n", encoding="utf-8")
     (args.out / "results.json").write_text(
         json.dumps(
@@ -947,7 +1112,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         encoding="utf-8",
     )
     print(f"\nwrote {args.out / 'results.md'}")
-    return 0
+    return 3 if stopped else 0
+
+
+def head_to_head(results: Sequence[Mapping[str, Any]], g: Sequence[GItem]) -> dict[str, Any]:
+    """Each later model against the first, prompt by prompt, on the same gate items, paired.
+
+    The Evaluator's own comparison (`openodke.eval.compare`), as the contest:
+    an item passes when the judge's keep or refuse, run 1, matches the person's.
+    """
+    gate = {i.id for i in g if i.split == "gate"}
+    with_items = [x for x in results if x.get("by_variant")]
+    if len(with_items) < 2:
+        return {}
+    first = with_items[0]
+    out: dict[str, Any] = {}
+    for other in with_items[1:]:
+        for variant, facts in other["by_variant"].items():
+            base = first["by_variant"].get(variant)
+            if base is None:
+                continue
+            a = {x.id: x for x in base if x.id in gate}
+            rows_a = [ItemRow(id=i, correct=passes(a[i])) for i in sorted(a)]
+            b = {x.id: x for x in facts if x.id in a}
+            rows_b = [ItemRow(id=i, correct=passes(b[i])) for i in sorted(a)]
+            compared = compare_items(
+                rows_a, rows_b, metric="accuracy", a_name=first["model"], b_name=other["model"]
+            )
+            out[f"{other['model']} vs {first['model']}: {variant}"] = compared
+    return out
 
 
 if __name__ == "__main__":

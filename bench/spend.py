@@ -40,6 +40,9 @@ PRICES: dict[str, tuple[float, float]] = {
     "anthropic/claude-haiku-4-5-20251001": (1.0, 5.0),
     "openai/gpt-4.1-mini-2025-04-14": (0.40, 1.60),
     "openai/gpt-5.4-mini-2026-03-17": (0.75, 4.50),
+    "anthropic/claude-sonnet-5-5": (2.0, 10.0),
+    # Up to 100K tokens a prompt, which every calibration message is.
+    "anthropic/claude-haiku-5-5": (0.10, 0.50),
 }
 
 
