@@ -170,7 +170,10 @@ Reconciling twice changes nothing.
 | a document changed | `Validator(..., sinks=...).validate(facts, [new], update=True)` | `odke validate ... --update` |
 
 `JsonlSink` and `Neo4jSink` are `Retractable`; neither rescores. An update
-retracts first, so rerun one that fails before writing.
+retracts first, so rerun one that fails before writing. A text that fails on its
+own after it was retracted is named in the report, `<id>: retracted, not
+rewritten; run it again` (`report.unrewritten`), and `odke validate --update`
+exits 1.
 
 ```python
 from datetime import UTC, datetime

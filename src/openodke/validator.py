@@ -152,6 +152,8 @@ Facts = str | Path | Iterable[TripleRow | Mapping[str, Any] | Fact]
 # JSON Schema. 1.1 adds `marked` and `calibration` (DECISIONS #54).
 REPORT_VERSION = "1.1"
 REPORT_SCHEMA_PATH = Path(__file__).with_name("validation_report.schema.json")
+# What the report says of a text an update retracted and then failed to validate.
+UNREWRITTEN = "retracted, not rewritten; run it again"
 
 
 class ValidationReport(Frozen):
@@ -234,6 +236,12 @@ class ValidationReport(Frozen):
         return self.model_dump() == other.model_dump()
 
     @property
+    def unrewritten(self) -> tuple[str, ...]:
+        """With `update`, the texts retracted first that then failed: their facts are retired
+        until the job runs again (release audit 13)."""
+        return tuple(self.failed) if self.retracted is not None else ()
+
+    @property
     def job(self) -> JobCounts:
         """Facts in, out, refused, merged, linked and queued for a person: this report's own."""
         queued = self.judge.get("queued", 0) if self.judge is not None else 0
@@ -259,6 +267,8 @@ class ValidationReport(Frozen):
             lines.append(
                 _row("failed", failed_summary(self.failed, of=self.documents, noun="text"))
             )
+            # An update retracts first (DECISIONS #37): a text that then failed is retired.
+            lines.extend(_row("", f"{doc}: {UNREWRITTEN}") for doc in self.unrewritten)
         unmatched = f"; {self.unmatched} name a text that was not given" if self.unmatched else ""
         given = f"{_n(self.facts_in, 'fact')} from {_n(self.documents, 'text')}"
         if self.batches is not None:
