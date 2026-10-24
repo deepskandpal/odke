@@ -121,6 +121,15 @@ CATALOGUE: tuple[Remedy, ...] = (
         "short",
     ),
     Remedy(
+        "every-relation",
+        ("linked_other",),
+        "Ask for every relation a pair holds: the extractor linked the pair once, with a "
+        "true relation, and stopped",
+        "the extraction prompt; ontology predicates.<name>.description",
+        (),
+        "overall",
+    ),
+    Remedy(
         "reextract",
         ("entity_missing", "not_linked"),
         "Hand the coverage report's gaps, missed entities and uncovered sentences, back to the "

@@ -5,7 +5,7 @@ shape is whatever that stage partitions on. That suits a person reading one
 table. It does not suit a CI job, a dashboard, or a second run to compare
 against, because each of those needs to know where precision is without
 knowing which stage made the report. So an Evaluator run also writes an
-`EvalReport`, whose shape is fixed and versioned (`schema_version`, "1.3"):
+`EvalReport`, whose shape is fixed and versioned (`schema_version`, "1.4"):
 
 - **rows**: one per configuration scored against gold facts (a single
   extraction, or the ablation's three), each with precision, recall and F1
@@ -46,6 +46,11 @@ grounder prompt the run sent wrote its claim, so a judge's card is the card of
 the format it ran. A 1.2 report has none, and reads each as its prompt's
 default.
 
+1.4 adds the recall bucket `linked_other`, "pair linked by another true
+relation": a miss whose two ends a correct prediction links with another
+relation, which 1.3 counted as a wrong relation, or as both seen but not linked
+(release audit 11).
+
 `eval_report.schema.json`, beside this file, is the contract. `check_report`
 holds a report to it in plain Python, with no dependency; every report the
 package writes is checked before it is written. A reader checks
@@ -79,7 +84,7 @@ from openodke.ground.checks import CHECKS, schema_problem
 from openodke.ontology import Ontology
 from openodke.types import Fact, Frozen
 
-SCHEMA_VERSION = "1.3"
+SCHEMA_VERSION = "1.4"
 SCHEMA_PATH = Path(__file__).with_name("eval_report.schema.json")
 
 

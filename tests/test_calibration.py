@@ -476,7 +476,7 @@ def test_an_eval_report_names_the_claim_format_its_grounder_ran(tmp_path: Path) 
         documents=triples / "texts",
         ontology=triples / "ontology.json",
     )
-    assert report.schema_version == "1.3"
+    assert report.schema_version == "1.4"
     assert report.run.claim_formats == {"ground.span@1": "labelled"}
     (entry,) = report.calibration
     assert entry.claim_format == "labelled" and entry.line.startswith(

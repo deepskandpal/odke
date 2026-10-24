@@ -10,7 +10,8 @@ its evidence fits (DECISIONS #38):
    relation, for the subject's type;
 2. **refused by the Validator**: a prediction matching it was made, and the gate
    refused it;
-3. **wrong relation**: a prediction links the same pair with another relation;
+3. **wrong relation**: a prediction links the same pair with another relation,
+   and is no hit itself: a pair often holds two true relations;
 4. **inverse direction**: a prediction links the pair the other way round, with
    the same relation or its inverse (`Ontology.inverses`, DECISIONS #28);
 5. **surface form**: a prediction has the relation and one end, and the other
@@ -21,11 +22,14 @@ its evidence fits (DECISIONS #38):
 7. **cross-sentence**: nothing came near, and the evidence spans sentences;
 8. **output saturation**: nothing came near, the run's output is flat against
    length, and the document is a long one;
-9. **entity never extracted**: an end is in no prediction for the document;
-10. **both seen but not linked**: both ends are, never in one prediction.
+9. **pair linked by another true relation**: a prediction that is a hit links
+   the pair with another relation, so the pair was found and this relation
+   between them was not;
+10. **entity never extracted**: an end is in no prediction for the document;
+11. **both seen but not linked**: both ends are, never in one prediction.
 
 Three tiers, in order: what the pipeline did (1–6), the condition the fact or
-its document was in (7–8), and what is merely missing (9–10). A bucket that says
+its document was in (7–8), and what is merely missing (9–11). A bucket that says
 what the pipeline did with a fact beats one that describes the fact, and one
 that describes it beats one that only names the symptom: every miss whose
 evidence fits nothing earlier is, trivially, an entity never extracted or a pair
@@ -106,6 +110,7 @@ RECALL: tuple[tuple[str, str], ...] = (
     ("scored_apart", "same triple, scored apart"),
     ("cross_sentence", "cross-sentence"),
     ("saturation", "output saturation"),
+    ("linked_other", "pair linked by another true relation"),
     ("entity_missing", "entity never extracted"),
     ("not_linked", "both seen but not linked"),
 )
@@ -527,8 +532,11 @@ def _bucket(
     forward = [p for p in made if p.subject in s and p.object in o]
     backward = [p for p in made if p.subject in o and p.object in s]
     turned = {g.relation, near.pairs.get(g.relation, g.relation)}
-    other = [p for p in forward if p.relation != g.relation]
-    other += [p for p in backward if p.relation not in turned]
+    linked = [p for p in forward if p.relation != g.relation]
+    linked += [p for p in backward if p.relation not in turned]
+    # A prediction that is a hit is a true fact about the pair, not a confusion (release
+    # audit 11): Re-DocRED often has two true relations between one pair.
+    other = [p for p in linked if not p.hit]
     out.swaps.update((g.relation, p.relation) for p in dict.fromkeys(backward))
     if other:
         out.confusions.update((g.relation, p.relation) for p in dict.fromkeys(other))
@@ -549,6 +557,9 @@ def _bucket(
         return "cross_sentence", example(why="the evidence spans sentences")
     if long:
         return "saturation", example(why="a long document in a saturated run")
+    if linked:
+        why = f"the pair is linked as {out.view.name(linked[0].relation)}, a true fact"
+        return "linked_other", example(linked[0], why)
     if not (s & near.seen) or not (o & near.seen):
         absent = g.subject if not (s & near.seen) else g.object
         return "entity_missing", example(why=f"{_first(absent)} is in no prediction")

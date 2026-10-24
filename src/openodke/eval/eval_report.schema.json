@@ -366,6 +366,7 @@
             "scored_apart",
             "cross_sentence",
             "saturation",
+            "linked_other",
             "entity_missing",
             "not_linked",
             "refused_not_in_gold",

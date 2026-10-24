@@ -181,6 +181,31 @@ def test_a_judge_confirms_or_sends_a_candidate_on() -> None:
     assert (rejected[3], rejected[7]) == ("entity_missing", "not_linked")
 
 
+def test_a_true_fact_about_the_pair_is_no_confusion() -> None:
+    """Release audit 11: a pair often holds two true relations, as Re-DocRED's do.
+
+    Ada was born in London and works for it. A prediction found the first, a
+    hit; the second is missed. That is no wrong relation, and the pair was
+    linked, so it is not "both seen but not linked" either: 141 of 156 "wrong
+    relation" misses on the published Re-DocRED run were this, and 47 of them
+    would have read "not linked".
+    """
+    both = gold(fact("Ada", "born_in", "London"), fact("Ada", "works_for", "London"))
+    found = diagnose(gold_view(both, [fact("Ada", "born_in", "London")], texts={"d1": TEXT}))
+    assert assigned(found) == [None, "linked_other"]
+    assert not found.confusions
+    (bucket,) = [b for b in found.buckets if b.bucket == "linked_other"]
+    assert (bucket.count, bucket.label) == (1, "pair linked by another true relation")
+    assert bucket.examples[0].why == "the pair is linked as born_in, a true fact"
+    # Written the other way round, a true fact about the pair counts the same.
+    inverse = gold(fact("London", "located_in", "England"), fact("England", "capital", "London"))
+    said = [fact("London", "located_in", "England")]
+    found = diagnose(gold_view(inverse, said, texts={"d1": TEXT}), inverses=ONTOLOGY.inverses)
+    assert assigned(found) == [None, "linked_other"]
+    # One that is no hit is still a confusion: the fixture's founded for works_for.
+    assert diagnose(gold_view(GOLD, SAID)).confusions[("works_for", "founded")] == 1
+
+
 def test_near_names() -> None:
     assert near("Palamu", "Palamu region")
     assert near("The Loud Tour", "Loud Tour")
@@ -330,4 +355,4 @@ def test_a_set_prepared_with_types_and_evidence_scores_the_same() -> None:
 def test_every_bucket_is_named_once_in_order() -> None:
     assert [name for name, _ in RECALL][:2] == ["never_offered", "refused"]
     assert [name for name, _ in RECALL][-2:] == ["entity_missing", "not_linked"]
-    assert len(BUCKETS) == len(RECALL) + len(PRECISION) == 13
+    assert len(BUCKETS) == len(RECALL) + len(PRECISION) == 14
