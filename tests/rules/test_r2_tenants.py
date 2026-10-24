@@ -92,7 +92,16 @@ SINKS: dict[str, dict[str, Any]] = {
     },
     "cypher_file": {"use": "cypher_file", "path": "graph.cypher"},
     "neo4j_admin_csv": {"use": "neo4j_admin_csv", "directory": "import"},
+    # An entity's and a fact's IRI are its key and its signature: a triple store merges on them.
+    "rdf": {"use": "rdf", "path": "graph.ttl"},
 }
+_IRI = re.compile(r"<([^<>\s]+/(?:entity|fact)/[^<>\s]+)>")
+RDF_IGNORES_THE_TENANT = pytest.mark.xfail(
+    strict=True,
+    reason="found by R2 in PR 0, not in the release audit: the RDF sink writes two tenants' "
+    "identical IRIs; proposed for fix PR 1, the maintainer's call",
+)
+MARKS = {"neo4j": (), "cypher_file": RELEASE_3, "neo4j_admin_csv": RELEASE_3}
 
 
 def _identities(sink: str, out: Path, driver: FakeDriver) -> set[str]:
@@ -100,6 +109,8 @@ def _identities(sink: str, out: Path, driver: FakeDriver) -> set[str]:
         return _driver_identities(driver)
     if sink == "cypher_file":
         return set(_CYPHER_IDENTITY.findall((out / "graph.cypher").read_text(encoding="utf-8")))
+    if sink == "rdf":
+        return set(_IRI.findall((out / "graph.ttl").read_text(encoding="utf-8")))
     return _csv_identities(out / "import")
 
 
@@ -108,7 +119,9 @@ def _commands(config: str) -> dict[str, list[str]]:
 
 
 WRITES = [
-    pytest.param(command, sink, marks=() if sink == "neo4j" else RELEASE_3, id=f"{command}-{sink}")
+    pytest.param(
+        command, sink, marks=MARKS.get(sink, RDF_IGNORES_THE_TENANT), id=f"{command}-{sink}"
+    )
     for command in ("odke run", "odke validate")
     for sink in SINKS
 ]
@@ -139,8 +152,9 @@ def test_two_tenants_writing_one_graph_share_no_key_and_no_signature(
         f"`{command} --tenant` wrote {len(shared)} identical keys or signatures for acme and "
         f"globex through the {sink} sink (e.g. {sorted(shared)[0]!r}), so loaded into one store "
         "their facts become one. Every sink must key a tenant's writes apart: give it a "
-        "`tenant` option and a `scoped(tenant)` that pass the run's tenant to "
-        "`openodke.sinks.neo4j.plan()`."
+        "`tenant` option and a `scoped(tenant)` that the run's tenant reaches, and build its "
+        "keys and signatures with it (`openodke.sinks.neo4j.plan(tenant=...)`, `scoped`, "
+        "`signature_of`)."
     )
 
 
@@ -162,8 +176,9 @@ def test_a_jsonl_directory_holds_one_tenant(tmp_path: Path) -> None:
 def test_every_sink_a_run_can_write_is_covered_by_this_rule() -> None:
     from openodke.run.build import SINKS as RUN_SINKS
 
-    # A file of one run's graph that no store merges into: a tenant has no key to scope.
-    single_graph = {"rdf", "networkx"}
+    # A graph in memory, or one run's node-link file that networkx reads back whole: no
+    # store merges two of them, so a tenant has no key to scope.
+    single_graph = {"networkx"}
     covered = {*SINKS, "jsonl"}
     assert set(RUN_SINKS) == covered | single_graph, (
         f"{sorted(set(RUN_SINKS) - covered - single_graph)} is a sink this rule does not "
@@ -257,7 +272,7 @@ class TwoTenantStore(FakeDriver):
     """A store holding the fact for acme, for globex and for no tenant.
 
     It answers a read as Neo4j would, for the filters this codebase writes: a
-    tenant condition (`r.tenant = $tenant`, `n.tenant IS NULL`), a MERGE key
+    tenant condition (`r.tenant = $tenant`, `n.tenant IS NULL`, or either), a MERGE key
     looked up by `row.signature` or `row.value`, and an ontology fingerprint.
     A read with no filter gets every owner's rows, as an unfiltered query would.
     """
@@ -278,10 +293,14 @@ class TwoTenantStore(FakeDriver):
         if "AS unread" in cypher:
             return [{"unread": 0}]
         records = self.records
+        # One condition filters; both (`r.tenant = $tenant OR r.tenant IS NULL`) let in both.
+        allowed: set[str | None] = set()
         if _IS_TENANT.search(cypher):
-            records = [r for r in records if r["owner"] == params.get("tenant")]
-        elif _NO_TENANT.search(cypher):
-            records = [r for r in records if r["owner"] is None]
+            allowed.add(params.get("tenant"))
+        if _NO_TENANT.search(cypher):
+            allowed.add(None)
+        if allowed:
+            records = [r for r in records if r["owner"] in allowed]
         if "$fingerprint" in cypher:
             records = [r for r in records if r["props"][ONTOLOGY] == params["fingerprint"]]
         if is_check(cypher):
@@ -326,58 +345,65 @@ def _owner_in(text: str | None) -> str:
     return found[0] if found else f"unknown ({text!r})"
 
 
-def _read_checked_under(store: TwoTenantStore) -> list[str]:
-    facts = Neo4jSink(driver=store, tenant="acme").checked_under(FINGERPRINT)
+def _read_checked_under(store: TwoTenantStore, tenant: str | None) -> list[str]:
+    facts = Neo4jSink(driver=store, tenant=tenant).checked_under(FINGERPRINT)
     return [_owner_in(e.uri) for f in facts for e in f.evidence]
 
 
-def _read_stored(store: TwoTenantStore) -> list[str]:
-    found = Neo4jSink(driver=store, tenant="acme").stored([_fact()])
+def _read_stored(store: TwoTenantStore, tenant: str | None) -> list[str]:
+    found = Neo4jSink(driver=store, tenant=tenant).stored([_fact()])
     return [_owner_in(e.uri) for f in found.values() for e in f.evidence]
 
 
-def _read_retract(store: TwoTenantStore) -> list[str]:
-    Neo4jSink(driver=store, tenant="acme").retract(["halden"], at=WHEN)
+def _read_retract(store: TwoTenantStore, tenant: str | None) -> list[str]:
+    Neo4jSink(driver=store, tenant=tenant).retract(["halden"], at=WHEN)
     return [store.owner_of(row["signature"])
             for _, params in store.writes for row in params.get("rows", [])
             if "signature" in row]  # fmt: skip
 
 
-def _read_check(store: TwoTenantStore) -> list[str]:
-    rows = Neo4jSink(driver=store, tenant="acme").check(ONTOLOGY_DOC)
+def _read_check(store: TwoTenantStore, tenant: str | None) -> list[str]:
+    rows = Neo4jSink(driver=store, tenant=tenant).check(ONTOLOGY_DOC)
     return [_owner_in(" ".join(map(str, row["objects"]))) for found in rows.values()
             for row in found]  # fmt: skip
 
 
-def _read_lookup(store: TwoTenantStore) -> list[str]:
-    found = Neo4jSink(driver=store, tenant="acme").lookup().candidates([HALDEN, TOMAS])
+def _read_lookup(store: TwoTenantStore, tenant: str | None) -> list[str]:
+    found = Neo4jSink(driver=store, tenant=tenant).lookup().candidates([HALDEN, TOMAS])
     return [_owner_in(e.label) for entities in found.values() for e in entities]
 
 
-def _read_neo4j(store: TwoTenantStore) -> list[str]:
-    rows, _ = read_neo4j(store, tenant="acme")
+def _read_neo4j(store: TwoTenantStore, tenant: str | None) -> list[str]:
+    rows, _ = read_neo4j(store, tenant=tenant)
     return [_owner_in(str(row.id)) for row in rows]
 
 
+# Each read as acme; and, where a reader with no tenant reads only what no tenant wrote
+# (#44), as no tenant. `checked_under`, `check()` and `read_neo4j` read the whole store
+# with no tenant, as documented, so they are read as acme only.
 READS = [
-    pytest.param(_read_checked_under, marks=RELEASE_20, id="Neo4jSink.checked_under"),
-    pytest.param(_read_stored, id="Neo4jSink.stored"),
-    pytest.param(_read_retract, id="Neo4jSink.retract"),
-    pytest.param(_read_check, id="Neo4jSink.check"),
-    pytest.param(_read_lookup, id="Neo4jLookup.candidates"),
-    pytest.param(_read_neo4j, id="read_neo4j"),
+    pytest.param(_read_checked_under, "acme", marks=RELEASE_20, id="Neo4jSink.checked_under"),
+    pytest.param(_read_stored, "acme", id="Neo4jSink.stored"),
+    pytest.param(_read_stored, None, id="Neo4jSink.stored-no tenant"),
+    pytest.param(_read_retract, "acme", id="Neo4jSink.retract"),
+    pytest.param(_read_retract, None, id="Neo4jSink.retract-no tenant"),
+    pytest.param(_read_check, "acme", id="Neo4jSink.check"),
+    pytest.param(_read_lookup, "acme", id="Neo4jLookup.candidates"),
+    pytest.param(_read_lookup, None, id="Neo4jLookup.candidates-no tenant"),
+    pytest.param(_read_neo4j, "acme", id="read_neo4j"),
 ]
 
 
-@pytest.mark.parametrize("read", READS)
-def test_reading_as_one_tenant_returns_nothing_of_anothers(read: Any) -> None:
+@pytest.mark.parametrize(("read", "tenant"), READS)
+def test_reading_as_one_tenant_returns_nothing_of_anothers(read: Any, tenant: str | None) -> None:
     store = TwoTenantStore()
-    owners = read(store)
-    assert owners, f"{read.__name__} read nothing: the store holds acme's fact, so it should"
-    others = sorted(set(owners) - {"acme"})
+    owners = read(store, tenant)
+    reader = _name(tenant)
+    assert owners, f"{read.__name__} read nothing: the store holds {reader}'s fact, so it should"
+    others = sorted(set(owners) - {reader})
     assert not others, (
-        f"{read.__name__.removeprefix('_read_')} read as acme returned {others}'s facts. Every "
-        "read path must filter on `tenant`: `r.tenant = $tenant` for a tenant, "
+        f"{read.__name__.removeprefix('_read_')} read as {reader} returned {others}'s facts. "
+        "Every read path must filter on `tenant`: `r.tenant = $tenant` for a tenant, "
         "`r.tenant IS NULL` for none, or look up by the tenant's own keys and signatures."
     )
 
