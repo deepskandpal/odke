@@ -24,6 +24,7 @@ flipped polarity is never a near miss: a denial is the opposite claim.
 from __future__ import annotations
 
 import math
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from typing import Any, Literal, NamedTuple
 
@@ -173,6 +174,12 @@ def evaluate_extraction(gold: Sequence[GoldFact], predictions: Iterable[Fact]) -
     if unscored:
         notes.append(
             f"{unscored} prediction(s) cite only documents with no gold facts and were not scored"
+        )
+    stated = Counter((g.doc_id, _exact(g.fact)) for g in gold)
+    if repeated := sum(n - 1 for n in stated.values() if n > 1):
+        notes.append(
+            f"{repeated} gold fact(s) repeat a triple their document already lists: a "
+            "prediction is counted once per document, so each repeat counts as missed"
         )
     metrics: dict[str, Metric] = {
         "precision": overall["precision"],
