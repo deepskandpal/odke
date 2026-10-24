@@ -29,7 +29,6 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any, NamedTuple
-from urllib.parse import unquote, urlsplit
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -68,6 +67,7 @@ from openodke.loaders import (
     TextLoader,
     TsvLoader,
 )
+from openodke.loaders.base import path_parts, with_path_ids
 from openodke.manifest import Served
 from openodke.observe import Observer
 from openodke.ontology import Ontology, OntologyLoadError
@@ -1337,20 +1337,6 @@ def input_loader(config: RunConfig, index: int, item: InputSpec) -> tuple[StageS
     return config.stages.loader or StageSpec(use="directory"), "stages.loader"
 
 
-def with_path_ids(docs: Sequence[Document], base: Path) -> list[Document]:
-    """The documents re-keyed by source path, as `Built.documents` describes."""
-    seen: dict[str, int] = {}
-    out: list[Document] = []
-    for doc in docs:
-        name = _path_id(doc, base)
-        if name is None:
-            out.append(doc)
-            continue
-        count = seen[name] = seen.get(name, 0) + 1
-        out.append(doc.model_copy(update={"id": name if count == 1 else f"{name}~{count}"}))
-    return out
-
-
 def iter_path_ids(inputs: Iterable[Iterable[Document]], base: Path) -> Iterator[Document]:
     """`with_path_ids` over each input's documents in turn, one at a time.
 
@@ -1366,7 +1352,7 @@ def iter_path_ids(inputs: Iterable[Iterable[Document]], base: Path) -> Iterator[
         whole: dict[str, int] = {}
         reached: dict[str, int] = {}
         for doc in docs:
-            parts = _path_parts(doc, base)
+            parts = path_parts(doc, base)
             if parts is None:
                 yield doc
                 continue
@@ -1381,28 +1367,6 @@ def iter_path_ids(inputs: Iterable[Iterable[Document]], base: Path) -> Iterator[
             yield doc.model_copy(update={"id": name if count == 1 else f"{name}~{count}"})
         for file, count in reached.items():
             top[file] = max(top.get(file, 0), count)
-
-
-def _path_id(doc: Document, base: Path) -> str | None:
-    parts = _path_parts(doc, base)
-    return None if parts is None else "".join(parts)
-
-
-def _path_parts(doc: Document, base: Path) -> tuple[str, str] | None:
-    """A document's file, relative to `base`, and the `#L<line>` or `#<row>` of its record."""
-    if not doc.uri or not doc.uri.startswith("file:"):
-        return None
-    path = Path(unquote(urlsplit(doc.uri).path))
-    try:
-        name = path.relative_to(base).as_posix()
-    except ValueError:
-        name = path.as_posix()
-    line, row = doc.metadata.get("line"), doc.metadata.get("row_index")
-    if isinstance(line, int):
-        return name, f"#L{line}"
-    if isinstance(row, int):
-        return name, f"#{row}"
-    return name, ""
 
 
 def build(config: RunConfig) -> Built:
