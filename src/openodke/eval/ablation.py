@@ -115,10 +115,15 @@ class _Replaying:
 
 
 class _Stamped:
-    """A grounder that hands back the verdicts the grounding pass already stamped."""
+    """A grounder that hands back the verdicts the grounding pass already stamped.
 
-    def __init__(self, grounded: Iterable[Fact]) -> None:
+    `grounder` is the one that stamped them, so a gate that follows its
+    grounder's calibration card (DECISIONS #54) reads that grounder's card.
+    """
+
+    def __init__(self, grounded: Iterable[Fact], grounder: Any = None) -> None:
         self.by_id = {fact.id: fact for fact in grounded}
+        self.grounder = grounder
 
     def ground(self, fact: Fact, doc: Document) -> Fact:
         return self.by_id.get(fact.id, fact)
@@ -222,11 +227,15 @@ def ablate(config: RunConfig) -> AblationRun:
         replay = _Replaying(recording.found)
         grounded = list(Pipeline(ontology, replay, grounder=grounder, **route).run(docs).facts)
     gate = stages["gate"] if stages["gate"] is not None else VerdictGate()
+    # The same default the last row's pipeline gives it, before this row reads it (#54).
+    follow = getattr(gate, "follow_card", None)
+    if callable(follow):
+        follow(grounder)
     gated = [f for f in grounded if gate.validate(f, ontology).action != "refuse"]
     all_calls = list(meter.records)
 
     full = built.pipeline(
-        extractor=_Replaying(recording.found), grounder=_Stamped(grounded), gate=gate
+        extractor=_Replaying(recording.found), grounder=_Stamped(grounded, grounder), gate=gate
     )
     graph = full.run(docs)
     return AblationRun(
