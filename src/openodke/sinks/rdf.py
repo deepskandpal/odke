@@ -23,6 +23,7 @@ from openodke.sinks.neo4j import (
     signature_of,
     storable,
 )
+from openodke.tenants import scoped, tenant_name
 from openodke.types import Evidence, Fact, KnowledgeGraph, LinkKind, Polarity, Support
 
 if TYPE_CHECKING:
@@ -151,6 +152,14 @@ class RdfSink:
     Two facts with one signature are one statement node, carrying the later
     fact, as successive `SET r = props` would leave a Neo4j relationship.
     The file is rewritten on every `write`, so it does not stream.
+
+    `tenant` keys the IRIs as `Neo4jSink(tenant=...)` keys its writes
+    (DECISIONS #44): an entity is `<base>entity/<tenant>%2F<key>`, a fact's
+    IRI is its signature hashed with the tenant, and every entity and
+    statement node says `odke:tenant`. So two tenants' files loaded into one
+    triple store never share a resource. `odke:key` stays the key the tenant
+    gave. `scoped(tenant)` is the same file for one tenant; `odke run` and the
+    Validator scope it to theirs.
     """
 
     # Each write is the whole graph (`openodke.stream.streams`).
@@ -164,8 +173,10 @@ class RdfSink:
         base: str = DEFAULT_BASE,
         schema: str | None = None,
         ontology: Ontology | None = None,
+        tenant: str | None = None,
     ) -> None:
         _require_rdflib()
+        self.tenant = tenant_name(tenant)
         self.path = Path(path)
         chosen = (format or _SUFFIXES.get(self.path.suffix.lower(), "turtle")).lower()
         if chosen not in _FORMATS:
@@ -176,13 +187,32 @@ class RdfSink:
         self.schema = schema if schema is not None else f"{base}schema/"
         self.ontology = ontology
 
+    def scoped(self, tenant: str | None) -> RdfSink:
+        """This file, written for `tenant`; the sink itself when it is that tenant's already.
+
+        A sink scoped to another tenant is refused: one file never holds two.
+        """
+        tenant = tenant_name(tenant)
+        if tenant == self.tenant:
+            return self
+        if self.tenant is not None:
+            raise ValueError(f"this sink writes tenant {self.tenant!r}, not {tenant!r}")
+        return RdfSink(
+            self.path,
+            format=self.format,
+            base=self.base,
+            schema=self.schema,
+            ontology=self.ontology,
+            tenant=tenant,
+        )
+
     # -- names --------------------------------------------------------------- #
 
     def entity_iri(self, key: str) -> str:
-        return f"{self.base}entity/{quote(key, safe='')}"
+        return f"{self.base}entity/{quote(scoped(key, self.tenant), safe='')}"
 
     def fact_iri(self, fact: Fact) -> str:
-        return f"{self.base}fact/{signature_of(fact)}"
+        return f"{self.base}fact/{signature_of(fact, self.tenant)}"
 
     def term_iri(self, name: str) -> str:
         """A type or predicate name as an ontology IRI."""
@@ -228,7 +258,13 @@ class _Builder:
             latest[signature_of(fact)] = fact
         for fact in latest.values():
             self._fact(fact, kg)
-        links = {_link_id(link.kind, link.source_key, link.target_key): link for link in kg.links}
+        tenant = self.sink.tenant
+        links = {
+            _link_id(
+                link.kind, scoped(link.source_key, tenant), scoped(link.target_key, tenant)
+            ): link
+            for link in kg.links
+        }
         for ident, link in links.items():
             self._link(ident, link)
         if self.sink.ontology is not None:
@@ -298,6 +334,7 @@ class _Builder:
         self.g.add((node, RDF.type, self._iri(sink.term_iri(type_name))))
         self.g.add((node, RDF.type, self._vocab("Entity")))
         self._put(node, self._vocab("key"), entity.key)
+        self._put(node, self._vocab("tenant"), sink.tenant)
         self._put(node, RDFS.label, entity.label)
         for alias in entity.aliases:
             self._put(node, SKOS.altLabel, alias)
@@ -336,9 +373,10 @@ class _Builder:
         self.g.add((node, RDF.predicate, predicate))
         if obj is not None:
             self.g.add((node, RDF.object, obj))
-        props = provenance_of(fact, kg.created_at)
+        props = provenance_of(fact, kg.created_at, sink.tenant)
         for name in _FACT_PROVENANCE:
             self._put(node, self._vocab(name), props[name])
+        self._put(node, self._vocab("tenant"), sink.tenant)
         for key in fact.identity_keys:
             self._put(node, self._vocab("identity_keys"), key)
         for key, value in fact.qualifiers.items():

@@ -94,12 +94,6 @@ SINKS: dict[str, dict[str, Any]] = {
     "rdf": {"use": "rdf", "path": "graph.ttl"},
 }
 _IRI = re.compile(r"<([^<>\s]+/(?:entity|fact)/[^<>\s]+)>")
-RDF_IGNORES_THE_TENANT = pytest.mark.xfail(
-    strict=True,
-    reason="found by R2 in PR 0, not in the release audit: the RDF sink writes two tenants' "
-    "identical IRIs; proposed for fix PR 1, the maintainer's call",
-)
-MARKS = {"neo4j": (), "cypher_file": (), "neo4j_admin_csv": ()}
 
 
 def _identities(sink: str, out: Path, driver: FakeDriver) -> set[str]:
@@ -117,9 +111,7 @@ def _commands(config: str) -> dict[str, list[str]]:
 
 
 WRITES = [
-    pytest.param(
-        command, sink, marks=MARKS.get(sink, RDF_IGNORES_THE_TENANT), id=f"{command}-{sink}"
-    )
+    pytest.param(command, sink, id=f"{command}-{sink}")
     for command in ("odke run", "odke validate")
     for sink in SINKS
 ]
