@@ -9,8 +9,9 @@ from collections.abc import Iterator
 _LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)?")
 
 REDACTED = "<redacted>"
-# `scheme://user:password@`: the password is everything between the colon and the `@`.
-_USERINFO = re.compile(r"(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)(?P<user>[^/@:\s]*):[^/@\s]*@")
+# `scheme://user:password@`: the password runs from the colon to the last `@` of the
+# authority, as `urlsplit` reads it, so a raw `@` in a password is taken out too.
+_USERINFO = re.compile(r"(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)(?P<user>[^/?#@:\s]*):[^/?#\s]*@")
 
 
 def without_password(text: str) -> str:

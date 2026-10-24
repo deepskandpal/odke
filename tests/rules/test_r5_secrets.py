@@ -116,6 +116,30 @@ def test_no_key_or_url_password_reaches_the_manifest_the_logs_or_stderr(
     )
 
 
+@pytest.mark.parametrize("logs", [["--log-format", "text"], ["--log-format", "json", "--log-text"]])
+def test_no_url_password_gets_out_through_the_real_urllib(
+    logs: list[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The gateway's URL has no port, so `http.client` reads the password as one and quotes it
+    in its error, before any socket opens: nothing here reaches the network."""
+    project = _project(tmp_path, GATEWAY_MODEL, extract=True)
+    monkeypatch.setenv("GATEWAY_KEY", KEY)
+
+    with caplog.at_level(logging.DEBUG):
+        result = runner.invoke(app, ["run", str(project / "odke.yaml"), *logs])
+    assert result.exit_code != 0, result.output
+    channels = _channels(project, result, caplog.text)
+    leaked = [where for where, text in channels.items() if PASSWORD in text or KEY in text]
+    assert not leaked, (
+        f"a secret reached {', '.join(leaked)}. An error raised before the request is sent "
+        "(`http.client.InvalidURL`) quotes the URL's password without its scheme, so the "
+        "client turns it into a message of its own."
+    )
+
+
 def test_a_providers_key_is_never_sent_to_a_host_base_url_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -12,6 +12,7 @@ older API versions — use `LiteLLMClient` instead.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import urllib.error
@@ -97,6 +98,14 @@ class OpenAICompatClient:
             # The URL may carry a password: never in a message (release audit finding 9).
             where = without_password(base)
             raise ProviderError(f"could not reach {provider} at {where}: {exc.reason}") from exc
+        except http.client.InvalidURL:
+            # `https://user:password@host/v1` with no port: http.client reads the password
+            # as the port and quotes it. urllib never sends a URL's credentials anyway.
+            raise ProviderError(
+                f"cannot call {provider} at {without_password(base)}: not a URL this client "
+                "can reach (a password in base_url is never sent; name the key's variable "
+                "with api_key_env)"
+            ) from None
 
         return _to_completion(body, spec)
 
