@@ -219,8 +219,9 @@ fact `unchecked`. A [calibration card](calibration.md) on label set G decides
 which is the default; until then it is `ground.span@1`.
 
 ```python
-onyx = LLMGrounder(ModelRoles.single("ollama/qwen2.5:3b"), client=ScriptedClient(["yes"]),
-                   prompt="ground.onyx")
+onyx = LLMGrounder(
+    ModelRoles.single("ollama/qwen2.5:3b"), client=ScriptedClient(["yes"]), prompt="ground.onyx"
+)
 assert onyx.ground(born, doc).verdict is GroundingVerdict.SUPPORTED
 assert onyx.stats["prompts"] == ["ground.onyx@1"] and onyx.claim_line == "sentence"
 ```

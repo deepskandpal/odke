@@ -1,5 +1,8 @@
 """Running a grounder over labelled facts, once or several times, for a card.
 
+Provisional (DECISIONS #48), as `openodke.calibration` is: the card format and the bars settle
+with the first published cards.
+
 `odke calibrate` and `bench/calibrate.py` both do this, so it lives here once:
 each labelled fact is grounded against the text its label row holds, exactly as
 the Validator would ground it, and its verdict in each run is kept beside the

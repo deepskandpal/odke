@@ -1,5 +1,8 @@
 """Cards from per-item outcomes: a judge's answers beside a person's labels.
 
+Provisional (DECISIONS #48), as `openodke.calibration` is: the card format and the bars settle
+with the first published cards.
+
 Nothing here calls a model. A caller runs the judge (`odke calibrate`,
 `bench/calibrate.py`), and hands over what each labelled item got: the
 person's label and the judge's answer in each run, or in each order. The same

@@ -44,6 +44,12 @@ PRIVATE = frozenset({"openodke.cli", "openodke.cli.main"})
 
 # Public, outside the semver promise until the reason is gone (DECISIONS #48).
 PROVISIONAL = {
+    "openodke.calibration": "calibration cards: format and bars settle with the first cards",
+    "openodke.calibration.card": "the card format",
+    "openodke.calibration.judging": "how a grounder is run over labels for a card",
+    "openodke.calibration.lookup": "where cards are found",
+    "openodke.calibration.measure": "the arithmetic of a card",
+    "openodke.calibration.policy": "DEFAULT_POLICY is set from the first measured cards (#54)",
     "openodke.corroborate.judge": "the pair judge: off by default until its calibration card",
     "openodke.eval.equivalence": "the fact-equivalence judge: unvalidated until label set F's card",
     "openodke.eval.datasets": "benchmark adapters: they follow the datasets' own releases",
