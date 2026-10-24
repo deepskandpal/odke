@@ -1,0 +1,46 @@
+{
+  "store": {
+    "documents": 40,
+    "entities": 246
+  },
+  "batch": {
+    "documents": 40,
+    "entities": 213
+  },
+  "same_node_by_key": 68,
+  "owed_a_link": 2,
+  "linked_of_owed": 2,
+  "recall": 1.0,
+  "links": {
+    "similar (rules)": {
+      "links": 2,
+      "right": 1,
+      "wrong": 0,
+      "uncheckable": 1,
+      "precision": 1.0
+    },
+    "different (judge)": {
+      "links": 4,
+      "right": 2,
+      "wrong": 1,
+      "uncheckable": 1,
+      "precision": 0.6666666666666666
+    },
+    "similar (judge)": {
+      "links": 2,
+      "right": 1,
+      "wrong": 0,
+      "uncheckable": 1,
+      "precision": 1.0
+    }
+  },
+  "judge": {
+    "calls": 42,
+    "cached": 38,
+    "input_tokens": 2416,
+    "output_tokens": 158,
+    "usd": 0.003206,
+    "unasked": 0,
+    "disagreed": 1
+  }
+}

@@ -265,12 +265,27 @@ def tables(runs: Sequence[Path]) -> str:
         if lookup:
             places.append(("against the store", lookup["links"]))
         for where, kinds in places:
-            for kind, k in sorted(kinds.items()):
+            for kind, k in sorted(kinds.items(), key=_published_order):
                 resolver.append(
                     f"| {system} | {kind} | {where} | {k['links']} | {k['right']} | "
                     f"{k['wrong']} | {k['uncheckable']} |"
                 )
     return "\n\n".join("\n".join(t) for t in (docs, graph, support, counted, resolver)) + "\n"
+
+
+# The resolver table's rows as docs/benchmarks.md shows them: the rules' links,
+# then the judge's, then a person's, and within each same_as, similar, different.
+_WHO = ("rules", "judge", "person")
+_KIND = ("same_as", "similar", "different")
+
+
+def _published_order(item: tuple[str, Any]) -> tuple[int, int, str]:
+    kind, _, who = item[0].removesuffix(")").partition(" (")
+    rank = (
+        _WHO.index(who) if who in _WHO else len(_WHO),
+        _KIND.index(kind) if kind in _KIND else len(_KIND),
+    )
+    return (*rank, item[0])
 
 
 def _read(path: Path) -> dict[str, Any] | None:

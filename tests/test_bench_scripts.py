@@ -33,6 +33,7 @@ inverses = _load("inverses")
 locator = _load("locator")
 store_lookup = _load("store_lookup")
 tables = _load("tables")
+trex = _load("trex")
 
 
 # --------------------------------------------------------------------------- #
@@ -406,3 +407,97 @@ def test_the_batch_bench_scores_merged_pairs_on_each_split(tmp_path: Path) -> No
     rows_by = {row["setting"]: row for row in natural["settings"]}
     # Three names with one key: the dataset's clusters call one pair of them one entity.
     assert (rows_by["batch, judge-free"]["merged"], rows_by["batch, judge-free"]["right"]) == (3, 1)
+
+
+# --------------------------------------------------------------------------- #
+# trex.py
+# --------------------------------------------------------------------------- #
+
+# Each published T-REx run's report.json, corroboration.json and lookup.json, as
+# `odke bench run trex` and `trex.py lookup --judge` saved them (set80, and
+# LLMGraphTransformer's run on it), with the local path left out: counts over the
+# public T-REx sample, and no text.
+TREX_RUNS = Path(__file__).parent / "fixtures" / "bench" / "trex"
+BENCHMARKS = BENCH.parent / "docs" / "benchmarks.md"
+
+
+def test_trex_tables_make_the_published_tables_from_the_saved_runs() -> None:
+    """docs/benchmarks.md's T-REx tables, row for row (release audit S26)."""
+    made = trex.tables([TREX_RUNS / "set80", TREX_RUNS / "lgt"]).strip("\n").split("\n\n")
+    # Documents, the graph off and on, support, sources, the resolver: a header, a
+    # rule and a row per system and setting each.
+    assert [len(table.splitlines()) for table in made] == [8, 8, 8, 8, 10]
+    page = BENCHMARKS.read_text(encoding="utf-8")
+    unpublished = [table.splitlines()[0] for table in made if f"\n{table}\n" not in page]
+    assert not unpublished, (
+        f"trex.py tables no longer makes the published tables headed {unpublished}: "
+        "re-make the page from the saved runs, or find what changed the script"
+    )
+
+
+def test_trex_lookup_scores_the_links_to_the_store_by_wikidata_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from openodke import Entity, Evidence, Fact
+    from openodke.eval.datasets import trex as dataset
+    from test_trex import _opener
+
+    run = dataset.prepare(dataset.fetch(tmp_path / "raw", opener=_opener([])), tmp_path / "set")
+
+    def fact(doc: str, s: str, p: str, o: str, verdict: str = "supported", key: str = "") -> Fact:
+        def entity(name: str, key: str = "") -> Entity:
+            return Entity(
+                key=key or f"Entity:{name.lower().replace(' ', '_')}", type="Entity", label=name
+            )
+
+        return Fact(
+            subject=entity(s, key),
+            predicate=p,
+            object_entity=entity(o),
+            evidence=[Evidence(doc_id=f"docs/{doc}.txt")],
+            verdict=verdict,
+        )
+
+    border, continent = "shares_border_with", "continent"
+    facts = [
+        # Every other abstract of the facts the gate kept is the store: Q142 and Q45.
+        fact("Q142", "France", border, "Spain"),
+        fact("Q45", "Portugal", border, "Spain"),
+        # Refused, so its abstract is in neither half.
+        fact("Q12837", "Iberian Peninsula", border, "Spain", verdict="contradicted"),
+        # The batch: Portugal is the stored node by key; Kingdom of Spain and a
+        # Spain keyed apart both stand for Q29, which the store holds as Spain, so
+        # each is owed a link, and the rules make one, to the Spain of the same name.
+        fact("Q29", "Kingdom of Spain", border, "Portugal"),
+        fact("Q29", "Spain", continent, "Europe", key="Entity:spain_(country)"),
+        # Q46, which the store does not hold: no link is owed.
+        fact("Q46", "Europe", continent, "Iberian Peninsula"),
+    ]
+    (run / "facts").mkdir()
+    (run / "facts" / "grounded.jsonl").write_text(
+        "".join(f.model_dump_json() + "\n" for f in facts)
+    )
+
+    monkeypatch.setattr("sys.argv", ["trex.py", "lookup", str(run)])
+    trex.main()
+    assert json.loads((run / "lookup.json").read_text()) == {
+        "store": {"documents": 2, "entities": 3},
+        "batch": {"documents": 2, "entities": 5},
+        "same_node_by_key": 1,
+        "owed_a_link": 2,
+        "linked_of_owed": 1,
+        "recall": 0.5,
+        "links": {
+            "similar (rules)": {
+                "links": 1,
+                "right": 1,
+                "wrong": 0,
+                "uncheckable": 0,
+                "precision": 1.0,
+            }
+        },
+        "judge": {},
+    }
+    assert "store lookup: 1 the same node by key, 1 of 2 owed a link linked" in (
+        capsys.readouterr().out
+    )
