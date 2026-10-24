@@ -7,10 +7,11 @@ most pass or fail in both, and only the items that flip carry information, so
 the comparison is paired: a **paired bootstrap** over items (Koehn 2004)
 resamples items with replacement, recomputes the metric for both runs on the
 same resample, and takes the difference's percentile interval. `mcnemar` is the
-exact test on the flips, a cross-check for a pass/fail outcome.
+exact test on the flips; for a pass/fail outcome a verdict needs it too.
 
 There are three verdicts, never two. *better* and *worse* need the whole
-interval on one side of zero. Everything else is *inconclusive*, and is
+interval on one side of zero, and for pass/fail items McNemar's exact p below
+α as well. Everything else is *inconclusive*, and is
 reported with the **detection limit**: the smallest change this set could have
 seen, at 95% confidence and 80% power. An inconclusive result is not "no
 regression"; it is "a change smaller than this would not show here".
@@ -95,9 +96,10 @@ class Paired(Frozen):
     `difference` is B minus A, so a positive one means B scored higher; every
     metric here is better higher. `interval` is the difference's percentile
     interval at `level`, and decides the verdict. `a_interval` and `b_interval`
-    are each run's own range from the same resamples. `flips` counts the items
-    whose outcome differs between the runs: a pass that became a fail or back,
-    or a document whose counts changed.
+    are each run's own range from the same resamples; for pass/fail items
+    scored by `share`, a verdict also needs McNemar's exact p below α. `flips`
+    counts the items whose outcome differs between the runs: a pass that
+    became a fail or back, or a document whose counts changed.
     """
 
     items: int
@@ -165,7 +167,10 @@ def paired_bootstrap(
 
     Element *i* of each list is the same item under each run. The verdict is
     *worse* when the whole interval is below zero, *better* when it is above,
-    and *inconclusive* otherwise.
+    and *inconclusive* otherwise. For pass/fail items scored by `share`,
+    McNemar's exact test on the flips must also be below `alpha`: a handful of
+    flips can all fall one way by chance, and the bootstrap alone then gives a
+    verdict on noise up to 12.5% of the time (4 flips), against the 5% stated.
 
     The detection limit is Z times the standard error of the difference. For
     pass/fail items scored by `share`, each flip moves the metric by exactly
@@ -217,6 +222,8 @@ def paired_bootstraps(
 
     flips = sum(1 for x, y in zip(a, b, strict=True) if x != y)
     pass_fail = all(v in ((0,), (1,)) for v in (*a, *b))
+    # A pass/fail verdict also needs the flips to lean one way (release audit 10).
+    exact = mcnemar([x == (1,) for x in a], [y == (1,) for y in b]) if pass_fail else None
     results = {}
     for name, metric in metrics.items():
         a_draws, b_draws = drawn[name]
@@ -234,6 +241,8 @@ def paired_bootstraps(
         verdict: Verdict = (
             "worse" if interval[1] < 0 else "better" if interval[0] > 0 else "inconclusive"
         )
+        if metric is share and exact is not None and exact.p_value >= alpha:
+            verdict = "inconclusive"
         a_value, b_value = whole[name]
         results[name] = Paired(
             items=len(a),

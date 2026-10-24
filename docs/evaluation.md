@@ -535,14 +535,15 @@ items, documents for corpus P/R/F1.
 |---|---|---|
 | better | the whole 95% interval is above zero | 0 |
 | worse | the whole 95% interval is below zero | 1 |
-| inconclusive | the interval contains zero | 0, or 1 with `--fail-on-inconclusive` |
+| inconclusive | the interval contains zero, or, for right-or-wrong items, McNemar's exact p on the flips is 0.05 or more | 0, or 1 with `--fail-on-inconclusive` |
 
 Inconclusive comes with the **detection limit**, the smallest change the set
 detects (95% confidence, 80% power): Z·√(d/n), with Z = 1.959964 + 0.841621 and
 d the share of items that flip, or Z times the bootstrap's standard error for a
 corpus metric ([DECISIONS #29](decisions.md#29)). One metric decides (F1 for
-documents, accuracy for items, or `--metric`); the rest are guardrails, and
-McNemar's exact test cross-checks pass/fail items.
+documents, accuracy for items, or `--metric`); the rest are guardrails. Four
+items that all flip one way leave the interval clear of zero one time in eight
+by chance, so a right-or-wrong verdict needs McNemar's exact test to agree.
 
 ```bash
 odke eval ground --labels gate.jsonl --predictions p1/facts.jsonl --items p1.items.jsonl
