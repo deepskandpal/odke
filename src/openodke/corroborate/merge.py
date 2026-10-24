@@ -6,7 +6,10 @@ Two jobs, in order.
 carries polarity and identity-bearing qualifiers (DECISIONS #14, #15), so a
 denial never merges with its assertion and uptime at p50 never merges with
 uptime at p95; everything else about the claim is reconciled. Evidence is
-unioned. Reconcilable qualifiers agree, or take the interval union
+unioned, except that a text contradicting a claim another member supports is
+no source for it: its member is left out of the evidence, the support list and
+the confidence, and its documents are recorded under `odke.conflict` as
+`contradicted_in` (release audit 2). Reconcilable qualifiers agree, or take the interval union
 (`start_time` the earliest, `end_time` the latest), or take the best-ranked
 source's value. The valid clock takes the earliest start and latest end any
 source gave. `support` is the count of **independent sources**: forty pages
@@ -63,6 +66,8 @@ from openodke.corroborate.provenance import (
     DERIVED,
     NEAR_DUPLICATES,
     SOURCE_FORM,
+    contradicted_in,
+    contradiction,
     near_duplicates,
     source_forms,
     unstamped,
@@ -327,6 +332,16 @@ class SignatureCorroborator:
 
     def _merge(self, members: list[Fact], copies: NearDuplicates | None) -> Fact:
         first = members[0]
+        everyone = members
+        # A text that contradicts the claim is no source for it (release audit 2):
+        # beside a member that supports the claim, a contradicting one is recorded,
+        # not counted. Its qualifiers, such as a review mark, still merge.
+        if any(f.verdict is GroundingVerdict.SUPPORTED for f in members):
+            members = [f for f in members if f.verdict is not GroundingVerdict.CONTRADICTED]
+        against = [f for f in everyone if f.verdict is GroundingVerdict.CONTRADICTED]
+        refuted = {d for f in everyone for d in contradicted_in(f)}
+        if len(members) < len(everyone):
+            refuted |= {e.doc_id for f in against for e in f.evidence}
         evidence: dict[tuple[Any, ...], Evidence] = {}
         for fact in members:
             for e in fact.evidence:
@@ -351,11 +366,15 @@ class SignatureCorroborator:
         if groups:
             sources = _collapse(sources, cited, groups, self.source)
         # Stable, so the first-seen member wins a tie.
-        ranked = sorted(members, key=self._strength, reverse=True)
-        qualifiers = self._qualifiers(members, ranked)
+        ranked = sorted(everyone, key=self._strength, reverse=True)
+        qualifiers = self._qualifiers(everyone, ranked)
         if groups:
             qualifiers[NEAR_DUPLICATES] = groups
-        extractors = sorted({f.extractor for f in members})
+        # A text that now supports the claim is no longer recorded against it.
+        refuted -= {e.doc_id for e in cited}
+        if refuted:
+            qualifiers[CONFLICT] = contradiction(refuted)
+        extractors = sorted({f.extractor for f in everyone})
         present = {f.verdict for f in members}
         # A source with no evidence has no name: a claim any of whose members
         # cites nothing keeps its count and names none of its sources.
@@ -417,7 +436,7 @@ class SignatureCorroborator:
         out: dict[str, Any] = {}
         forms: dict[str, list[str]] = {}
         for key in dict.fromkeys(k for f in members for k in f.qualifiers):
-            if key == NEAR_DUPLICATES:
+            if key in (NEAR_DUPLICATES, CONFLICT):
                 continue
             if key == SOURCE_FORM:
                 for fact in members:
@@ -576,6 +595,9 @@ class SignatureCorroborator:
                 "over": sorted({_claim(facts[k]) for k in beaten}),
                 "reason": self._explain(fact, mine, facts[j], standing[j]),
             }
+        if refuted := contradicted_in(fact):
+            # The contest's record keeps the texts that contradict the claim.
+            conflict["contradicted_in"] = list(refuted)
         update["qualifiers"] = {**fact.qualifiers, CONFLICT: conflict}
         return fact.model_copy(update=update)
 
