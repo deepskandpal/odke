@@ -83,6 +83,7 @@ nav:
   - Evaluate:
       - "Evaluate a pipeline": evaluation.md
       - "Labels and judges": labels.md
+      - "Calibration cards": calibration.md
       - Benchmarks: benchmarks.md
   - Reference:
       - "Models & providers": models.md

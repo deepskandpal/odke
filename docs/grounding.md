@@ -206,6 +206,25 @@ order. The client must be thread-safe; `ScriptedClient` is not.
 | `max_delay` | `30` s; a server's `Retry-After` wins, capped here |
 | `jitter` | `true`: full jitter |
 
+### The challengers: `prompt=`
+
+Two other prompts compete with `ground.span@1` for the default (#134), both from
+EnterpriseRAG-Bench (Onyx, arXiv 2605.05253, MIT): `ground.onyx@1`, its fact
+validator word for word, and `ground.statement@1`, the same question answered
+three ways in JSON. Both read the fact as one plain sentence (`render_sentence`:
+`Ada Lovelace born in London.`; a denial reads "It is not the case that …").
+Onyx's yes or no is read as Onyx reads it, from the first line: "yes" is
+`supported`, "no" is `not_found`, and anything else is unreadable, leaving the
+fact `unchecked`. A [calibration card](calibration.md) on label set G decides
+which is the default; until then it is `ground.span@1`.
+
+```python
+onyx = LLMGrounder(ModelRoles.single("ollama/qwen2.5:3b"), client=ScriptedClient(["yes"]),
+                   prompt="ground.onyx")
+assert onyx.ground(born, doc).verdict is GroundingVerdict.SUPPORTED
+assert onyx.stats["prompts"] == ["ground.onyx@1"] and onyx.claim_line == "sentence"
+```
+
 ### Paper mode: the ODKE+ grounder as written
 
 The paper's grounder (ODKE+ §3.3.1, App. B) reads the whole context, answers
@@ -325,6 +344,12 @@ noise (`bench/locator.py` states the rule and measures it).
 or a type outside the domain or range. `stats` counts accepted and refused
 facts, by reason. Whether to refuse `not_found` on your corpus is a
 measurement: [`odke eval ablation`](evaluation.md#ablation).
+
+A refusal on a grounding verdict is the grounder's word, and below its
+calibration bar the gate can **mark** instead of dropping: the fact is written
+with `qualifiers["odke.review"]` saying why (`on_refusal="mark"`, or `"drop"`;
+left out, the grounder's [calibration card](calibration.md#below-the-bar-nothing-is-dropped-on-a-judges-word)
+decides, [DECISIONS #54](decisions.md#54)). A schema refusal is always made.
 
 ```python
 from openodke import Ontology, Pipeline, VerdictGate
