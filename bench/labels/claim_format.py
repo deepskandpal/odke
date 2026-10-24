@@ -18,7 +18,9 @@ is truth; the calibration on the hand labels is (roadmap §9).
 
 Cost: two calls per item at the grounder's price, about $0.70 for all 600 on
 the default Haiku. `--cache DIR` keeps the answers, so a rerun of the same
-items costs nothing.
+items costs nothing. The run is held to the spend guard (`bench/spend.py`):
+priced first from what it would send, less the cache, and refused past its
+provider's cap; its real spend goes in the ledger after.
 """
 
 from __future__ import annotations
@@ -26,12 +28,19 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import sys
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 from openodke.eval.sheets import GroundingItem
 from openodke.ground import LLMGrounder
 from openodke.llm import CachedClient, ModelRoles, ModelSpec
+
+# bench/spend.py and bench/calibrate.py: the ledger, the cap and the estimate.
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import calibrate  # noqa: E402
+import spend  # noqa: E402
 
 HERE = Path(__file__).parent / "G"
 FORMATS = ("inline", "labelled")
@@ -52,7 +61,11 @@ def load(limit: int | None, seed: int) -> list[tuple[str, GroundingItem]]:
 
 
 def run(
-    items: list[tuple[str, GroundingItem]], roles: ModelRoles, claim_format: str, cache: Path | None
+    items: list[tuple[str, GroundingItem]],
+    roles: ModelRoles,
+    claim_format: str,
+    cache: Path | None,
+    ledger: Path = spend.LEDGER,
 ) -> Counter:
     client = CachedClient(roles.client_for("ground"), cache)
     grounder = LLMGrounder(roles, client=client, claim_format=claim_format)  # type: ignore[arg-type]
@@ -60,8 +73,37 @@ def run(
     for kind, item in items:
         fact = grounder.ground(item.fact, item.document())
         counts[kind, fact.verdict.value] += 1
-    print(f"{claim_format}: {grounder.stats['calls']} calls, cost {grounder.stats['cost_usd']}")
+    stats = grounder.stats
+    print(f"{claim_format}: {stats['calls']} calls, cost {stats['cost_usd']}")
+    live = int(stats["calls"]) - int(stats.get("cached", 0))
+    if live:
+        spend.record(
+            f"claim-format check: G {len(items)} items, {claim_format}",
+            roles.ground.model,
+            calls=live,
+            input_tokens=int(stats["prompt_tokens"]),
+            output_tokens=int(stats["completion_tokens"]),
+            usd=stats["cost_usd"],
+            ledger=ledger,
+        )
     return counts
+
+
+def estimate(items: list[tuple[str, GroundingItem]], model: str, cache: Path | None) -> float:
+    """What grounding `items` in both formats would cost, less what the cache holds."""
+    store = CachedClient(calibrate._Never(), cache).store if cache is not None else None
+    rows = [
+        calibrate.GItem(str(at), _labelled(item), "", False, kind)
+        for at, (kind, item) in enumerate(items)
+    ]
+    plans = [calibrate.plan_grounding(model, f"span-{f}", rows, 1, store) for f in FORMATS]
+    return sum(job["usd"] or 0.0 for job in calibrate.priced(model, plans))
+
+
+def _labelled(item: GroundingItem) -> Any:
+    from openodke.eval.formats import GroundingLabel
+
+    return GroundingLabel(text=item.text, fact=item.fact, doc_id=item.doc_id, verdict="not_found")
 
 
 def main() -> None:
@@ -70,13 +112,28 @@ def main() -> None:
     parser.add_argument("--limit", type=int, help="a seeded random sample of this many items")
     parser.add_argument("--seed", type=int, default=133)
     parser.add_argument("--cache", type=Path, help="the response cache's directory")
+    parser.add_argument(
+        "--cap-usd", type=float, help="the provider's cap; bench/spend.py's by default"
+    )
+    parser.add_argument("--ledger", type=Path, default=spend.LEDGER)
     args = parser.parse_args()
     roles = ModelRoles()
     if args.model:
         roles = ModelRoles(ground=ModelSpec(model=args.model, max_tokens=256))
     items = load(args.limit, args.seed)
+    try:
+        print(
+            spend.check(
+                roles.ground.model,
+                estimate(items, roles.ground.model, args.cache),
+                cap=args.cap_usd,
+                ledger=args.ledger,
+            )
+        )
+    except spend.SpendRefused as refused:
+        raise SystemExit(f"refused: {refused}") from refused
     kinds = sorted({kind for kind, _ in items})
-    results = {f: run(items, roles, f, args.cache) for f in FORMATS}
+    results = {f: run(items, roles, f, args.cache, args.ledger) for f in FORMATS}
 
     print(f"\nmodel {roles.ground.model}, {len(items)} items")
     print("| kind | n | " + " | ".join(f"{f} supported" for f in FORMATS) + " |")
