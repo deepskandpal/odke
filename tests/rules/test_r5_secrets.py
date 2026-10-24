@@ -33,7 +33,6 @@ KEY = "sk-rule5-fake-0f9e8d7c6b5a"
 PASSWORD = "Hunter2Rule5"
 GATEWAY = f"https://svc:{PASSWORD}@gateway.invalid/v1"
 NO_RETRY = {"attempts": 1}
-RELEASE_9 = pytest.mark.xfail(strict=True, reason="release audit finding 9; fixed in fix PR 2")
 
 
 class _Unreachable:
@@ -75,16 +74,12 @@ GATEWAY_MODEL = {"model": "openai/gateway-large", "base_url": GATEWAY, "api_key_
 # grounder alone, after a model-free extractor), and how the run logs. JSON logs carry no message
 # text unless `--log-text` asks for it (#41), so a grounding failure leaks nothing there.
 SCENARIOS = [
-    pytest.param("extract", ["--log-format", "text"], marks=RELEASE_9, id="extract-text"),
-    pytest.param("extract", ["--log-format", "json"], marks=RELEASE_9, id="extract-json"),
-    pytest.param(
-        "extract", ["--log-format", "json", "--log-text"], marks=RELEASE_9, id="extract-json-text"
-    ),
-    pytest.param("ground", ["--log-format", "text"], marks=RELEASE_9, id="ground-text"),
+    pytest.param("extract", ["--log-format", "text"], id="extract-text"),
+    pytest.param("extract", ["--log-format", "json"], id="extract-json"),
+    pytest.param("extract", ["--log-format", "json", "--log-text"], id="extract-json-text"),
+    pytest.param("ground", ["--log-format", "text"], id="ground-text"),
     pytest.param("ground", ["--log-format", "json"], id="ground-json"),
-    pytest.param(
-        "ground", ["--log-format", "json", "--log-text"], marks=RELEASE_9, id="ground-json-text"
-    ),
+    pytest.param("ground", ["--log-format", "json", "--log-text"], id="ground-json-text"),
 ]
 
 

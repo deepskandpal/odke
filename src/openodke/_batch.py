@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from openodke._text import without_password
 from openodke.llm.base import MissingAPIKey, ProviderNotInstalled
 
 # What stops a run rather than one document: every call would fail the same way.
@@ -57,8 +58,12 @@ def told(exc: BaseException, size: int) -> tuple[list[Any], dict[int, Exception]
 
 
 def reason(stage: str, exc: BaseException) -> str:
-    """`extract: ProviderError: 503 overloaded`: why a document failed, in one line."""
-    text = " ".join(str(exc).split())
+    """`extract: ProviderError: 503 overloaded`: why a document failed, in one line.
+
+    A URL's password is taken out, for a message from code that did not: the line goes
+    to the run manifest, the `document.failed` event and the report.
+    """
+    text = without_password(" ".join(str(exc).split()))
     if len(text) > 200:
         text = text[:197] + "..."
     return f"{stage}: {type(exc).__name__}: {text}" if text else f"{stage}: {type(exc).__name__}"

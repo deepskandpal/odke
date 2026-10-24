@@ -34,6 +34,7 @@ from urllib.parse import unquote, urlsplit
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from openodke._renamed import deprecated
+from openodke._text import without_password
 from openodke.chunking import SentenceChunker
 from openodke.corroborate import (
     EvidenceScorer,
@@ -788,7 +789,10 @@ class _Neo4jPlan(SinkPlan):
 
     @property
     def target(self) -> str:
-        return self.options.uri or f"${self.options.uri_env}"
+        """Where it writes, as a report or a dry run prints it: never a URI's password."""
+        return (
+            without_password(self.options.uri) if self.options.uri else f"${self.options.uri_env}"
+        )
 
     def open(self) -> Sink:
         opts = self.options

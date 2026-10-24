@@ -19,6 +19,7 @@ import urllib.request
 from collections.abc import Sequence
 from typing import Any
 
+from openodke._text import without_password
 from openodke.llm.base import Completion, Message, ModelSpec, ProviderError
 
 # Re-exported from the provider table, which is the one place a provider's endpoint
@@ -93,7 +94,9 @@ class OpenAICompatClient:
         except urllib.error.HTTPError as exc:  # pragma: no cover - network shape
             raise ProviderError(f"{provider} returned {exc.code}: {exc.read()[:400]!r}") from exc
         except urllib.error.URLError as exc:  # pragma: no cover - network shape
-            raise ProviderError(f"could not reach {provider} at {base}: {exc.reason}") from exc
+            # The URL may carry a password: never in a message (release audit finding 9).
+            where = without_password(base)
+            raise ProviderError(f"could not reach {provider} at {where}: {exc.reason}") from exc
 
         return _to_completion(body, spec)
 
