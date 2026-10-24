@@ -55,6 +55,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field
 
+from openodke._text import REDACTED, without_password
 from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
 from openodke.types import Document, Fact, Frozen, KnowledgeGraph
 
@@ -64,7 +65,6 @@ if TYPE_CHECKING:
 # The format of the run's own fields; a reader checks it before trusting them.
 FORMAT = 1
 FILE = "manifest.json"
-REDACTED = "<redacted>"
 
 # What a `JsonlSink` writes into `manifest.json`. A run adds its own fields
 # beside these and never replaces them: the sink's counts are the files'.
@@ -84,7 +84,6 @@ _SECRET = re.compile(
     r"($|[_-])",
     re.IGNORECASE,
 )
-_USERINFO = re.compile(r"(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)(?P<user>[^/@:\s]*):[^/@\s]*@")
 
 
 def now() -> datetime:
@@ -116,7 +115,7 @@ def _redact(value: Any) -> Any:
     if isinstance(value, list):
         return [_redact(item) for item in value]
     if isinstance(value, str):
-        return _USERINFO.sub(rf"\g<scheme>\g<user>:{REDACTED}@", value)
+        return without_password(value)
     return value
 
 

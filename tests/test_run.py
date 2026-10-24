@@ -400,6 +400,15 @@ def test_a_dry_run_prints_the_ddl_and_the_statements_without_connecting(
     assert "MERGE (n:`Person` {key: row.key})" in result.output
 
 
+def test_a_dry_run_never_prints_a_password_in_the_neo4j_uri(project: Path) -> None:
+    config = _config()
+    config["stages"]["sink"] = _neo4j_sink(uri="bolt://neo4j:Hunter2Secret@example.invalid:7687")
+    result = runner.invoke(app, ["run", str(_write(project, config)), "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "neo4j → bolt://neo4j:<redacted>@example.invalid:7687:" in result.output
+    assert "Hunter2Secret" not in result.output
+
+
 def test_a_missing_password_variable_is_named(
     project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
