@@ -47,9 +47,11 @@ class RetryPolicy(BaseModel):
     must not all come back together — and a server's `Retry-After` wins when it
     sends one, capped at `max_delay`.
 
-    The default waits up to 1 + 2 + 4 + 8 + 16 = 31 s over six tries: long
-    enough for a per-minute rate limit that sends no `Retry-After`, which four
-    tries from 0.5 s (3.5 s in all) were not (release audit finding 8).
+    The default's six tries wait at most 1 + 2 + 4 + 8 + 16 = 31 s, and about
+    15 s on average under full jitter: enough to outlast a rate limit of a few
+    seconds that sends no `Retry-After`, which four tries from 0.5 s (3.5 s at
+    most) were not (release audit finding 8). A limit that holds for a minute
+    needs the server's `Retry-After`, or more `attempts`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
