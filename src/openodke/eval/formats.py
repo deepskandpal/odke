@@ -115,7 +115,9 @@ class GroundingLabel(Frozen):
     defaults to the first evidence's `doc_id`, then to the fact's id.
 
     Predictions are `Fact` rows whose `verdict` a grounder set, joined on
-    `Fact.id`; without them the label row's own fact is scored as it stands.
+    `Fact.id`, and on the document where predictions share an id (facts read
+    back from Neo4j do); without them the label row's own fact is scored as it
+    stands.
     Correct means the predicted verdict equals yours. `unchecked` is never
     correct — it is what a grounder that did not decide leaves behind.
     """

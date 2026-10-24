@@ -283,9 +283,35 @@ def test_labels_join_the_judged_facts_on_their_ids() -> None:
     assert notes[-1].startswith("recall is not claimed")
 
 
-def test_facts_sharing_an_id_are_refused() -> None:
-    with pytest.raises(ValueError, match="appear more than once"):
-        judged_precision([_fact(1, "supported"), _fact(1, "not_found")])
+def _in(fact: Fact, doc: str) -> Fact:
+    return fact.model_copy(
+        update={"evidence": (Evidence(doc_id=doc, span=Span(doc_id=doc, start=0, end=40)),)}
+    )
+
+
+def test_facts_sharing_an_id_join_by_their_document(tmp_path: Path) -> None:
+    """Release audit 19: facts read back from Neo4j share their relationship's id.
+
+    One row per piece of evidence, by design, so verdicts can be written back.
+    A label joins the row citing its document; joined on the id alone, both
+    labels took the last row, and a judge right on both scored half.
+    """
+    first, second = _in(_fact(1, "supported"), "d1"), _in(_fact(1, "not_found"), "d2")
+    labels = [_label(first, "supported"), _label(second, "not_found")]
+    section, _ = judged_precision([first, second], labels)
+    assert (section.labels, section.false_support, section.lost_support) == (2, 0, 0)
+    assert report_precision([first, second], labels).stages[0].metrics["accuracy"] == 1.0
+    # One id twice in one document: no label can tell which it is.
+    twin = first.model_copy(update={"verdict": GroundingVerdict.NOT_FOUND})
+    with pytest.raises(ValueError, match="share the fact id 'f1' and its document"):
+        judged_precision([first, twin], labels[:1])
+    # And the sheets refuse it before writing anything, so no labelling is wasted.
+    docs = [Document(id=d, text=TEXT) for d in ("d1", "d2")]
+    with pytest.raises(ValueError, match="appear twice in one document"):
+        write_sample([first, twin], docs, tmp_path / "twins")
+    assert not (tmp_path / "twins").exists()
+    drawn, _ = write_sample([first, second], docs, tmp_path / "sheets", n=2)
+    assert len(drawn) == 2
 
 
 def test_the_coverage_report_stands_in_for_recall() -> None:

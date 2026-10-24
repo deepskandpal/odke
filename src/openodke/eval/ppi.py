@@ -84,6 +84,7 @@ from openodke.eval.eval_report import (
 from openodke.eval.formats import GroundingLabel
 from openodke.eval.grounding import evaluate_grounding
 from openodke.eval.report import StageReport
+from openodke.eval.report import _pick as _labelled_fact
 from openodke.eval.sheets import Made, make_sheets
 from openodke.eval.stats import wilson
 from openodke.ontology import Ontology
@@ -190,31 +191,30 @@ def judged_precision(
     level: float = LEVEL,
     minimum: int = MINIMUM_LABELS,
 ) -> tuple[JudgedPrecision, list[str]]:
-    """The judged facts, corrected by the labels joined to them on `Fact.id`, and notes.
+    """The judged facts, corrected by the labels joined to them, and notes.
 
-    A label whose fact is not among `facts` is left out and counted; so is a
-    second label on one fact. With `documents`, the coverage report over the
-    facts comes too, with `ontology`'s relations when one is given.
+    A label joins the fact with its `Fact.id`; where facts share an id, as
+    facts read back from Neo4j do, the one citing the label's document
+    (`openodke.eval.report.join_by_id`). A label whose fact is not among
+    `facts` is left out and counted; so is a second label on one fact. With
+    `documents`, the coverage report over the facts comes too, with
+    `ontology`'s relations when one is given.
     """
-    ids = Counter(fact.id for fact in facts)
-    if shared := [i for i, n in ids.items() if n > 1]:
-        raise ValueError(
-            f"{len(shared)} fact id(s) appear more than once, e.g. {shared[0]}: the labels "
-            "join the facts on Fact.id, so each must be one fact"
-        )
-    said = {fact.id: fact.verdict is GroundingVerdict.SUPPORTED for fact in facts}
+    by_id = _by_id(facts)
+    said = [fact.verdict is GroundingVerdict.SUPPORTED for fact in facts]
     pairs: list[tuple[bool, bool]] = []
-    seen: set[str] = set()
+    seen: set[int] = set()
     strays = repeats = 0
     for row in labels:
-        if row.fact.id not in said:
+        fact = _labelled_fact(by_id.get(row.fact.id, []), row, row.fact.id, "fact")
+        if fact is None:
             strays += 1
-        elif row.fact.id in seen:
+        elif id(fact) in seen:
             repeats += 1
         else:
-            seen.add(row.fact.id)
-            pairs.append((said[row.fact.id], row.verdict == "supported"))
-    judge, corrected, alone = prediction_powered(list(said.values()), pairs, level=level)
+            seen.add(id(fact))
+            pairs.append((fact.verdict is GroundingVerdict.SUPPORTED, row.verdict == "supported"))
+    judge, corrected, alone = prediction_powered(said, pairs, level=level)
     verdicts = Counter(fact.verdict.value for fact in facts)
     order = ("supported", "contradicted", "not_found", "unchecked")
     notes = [
@@ -245,7 +245,7 @@ def judged_precision(
     return (
         JudgedPrecision(
             facts=len(facts),
-            supported=sum(said.values()),
+            supported=sum(said),
             labels=len(pairs),
             labelled_supported=sum(y for _, y in pairs),
             false_support=sum(f and not y for f, y in pairs),
@@ -260,6 +260,14 @@ def judged_precision(
         ),
         notes,
     )
+
+
+def _by_id(facts: Sequence[Fact]) -> dict[str, list[Fact]]:
+    """The judged facts by id; facts read back from Neo4j share one, one row per evidence."""
+    by_id: dict[str, list[Fact]] = {}
+    for fact in facts:
+        by_id.setdefault(fact.id, []).append(fact)
+    return by_id
 
 
 def coverage_totals(
@@ -299,17 +307,18 @@ def report_precision(
     )
     stages: tuple[StageReport, ...] = ()
     if section.labels:
-        joined = {fact.id: fact for fact in facts}
+        by_id = _by_id(facts)
         # The labels the section used: each judged fact's first, as `judged_precision` keeps it.
-        first: dict[str, GroundingLabel] = {}
+        first: dict[int, tuple[GroundingLabel, Fact]] = {}
         for row in labels:
-            if row.fact.id in joined:
-                first.setdefault(row.fact.id, row)
-        kept = list(first.values())
+            fact = _labelled_fact(by_id.get(row.fact.id, []), row, row.fact.id, "fact")
+            if fact is not None:
+                first.setdefault(id(fact), (row, fact))
         stages = (
-            evaluate_grounding(kept, [joined[row.fact.id] for row in kept]).model_copy(
-                update={"stage": "the judge on the labels"}
-            ),
+            # Each label already holds its fact, so the join is by position, not by id again.
+            evaluate_grounding(
+                [row.model_copy(update={"fact": fact}) for row, fact in first.values()]
+            ).model_copy(update={"stage": "the judge on the labels"}),
         )
     return EvalReport(
         title=TITLE,
@@ -399,24 +408,32 @@ def write_sample(
     if target.is_dir() and ((target / SAMPLE_FILE).exists() or any(target.glob("sheet-*"))):
         raise ValueError(f"{target} already has a sample or sheets; write to an empty directory")
     texts = {doc.id: doc for doc in documents}
-    homes: dict[str, Document] = {}
+    homes: dict[int, Document] = {}
     homeless = []
     for fact in facts:
         doc = next((texts[e.doc_id] for e in fact.evidence if e.doc_id in texts), None)
         if doc is None:
             homeless.append(fact.id)
         else:
-            homes[fact.id] = doc
+            homes[id(fact)] = doc
     if homeless:
         raise ValueError(
             f"{len(homeless)} judged fact(s) cite none of the documents, e.g. {homeless[0]}: "
             "any fact may be drawn, and a sheet shows the text it cites"
         )
+    # Before anything is written: labels made from a sheet must join back (release audit 19).
+    shared = Counter((fact.id, homes[id(fact)].id) for fact in facts)
+    if twice := [key for key, count in shared.items() if count > 1]:
+        raise ValueError(
+            f"{len(twice)} judged fact id(s) appear twice in one document, e.g. {twice[0][0]} "
+            f"in {twice[0][1]}: a label joins its fact on the id and the document, so each "
+            "pair must be one fact"
+        )
     drawn = sample(facts, n, seed=seed, by=predicate if by_predicate else None)
     rows = []
     for fact in drawn:
         blind = fact.model_copy(update={"verdict": GroundingVerdict.UNCHECKED, "confidence": 0.0})
-        doc = homes[fact.id]
+        doc = homes[id(fact)]
         rows.append({"text": doc.text, "fact": blind.model_dump(mode="json"), "doc_id": doc.id})
     target.mkdir(parents=True, exist_ok=True)
     items = target / SAMPLE_FILE

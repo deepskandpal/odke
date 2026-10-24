@@ -54,8 +54,10 @@ precision without gold  (1000 facts judged, 120 labels)
 `--make-sheet DIR` draws `--n` facts (150) with `--seed` (0), `--by-predicate`
 giving each predicate its share. The sample goes to `DIR/sample.jsonl` with
 verdicts cleared, and onto grounding sheets. Every judged fact must cite one of
-`--documents`. Labels join on `Fact.id`; one naming no judged fact, or repeated,
-is left out and counted. `tests/test_eval_ppi.py` checks the interval's
+`--documents`. Labels join on `Fact.id`, and where facts share an id, as facts
+read back from Neo4j do (one row per piece of evidence), on the document too;
+two that share both are refused before a sheet is written. A label naming no
+judged fact, or repeated, is left out and counted. `tests/test_eval_ppi.py` checks the interval's
 coverage on simulated biased judges.
 
 ```python
