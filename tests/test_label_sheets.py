@@ -139,6 +139,23 @@ def test_passage_markdown_is_escaped_so_nothing_is_hidden() -> None:
     assert "\\=\\=hi\\=\\=" in line and "\\[\\[link\\]\\]" in line and "\\#tag" in line
 
 
+def test_an_entity_in_a_passage_shows_as_written() -> None:
+    """Release audit S22: "AT&amp;T" rendered as "AT&T", and "&lt;b&gt;" as "<b>"."""
+    (line,) = quote("AT&amp;T said &lt;b&gt; & more")
+    assert line == "> AT\\&amp;T said \\&lt;b\\&gt; \\& more"
+
+
+def test_label_make_names_every_kind_it_makes() -> None:
+    from typer.testing import CliRunner
+
+    from openodke.cli.main import app
+
+    shown = CliRunner().invoke(app, ["label", "make", "--help"], terminal_width=200)
+    assert shown.exit_code == 0 and "grounding, pair, fact or refusal" in " ".join(
+        shown.output.split()
+    )
+
+
 def test_a_span_across_lines_is_bold_on_each_and_whitespace_stays_outside() -> None:
     text = "First line here.\n\nSecond line."
     # From the space before "line" to the end of "Second".

@@ -93,8 +93,9 @@ class Kind:
 
 
 # Markdown, and Obsidian on top of it, would hide or restyle text containing
-# these: `$` opens a formula, `%%` a comment, `==` a highlight, `<` HTML.
-_SPECIAL = re.compile(r"([\\`*_\[\]<>#$%=~^|])")
+# these: `$` opens a formula, `%%` a comment, `==` a highlight, `<` HTML, and `&`
+# an entity, so a passage's "&amp;" would show as "&" (release audit S22).
+_SPECIAL = re.compile(r"([\\`*_\[\]<>#$%=~^|&])")
 
 
 # Every line break but `\n`. A reader may break a line on any of them, which
