@@ -830,7 +830,7 @@ class Validator:
             facts_in=facts_in,
             unmatched=int(own.get("unmatched_rows", 0)),
             verdicts={v.value: int(grounding["verdicts"].get(v.value, 0)) for v in VERDICTS},
-            checked=refusals(grounding),
+            checked={k: v - before.checked.get(k, 0) for k, v in refusals(grounding).items()},
             refused=refused,
             refused_by=dict(refused_by),
             merged=facts_in + derived - refused - int(graph["facts"]),
@@ -910,6 +910,8 @@ class _Before:
     def __init__(self, stages: Mapping[str, Any]) -> None:
         judge = getattr(stages["resolver"], "judge", None)
         self.spent = _spent(stages["grounder"].grounder)
+        # A grounder given keeps its span check's counts between jobs (release audit S11).
+        self.checked = refusals(stages["grounder"].stats)
         self.judged = _spent(judge)
         self.counted = _counted(judge)
         self.refused = _refused_by(stages["gate"])

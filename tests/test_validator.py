@@ -92,6 +92,17 @@ def test_the_triples_example_runs_end_to_end_into_jsonl(tmp_path: Path) -> None:
     assert len(lines) == 5
 
 
+def test_a_grounder_kept_between_jobs_reports_each_jobs_free_checks_alone() -> None:
+    """Release audit S11: a grounder passed in counted not_in_text 1, 2, 3 over three jobs."""
+    client = RecordedClient.from_fixture(EXAMPLE / "recorded" / "ground.json")
+    ontology = Ontology.from_json(EXAMPLE / "ontology.json")
+    validator = Validator(ontology, grounder=LLMGrounder(client=client))
+    for _ in range(3):
+        _, report = validator.validate(EXAMPLE / "triples.jsonl", _texts())
+        assert report.checked["not_in_text"] == 1
+        assert "free checks   1 refused" in report.render()
+
+
 def test_the_report_counts_what_each_stage_did() -> None:
     client = RecordedClient(RECORDED)
     kg, report = Validator(PLACES, client=client).validate(ROWS, [A, B])
