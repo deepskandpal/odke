@@ -312,6 +312,11 @@ def test_facts_sharing_an_id_join_by_their_document(tmp_path: Path) -> None:
     assert not (tmp_path / "twins").exists()
     drawn, _ = write_sample([first, second], docs, tmp_path / "sheets", n=2)
     assert len(drawn) == 2
+    # A fact merged across d1 and d2 and one citing d2 share (f1, d2): a label of either
+    # would match both, so the sheets refuse them too.
+    merged = first.model_copy(update={"evidence": (*first.evidence, *second.evidence)})
+    with pytest.raises(ValueError, match="appear twice in one document"):
+        write_sample([merged, second], docs, tmp_path / "merged")
 
 
 def test_the_coverage_report_stands_in_for_recall() -> None:
