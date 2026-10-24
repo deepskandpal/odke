@@ -236,6 +236,38 @@ def test_run_extract_reads_documents_and_an_ontology(
     )
 
 
+def test_an_in_process_run_s_report_names_its_prompt_and_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Release audit S18: `--run mod:grounder --report` named no prompt and no model.
+
+    The calibration card of a judge is looked up by its prompt, model and claim
+    format, so a report of a grounder run in-process must say all three.
+    """
+    from openodke.ground import LLMGrounder
+    from openodke.llm import ModelRoles
+    from openodke.llm.testing import RecordedClient
+
+    roles = ModelRoles()
+    module = types.ModuleType("odke_eval_cli_grounder")
+    answers = RecordedClient([{"match": "", "response": {"verdict": "supported"}}])
+    module.GROUNDER = LLMGrounder(roles, client=answers)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    out = tmp_path / "report.json"
+    args = ["eval", "ground", "--labels", str(FIXTURES / "ground.labels.jsonl")]
+    result = runner.invoke(
+        app, [*args, "--run", f"{module.__name__}:GROUNDER", "--report", str(out)]
+    )
+    assert result.exit_code == 0, result.output
+    run = read_report(out).run
+    assert run.models == {"ground": roles.ground.model}
+    assert run.prompts == (module.GROUNDER.prompt.key,)
+    assert run.claim_formats == {module.GROUNDER.prompt.key: module.GROUNDER.claim_line}
+    # From a predictions file nothing ran here, and the report claims nothing.
+    plain = runner.invoke(app, [*_files("ground"), "--report", str(tmp_path / "plain.json")])
+    assert plain.exit_code == 0 and read_report(tmp_path / "plain.json").run.models == {}
+
+
 def test_load_stage_instantiates_a_class_and_takes_an_instance_as_is(
     support: types.ModuleType,
 ) -> None:
