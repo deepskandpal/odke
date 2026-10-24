@@ -163,10 +163,14 @@ jobs:
           enable-cache: true
           cache-dependency-glob: bench/requirements.txt
 
+      # Only the files resolved into bench/requirements.txt install: --require-hashes
+      # refuses any other upload of the same version. The package itself comes from
+      # this checkout, with no dependencies of its own (the file pins them), in a
+      # second call, since a local editable install has no hash to check.
       - name: Install the bench environment
         run: |
           uv venv --python 3.12 bench/.venv
-          uv pip install --python bench/.venv/bin/python -r bench/requirements.txt
+          uv pip install --python bench/.venv/bin/python --require-hashes -r bench/requirements.txt
           uv pip install --python bench/.venv/bin/python --no-deps -e .
 
       # A skipped test is a green tick that proved nothing, as in the live job.
