@@ -128,7 +128,8 @@ def test_two_tenants_writing_one_graph_share_no_key_and_no_signature(
         config = yaml.safe_load((project / "odke.yaml").read_text(encoding="utf-8"))
         config["stages"]["sink"] = SINKS[sink]
         (project / "odke.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
-        driver = FakeDriver()
+        # Bootstrapped, as a store a write merges with must be (DECISIONS #53).
+        driver = FakeDriver.bootstrapped(*ONTOLOGY_DOC.predicates)
         monkeypatch.setattr(neo4j_module, "_connect", lambda uri, auth, d=driver: d)
         monkeypatch.chdir(project)
         args = [*_commands("odke.yaml")[command], "--tenant", tenant]

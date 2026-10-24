@@ -33,7 +33,7 @@ from openodke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink
 from openodke.sinks.networkx import NetworkXSink
 from openodke.sinks.rdf import RdfSink
 from openodke.stages import PassThroughGate
-from test_neo4j_sink import FakeDriver
+from test_neo4j_sink import FakeDriver, signature_indexes
 
 runner = CliRunner()
 SUPPORT = "odke_run_support"
@@ -361,9 +361,10 @@ def _neo4j_sink(**options: Any) -> dict[str, Any]:
 
 
 def test_bootstrap_applies_the_constraints_before_the_first_write(
-    project: Path, monkeypatch: pytest.MonkeyPatch
+    project: Path, people: Ontology, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    driver = FakeDriver()
+    # Bootstrapped: the indexes the DDL makes, as `SHOW INDEXES` then lists them.
+    driver = FakeDriver.bootstrapped(*people.predicates)
     monkeypatch.setattr(neo4j_module, "_connect", lambda uri, auth: driver)
     monkeypatch.setenv("ODKE_TEST_SECRET", "not-a-real-password")
     config = _config(bootstrap=True)
@@ -374,8 +375,10 @@ def test_bootstrap_applies_the_constraints_before_the_first_write(
 
     modes = [mode for mode, _, _ in driver.calls]
     first_write = modes.index("write")
-    assert modes[:first_write] and set(modes[:first_write]) == {"auto"}
-    # Before the first write: the DDL, and the indexes the store merge reads through (#153).
+    # Before the first write: the DDL, the indexes the store merge reads through (#153),
+    # and that read.
+    assert modes[:first_write] and set(modes[:first_write]) == {"auto", "read"}
+    assert modes.index("read") > modes.index("auto")
     auto = [cypher for mode, cypher, _ in driver.calls if mode == "auto"]
     assert all("IF NOT EXISTS" in cypher or cypher.startswith("SHOW INDEXES") for cypher in auto)
     assert "applied" in result.output and "CREATE CONSTRAINT odke_key_Person" in result.output
@@ -437,7 +440,7 @@ INDEXES = [
 
 
 def test_store_lookup_reads_the_neo4j_sinks_store_before_it_writes(
-    project: Path, monkeypatch: pytest.MonkeyPatch
+    project: Path, people: Ontology, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     hopper = {"key": "p:hopper", "label": "Grace Hopper", "aliases": []}
 
@@ -450,7 +453,7 @@ def test_store_lookup_reads_the_neo4j_sinks_store_before_it_writes(
             # The statement being answered is the last one recorded.
             return [{"block": row["block"], "node": hopper} for row in self.calls[-1][2]["rows"]]
 
-    driver = Store({"SHOW INDEXES": INDEXES})
+    driver = Store({"SHOW INDEXES": INDEXES + signature_indexes(*people.predicates)})
     connected: list[str] = []
 
     def connect(uri: str, auth: Any) -> Any:
@@ -471,7 +474,11 @@ def test_store_lookup_reads_the_neo4j_sinks_store_before_it_writes(
     assert modes[0] == "auto" and "read" in modes and "write" in modes
     assert max(i for i, m in enumerate(modes) if m == "read") < modes.index("write")
     reads = [(cypher, params) for mode, cypher, params in driver.calls if mode == "read"]
-    assert all(params["tenant"] == "t1" for _, params in reads)
+    # The lookup filters on the tenant; the store merge reads by the tenant's signatures.
+    looked = [params for cypher, params in reads if "row.signature" not in cypher]
+    merged = [params for cypher, params in reads if "row.signature" in cypher]
+    assert looked and all(params["tenant"] == "t1" for params in looked)
+    assert merged and all("tenant" not in params for params in merged)
     assert any(params.get("limit") == 7 for _, params in reads)
     # No resolver named: store_lookup brings the native one, and it found the person.
     links = [(link.source_key, link.target_key, link.kind.value) for link in result.graph.links]

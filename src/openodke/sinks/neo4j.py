@@ -1464,6 +1464,24 @@ def _block_rows(
     return rows
 
 
+# What to run when a store is not bootstrapped for the predicates a write merges on.
+BOOTSTRAP_HINT = (
+    "bootstrap it once and run again: `bootstrap: true` in the run config (odke run, "
+    "odke validate --config), or Neo4jSink(...).bootstrap(ontology) from Python. "
+    "A predicate the ontology does not declare gets no index, so declare it"
+)
+
+
+def unbootstrapped(predicates: Sequence[str]) -> str:
+    """Why a store with no signature index for `predicates` is refused (DECISIONS #53)."""
+    names = ", ".join(f"{p}.signature" for p in predicates)
+    return (
+        f"the store has no index for {names}, so a write cannot read what the store holds "
+        "under those signatures, and would replace the support lists it holds rather than "
+        f"add to them; it was not bootstrapped for this ontology: {BOOTSTRAP_HINT}"
+    )
+
+
 def _read_all(tx: Any, queries: Sequence[LookupQuery]) -> list[list[dict[str, Any]]]:
     return [tx.run(q.cypher, q.params).data() for q in queries]
 
@@ -1576,8 +1594,14 @@ class Neo4jLookup:
         through the relationship index the predicate's uniqueness constraint
         brings, and every predicate in one read transaction. Each relationship
         found is read back by `stored_fact`: the claim as the batch states it,
-        the receipts as the store holds them. A predicate with no index is not
-        read, and warns once, as a type with no index does.
+        the receipts as the store holds them.
+
+        A store never bootstrapped, or one missing the signature index of a
+        predicate its ontology declares, is refused, naming the bootstrap
+        (DECISIONS #53): it cannot say what it holds under that signature
+        without a scan, so a write would replace the stored support list
+        rather than add to it. A predicate the ontology does not declare gets
+        no index from a bootstrap, so its facts are not read, and it warns once.
         """
         by_key: dict[str, list[Fact]] = defaultdict(list)
         for fact in facts:
@@ -1602,9 +1626,15 @@ class Neo4jLookup:
         by_predicate: dict[str, set[str]] = defaultdict(set)
         for fact in facts:
             by_predicate[fact.predicate].add(signature_of(fact, self.tenant))
+        missing = sorted(set(by_predicate) - indexes.signatures)
+        declared = set(self.ontology.predicates) if self.ontology is not None else set()
+        refused = [p for p in missing if p in declared or not indexes.entity_key]
+        if refused:
+            raise ValueError(unbootstrapped(refused))
         queries: list[LookupQuery] = []
         for predicate in sorted(by_predicate):
-            if predicate not in indexes.signatures:
+            if predicate in missing:
+                # Undeclared, in a bootstrapped store: no index can exist for it.
                 self._unindexed(predicate, "signature")
                 continue
             cypher = (

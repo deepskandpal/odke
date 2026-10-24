@@ -116,7 +116,12 @@ a `FactLookup`, whose `stored(facts)` returns the stored fact for each
 signature; `SignatureCorroborator(store=...)` merges those in before the scorer
 and the gate, a statement replacing a derived twin
 ([DECISIONS #28](decisions.md#28)). `Neo4jSink.stored` reads through each
-predicate's uniqueness index, warning on a predicate without one; `JsonlSink(directory, merge=True)` keeps what the files hold.
+predicate's uniqueness index. A store never bootstrapped, or missing the index
+of a predicate its ontology declares, is refused with the bootstrap to run
+([DECISIONS #53](decisions.md#53)): without the index a write would replace the
+stored support lists. A predicate no ontology declares gets no index, so its
+facts are not read, with a warning. `JsonlSink(directory, merge=True)` keeps
+what the files hold.
 
 **The Validator merges by default** with every `FactLookup` sink
 (`report.restated` counts them), as does `odke validate` with a config's sinks

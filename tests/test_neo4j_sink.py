@@ -141,6 +141,11 @@ class FakeDriver:
     def close(self) -> None:
         self.closed = True
 
+    @classmethod
+    def bootstrapped(cls, *predicates: str) -> FakeDriver:
+        """A store bootstrapped for `predicates`: one a write can merge with (DECISIONS #53)."""
+        return cls({"SHOW INDEXES": signature_indexes(*predicates)})
+
     @property
     def writes(self) -> list[tuple[str, dict[str, Any]]]:
         """Each statement written, as planned: the sink adds `COUNTED` to count its rows."""
@@ -149,6 +154,17 @@ class FakeDriver:
             for mode, cypher, params in self.calls
             if mode == "write"
         ]
+
+
+def signature_indexes(*predicates: str) -> list[dict[str, Any]]:
+    """What `SHOW INDEXES` lists of a bootstrap: its `:Entity(key)` index, and a signature
+    index for each of `predicates`."""
+    return [
+        {"name": "odke_entity_key", "type": "RANGE", "entityType": "NODE",
+         "labelsOrTypes": ["Entity"], "properties": ["key"]},
+        *({"name": f"odke_signature_{p}", "type": "RANGE", "entityType": "RELATIONSHIP",
+           "labelsOrTypes": [p], "properties": ["signature"]} for p in predicates),
+    ]  # fmt: skip
 
 
 # --------------------------------------------------------------------------- #
