@@ -121,7 +121,7 @@ from openodke.llm.base import LLMClient, ModelSpec
 from openodke.llm.budget import stopped_summary
 from openodke.llm.roles import ModelRoles
 from openodke.manifest import FILE, InputsHash, Recorder, RunManifest, inputs_of, spent_of
-from openodke.observe import JobCounts, Observer, spend
+from openodke.observe import JobCounts, Observer
 from openodke.ontology import Ontology
 from openodke.pipeline import Pipeline
 from openodke.reconcile import Reconciler
@@ -531,7 +531,7 @@ class Validator:
                 manifest.write(self.manifest, kg)
         observer.finish(
             report.job,
-            cost=spend(spent),
+            cost=spent_of(spent),
             documents=report.documents,
             failed=len(report.failed),
             stopped=report.stopped.get("limit") if report.stopped else None,
@@ -666,7 +666,7 @@ class Validator:
                 manifest.write(self.manifest, kg, shape=graph)
         observer.finish(
             report.job,
-            cost=spend(spent),
+            cost=spent_of(spent),
             documents=report.documents,
             failed=len(report.failed),
             stopped=report.stopped.get("limit") if report.stopped else None,

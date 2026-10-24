@@ -48,7 +48,7 @@ from openodke.manifest import (
     package,
     spent_of,
 )
-from openodke.observe import JobCounts, Observer, job_counts_of_run, spend
+from openodke.observe import JobCounts, Observer, job_counts_of_run
 from openodke.ontology import Ontology
 from openodke.reextract import summary as reextract_summary
 from openodke.run.build import Built, build, check_streams
@@ -363,7 +363,7 @@ def finish(observer: Observer, counts: JobCounts, stats: Mapping[str, Any]) -> N
     stopped = stats.get("stopped")
     observer.finish(
         counts,
-        cost=spend(stats.get("spent") or {}),
+        cost=spent_of(stats.get("spent") or {}),
         documents=int(stats.get("documents", 0)),
         failed=len(stats.get("failed") or {}),
         stopped=stopped.get("limit") if isinstance(stopped, Mapping) else None,
