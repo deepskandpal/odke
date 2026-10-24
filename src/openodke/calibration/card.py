@@ -1,5 +1,8 @@
 """A calibration card: one judge prompt on one dated model, measured against human labels.
 
+Provisional (DECISIONS #48), as `openodke.calibration` is: the card format and the bars settle
+with the first published cards.
+
 A judge's number is only as good as its agreement with a person. A card holds
 that agreement for one prompt version (DECISIONS #27), one dated model id
 (#7a) and one version of one label set, and nothing else: change any of the

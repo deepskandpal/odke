@@ -1,5 +1,8 @@
 """Nothing is dropped on the word of a judge below its bar (DECISIONS #54).
 
+Provisional (DECISIONS #48), as `openodke.calibration` is: the card format and the bars settle
+with the first published cards.
+
 A judge below its calibration bar still runs, and its answers are kept and
 reported. What changes is what its answer does:
 

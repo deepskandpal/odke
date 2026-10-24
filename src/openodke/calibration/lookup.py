@@ -1,5 +1,8 @@
 """Which card describes a judge, and the line a report prints for it.
 
+Provisional (DECISIONS #48), as `openodke.calibration` is: the card format and the bars settle
+with the first published cards.
+
 A judge is a registered prompt on a model: `ground.span@1` on
 `anthropic/claude-haiku-4-5-20251001`, with the claim written inline. Its card
 is the one with that prompt key, that exact model id, that claim format, and a
