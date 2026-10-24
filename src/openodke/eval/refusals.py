@@ -27,12 +27,14 @@ refusals 90% right and 50 that are 30% right read as 62% [52%, 71%], against
 a truth of 87%, and over 2,000 draws the range held the truth 0 times (release
 audit 5). So each drawn refusal carries its stratum's size (`stratum_size`),
 and a row that spans strata **weights each stratum by its size**. Its range is
-a Wilson interval on the sample's effective size: p̂(1 − p̂) over the stratified
-variance, Σ W²·p̃(1 − p̃)/n·(1 − n/N) over the strata, where W is a stratum's
-share of the refusals, N its size, n its judged labels, and p̃ its right ones
-with one right and one wrong added, so a stratum whose labels all agree still
-leaves doubt; at most the labels judged. In simulation that holds the truth
-95% to 99% of the time, 95.2% on the case above (`tests/test_eval_refusals.py`).
+a Wilson interval on the sample's effective size: p̃(1 − p̃) over the stratified
+variance, Σ W²·p̃ₕ(1 − p̃ₕ)/n·(1 − n/N) over the strata, where W is a stratum's
+share of the refusals, N its size, n its judged labels, p̃ₕ its right ones with
+one right and one wrong added, so a stratum whose labels all agree still
+leaves doubt, and p̃ the weighted mean of those; at most the labels judged. In
+simulation that holds the truth 95.3% of the time on the case above, its
+population held fixed, and 93.5% to 98.9% over six designs whose every draw
+makes a new population (`tests/test_eval_refusals.py`).
 Labels with no sizes (drawn by hand, or before sizes were recorded) are
 reported per stratum only, each a simple random sample of its own; the runs
 they were drawn from give the sizes back (`sizes`, or
@@ -527,9 +529,10 @@ def _stratified(labels: Sequence[RefusalLabel]) -> dict[str, Metric]:
     Every label carries its stratum's size (`stratum_size`). A stratum's
     precision is its right refusals over its judged labels; the row's is their
     mean, each weighted by the stratum's share of the refusals. The 95% range
-    is Wilson's on the effective sample size, p̂(1 − p̂) over the stratified
-    variance Σ W²·p̃(1 − p̃)/n·(1 − n/N), with p̃ a stratum's share with one right
-    and one wrong added, and at most the labels judged; one stratum is a simple
+    is Wilson's on the effective sample size, p̃(1 − p̃) over the stratified
+    variance Σ W²·p̃ₕ(1 − p̃ₕ)/n·(1 − n/N), each stratum's share read with one
+    right and one wrong added (p̃ₕ) and p̃ their weighted mean, at most the
+    labels judged; one stratum is a simple
     random sample, and gets `precision`'s interval. A stratum whose every label
     is unsure has no precision and no weight: `unweighted` counts them.
     """
@@ -573,14 +576,19 @@ def _stratified(labels: Sequence[RefusalLabel]) -> dict[str, Metric]:
     if not weighed:
         return out
     total = sum(size for size, _, _ in weighed)
-    share = sum(size / total * right / judged for size, judged, right in weighed)
+    # A float sum of shares can land a hair past 1 when every label is right.
+    share = min(1.0, sum(size / total * right / judged for size, judged, right in weighed))
+    # Both sides of the design effect read the shares with one right and one wrong added,
+    # so the effective size moves smoothly to a share of 0 or 1, never jumping there.
+    tilted = 0.0
     spread = 0.0
     for size, judged, right in weighed:
-        tilted = (right + 1) / (judged + 2)
-        spread += (size / total) ** 2 * tilted * (1 - tilted) / judged * (1 - judged / size)
+        each = (right + 1) / (judged + 2)
+        tilted += size / total * each
+        spread += (size / total) ** 2 * each * (1 - each) / judged * (1 - judged / size)
     effective = float(sum(judged for _, judged, _ in weighed))
-    if spread > 0 and 0 < share < 1:
-        effective = min(effective, share * (1 - share) / spread)
+    if spread > 0:
+        effective = min(effective, tilted * (1 - tilted) / spread)
     interval = wilson(share * effective, effective)
     assert interval is not None
     return {**out, "precision": share, "low": interval[0], "high": interval[1],

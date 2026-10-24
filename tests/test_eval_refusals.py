@@ -425,10 +425,10 @@ def _held(strata: list[tuple[str, int, float]], n: int, reps: int) -> float:
     [
         # The release audit's case: pooled, it read 62% [52%, 71%] against 87%, and held 0 of 2,000.
         pytest.param(
-            [("big", 1000, 0.9), ("small", 50, 0.3)], 100, 0.952, id="1000 at 90%, 50 at 30%"
+            [("big", 1000, 0.9), ("small", 50, 0.3)], 100, 0.935, id="1000 at 90%, 50 at 30%"
         ),
         pytest.param(
-            [("a", 500, 0.7), ("b", 300, 0.9), ("c", 100, 0.5)], 60, 0.956, id="three strata"
+            [("a", 500, 0.7), ("b", 300, 0.9), ("c", 100, 0.5)], 60, 0.946, id="three strata"
         ),
         # The shape of the 10 Oct refusal labels: six strata of 8 to 83, 100 drawn.
         pytest.param(
@@ -452,10 +452,41 @@ def test_the_stratified_range_holds_its_level(
     """Release audit 5: each stratum weighted by its size, Wilson on the effective sample size.
 
     `measured` is the coverage offline, 5,000 seeded populations each; here,
-    200, so a draw may sit a few points from it. Never under 90%.
+    200, so a draw may sit a few points from it. Never under 90%. Each draw
+    makes a new population of the given shares; with the audit's population
+    held fixed (900 of 1,000 right, 15 of 50), as rule R6 draws it, the range
+    holds the truth 95.3% of the time.
     """
     found = _held(strata, n, reps=200)
     assert found >= 0.90 and abs(found - measured) < 0.04, (found, measured)
+
+
+def _ticked(strata: list[tuple[int, int, int]]) -> list[RefusalLabel]:
+    """`(size, labelled, right)` per stratum: the labels, each carrying its stratum's size."""
+    return [
+        RefusalLabel(
+            id=f"{at}-{i}", claim="c", text="t", verdict=f"v{at}", reason="r", predicate="p",
+            stratum_size=size, judgement="refusal_correct" if i < right else "refusal_wrong",
+        )
+        for at, (size, labelled, right) in enumerate(strata)
+        for i in range(labelled)
+    ]  # fmt: skip
+
+
+def test_one_wrong_label_in_a_small_stratum_moves_the_range_a_little() -> None:
+    """Near a share of 1, the effective sample size reads both sides with one right and one
+    wrong added; read off the raw share it fell to 1.15 labels, and the range to [0.23, 1]."""
+    every = _stratified(_ticked([(8000, 25, 25), (500, 25, 25), (300, 25, 25)]))
+    one = _stratified(_ticked([(8000, 25, 25), (500, 25, 25), (300, 25, 24)]))
+    assert every["high"] == 1.0 and float(one["high"]) > 0.999  # type: ignore[arg-type]
+    assert abs(float(every["low"]) - float(one["low"])) < 0.01  # type: ignore[arg-type]
+    assert float(one["low"]) > 0.85  # type: ignore[arg-type]
+
+
+def test_every_label_right_reads_as_a_share_of_one() -> None:
+    """A float sum of weighted shares came to 1.0000000000000002, and Wilson refused it."""
+    found = _stratified(_ticked([(4928, 12, 12), (394, 5, 5), (430, 16, 16)]))
+    assert found["precision"] == 1.0 and found["high"] == 1.0
 
 
 def test_refusal_precision_counts_gold_wrong_as_right_and_sets_unsure_aside() -> None:
