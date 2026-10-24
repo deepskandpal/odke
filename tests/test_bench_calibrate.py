@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from openodke.calibration import JudgedFact, load_card
+from openodke.llm.cache import replay_directory
 
 BENCH = Path(__file__).parent.parent / "bench"
 HAIKU = "anthropic/claude-haiku-4-5-20251001"
@@ -194,9 +195,12 @@ def test_a_run_writes_cards_items_and_the_table(tmp_path: Path) -> None:
     assert "Gold adjudication" in table
     items = (out / "items" / HAIKU.replace("/", "--") / "ground-span-inline.jsonl").read_text()
     assert len(items.splitlines()) == 263
-    # Recorded answers spend nothing, and are cached apart from the live model's (R4).
+    # Recorded answers spend nothing, and are cached apart from the live model's (R4), in the
+    # folder odke itself caches that recording in.
     assert not ledger.exists()
-    assert list((tmp_path / "cache" / "replay").iterdir())
+    assert [p.name for p in (tmp_path / "cache" / "replay").iterdir()] == [
+        replay_directory(tmp_path / "cache", replay).name
+    ]
     estimated = calibrate.estimate(
         argparse.Namespace(
             cache=tmp_path / "cache",

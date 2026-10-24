@@ -40,7 +40,6 @@ judge), `results.md` and `results.json`.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 import threading
@@ -77,7 +76,7 @@ from openodke.ground.span import located
 from openodke.llm import CachedClient, Completion, ModelRoles, ModelSpec, RecordedClient
 from openodke.llm.base import LLMClient, Message
 from openodke.llm.budget import estimate_tokens
-from openodke.llm.cache import cache_key
+from openodke.llm.cache import cache_key, replay_directory
 from openodke.llm.roles import DEFAULT_GROUND
 from openodke.prompts import get as get_prompt
 
@@ -280,13 +279,15 @@ def client_for(model: str, cache: Path | None, replay: Path | None = None) -> Me
 
     Recorded answers are cached apart, under `<cache>/replay/<the file's hash>`,
     never under the live model's key: a later live run is never answered from a
-    recording (rule R4, release audit finding 1).
+    recording (rule R4, release audit finding 1). The folder is the one `odke`
+    caches the same recording in (`openodke.llm.cache.replay_directory`).
     """
     if replay is None:
         return Meter(CachedClient(roles_for(model).client_for("ground"), cache))
     recorded = RecordedClient.from_fixture(replay)
-    digest = hashlib.sha256(replay.read_bytes()).hexdigest()[:16]
-    return Meter(CachedClient(recorded, cache / "replay" / digest if cache is not None else None))
+    return Meter(
+        CachedClient(recorded, replay_directory(cache, replay) if cache is not None else None)
+    )
 
 
 # --------------------------------------------------------------------------- #

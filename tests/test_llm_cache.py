@@ -387,8 +387,14 @@ def test_a_rerun_from_the_cache_needs_neither_a_recording_nor_a_provider(
 ) -> None:
     # `--cache` is read against the working directory, as any path on the command line is.
     monkeypatch.chdir(project)
-    result = runner.invoke(app, ["run", str(_write(project, _config())), "--cache", "c"])
+    # No replay files: the models answer the first run, and their answers seed the cache.
+    config = _config(models={"extract": "anthropic/claude-sonnet-5", "meter": True})
+    live = _AsRecorded(project / "ground.json", project / "extract.json")
+    build_module = sys.modules["openodke.run.build"]
+    monkeypatch.setattr(build_module, "resolve_client", lambda spec: live)
+    result = runner.invoke(app, ["run", str(_write(project, config)), "--cache", "c"])
     assert result.exit_code == 0, result.output
+    assert live.calls == 7
     shutil.rmtree(project / "out")
 
     def missing(spec: ModelSpec) -> Any:
@@ -396,10 +402,9 @@ def test_a_rerun_from_the_cache_needs_neither_a_recording_nor_a_provider(
         raise ProviderNotInstalled(f"no adapter for {spec.model}")
 
     # `openodke.run.build` the attribute is the function; the module is in sys.modules.
-    monkeypatch.setattr(sys.modules["openodke.run.build"], "resolve_client", missing)
+    monkeypatch.setattr(build_module, "resolve_client", missing)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    # No replay files: anything not in the cache would have to reach a provider.
-    config = _config(models={"extract": "anthropic/claude-sonnet-5", "meter": True})
+    # Anything not in the cache would have to reach a provider.
     again = runner.invoke(app, ["run", str(_write(project, config)), "--cache", "c"])
     assert again.exit_code == 0, again.output
     assert "7 model calls (7 from the cache)" in again.output
@@ -428,12 +433,16 @@ def triples(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 TRIPLES = ["--facts", "triples/triples.jsonl", "--texts", "triples/texts", "-o", "out"]
 
 
-def test_odke_ground_answers_a_rerun_from_the_cache(triples: Path) -> None:
-    first = runner.invoke(
-        app, ["ground", *TRIPLES, "--config", "triples/odke.yaml", "--cache", "c"]
-    )
+def test_odke_ground_answers_a_rerun_from_the_cache(
+    triples: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with monkeypatch.context() as patched:
+        live = _AsRecorded(triples / "triples" / "recorded" / "ground.json")
+        patched.setattr(sys.modules["openodke.run.build"], "resolve_client", lambda spec: live)
+        first = runner.invoke(app, ["ground", *TRIPLES, "--config", "models.yaml", "--cache", "c"])
     assert first.exit_code == 0, first.output
-    # Without the recording, and with no key: every answer comes from the cache.
+    assert live.calls == 4
+    # With no model and no key: every answer comes from the cache.
     again = runner.invoke(app, ["ground", *TRIPLES, "--config", "models.yaml", "--cache", "c"])
     assert again.exit_code == 0, again.output
     summary = json.loads((triples / "out" / "summary.json").read_text(encoding="utf-8"))
@@ -441,15 +450,17 @@ def test_odke_ground_answers_a_rerun_from_the_cache(triples: Path) -> None:
     assert "4 calls (4 from the cache)" in again.output
 
 
-def test_odke_validate_reads_the_cache_from_the_models_block(triples: Path) -> None:
-    (triples / "cached.yaml").write_text(
-        "models:\n  replay: {ground: triples/recorded/ground.json}\n  cache: c\n",
-        encoding="utf-8",
-    )
-    first = runner.invoke(app, ["validate", *TRIPLES, "--config", "cached.yaml"])
+def test_odke_validate_reads_the_cache_from_the_models_block(
+    triples: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (triples / "cached.yaml").write_text("models:\n  cache: c\n", encoding="utf-8")
+    with monkeypatch.context() as patched:
+        live = _AsRecorded(triples / "triples" / "recorded" / "ground.json")
+        patched.setattr(sys.modules["openodke.run.build"], "resolve_client", lambda spec: live)
+        first = runner.invoke(app, ["validate", *TRIPLES, "--config", "cached.yaml"])
     assert first.exit_code == 0, first.output
-    (triples / "rerun.yaml").write_text("models:\n  cache: c\n", encoding="utf-8")
-    again = runner.invoke(app, ["validate", *TRIPLES, "--config", "rerun.yaml"])
+    assert live.calls == 4
+    again = runner.invoke(app, ["validate", *TRIPLES, "--config", "cached.yaml"])
     assert again.exit_code == 0, again.output
     assert "4 model calls (4 from the cache), 0 tokens, $0.0000" in again.output
 
@@ -457,6 +468,35 @@ def test_odke_validate_reads_the_cache_from_the_models_block(triples: Path) -> N
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+
+
+class _AsRecorded:
+    """A provider that answers as the recordings in `paths` do, and counts its calls.
+
+    A recording's answers are cached apart from the model's (rule R4), so a
+    cache that a rerun with no recording reads is seeded by the model: by this,
+    standing in for it. Each call goes to the first recording that answers it.
+    """
+
+    def __init__(self, *paths: Path) -> None:
+        from openodke.run.build import _replay_client
+
+        self.recordings = [_replay_client(path, "seed") for path in paths]
+        self.calls = 0
+        self._lock = threading.Lock()
+
+    def complete(
+        self, messages: Sequence[Message], *, spec: ModelSpec, schema: dict[str, Any] | None = None
+    ) -> Completion:
+        with self._lock:
+            self.calls += 1
+        *others, last = self.recordings
+        for recording in others:
+            try:
+                return recording.complete(messages, spec=spec, schema=schema)
+            except ProviderError:
+                continue
+        return last.complete(messages, spec=spec, schema=schema)
 
 
 def _doc(i: int) -> Any:

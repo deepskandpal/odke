@@ -49,7 +49,7 @@ from openodke.ground import LLMGrounder, RetryPolicy, SpanGrounder
 from openodke.interop import TriplesExtractor
 from openodke.llm.base import Completion, LLMClient, Message, ModelSpec, ProviderNotInstalled
 from openodke.llm.budget import Ledger
-from openodke.llm.cache import CachedClient, DirectoryCache
+from openodke.llm.cache import CachedClient, DirectoryCache, replay_directory
 from openodke.llm.limits import PROVIDER_LIMITS, LimitedClient
 from openodke.llm.registry import resolve as resolve_client
 from openodke.llm.roles import ModelRoles
@@ -247,7 +247,10 @@ def model_client(
     command before anything is spent. Behind a cache it may be missing until
     the first miss: a rerun answered from the cache needs no adapter at all.
     `replays` keeps the recordings opened so far, by role, so every stage of a
-    run shares one (a cassette answers each interaction once).
+    run shares one (a cassette answers each interaction once). A recording's
+    answers are cached apart, under `<cache>/replay/<its hash>`
+    (`openodke.llm.cache.replay_directory`), never where a live run would
+    read them as the model's (rule R4).
 
     Every call that goes out holds a slot of its provider's process-wide limit
     (`openodke.llm.limits`). `ledger` counts every call and stops at its
@@ -265,6 +268,10 @@ def model_client(
         if role not in opened:
             opened[role] = _replay_client(replay, role)
         source = opened[role]
+        if cache is not None:
+            cache = response_cache(
+                replay_directory(cache.directory, replay), f"models.replay.{role}"
+            )
     else:
         try:
             source = resolve_client(spec)
