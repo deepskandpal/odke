@@ -313,9 +313,9 @@ class Card(_Read):
         return "\n".join(lines)
 
     def write(self, path: str | Path) -> Path:
-        """The card as JSON at `path`; a directory gets `<id>.json` inside it."""
+        """The card as JSON at `path`, a `.json` file; any other path is a directory for it."""
         target = Path(path)
-        if target.is_dir():
+        if target.is_dir() or target.suffix != ".json":
             target = target / f"{self.id}.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(self.model_dump_json(indent=2) + "\n", encoding="utf-8")
