@@ -479,7 +479,10 @@ stage counts and [run manifest](run.md#the-run-manifest) to `manifest.json`.
 `facts.jsonl` is a predictions file for [`odke eval`](evaluation.md).
 `append(kg)` adds a graph without reading the files (or merges, with
 `merge=True`): a [streamed run](run.md#streaming) appends each micro-batch, and
-a reader keeps a fact's last line. RDF, `cypher_file` and `neo4j_admin_csv`
+a reader keeps a fact's last line. A merging store reads and rewrites itself
+whole on every micro-batch, so a streamed run into one takes time that grows
+with the square of the store (8,000 rows: 51 s); it warns once, and Neo4j is
+the store for that load. RDF, `cypher_file` and `neo4j_admin_csv`
 rewrite the whole graph (`streams = False`), so a streamed run refuses them.
 
 ## Your own sink

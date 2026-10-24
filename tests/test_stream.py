@@ -221,9 +221,12 @@ def test_micro_batches_merge_through_the_store_into_the_facts_one_batch_makes(
         JsonlSink(tmp_path / "s", merge=True),
     )
     Validator(PLACES, client=RecordedClient(RECORDED), sinks=[whole]).validate(ROWS, [A, B])
-    kg, report = Validator(PLACES, client=RecordedClient(RECORDED), sinks=[streamed]).validate(
-        ROWS, [A, B], batch_size=1
-    )
+    # Release audit S10: it works, and says once what it costs at volume.
+    with pytest.warns(UserWarning, match="grows with the square") as caught:
+        kg, report = Validator(PLACES, client=RecordedClient(RECORDED), sinks=[streamed]).validate(
+            ROWS, [A, B], batch_size=1
+        )
+    assert sum("grows with the square" in str(w.message) for w in caught) == 1
     assert _held(tmp_path / "s") == _held(tmp_path / "whole")
     assert max(_held(tmp_path / "s").values()) == 2
     # The rows of one text that sit together stay together: a, b, a a, b.

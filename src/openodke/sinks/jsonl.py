@@ -8,6 +8,7 @@ against without a database.
 from __future__ import annotations
 
 import json
+import warnings
 from collections.abc import Callable, Collection, Hashable, Iterable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
@@ -48,6 +49,12 @@ class JsonlSink:
     the sink's write report: each line written or appended is `written`, and
     with `merge` one that replaced a line held is `merged` instead
     (`openodke.sinks.report`).
+
+    A merging store reads and rewrites its files whole on every write, so a
+    streamed run into one takes time that grows with the square of the store:
+    2,000, 4,000 and 8,000 rows took 3, 9 and 51 s. It works, and the first
+    `append` warns once; for a large run, stream into Neo4j, which merges
+    through its indexes.
     """
 
     def __init__(
@@ -57,6 +64,7 @@ class JsonlSink:
         self.merge = merge
         self.tenant = tenant_name(tenant)
         self.writes = WriteReport()
+        self._warned = False
 
     def scoped(self, tenant: str | None) -> JsonlSink:
         """This directory written for `tenant`; the sink itself when it is that tenant's."""
@@ -107,6 +115,14 @@ class JsonlSink:
         merges merges, as `write` does.
         """
         if self.merge:
+            if not self._warned:
+                self._warned = True
+                warnings.warn(
+                    f"{self.directory}: a streamed run into a merging JSONL store reads and "
+                    "rewrites the whole store on every micro-batch, so its time grows with the "
+                    "square of the store's size; for a large run, stream into Neo4j",
+                    stacklevel=2,
+                )
             self.write(kg)
             return
         self.directory.mkdir(parents=True, exist_ok=True)
