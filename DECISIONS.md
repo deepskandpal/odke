@@ -902,11 +902,14 @@ its evidence returns without them. A store never bootstrapped has no
 signature index, so nothing merges with it, and the warning is the only sign.
 
 **Amended 24 Oct 2026 (release audit 2, 4, S16):** a member that contradicts a
-claim another member supports is no source for it. It stays out of the evidence,
-the support list, the confidence and the valid time, and `odke.conflict` records
-its documents as `contradicted_in`; the record outlives later merges, and goes
-for a document that comes back supporting the claim. Delete the supporting text,
-and the fact is retired, not held up by the one that contradicts it. The write
+claim another member supports is no source for it. Its evidence stays out of the
+fact, and its qualifiers, valid time, confidence and extractor out of the claim;
+`odke.conflict` records its documents as `contradicted_in`. A merge whose texts
+disagree records them even with no support, so a later merge leaves out those
+texts alone. The record outlives later merges, and goes for a document that
+comes back supporting the claim; a retraction does not reach it, since a store
+finds a fact by its evidence. Delete the supporting text, and the fact is
+retired, not held up by the one that contradicts it. The write
 after the merge compares and sets the version it read (#51). And a store never
 bootstrapped, or missing a declared predicate's index, is refused rather than
 warned about (#53).
@@ -1686,12 +1689,14 @@ to ship with.
 Four calls come with it.
 
 **A version on every fact relationship, compared when it is set.**
-`odke.version` counts a relationship's writes, the reconciler's rewrites
-included. `stored()` keeps the version it read under each signature. The next
-`write()` sends it with the row, and the statement writes the row only where the
-store still holds that version, and makes it one more. A row read with nothing
-stored expects 0. A row the sink never read is written as it always was, and
-counted.
+`odke.version` is a token every write renews (`randomUUID()`), the reconciler's
+rewrites included. `stored()` keeps the token it read under each signature. The
+next `write()` sends it with the row, and the statement writes the row only
+where the store still holds that token. A token, not a count: a count restarts
+when a fact is deleted and made again, and a write that read the old fact would
+pass. A row read with nothing stored expects a relationship its own MERGE has
+just made, which holds no fact yet. A row the sink never read is written as it
+always was.
 
 **The lock comes before the read.** Under Neo4j's read-committed isolation, a
 check that reads the version before it takes the lock passes for both writers.
@@ -1705,9 +1710,13 @@ still locked by the write's transaction. So it is read again as the other
 writer committed it, and merged with what this job's fact brought
 (`SignatureCorroborator.rebase`: what the store dropped since the read goes,
 what it gained comes in). It is scored again by the job's scorer, with no model
-call, and written against the version it now holds. A derived fact the store now
-states is dropped (#28). A fact every source of which was retracted meanwhile is
-not written: the reconciler's state stands. The Validator, `Pipeline` and
+call, and written against the version it now holds; the gate's decision stands,
+and a stamp the gate did not make stays as the merge brings it, as the next
+job's merge would keep it. A derived fact the store now states is dropped (#28).
+A fact every source of which was retracted meanwhile is not written: the
+reconciler's state stands, and a relationship the write's MERGE made for it is
+deleted again. A claim merged again is projected again from the claims the
+store holds. The Validator, `Pipeline` and
 `odke run` hand the sink their corroborator and scorer (`merges_with`). The
 loop is bounded: a write that still finds a fact moved after three merges fails,
 saying why, and its transaction writes nothing.

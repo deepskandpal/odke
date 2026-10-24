@@ -442,10 +442,12 @@ assertion, nor a p50 value with a p95 one
 reconciled:
 
 - **Evidence** is unioned, except from a text that contradicts a claim another
-  member supports. That text is no source for the claim: its evidence, sources,
-  confidence and valid time are left out, and `odke.conflict` records its
-  documents as `contradicted_in` (status `contradicted`, or beside a contest's
-  decision). The record outlives later merges, and goes for a document that
+  member supports. That text is no source for the claim: its evidence is left
+  out, and its qualifiers, valid time, confidence and extractor are not the
+  claim's. `odke.conflict` records its documents as `contradicted_in` (status
+  `contradicted`, or beside a contest's decision), and a merge whose texts
+  disagree records them even with no support, so a later merge leaves out those
+  texts alone. The record outlives later merges, and goes for a document that
   comes back supporting the claim. Delete the supporting text, and the fact is
   retired, not left standing on the one that contradicts it.
 - **`support`** counts independent sources: `source_of(evidence)` is the URI's
