@@ -32,14 +32,10 @@ from openodke._renamed import deprecated
 from openodke.corroborate.lookup import Embed, embedding_text
 from openodke.corroborate.merge import _aware
 from openodke.corroborate.provenance import (
-    CHECK,
     CONFLICT,
-    DERIVED,
+    JSON_STAMPS,
     NEAR_DUPLICATES,
     ONTOLOGY,
-    SCORE,
-    SOURCE_FORM,
-    WIDEN,
 )
 from openodke.corroborate.resolve import block_keys
 from openodke.ontology import Ontology, Predicate
@@ -276,7 +272,7 @@ def support_from(props: Mapping[str, Any]) -> tuple[Support, ...]:
 
 
 # The odke.* stamps a relationship keeps as JSON text, read back as the values they were.
-_JSON_STAMPS = frozenset({SOURCE_FORM, CONFLICT, SCORE, DERIVED, NEAR_DUPLICATES, WIDEN, CHECK})
+_JSON_STAMPS = JSON_STAMPS
 
 
 def stored_qualifiers(props: Mapping[str, Any]) -> dict[str, Any]:

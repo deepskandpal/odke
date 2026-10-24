@@ -71,6 +71,17 @@ SCHEMA_SLICE = "odke.schema_slice"
 # person to review: nothing is dropped on such a judge's word.
 REVIEW = "odke.review"
 
+# On Fact.qualifiers: {"window": [start, end]}, the gap a re-extracted fact came back
+# from (#183). `openodke.reextract` names it too.
+REEXTRACT = "odke.reextract"
+
+# The stamps a store keeps as JSON text, because Neo4j holds no map and no nested
+# list. Every reader of a store decodes these back to the values they were, and one
+# list serves them all, so no reader reads a stamp as text and counts it apart.
+JSON_STAMPS = frozenset(
+    {SOURCE_FORM, CONFLICT, SCORE, DERIVED, NEAR_DUPLICATES, WIDEN, CHECK, REVIEW, REEXTRACT}
+)
+
 
 def source_forms(value: Any) -> dict[str, tuple[str, ...]]:
     """`qualifiers["odke.source_form"]` read back — tuples in memory, lists after JSON."""

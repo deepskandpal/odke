@@ -27,7 +27,7 @@ from openodke import (
     SpanOrigin,
 )
 from openodke.corroborate import CONFLICT
-from openodke.corroborate.provenance import SCORE
+from openodke.corroborate.provenance import JSON_STAMPS, NEAR_DUPLICATES, SCORE
 from openodke.ground import LLMGrounder
 from openodke.interop import (
     TripleRow,
@@ -242,6 +242,25 @@ def test_qualifiers_come_back_unprefixed_and_the_stamps_as_mappings() -> None:
         SCORE: {"extractor": 0.5, "evidence": 0.9},
     }
     assert row.object == 2014 and row.object_type is None
+
+
+@pytest.mark.parametrize("stamp", sorted(JSON_STAMPS))
+def test_every_json_stamp_reads_back_as_written_through_both_readers(stamp: str) -> None:
+    """Release audit S12: `read_neo4j` decoded 3 of the 7 stamps the sink's reader did.
+
+    `odke.near_duplicates` came back as text, so corroborating a graph read back
+    counted two copies of one page as two sources.
+    """
+    from openodke.sinks.neo4j import stored_qualifiers
+
+    value: Any = [["a", "b"]] if stamp == NEAR_DUPLICATES else {"of": "x", "window": [1, 2]}
+    founded = _facts(_halden())[2]
+    stamped = founded.model_copy(update={"qualifiers": {**founded.qualifiers, stamp: value}})
+    record = _record(stamped, "r0")
+    assert isinstance(record["properties"][stamp], str)  # Neo4j holds it as JSON text
+    assert stored_qualifiers(record["properties"])[stamp] == value
+    (row,), _ = read_neo4j(_driver([record]), documents=[_halden()])
+    assert row.qualifiers[stamp] == value
 
 
 def test_reading_runs_two_read_queries_and_writes_nothing() -> None:
