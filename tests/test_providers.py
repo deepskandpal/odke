@@ -340,6 +340,19 @@ def test_a_url_password_never_reaches_a_providers_error(monkeypatch: pytest.Monk
         assert "Hunter2Secret" not in message, message
         assert "https://svc:<redacted>@gateway.invalid/v1" in message, message
 
+    # The real urllib, with no port: http.client reads the password as the port and quotes
+    # it, scheme and all gone, before any socket opens.
+    monkeypatch.setenv("GATEWAY_KEY", "k")
+    real = spec.model_copy(update={"api_key_env": "GATEWAY_KEY"})
+    with pytest.raises(ProviderError) as portless:
+        OpenAICompatClient().complete([Message(content="hi")], spec=real)
+    assert "Hunter2Secret" not in str(portless.value) and "api_key_env" in str(portless.value)
+    assert portless.value.__cause__ is None
+    # A raw `@` in a password: the password runs to the authority's last `@`.
+    assert reason("x", RuntimeError("https://u:p@ss@host/v1")) == (
+        "x: RuntimeError: https://u:<redacted>@host/v1"
+    )
+
 
 # --------------------------------------------------------------------------- #
 # --model / --model-provider
