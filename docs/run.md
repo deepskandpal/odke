@@ -279,7 +279,9 @@ beside the config as `<name>.manifest.json`; `odke validate` writes it into
 `odke run --from-manifest PATH` runs one again as resolved, refusing (exit 2)
 when the ontology or a document changed, naming each, and taking no `--model`,
 `--widen`, `--cache`, `--batch-size`, `--tenant` or budget flag; another
-openodke version only warns, and a field a newer version added is read past. To rerun an `odke validate` or `odke ground`
+openodke version only warns, and a field a newer version added to the manifest is
+read past; a config option this version does not know is still refused, since it
+cannot run it. To rerun an `odke validate` or `odke ground`
 manifest, pass its `config.models` as a `--config` file (`{"models": ...}`) and
 the rest as flags.
 

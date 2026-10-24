@@ -330,7 +330,9 @@ def _known(model: type[BaseModel], data: Any) -> Any:
     A minor release may add an optional field anywhere (DECISIONS #48), and a
     manifest written by another openodke only warns (#40). So the reader keeps
     what it knows and leaves the rest, rather than refusing a newer manifest
-    (release audit finding 18).
+    (release audit finding 18). The recorded `config` is a plain mapping, kept
+    whole: `from_manifest` reads it as a config, and refuses an option this
+    version does not know, since it cannot run it.
     """
     if not isinstance(data, Mapping):
         return data
