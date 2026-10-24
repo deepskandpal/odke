@@ -708,7 +708,7 @@ def lenient(
     for name, facts in configurations:
         counts = document_counts(gold, facts)
         moved = dict.fromkeys(counts.by_doc, 0)
-        tally = dict.fromkeys(("same", "different", "unsure"), 0)
+        tally = dict.fromkeys(("same", "different", "unsure", "failed"), 0)
         golds: set[int] = set()
         predictions: set[int] = set()
         for doc_id, g_at, p_at, key in found[name]:

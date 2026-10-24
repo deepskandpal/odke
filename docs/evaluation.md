@@ -499,7 +499,12 @@ Each stage runs once, later rows replaying earlier facts, and nothing is
 written. Rows are `evaluate_extraction` per document, by the
 [ids `odke run` gives](run.md#inputs); a fact merged across documents scores in
 each. The notes say what the gate kept and what refusing `not_found` would
-change.
+change. A run in which a document failed (an extraction that raised, a
+grounding call that failed and left its facts unchecked) is not scored: it
+exits 1 naming each document, since its rows would count the failure as
+misses. `pipeline --validator` does the same for the Validator's run; with
+`--adjudicate` and `--lenient`, a question whose calls failed counts neither
+way, and when every one failed the command exits 1.
 
 ```bash
 odke eval ablation --config odke.yaml --labels gold.jsonl

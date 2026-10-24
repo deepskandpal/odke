@@ -61,6 +61,8 @@ from typing import Any, NamedTuple
 
 from pydantic import ValidationError
 
+from openodke._batch import failed_summary
+from openodke.eval._failures import answered, calls_failed, unjudged
 from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED
 from openodke.eval.compare import ItemRow
 from openodke.eval.cost import CallRecord
@@ -139,21 +141,24 @@ folder, each file named by its path inside it, or Document JSONL).
 
 --validator runs the Validator over the same output and reports both rows:
 with the stages and models of --config (a bench set's own odke.json by
-default), or the Validator's defaults.
+default), or the Validator's defaults. A Validator run that failed on a text
+(a grounding call failed, so its facts are unchecked) is not scored: exit 1.
 
 --adjudicate LIST, with --labels: gold is incomplete, so each prediction the
 gold lacks is grounded three times against its document (--config's grounder,
 or the default one). One supported in two of the three runs is possibly
 missing from gold. Each row's adjudicated precision, counting those as hits,
 is printed beside its strict one, which never changes, and every prediction
-the gold lacks goes to LIST (JSONL) with its three verdicts.
+the gold lacks goes to LIST (JSONL) with its three verdicts. A question whose
+grounding failed counts neither way; when every one failed, exit 1.
 
 --lenient PAIRS, with --labels: a missed gold fact and an unmatched prediction
 with the relation and one end in common are asked about, in both orders, by the
 fact-equivalence judge (--config's ground model, or the default one). A pair
 judged the same fact in both orders counts as a hit in each row's lenient
 precision, recall and F1, printed beside the strict ones, which never change;
-every pair goes to PAIRS (JSONL) with both answers."""
+every pair goes to PAIRS (JSONL) with both answers. A pair whose calls failed
+counts neither way; when every one failed, exit 1."""
 
 
 class PipelineError(RuntimeError):
@@ -443,6 +448,9 @@ class Checked:
     refused: list[tuple[Fact, str]] = field(default_factory=list)
     # How the grounder wrote each claim, by its prompt key (`Run.claim_formats`).
     claim_formats: dict[str, str] = field(default_factory=dict)
+    # Each text the Validator failed on, and why: a text it left out, or one holding a fact
+    # its grounding call failed on. A run with any is not scored (`evaluate`).
+    failed: dict[str, str] = field(default_factory=dict)
 
 
 def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = None) -> Checked:
@@ -471,6 +479,7 @@ def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = Non
         assert meter is not None
         stage = built.stages
         kept = Kept(stage["gate"] if stage.get("gate") is not None else VerdictGate(schema=True))
+        grounder = stage["grounder"]
         validator = Validator(
             corpus.ontology or built.ontology,
             grounder=stage["grounder"],
@@ -491,10 +500,18 @@ def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = Non
         meter = CostMeter()
         client = meter.client(roles.client_for("ground"), "ground")
         kept = Kept(VerdictGate(schema=True))
+        grounder = None
         validator = Validator(corpus.ontology, roles=roles, client=client, gate=kept)
         configured = {"ground": roles.ground.model}
         source = "its defaults"
+    before = calls_failed(grounder)
     graph, done = validator.validate(list(facts), corpus.documents)
+    failed = dict(done.failed)
+    # A model grounder leaves the fact of a call that failed unchecked, and raises nothing.
+    # With none given, the Validator's own is one.
+    if grounder is None or calls_failed(grounder) > before:
+        written = [*graph.facts, *(fact for fact, _ in kept.refused)]
+        failed |= {doc: why for doc, why in unjudged(written).items() if doc not in failed}
     verdicts = ", ".join(f"{k} {v}" for k, v in done.verdicts.items())
     refused = ", ".join(f"{v} {k}" for k, v in done.refused_by.items() if v)
     notes = [
@@ -516,6 +533,7 @@ def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = Non
             for c in done.calibration
             if c.judge == "ground" and c.claim_format is not None
         },
+        failed=failed,
     )
 
 
@@ -811,6 +829,13 @@ def evaluate(
     ran = f" in {output.seconds:.1f} s" if output.seconds is not None else ""
     notes.insert(0, f"{output.how}: {len(output.items)} row(s){ran}, {len(facts)} fact(s)")
     checked = check(facts, corpus, config) if validator else None
+    if checked is not None and checked.failed:
+        # The row asked for is the Validator's, and its run failed: not scored (rule R1).
+        raise PipelineError(
+            f"the Validator's run failed, so its row is not scored: "
+            f"{failed_summary(checked.failed, of=len(corpus.documents), noun='text')}. Run it "
+            "again; with models.cache set, only the calls that failed are asked again"
+        )
     others = None if reference is None else as_facts(read_output(reference), corpus)[0]
     judged = None
     if lenient is not None:
@@ -880,6 +905,16 @@ def adjudicated(
         grounder = LLMGrounder(roles, client=meter.client(roles.client_for("ground"), "ground"))
         configured = {"ground": roles.ground.model}
     section, entries = adjudicate(rows, corpus.gold, corpus.documents, grounder)
+    failed = sum(entry.failed for entry in entries)
+    if failed and (failed == len(entries) or answered(grounder) == 0):
+        # No question the model was asked came back: an adjudicated precision would be the
+        # strict one, and read as "nothing missing from gold" (rule R1). A question the free
+        # span check settled asked no model.
+        raise PipelineError(
+            f"adjudication: every grounding call failed ({failed} of {len(entries)} question(s) "
+            "left open), so nothing was adjudicated; check the ground model and its key, and "
+            "run it again"
+        )
     write_audit(audit, entries)
     listed = sum(entry.listed for entry in entries)
     note = (
@@ -887,6 +922,11 @@ def adjudicated(
         f"each; {listed} supported in {NEEDED} or more, possibly missing from gold "
         f"(every one, with its verdicts, in {audit})"
     )
+    if failed:
+        note += (
+            f"; {failed} failed, a run's call failing where the others did not settle it, and "
+            "count neither way, so the adjudicated precision is a floor: run it again to ask them"
+        )
     stats = getattr(grounder, "stats", None)
     prompts = stats.get("prompts", []) if isinstance(stats, Mapping) else []
     run = report.run.model_copy(
@@ -966,12 +1006,24 @@ def judged_leniently(
         client = meter.client(roles.client_for("ground"), "judge")
     judge = FactJudge(roles, client=client, ontology=ontology)
     section, entries = lenient(rows, corpus.gold, corpus.documents, judge)
+    failed = sum(1 for e in entries if e.decision is not None and e.decision.decision == "failed")
+    if entries and failed == len(entries):
+        # Every pair's calls failed: a lenient score would be the strict one (rule R1).
+        raise PipelineError(
+            f"lenient: the calls for all {len(entries)} pair(s) failed, so nothing was judged; "
+            "check the ground model and its key, and run it again"
+        )
     write_pairs(pairs, entries)
     same = sum(1 for e in entries if e.decision is not None and e.decision.decision == "same")
     note = (
         f"lenient: {len(entries)} pair(s) the pre-filter let through, asked in both orders; "
         f"{same} judged the same fact (every one, with both answers, in {pairs})"
     )
+    if failed:
+        note += (
+            f"; {failed} pair(s)' calls failed and count neither way, so the lenient score is "
+            "a floor: run it again to ask them"
+        )
     return Judged(
         section=section,
         pairs=entries,

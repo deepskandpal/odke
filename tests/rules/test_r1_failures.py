@@ -114,14 +114,12 @@ def test_odke_bench_run(every_model_call_fails: Any, tmp_path: Path) -> None:
     _no_score("odke bench run", result, prepared / "report.json")
 
 
-@_found_here("`odke eval ablation` scores a run whose every call failed", 3)
 def test_odke_eval_ablation(every_model_call_fails: Any, example: Path) -> None:
     args = ["--config", str(example / "odke.yaml"), "--labels", str(example / "gold.jsonl")]
     result = runner.invoke(app, ["eval", "ablation", *args])
     _no_score("odke eval ablation", result)
 
 
-@_found_here("`odke eval pipeline --validator` scores a Validator that checked nothing", 3)
 def test_odke_eval_pipeline_validator(
     every_model_call_fails: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -135,16 +133,7 @@ def test_odke_eval_pipeline_validator(
 
 @pytest.mark.parametrize(
     "judge",
-    [
-        pytest.param(
-            "--adjudicate",
-            marks=_found_here("`odke eval pipeline --adjudicate` scores judgements that failed", 3),
-        ),
-        pytest.param(
-            "--lenient",
-            marks=_found_here("`odke eval pipeline --lenient` scores judgements that failed", 3),
-        ),
-    ],
+    ["--adjudicate", "--lenient"],
 )
 def test_odke_eval_pipeline_judged(
     judge: str, every_model_call_fails: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

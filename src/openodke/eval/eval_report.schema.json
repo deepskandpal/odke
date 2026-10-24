@@ -515,7 +515,8 @@
         "asked": {"$ref": "#/$defs/count"},
         "possibly_missing": {"$ref": "#/$defs/count"},
         "strict": {"$ref": "#/$defs/estimate"},
-        "adjudicated": {"$ref": "#/$defs/estimate"}
+        "adjudicated": {"$ref": "#/$defs/estimate"},
+        "failed": {"$ref": "#/$defs/count", "description": "Added in 1.4: questions whose grounding failed, counted neither way."}
       }
     },
     "adjudication": {
@@ -567,7 +568,8 @@
         "unsure": {"$ref": "#/$defs/count"},
         "counted": {"$ref": "#/$defs/count", "description": "Misses counted found: once per gold fact, once per prediction."},
         "strict": {"$ref": "#/$defs/performance"},
-        "lenient": {"$ref": "#/$defs/performance"}
+        "lenient": {"$ref": "#/$defs/performance"},
+        "failed": {"$ref": "#/$defs/count", "description": "Added in 1.4: pairs whose calls failed, counted neither way."}
       }
     },
     "lenient": {
