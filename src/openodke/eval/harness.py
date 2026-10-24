@@ -829,7 +829,8 @@ def evaluate(
         report = judged.attach(report)
     if produced is None and validator and config is not None:
         produced = _data(config)
-    return Evaluation(report, found.items, produced)
+    # Every judge the run called, with its card's line or UNCALIBRATED (#135).
+    return Evaluation(report.calibrated(), found.items, produced)
 
 
 def adjudicated(

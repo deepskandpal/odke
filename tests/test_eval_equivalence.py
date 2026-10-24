@@ -434,8 +434,12 @@ def test_the_section_is_in_the_report_beside_the_rows_and_reads_back(tmp_path: P
     report = report.model_copy(update={"lenient": section})
     assert report.schema_version == "1.2"
     assert check_report(report.model_dump(mode="json")) == []
-    assert read_report(report.write(tmp_path / "r.json")) == report
+    # Written, it names the judge it called and that judge's standing (#135).
+    written = read_report(report.write(tmp_path / "r.json"))
+    assert written == report.calibrated() and written.calibration[0].prompt == "fact_equiv@1"
+    assert "UNCALIBRATED" in written.calibration[0].line
     text = report.render()
+    assert "calibration  fact_equiv@1 on " in text
     assert "lenient score  (a surface form the judge called the gold fact in both orders" in text
     strict_line = next(line for line in text.splitlines() if line.startswith("  extract  strict"))
     lenient_line = next(line for line in text.splitlines() if "lenient  0.600" in line)
