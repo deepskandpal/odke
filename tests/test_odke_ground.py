@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -133,6 +134,8 @@ def test_a_dry_run_calls_no_model_and_needs_no_key(
         raise AssertionError("a dry run built a model client")
 
     monkeypatch.setattr("openodke.llm.registry.resolve", refuse)
+    # `openodke.run.build` the attribute is the function; the module is in sys.modules.
+    monkeypatch.setattr(sys.modules["openodke.run.build"], "resolve_client", refuse)
     monkeypatch.setattr("openodke.ground.llm.LLMGrounder.__init__", refuse)
     result = _ground(*EXAMPLE, "--dry-run", "--locate", "--model", "openai/gpt-5.5")
     assert result.exit_code == 0, result.output

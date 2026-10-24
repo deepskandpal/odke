@@ -153,42 +153,27 @@ class Context:
     def client(self, role: str, *, stage: str | None = None) -> LLMClient:
         """The client a model-backed stage should use for `role`.
 
-        Recorded responses win when the config names them; otherwise the
-        provider's client, resolved now, so a missing adapter stops the run
-        before anything is spent. Behind a cache it may be missing until the
-        first miss: a rerun answered from the cache needs no adapter at all.
-
-        Every call that goes out holds a slot of its provider's process-wide
-        limit (`openodke.llm.limits`). The ledger counts every call and stops
-        the run at its budget, before a call queues for a slot. The response
-        cache, when on, answers in front of both, so a
-        repeated call reaches neither a provider nor a recording and costs
-        nothing against the budget. A meter, when on, wraps the lot, so cost is
-        counted without a stage knowing: under `stage` when given, so the
-        grounder's widened retries are a cost row of their own, and under the
-        role otherwise. Every answer's model, a cached one's too, is noted
-        under the role for the run manifest (`served`). Outermost, the run's
-        observer sees every call, a cached one too, as an event and a span
-        under the same name.
+        Recorded responses when the config names them, otherwise the
+        provider's; behind its provider's limit, the run's ledger and the
+        response cache, as `model_client` builds every command's. A meter, when
+        on, wraps the lot, so cost is counted without a stage knowing: under
+        `stage` when given, so the grounder's widened retries are a cost row of
+        their own, and under the role otherwise. Every answer's model, a cached
+        one's too, is noted under the role for the run manifest (`served`).
+        Outermost, the run's observer sees every call, a cached one too, as an
+        event and a span under the same name.
         """
-        inner: LLMClient
         replay = self.config.models.replay.get(role)  # type: ignore[call-overload]
-        if replay is not None:
-            if role not in self._replays:
-                self._replays[role] = _replay_client(self.config.resolve(replay), role)
-            inner = self._replays[role]
-        else:
-            spec = getattr(self.roles, role)
-            try:
-                inner = resolve_client(spec)
-            except ProviderNotInstalled:
-                if self.cache is None:
-                    raise
-                inner = OnFirstCall(spec)
-        inner = self.ledger.client(LimitedClient(inner))
-        if self.cache is not None:
-            inner = CachedClient(inner, self.cache)
-            self.cached.append(inner)
+        inner, cached = model_client(
+            getattr(self.roles, role),
+            role=role,
+            replay=self.config.resolve(replay) if replay is not None else None,
+            cache=self.cache,
+            ledger=self.ledger,
+            replays=self._replays,
+        )
+        if cached is not None:
+            self.cached.append(cached)
         inner = self.served.client(role, getattr(self.roles, role), inner)
         if self.meter is not None:
             inner = self.meter.client(inner, stage=stage or role)
@@ -244,6 +229,56 @@ class OnFirstCall:
                 self._client = resolve_client(self.spec)
             client = self._client
         return client.complete(messages, spec=spec, schema=schema)
+
+
+def model_client(
+    spec: ModelSpec,
+    *,
+    role: str,
+    replay: Path | None = None,
+    cache: DirectoryCache | None = None,
+    ledger: Ledger | None = None,
+    replays: dict[str, LLMClient] | None = None,
+) -> tuple[LLMClient, CachedClient | None]:
+    """A model role's client, built the one way every command builds it.
+
+    The source is the recording `replay` names, when it names one, or the
+    provider's client for `spec`, resolved now, so a missing adapter stops the
+    command before anything is spent. Behind a cache it may be missing until
+    the first miss: a rerun answered from the cache needs no adapter at all.
+    `replays` keeps the recordings opened so far, by role, so every stage of a
+    run shares one (a cassette answers each interaction once).
+
+    Every call that goes out holds a slot of its provider's process-wide limit
+    (`openodke.llm.limits`). `ledger` counts every call and stops at its
+    budget, before a call queues for a slot. The response cache, when on,
+    answers in front of both, so a repeated call reaches neither a provider
+    nor a recording and costs nothing against the budget.
+
+    Returns the client, and its cache layer (None without a cache) for the hit
+    and miss counts. `odke run` (`Context.client`), `odke ground`,
+    `odke validate` and `odke calibrate` build their clients here.
+    """
+    source: LLMClient
+    if replay is not None:
+        opened = replays if replays is not None else {}
+        if role not in opened:
+            opened[role] = _replay_client(replay, role)
+        source = opened[role]
+    else:
+        try:
+            source = resolve_client(spec)
+        except ProviderNotInstalled:
+            if cache is None:
+                raise
+            source = OnFirstCall(spec)
+    inner: LLMClient = LimitedClient(source)
+    if ledger is not None:
+        inner = ledger.client(inner)
+    if cache is None:
+        return inner, None
+    cached = CachedClient(inner, cache)
+    return cached, cached
 
 
 def response_cache(directory: Path, where: str = "models.cache") -> DirectoryCache:
