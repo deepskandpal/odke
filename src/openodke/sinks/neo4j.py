@@ -26,7 +26,7 @@ from collections import defaultdict
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from datetime import date, datetime, time
 from enum import Enum
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypeVar
 
 from openodke._renamed import deprecated
 from openodke.corroborate.lookup import Embed, embedding_text
@@ -59,6 +59,7 @@ from openodke.types import (
 )
 
 EXTRA_HINT = "the neo4j driver is not installed; run: pip install 'openodke[neo4j]'"
+_T = TypeVar("_T")
 
 # The two labels the sink owns. `Entity` goes on every node next to its type,
 # so a link — which knows only keys — can find both ends without their types.
@@ -761,7 +762,7 @@ def _delete_cypher(predicate: str) -> str:
     )
 
 
-def _batches(rows: Sequence[dict[str, Any]], size: int) -> Iterator[list[dict[str, Any]]]:
+def _batches(rows: Sequence[_T], size: int) -> Iterator[list[_T]]:
     for start in range(0, len(rows), size):
         yield list(rows[start : start + size])
 
