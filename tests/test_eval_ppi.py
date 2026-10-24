@@ -38,6 +38,7 @@ from openodke.eval.ppi import (
     write_sample,
 )
 from openodke.eval.sheets import read_sheets
+from openodke.eval.stats import wilson
 
 runner = CliRunner()
 TRUTH, FACTS, LABELS, REPS = 0.80, 2000, 300, 400
@@ -66,9 +67,10 @@ def test_the_corrected_interval_covers_the_truth_and_the_judge_alone_does_not(
 ) -> None:
     """400 seeded judged sets of 2,000 facts, 300 labelled: coverage near 95%, narrower.
 
-    Measured at these seeds: 94.75% (lenient) and 96.0% (strict). Offline, at
-    5,000 sets each: 95.2% for the lenient judge, PPI ±4.1 points against the
-    labels' ±4.5; 94.8% for the strict one, ±3.4 against ±4.5.
+    Measured at these seeds: 95.25% (lenient) and 96.75% (strict), with the
+    variances read with plus-two counts. Offline, at 5,000 sets each: 95.4% for
+    the lenient judge, PPI ±4.2 points against the labels' ±4.5; 95.1% for the
+    strict one, ±3.6 against ±4.5 (DECISIONS #36).
     """
     rng = random.Random(144 if judge == "lenient" else 145)
     covered = narrower = 0
@@ -97,6 +99,63 @@ def test_the_corrected_interval_covers_the_truth_and_the_judge_alone_does_not(
     assert narrower / REPS > 0.9
 
 
+# (judge, label) for one fact, as a cell of the judged set.
+CELLS = ((True, True), (True, False), (False, True), (False, False))
+# Precise pipelines, judges right 99% and 95% of the time, and the label counts people make.
+PRECISE = [
+    (p, w, n) for p in (0.90, 0.95, 0.98, 0.99) for w in (0.01, 0.05) for n in (50, 100, 150)
+]
+
+
+def _precise(precision: float, wrong: float, n: int, reps: int, seed: int) -> tuple[int, int]:
+    """Of `reps` seeded judged sets of 1,000 facts, how many ranges held the truth, and were flat.
+
+    The judge flips each fact's truth with probability `wrong`; `n` facts are
+    labelled at random. A set is drawn as its four cells' counts, so a rep
+    costs the labelled sample, not the 1,000 facts.
+    """
+    from bisect import bisect_right
+
+    from openodke.eval.stats import _multinomial
+
+    rng = random.Random(seed)
+    weights = [
+        precision * (1 - wrong), (1 - precision) * wrong, precision * wrong,
+        (1 - precision) * (1 - wrong),
+    ]  # fmt: skip
+    sizes = [round(w * 10**9) for w in weights]
+    held = flat = 0
+    for _ in range(reps):
+        counts = _multinomial(rng, 1000, sizes)
+        ends = [sum(counts[: k + 1]) for k in range(4)]
+        judged = [True] * (counts[0] + counts[1]) + [False] * (counts[2] + counts[3])
+        labelled = [CELLS[bisect_right(ends, i)] for i in rng.sample(range(1000), n)]
+        _, corrected, _ = prediction_powered(judged, labelled)
+        assert corrected.low is not None and corrected.high is not None
+        held += corrected.low <= (counts[0] + counts[2]) / 1000 <= corrected.high
+        flat += corrected.low >= corrected.high
+    return held, flat
+
+
+def test_the_corrected_range_holds_its_level_where_the_pipeline_is_precise() -> None:
+    """Release audit 6: 24 settings of a precise pipeline, 150 seeded sets of 1,000 facts each.
+
+    DECISIONS #36 simulated an 80%-precise pipeline, where the labels disagree
+    enough to measure. At 99% they mostly all agree, the measured variances
+    were zero, and the "95%" range held the truth 71.1% of the time on 100
+    labels, 13.5% of the ranges zero width. With plus-two counts it holds
+    96.7% to 100% of the time across these 24 settings (offline, 5,000 sets
+    each; it was 51.1% to 99.9%), and none is zero width.
+    """
+    held = flat = sets = 0
+    for at, (precision, wrong, n) in enumerate(PRECISE):
+        found, zero = _precise(precision, wrong, n, reps=150, seed=at)
+        # The claimed 95%, less three standard errors of a 150-set estimate.
+        assert found / 150 >= 0.93, (precision, wrong, n, found)
+        held, flat, sets = held + found, flat + zero, sets + 150
+    assert held / sets >= 0.97 and flat == 0, (held / sets, flat)
+
+
 # --------------------------------------------------------------------------- #
 # The arithmetic, by hand
 # --------------------------------------------------------------------------- #
@@ -111,15 +170,34 @@ def test_the_correction_is_the_judge_plus_the_mean_gap_on_the_sample() -> None:
     assert alone.value == 0.7
     assert corrected.value == pytest.approx(0.7 + (1 - 2) / 20)
     assert labels.value == pytest.approx(13 / 20)
-    # Over the 20: Var(y) = 20·0.65·0.35/19 and Var(y − f) = (3 − 20·0.05²)/19.
+    # Over the 20, with plus-two counts (release audit 6): 13 labelled true, so
+    # Var(y) = p̃(1 − p̃) with p̃ = 15/24; 3 disagreements, so Var(y − f) ≤ 5/24.
     # The variance is Var(y)/100 + Var(y − f)·(1/20 − 1/100).
     z = 1.959963984540054
-    var_y, var_gap = 20 * 0.65 * 0.35 / 19, (3 - 20 * 0.05**2) / 19
+    var_y, var_gap = (15 / 24) * (9 / 24), 5 / 24
     half = z * math.sqrt(var_y / 100 + var_gap * (1 / 20 - 1 / 100))
     assert (corrected.low, corrected.high) == pytest.approx((0.65 - half, 0.65 + half))
-    alone_half = z * math.sqrt(var_y / 20)
-    assert (labels.low, labels.high) == pytest.approx((0.65 - alone_half, 0.65 + alone_half))
-    assert half < alone_half
+    # The labels alone: the Wilson interval on 13 of 20, 0.626 ± 0.193 by hand.
+    assert (labels.low, labels.high) == pytest.approx(wilson(13, 20))
+    assert (labels.low, labels.high) == pytest.approx((0.4329, 0.8189), abs=1e-4)
+    # On 20 labels the plus-two counts weigh enough that PPI's range is a little wider
+    # than the labels' own; at the hundreds of labels the simulation uses, it is narrower.
+    assert 2 * half == pytest.approx(0.4050, abs=1e-4)
+
+
+def test_labels_that_all_agree_still_leave_a_range() -> None:
+    """Release audit 6: 980 of 1,000 judged supported, 100 labels all supported.
+
+    Measured as they stand, every variance on such a sample is zero, and the
+    range was "0.980 [0.980, 0.980]". Plus-two counts leave it the doubt that
+    100 agreeing labels cannot rule out.
+    """
+    said = [True] * 980 + [False] * 20
+    _, corrected, labels = prediction_powered(said, [(True, True)] * 100)
+    assert corrected.value == pytest.approx(0.98)
+    assert corrected.low is not None and corrected.high is not None
+    assert corrected.low < 0.97 and corrected.high == 1.0
+    assert labels.low is not None and labels.low < 0.97 and labels.high == 1.0
 
 
 def test_with_every_fact_labelled_it_is_the_labels_mean_and_their_interval() -> None:

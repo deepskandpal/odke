@@ -968,6 +968,37 @@ interval's half-width, in points.
 | lenient, 50 | 94.3% | 9.7 | 11.0 |
 | strict, 50 | 90.8% | 7.6 | 11.0 |
 
+**Amended 24 Oct 2026 (release audit 6):** both variances are read with
+plus-two counts, and the labels-only interval is Wilson's. The table above was
+one regime: a judge wrong often enough that the labels disagree with it. At
+99% precision with a judge wrong 1% of the time, 100 labels mostly all agree,
+the measured variances were zero, and the "95%" range held the truth 71.1% of
+the time, 13.5% of the ranges zero width ("0.980 [0.980, 0.980]"); 83.5% on
+150 labels. Now Var(y) is p̃(1 − p̃) with p̃ = (Σy + 2)/(n + 4), and Var(y − f),
+which is at most the share of labels the judge disagrees with, is read as
+(D + 2)/(n + 4) for D disagreements. When every fact is labelled the
+corrected interval is the labels' own. Over 24 settings of a precise pipeline
+(precision 90%, 95%, 98% and 99%; a judge wrong 1% or 5% of the time; 50, 100
+or 150 labels; 1,000 facts, 5,000 seeded sets each) the range holds the truth
+96.7% to 100% of the time, against 51.1% to 99.9% before, and none is zero
+width; with a judge wrong 10% of the time as well, 96.2% to 100%. The ranges
+are about twice as wide at 99% precision. The regime above, re-measured the
+same way:
+
+| Judge, labels | PPI covers 80% | PPI ± | Labels only ± |
+|---|---|---|---|
+| lenient, 300 | 95.4% | 4.2 | 4.5 |
+| strict, 300 | 95.1% | 3.6 | 4.5 |
+| lenient, 150 | 96.0% | 5.9 | 6.3 |
+| strict, 150 | 96.5% | 5.0 | 6.3 |
+| lenient, 50 | 97.4% | 10.7 | 10.7 |
+| strict, 50 | 96.7% | 9.3 | 10.7 |
+
+The cost is width where labels are few: at 50 labels the lenient judge's
+corrected range is no narrower than the labels' own, and on a 20-label sample
+it is a little wider. The settings are in `tests/test_eval_ppi.py` (150 sets
+each there) and `tests/rules/test_r6_intervals.py`.
+
 **The strict precision never changes.** Adjudication lists a prediction the
 gold lacks as possibly missing from gold when the grounder supports it in 2 of
 3 runs. The adjudicated precision is printed beside the strict one and never

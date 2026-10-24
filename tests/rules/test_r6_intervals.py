@@ -46,7 +46,6 @@ FLOOR = LEVEL - 0.05
 FEW = settings(max_examples=40, derandomize=True, deadline=None, database=None)
 
 RELEASE_5 = pytest.mark.xfail(strict=True, reason="release audit finding 5; fixed in fix PR 3")
-RELEASE_6 = pytest.mark.xfail(strict=True, reason="release audit finding 6; fixed in fix PR 3")
 
 
 # --------------------------------------------------------------------------- #
@@ -97,7 +96,6 @@ def _judged_and_labelled(draw: st.DrawFn) -> tuple[list[bool], list[tuple[bool, 
     return [f for f, _ in labelled] + unlabelled, labelled
 
 
-@RELEASE_6
 @FEW
 @given(case=_judged_and_labelled())
 def test_ppi_ranges_have_width(case: tuple[list[bool], list[tuple[bool, bool]]]) -> None:
@@ -132,8 +130,8 @@ def _ppi_coverage(precision: float, wrong: float, n: int, *, facts: int = 1000) 
     [
         # The regime DECISIONS #36 simulated: it holds there.
         pytest.param(0.90, 0.10, 100, id="90%-precise, judge 10% wrong, 100 labels"),
-        pytest.param(0.99, 0.01, 100, marks=RELEASE_6, id="99%-precise, 100 labels"),
-        pytest.param(0.99, 0.01, 150, marks=RELEASE_6, id="99%-precise, 150 labels"),
+        pytest.param(0.99, 0.01, 100, id="99%-precise, 100 labels"),
+        pytest.param(0.99, 0.01, 150, id="99%-precise, 150 labels"),
     ],
 )
 def test_ppi_covers_its_level(precision: float, wrong: float, n: int) -> None:
