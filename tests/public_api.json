@@ -1705,8 +1705,7 @@
       "TRACER_PROVIDER",
       "configure_logs",
       "event",
-      "job_counts_of_run",
-      "spend"
+      "job_counts_of_run"
     ],
     "openodke.ontology": [
       "Cardinality",

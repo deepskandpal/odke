@@ -696,8 +696,8 @@ def ground_command(
     # Imported here so `odke --version` and the ontology commands stay light.
     from openodke.interop import ground_graph, ground_manifest, write_verdicts
     from openodke.llm.base import ProviderError
-    from openodke.manifest import FILE, Recorder
-    from openodke.observe import Observer, spend
+    from openodke.manifest import FILE, Recorder, spent_of
+    from openodke.observe import Observer
     from openodke.run import ConfigError
 
     chosen = _qualified(model, model_provider)
@@ -786,7 +786,7 @@ def ground_command(
     summary = grounded.summary
     observer.finish(
         summary.job,
-        cost=spend(getattr(grounder, "stats", None) or {}),
+        cost=spent_of(getattr(grounder, "stats", None) or {}),
         documents=len(docs),
         failed=len(summary.failed),
         stopped=summary.stopped.get("limit") if summary.stopped else None,

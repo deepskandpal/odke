@@ -49,6 +49,7 @@ from typing import IO, Any, Literal, NamedTuple
 from uuid import uuid4
 
 from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
+from openodke.manifest import qualified
 from openodke.types import Frozen
 
 EVENTS = logging.getLogger("openodke.events")
@@ -82,18 +83,6 @@ class JobCounts(Frozen):
     merged: int = 0
     linked: int = 0
     review: int = 0
-
-
-def spend(stats: Mapping[str, Any]) -> dict[str, Any]:
-    """A stage's or a run's model calls, tokens and cost, by the names the events use."""
-    usd = stats.get("cost_usd", stats.get("usd"))
-    return {
-        "calls": int(stats.get("calls", 0)),
-        "cached_calls": int(stats.get("cached", stats.get("cached_calls", 0))),
-        "input_tokens": int(stats.get("prompt_tokens", stats.get("input_tokens", 0))),
-        "output_tokens": int(stats.get("completion_tokens", stats.get("output_tokens", 0))),
-        "usd": float(usd) if isinstance(usd, int | float) else None,
-    }
 
 
 def job_counts_of_run(stats: Mapping[str, Any]) -> JobCounts:
@@ -343,7 +332,7 @@ class Observer:
         span: Any,
         error: BaseException | None = None,
     ) -> None:
-        model = _qualified(spec.model, spec.provider)
+        model = qualified(spec.model, spec.provider)
         cost: dict[str, Any] | None = None
         extra: dict[str, Any] = {"model": model, "served": None}
         if completion is not None:
@@ -355,7 +344,7 @@ class Observer:
                 "cached": completion.cached,
             }
             if completion.model:
-                extra["served"] = _qualified(completion.model, spec.provider)
+                extra["served"] = qualified(completion.model, spec.provider)
         if error is not None:
             extra["error"] = type(error).__name__
         event(
@@ -387,10 +376,6 @@ class Stage(NamedTuple):
     spent: _Spend
     outer: Any
     started: float
-
-
-def _qualified(model: str, provider: str) -> str:
-    return model if model.startswith(f"{provider}/") else f"{provider}/{model}"
 
 
 class ObservedClient:
@@ -526,5 +511,4 @@ __all__ = [
     "configure_logs",
     "event",
     "job_counts_of_run",
-    "spend",
 ]
