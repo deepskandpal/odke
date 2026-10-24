@@ -99,8 +99,10 @@ def test_every_place_that_caches_a_model_is_an_entry_point_of_this_rule() -> Non
     known = {
         "src/openodke/run/build.py",  # odke run
         "src/openodke/cli/main.py",  # odke ground, odke validate
-        # The bench's grounding: a provider or the cache, never a replay file.
+        # The bench's grounding and label set G's claim-format check: a provider or the
+        # cache, never a replay file.
         "bench/layer.py",
+        "bench/labels/claim_format.py",
     }
     found = set()
     for path in [*SRC.rglob("*.py"), *BENCH.rglob("*.py")]:
