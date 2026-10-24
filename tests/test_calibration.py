@@ -411,3 +411,74 @@ def test_an_eval_report_names_each_judge_its_run_called(tmp_path: Path) -> None:
     assert read_report(report.write(tmp_path / "r.json")) == report
     # A run that called no judge has nothing to calibrate.
     assert from_stage(StageReport(stage="x", n=0, metrics={}), run=Run()).calibration == ()
+
+
+def test_the_run_records_each_grounder_s_claim_format_and_its_card_follows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openodke.eval.eval_report import Run, calibration_of, read_report
+
+    _card(True, claim_format="labelled").write(tmp_path / "cards")
+    monkeypatch.setattr(lookup, "CARDS_DIR", tmp_path / "cards")
+    labelled = Run(
+        models={"ground": HAIKU},
+        prompts=("ground.span@1",),
+        claim_formats={"ground.span@1": "labelled"},
+    )
+    (entry,) = calibration_of(labelled)
+    assert (entry.claim_format, entry.calibrated, entry.meets_bar) == ("labelled", True, True)
+    # A record from before 1.3 has no claim format: read as the prompt's default, inline.
+    (old,) = calibration_of(Run(models={"ground": HAIKU}, prompts=("ground.span@1",)))
+    assert (old.claim_format, old.calibrated) == ("inline", False)
+    data = {
+        "schema_version": "1.2",
+        "title": "old",
+        "n": 0,
+        "run": {"openodke": "0.9", "models": {"ground": HAIKU}, "prompts": ["ground.span@1"],
+                "dataset": None},
+        "bootstrap": None, "rows": [], "stages": [], "notes": [], "diagnosis": [],
+        "fixes": [], "comparison": None, "calibration": [],
+    }  # fmt: skip
+    path = tmp_path / "old.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    read = read_report(path)
+    assert (
+        read.run.claim_formats == {} and read.calibrated().calibration[0].claim_format == "inline"
+    )
+
+
+def test_an_eval_report_names_the_claim_format_its_grounder_ran(tmp_path: Path) -> None:
+    import shutil
+
+    import yaml
+
+    from openodke.eval.harness import evaluate_pipeline
+
+    triples = Path(__file__).parent.parent / "examples" / "triples"
+    copy = tmp_path / "triples"
+    shutil.copytree(triples, copy, ignore=shutil.ignore_patterns("out"))
+    config = yaml.safe_load((copy / "odke.yaml").read_text())
+    config["stages"]["grounder"] = {"use": "llm", "claim_format": "labelled"}
+    config["models"]["replay"] = {"ground": "labelled.json"}
+    (copy / "labelled.json").write_text(
+        json.dumps(
+            [{"match": "Claim (subject | relation | object)", "response": {"verdict": "supported"}}]
+        ),
+        encoding="utf-8",
+    )
+    path = copy / "labelled.yaml"
+    path.write_text(yaml.safe_dump(config))
+    report = evaluate_pipeline(
+        predictions=triples / "triples.jsonl",
+        validator=True,
+        config=path,
+        labels=triples / "gold.jsonl",
+        documents=triples / "texts",
+        ontology=triples / "ontology.json",
+    )
+    assert report.schema_version == "1.3"
+    assert report.run.claim_formats == {"ground.span@1": "labelled"}
+    (entry,) = report.calibration
+    assert entry.claim_format == "labelled" and entry.line.startswith(
+        f"ground.span@1 on {HAIKU} (labelled): {UNCALIBRATED}"
+    )

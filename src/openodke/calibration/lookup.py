@@ -177,6 +177,22 @@ def status_of(stage: Any) -> CardStatus | None:
     return CardStatus(judge="ground", prompt=name, line=f"{name}: {UNCALIBRATED} (no card)")
 
 
+def claim_formats(*stages: Any) -> dict[str, str]:
+    """Each model grounder's prompt key, and how it writes the claim, through any wrapper.
+
+    What an eval report's run records beside the prompt key (`Run.claim_formats`),
+    so the card it prints is the card of the format that ran.
+    """
+    out: dict[str, str] = {}
+    for stage in stages:
+        judge = judge_of(stage)
+        key = getattr(getattr(judge, "prompt", None), "key", None)
+        line = getattr(judge, "claim_line", None)
+        if isinstance(key, str) and isinstance(line, str):
+            out[key] = line
+    return out
+
+
 def standing(stages: Mapping[str, Any]) -> list[CardStatus]:
     """Every model judge in a run's stages, with what its word did there.
 
@@ -206,6 +222,7 @@ __all__ = [
     "ENV",
     "CardStatus",
     "card_for",
+    "claim_formats",
     "cards",
     "judge_of",
     "standing",

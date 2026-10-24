@@ -156,6 +156,8 @@ class AblationRun:
     # The registered prompt keys the stages sent, and role -> model as configured.
     prompts: tuple[str, ...] = ()
     models: dict[str, str] = field(default_factory=dict)
+    # How the grounder wrote each claim, by its prompt key (`Run.claim_formats`).
+    claim_formats: dict[str, str] = field(default_factory=dict)
     # What the extractor refused before anything was grounded (`Rejection`s,
     # #109); None for an extractor that keeps no record of them.
     rejections: list[Any] | None = None
@@ -191,6 +193,7 @@ def rejections_of(extractor: Any) -> list[Any] | None:
 def ablate(config: RunConfig) -> AblationRun:
     """Run `config` three ways and keep the facts. Extraction and grounding run once."""
     # Imported here: `openodke.run` imports `openodke.eval.cost`, and so this package.
+    from openodke.calibration import claim_formats
     from openodke.gate import VerdictGate
     from openodke.run.build import build
     from openodke.run.execute import prompts_sent, register_documents
@@ -251,6 +254,7 @@ def ablate(config: RunConfig) -> AblationRun:
         notes=notes,
         coverage=extracted.stats.get("coverage"),
         prompts=tuple(prompts_sent(stages)),
+        claim_formats=claim_formats(grounder),
         rejections=rejections,
         models={
             role: spec.model
@@ -301,7 +305,10 @@ def report_ablation(
         rows=rows,
         bootstrap=how,
         run=Run(
-            models=models_called(run.all_calls, run.models), prompts=run.prompts, dataset=dataset
+            models=models_called(run.all_calls, run.models),
+            prompts=run.prompts,
+            claim_formats=run.claim_formats,
+            dataset=dataset,
         ),
     )
 

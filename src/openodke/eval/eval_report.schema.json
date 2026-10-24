@@ -54,7 +54,7 @@
     },
     "calibration": {
       "type": "array",
-      "description": "Each model judge the run called (#135): its registered prompt, its model, its calibration card's id and line, or UNCALIBRATED where there is none. Reserved and empty in 1.0 and 1.1.",
+      "description": "Each model judge the run called (#135): its registered prompt, its model, its calibration card's id and line, or UNCALIBRATED where there is none. Filled from 1.3; reserved and empty before.",
       "items": {"$ref": "#/$defs/card_status"}
     },
     "judged_precision": {
@@ -110,6 +110,11 @@
           "type": "array",
           "description": "Registered prompt keys the stages sent, id@version.",
           "items": {"type": "string"}
+        },
+        "claim_formats": {
+          "type": "object",
+          "description": "Added in 1.3, so not required: each grounder prompt key the stages sent -> how the claim was written: inline, labelled, sentence or triple. A key missing from it reads as its prompt's default (inline for ground.span).",
+          "additionalProperties": {"type": "string"}
         },
         "dataset": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/dataset"}]}
       }

@@ -57,14 +57,14 @@ lists every mismatch, and each report is checked when written and read.
 |---|---|
 | Key | What it holds |
 |---|---|
-| `schema_version` | `"1.2"` |
-| `title`, `n`, `run` | what was scored and how many rows; the version, models, prompts and dataset |
+| `schema_version` | `"1.3"` |
+| `title`, `n`, `run` | what was scored and how many rows; the version, models, prompts, each grounder prompt's claim format (`claim_formats`, 1.3) and dataset |
 | `bootstrap` | how the ranges were drawn |
 | `rows[]` | one per configuration scored against gold: `performance` (`precision`, `recall`, `f1`, each `{value, low, high}`, `micro` or `macro`), `counts` (`hits`, `over_extraction`, `under_extraction`, `uncited`, …), `conformance`, `hallucination`, `cost`, `latency` |
 | `stages[]`, `notes[]` | the `StageReport`s; what a number cannot say |
 | `comparison` | [`compare`](#was-the-change-real)'s result |
 | `diagnosis[]`, `fixes[]` | [where it loses facts](#where-does-it-lose-facts) and [what should change](#what-should-change) |
-| `calibration` | reserved, empty |
+| `calibration` | each model judge the run called, with its [calibration card](calibration.md)'s line or UNCALIBRATED (1.3) |
 | `judged_precision`, `pooled_recall` | [precision](labels.md#precision-the-judge-corrected) and [recall](labels.md#recall-a-pool-of-pipelines) without gold, when asked for |
 | `adjudication`, `lenient` | the [adjudicated](#is-the-gold-complete) and [lenient](#surface-forms-the-lenient-score) scores, when asked for |
 
