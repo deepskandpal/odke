@@ -166,6 +166,34 @@ def test_the_cypher_file_sink_is_idempotent(tmp_path: Path) -> None:
     assert path.read_bytes() == before
 
 
+@pytest.mark.parametrize("kind", ["cypher_file", "neo4j_admin_csv"])
+def test_a_tenant_keys_the_bulk_files_as_the_driver_keys_its_writes(
+    kind: str, tmp_path: Path
+) -> None:
+    """Release audit 3: both bulk sinks wrote no tenant, so two tenants' files merged."""
+    kg = _graph()
+
+    def written(tenant: str | None) -> str:
+        if kind == "cypher_file":
+            script = CypherFileSink(tmp_path / f"{tenant}.cypher").scoped(tenant)
+            return script.script(kg)
+        tables = Neo4jAdminCsvSink(tmp_path / str(tenant)).scoped(tenant).tables(kg)
+        return repr([table.rows for table in tables])
+
+    acme, globex = written("acme"), written("globex")
+    for fact in kg.facts:
+        assert signature_of(fact, "acme") in acme and signature_of(fact, "acme") not in globex
+        assert signature_of(fact) not in acme
+    assert "acme/p:ada" in acme and "globex/p:ada" in globex and "acme/" not in globex
+    if kind == "cypher_file":
+        sink = CypherFileSink(tmp_path / "x.cypher", tenant="acme")
+    else:
+        sink = Neo4jAdminCsvSink(tmp_path / "x", tenant="acme")
+    assert sink.scoped("acme") is sink
+    with pytest.raises(ValueError, match="writes tenant 'acme', not 'globex'"):
+        sink.scoped("globex")
+
+
 def test_the_bulk_sinks_declare_the_neo4j_platform() -> None:
     assert CypherFileSink("x.cypher").profile == Neo4jSink.profile
     assert Neo4jAdminCsvSink("x").profile == Neo4jSink.profile
