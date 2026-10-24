@@ -11,7 +11,8 @@ and [DECISIONS.md](DECISIONS.md) are the detail.
 ## Check your work
 
 - **The whole check:** `scripts/verify.sh`, ten steps, about seven minutes.
-  CI runs the same script on Python 3.11 to 3.14, plus a live Neo4j job.
+  CI runs the same script on Python 3.11 to 3.14, plus a live Neo4j job and
+  a bench job (`bench/test_competitors.py`, in `bench/requirements.txt`).
 - **The rules alone:** `uv run pytest tests/rules`, about 15 seconds. They
   also run after every edit under `src/` ([.claude/settings.json](.claude/settings.json)).
 - **A quick loop:** the test files your change touches. Tests never reach the
