@@ -393,6 +393,20 @@ def test_a_pair_judged_the_same_is_a_hit_and_the_strict_score_never_changes() ->
     assert pairs[0].passage == "Ada Lovelace was born in London in 1815."
 
 
+def test_a_pair_whose_calls_failed_counts_neither_way() -> None:
+    """Rule R1: a failed call is no "unsure"; it is counted apart, as failed."""
+    client = RecordedClient(
+        [
+            {"match": '"10 December 1815"', "response": answer("same")},
+            {"match": '"Marylebone"', "response": answer("same")},
+            {"match": '"Westminster"', "error": "401 unauthorized"},
+        ]
+    )
+    section, _ = lenient([("extract", ADA_SAID)], ADA_GOLD, [ADA_DOC], judge(client))
+    (row,) = section.rows
+    assert (row.candidates, row.same, row.unsure, row.failed, row.counted) == (3, 2, 0, 1, 2)
+
+
 def test_a_gold_fact_and_a_prediction_count_once_each() -> None:
     gold = [GoldFact(doc_id="a1", fact=ada("died_in", "Marylebone, London"))]
     said = [ada("died_in", "Marylebone"), ada("died_in", "Marylebone, Westminster")]
@@ -460,7 +474,9 @@ def test_the_schema_names_every_field_of_the_section() -> None:
     defs = schema()["$defs"]
     for name, model in (("lenient", Lenient), ("lenient_row", LenientRow)):
         assert set(defs[name]["properties"]) == set(model.model_fields), name
-        assert set(defs[name]["required"]) == set(model.model_fields), name
+        # `failed` on a row is added in 1.4, so a 1.3 report, which has none, still reads.
+        added = {"failed"} if name == "lenient_row" else set()
+        assert set(defs[name]["required"]) == set(model.model_fields) - added, name
     # Added in 1.2, so a report written before it still reads.
     assert "lenient" not in schema()["required"]
 

@@ -22,7 +22,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from openodke import Entity, Evidence, Fact, Span
+from openodke import Document, Entity, Evidence, Fact, Span
 from openodke.cli.main import app
 from openodke.eval import StageReport, load_jsonl, per_document, report_ablation, run_ablation
 from openodke.eval.ablation import CONFIGURATIONS, AblationRun
@@ -243,3 +243,26 @@ def test_the_last_row_carries_the_calls_a_pair_judge_made() -> None:
     )
     calls = {name: len(c) for name, _, c in run.configurations()}
     assert calls == {CONFIGURATIONS[0]: 1, CONFIGURATIONS[1]: 2, CONFIGURATIONS[2]: 3}
+
+
+def test_a_run_in_which_a_document_failed_is_not_scored() -> None:
+    """Rule R1: a document left out of a run would score as misses in every row."""
+    from openodke.eval.ablation import AblationRun, score_ablation
+    from openodke.eval.harness import PipelineError
+
+    run = AblationRun(
+        documents=[Document(id="a", text="t"), Document(id="b", text="t")],
+        ontology=Ontology(),
+        candidates=[],
+        grounded=[],
+        gated=[],
+        corroborated=[],
+        extraction_calls=[],
+        all_calls=[],
+        gate=None,
+        failed={"b": "extract: ProviderError: 503 overloaded"},
+    )
+    with pytest.raises(
+        PipelineError, match=r"1 of 2 documents left out: b \(extract: ProviderError"
+    ):
+        score_ablation(run, [])

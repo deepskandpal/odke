@@ -26,6 +26,9 @@ prediction the gold lacks with its three verdicts, for a person to audit.
   runs agree.
 - **The same question is asked once** for every row it appears in: the
   pipeline's prediction and the Validator's copy of it share their verdicts.
+- **A run whose call failed gives no verdict.** A question it leaves open is
+  `failed`, counted apart and neither listed nor ruled out, so a bad key reads
+  as failed questions, not as "not supported" (rule R1).
 
 Neither number is the truth. The strict one counts every fact the gold missed
 as wrong; the adjudicated one trusts the grounder on exactly those facts, and
@@ -130,6 +133,13 @@ class Audit:
     def listed(self) -> bool:
         return self.supported >= self.needed
 
+    @property
+    def failed(self) -> bool:
+        """A run gave no verdict (its call failed, or its answer was unreadable), and the
+        runs that did answer do not settle it: neither listed nor ruled out."""
+        unanswered = sum(v is GroundingVerdict.UNCHECKED for v in self.verdicts)
+        return bool(unanswered) and not self.listed and self.supported + unanswered >= self.needed
+
     def row(self) -> dict[str, Any]:
         return {
             "doc_id": self.doc_id,
@@ -139,6 +149,7 @@ class Audit:
             "verdicts": [v.value for v in self.verdicts],
             "supported": self.supported,
             "possibly_missing_from_gold": self.listed,
+            "failed": self.failed,
             "fact": self.fact.model_dump(mode="json"),
         }
 
@@ -188,6 +199,7 @@ def adjudicate(
     ):
         entry.verdicts = verdicts
     listed = {key for key, entry in asked.items() if entry.listed}
+    failed = {key for key, entry in asked.items() if entry.failed}
 
     rows = []
     for name, facts in configurations:
@@ -225,6 +237,7 @@ def adjudicate(
                 ),
                 strict=estimates[0],
                 adjudicated=estimates[1],
+                failed=sum(doc_id is not None and key in failed for doc_id, key in misses[name]),
             )
         )
     section = Adjudication(runs=runs, needed=needed, questions=len(entries), rows=tuple(rows))

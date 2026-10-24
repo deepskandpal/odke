@@ -273,7 +273,9 @@ def test_the_schema_names_every_field_of_the_section() -> None:
     defs = schema()["$defs"]
     for name, model in (("adjudication", Adjudication), ("adjudicated_row", AdjudicatedRow)):
         assert set(defs[name]["properties"]) == set(model.model_fields), name
-        assert set(defs[name]["required"]) == set(model.model_fields), name
+        # `failed` on a row is added in 1.4, so a 1.3 report, which has none, still reads.
+        added = {"failed"} if name == "adjudicated_row" else set()
+        assert set(defs[name]["required"]) == set(model.model_fields) - added, name
 
 
 @pytest.fixture
@@ -332,6 +334,43 @@ def test_odke_eval_pipeline_adjudicates_what_the_gold_lacks(judged: Path, tmp_pa
     text = report.render()
     assert "gold adjudication  (each prediction the gold lacks grounded 3 times" in text
     assert f"the strict precision never changes; the list, with every verdict: {audit}" in text
+
+
+def test_a_question_a_failed_call_left_open_counts_neither_way(tmp_path: Path) -> None:
+    """Rule R1: a run that gave no verdict is no "not supported".
+
+    Berlin is supported once, unreadable once, not found once: the run with no
+    answer could have listed it, so it is failed, counted apart and neither way,
+    and the note says the adjudicated precision is a floor.
+    """
+    copy = tmp_path / "triples"
+    shutil.copytree(TRIPLES, copy, ignore=shutil.ignore_patterns("out"))
+    answers = (
+        json.dumps({"verdict": "supported"}),
+        "I would rather not say",
+        json.dumps({"verdict": "not_found"}),
+    )
+    berlin = [{"match": {"contains": ["Berlin"]}, "response": {"text": text}} for text in answers]
+    (copy / "recorded" / "adjudicate.json").write_text(json.dumps({"interactions": berlin}))
+    config = yaml.safe_load((copy / "odke.yaml").read_text())
+    config["models"]["replay"] = {"ground": "recorded/adjudicate.json"}
+    (copy / "adjudicate.yaml").write_text(yaml.safe_dump(config))
+    audit = tmp_path / "adjudicated.jsonl"
+    report = evaluate_pipeline(
+        predictions=TRIPLES / "triples.jsonl", config=copy / "adjudicate.yaml", adjudicate=audit,
+        **_labels(),
+    )  # fmt: skip
+    assert report.adjudication is not None
+    (row,) = report.adjudication.rows
+    assert (row.asked, row.possibly_missing, row.failed) == (2, 0, 1)
+    assert row.adjudicated.value == row.strict.value == 0.6
+    assert (
+        "1 failed" in report.notes[-1]
+        and "the adjudicated precision is a floor" in report.notes[-1]
+    )
+    listed = {json.loads(line)["claim"]: json.loads(line)["failed"] for line in audit.open()}
+    assert listed["Halden Robotics (Company) — office in — Berlin (City)."] is True
+    assert check_report(report.model_dump(mode="json")) == []
 
 
 def test_the_validator_row_is_adjudicated_on_the_same_answers(tmp_path: Path) -> None:

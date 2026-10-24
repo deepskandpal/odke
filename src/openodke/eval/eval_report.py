@@ -49,7 +49,8 @@ default.
 1.4 adds the recall bucket `linked_other`, "pair linked by another true
 relation": a miss whose two ends a correct prediction links with another
 relation, which 1.3 counted as a wrong relation, or as both seen but not linked
-(release audit 11).
+(release audit 11); and `failed` on each adjudicated and lenient row, the
+questions whose calls failed, which 1.3 counted as not supported or unsure.
 
 `eval_report.schema.json`, beside this file, is the contract. `check_report`
 holds a report to it in plain Python, with no dependency; every report the
@@ -316,9 +317,11 @@ class AdjudicatedRow(Frozen):
 
     `not_in_gold` is the row's predictions the gold lacks (its over-extraction);
     `asked`, those of them that cite a document to be grounded against;
-    `possibly_missing`, those the grounder supported in enough runs. `strict`
-    is the row's own precision and range, unchanged; `adjudicated` counts the
-    possibly missing as hits, resampled on the same draws.
+    `possibly_missing`, those the grounder supported in enough runs; `failed`
+    (1.4), those whose grounding failed in a run the others did not settle,
+    which are counted neither way. `strict` is the row's own precision and
+    range, unchanged; `adjudicated` counts the possibly missing as hits,
+    resampled on the same draws.
     """
 
     name: str
@@ -327,6 +330,7 @@ class AdjudicatedRow(Frozen):
     possibly_missing: int = Field(ge=0)
     strict: Estimate
     adjudicated: Estimate
+    failed: int = Field(default=0, ge=0)
 
 
 class Adjudication(Frozen):
@@ -393,8 +397,9 @@ class LenientRow(Frozen):
     matcher counted missed and a prediction it did not match, in one document,
     with the relation and one end in common. Each was asked in both orders:
     `same` were judged the same fact in both, `different` different in both,
-    and `unsure` the rest (the orders disagreed, an answer could not be read,
-    a call failed or a budget stopped it). `counted` is the misses counted
+    `unsure` the rest (the orders disagreed, an answer could not be read, or a
+    budget stopped it), and `failed` (1.4) those whose calls failed, counted
+    neither way. `counted` is the misses counted
     found, at most once per gold fact and once per prediction. `strict` is the
     row's own performance, unchanged; `lenient` counts the `counted` pairs as
     hits, each moving one miss and one false positive, resampled on the same
@@ -409,6 +414,7 @@ class LenientRow(Frozen):
     counted: int = Field(ge=0)
     strict: Performance
     lenient: Performance
+    failed: int = Field(default=0, ge=0)
 
 
 class Lenient(Frozen):

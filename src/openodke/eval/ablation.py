@@ -24,18 +24,24 @@ what refusing `not_found` as well would have changed.
 
 If grounding does not move precision on your labels, the first note says so.
 That is a finding about your corpus, not a failure of the command.
+
+A run in which a document failed, in any pass (an extraction that raised, a
+grounding call that failed and left its facts unchecked), is not scored:
+`PipelineError` names each document and why, since its rows would count the
+failure as misses (rule R1).
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Collection, Iterable, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from openodke.coverage import offered_by
 from openodke.coverage import summary as coverage_summary
+from openodke.eval._failures import calls_failed, unjudged
 from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED
 from openodke.eval.cost import CallRecord, StageCost
 from openodke.eval.eval_report import (
@@ -164,6 +170,8 @@ class AblationRun:
     links: tuple[EntityLink, ...] = ()
     # None: no calls after grounding were recorded apart, so `all_calls` stands.
     final_calls: list[CallRecord] | None = None
+    # Each document that failed in some pass, and why: left out of every row scored.
+    failed: dict[str, str] = field(default_factory=dict)
 
     def configurations(self) -> list[tuple[str, list[Fact], list[CallRecord]]]:
         """Each configuration's name, its facts, and the calls it took to get them."""
@@ -221,6 +229,7 @@ def ablate(config: RunConfig) -> AblationRun:
     candidates = list(extracted.facts)
     rejections = rejections_of(stages["extractor"])
     extraction_calls = list(meter.records)
+    failed = _failed(extracted.stats)
 
     grounder = stages["grounder"]
     if grounder is None:
@@ -228,7 +237,12 @@ def ablate(config: RunConfig) -> AblationRun:
         notes.append("no grounder is configured, so + grounding differs only by the gate")
     else:
         replay = _Replaying(recording.found)
-        grounded = list(Pipeline(ontology, replay, grounder=grounder, **route).run(docs).facts)
+        before = calls_failed(grounder)
+        ran = Pipeline(ontology, replay, grounder=grounder, **route).run(docs)
+        grounded = list(ran.facts)
+        failed |= {k: v for k, v in _failed(ran.stats).items() if k not in failed}
+        if calls_failed(grounder) > before:
+            failed |= {k: v for k, v in unjudged(grounded).items() if k not in failed}
     gate = stages["gate"] if stages["gate"] is not None else VerdictGate()
     # The same default the last row's pipeline gives it, before this row reads it (#54).
     follow = getattr(gate, "follow_card", None)
@@ -241,6 +255,7 @@ def ablate(config: RunConfig) -> AblationRun:
         extractor=_Replaying(recording.found), grounder=_Stamped(grounded, grounder), gate=gate
     )
     graph = full.run(docs)
+    failed |= {k: v for k, v in _failed(graph.stats).items() if k not in failed}
     return AblationRun(
         documents=list(docs),
         ontology=ontology,
@@ -264,6 +279,31 @@ def ablate(config: RunConfig) -> AblationRun:
         links=graph.links,
         # A pair judge in the resolver calls a model in the last row alone.
         final_calls=list(meter.records),
+        failed=failed,
+    )
+
+
+def _failed(stats: Mapping[str, Any]) -> dict[str, str]:
+    found = stats.get("failed")
+    return {str(k): str(v) for k, v in found.items()} if isinstance(found, Mapping) else {}
+
+
+def _scorable(run: AblationRun) -> AblationRun:
+    """`run`, unless a document failed in it: then a `PipelineError` naming what failed.
+
+    A run with a document left out is not the run the labels describe, and its
+    rows would score the failure as misses (rule R1). With the response cache
+    on (`models.cache`), a rerun asks only the calls that failed.
+    """
+    if not run.failed:
+        return run
+    from openodke._batch import failed_summary
+    from openodke.eval.harness import PipelineError
+
+    raise PipelineError(
+        f"the ablation's run failed, so it is not scored: "
+        f"{failed_summary(run.failed, of=len(run.documents))}. Run it again; with "
+        "models.cache set, only the calls that failed are asked again"
     )
 
 
@@ -283,9 +323,10 @@ def report_ablation(
 ) -> EvalReport:
     """`run_ablation` as an eval report: the three rows with their ranges. Writes nothing.
 
-    `labels` names the gold file in the report's dataset.
+    `labels` names the gold file in the report's dataset. A run in which a
+    document failed is not scored (`_scorable`).
     """
-    run = ablate(config)
+    run = _scorable(ablate(config))
     rows, how = extraction_rows(
         run.configurations(),
         gold,
@@ -314,7 +355,11 @@ def report_ablation(
 
 
 def score_ablation(run: AblationRun, gold: Sequence[GoldFact]) -> StageReport:
-    """An `AblationRun` already made, scored against `gold`: `run_ablation` without the run."""
+    """An `AblationRun` already made, scored against `gold`: `run_ablation` without the run.
+
+    A run in which a document failed is not scored (`_scorable`).
+    """
+    run = _scorable(run)
     notes = list(run.notes)
     candidates, grounded, docs, gate = run.candidates, run.grounded, run.documents, run.gate
 
