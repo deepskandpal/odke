@@ -11,6 +11,7 @@ import json
 import math
 import sys
 import threading
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -59,26 +60,46 @@ REPO = Path(__file__).parent.parent
 
 
 class _Counting:
-    """Answers every call, priced or not, and counts the calls that reached it."""
+    """Answers every call, priced or not, and counts the calls that reached it.
+
+    `delay` holds each call open that long, as a provider does, so calls from
+    several threads are in flight together; `most_at_once` says how many were.
+    """
 
     def __init__(
-        self, *, cost: float | None = 0.0003, fail: bool = False, gate: Any = None
+        self,
+        *,
+        cost: float | None = 0.0003,
+        fail: bool = False,
+        gate: Any = None,
+        delay: float = 0.0,
     ) -> None:
         self.calls = 0
         self.cost = cost
         self.fail = fail
         self.gate = gate
+        self.delay = delay
         self.entered = threading.Event()
         self._lock = threading.Lock()
+        self._in_flight = 0
+        self.most_at_once = 0
 
     def complete(
         self, messages: Sequence[Message], *, spec: ModelSpec, schema: dict[str, Any] | None = None
     ) -> Completion:
         with self._lock:
             self.calls += 1
+            self._in_flight += 1
+            self.most_at_once = max(self.most_at_once, self._in_flight)
         self.entered.set()
-        if self.gate is not None:
-            self.gate.wait(5)
+        try:
+            if self.gate is not None:
+                self.gate.wait(5)
+            if self.delay:
+                time.sleep(self.delay)
+        finally:
+            with self._lock:
+                self._in_flight -= 1
         if self.fail:
             raise ProviderError("503 overloaded")
         return Completion(
@@ -210,7 +231,11 @@ def test_a_call_waits_for_the_calls_in_flight_rather_than_stopping_on_their_rese
 
 
 def test_threads_drawing_on_one_ledger_never_make_a_call_past_the_limit() -> None:
-    inner = _Counting()
+    # Each call stays in flight 5 ms, as a provider's would. An instant answer
+    # never overlaps another, and then a ledger that forgot what the calls in
+    # flight hold passed this test (release audit S24); with the wait, it lets
+    # about 65 calls through a limit of 50.
+    inner = _Counting(delay=0.005)
     ledger = Ledger(Budget(calls=50))
     client = ledger.client(inner)
     refused: list[BudgetExceeded] = []
@@ -229,6 +254,7 @@ def test_threads_drawing_on_one_ledger_never_make_a_call_past_the_limit() -> Non
         thread.start()
     for thread in threads:
         thread.join()
+    assert inner.most_at_once > 1, "the calls never overlapped, so the limit was not tested"
     assert inner.calls == ledger.spent.calls == 50
     assert len(refused) == 110
     # One exception per refused call: none shares another's traceback.
