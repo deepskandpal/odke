@@ -432,6 +432,30 @@ def test_the_validator_writes_its_manifest_into_each_jsonl_sink_and_where_named(
     assert dry.manifest.ontology_hash == ontology.fingerprint and dry.manifest.models == {}
 
 
+def test_a_manifest_write_that_dies_leaves_the_last_one_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Written beside itself and renamed into place (release audit S8): a run killed while it
+    writes leaves the manifest that was there, never half of one, and no stray file."""
+    import os
+
+    from openodke.manifest import Recorder, inputs_of
+
+    manifest = Recorder("run", {"stages": {}}).finish(inputs=inputs_of([]))
+    path = manifest.write(tmp_path / "manifest.json")
+    before = path.read_text(encoding="utf-8")
+
+    def killed(*args: Any) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(os, "replace", killed)
+    for write in (manifest.write, manifest.write_into):
+        with pytest.raises(KeyboardInterrupt):
+            write(path)
+        assert path.read_text(encoding="utf-8") == before
+        assert [p.name for p in tmp_path.iterdir()] == ["manifest.json"]
+
+
 def test_a_merging_store_keeps_its_own_counts_beside_the_jobs(tmp_path: Path) -> None:
     rows = [json.loads(line) for line in (TRIPLES / "triples.jsonl").read_text().splitlines()]
     client = RecordedClient.from_fixture(TRIPLES / "recorded" / "ground.json")
