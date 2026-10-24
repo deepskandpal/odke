@@ -5,7 +5,7 @@ shape is whatever that stage partitions on. That suits a person reading one
 table. It does not suit a CI job, a dashboard, or a second run to compare
 against, because each of those needs to know where precision is without
 knowing which stage made the report. So an Evaluator run also writes an
-`EvalReport`, whose shape is fixed and versioned (`schema_version`, "1.2"):
+`EvalReport`, whose shape is fixed and versioned (`schema_version`, "1.3"):
 
 - **rows**: one per configuration scored against gold facts (a single
   extraction, or the ablation's three), each with precision, recall and F1
@@ -26,7 +26,7 @@ knowing which stage made the report. So an Evaluator run also writes an
 - **comparison**: this run against a baseline (#142); **calibration**: each
   model judge the run called, with its calibration card's line or
   UNCALIBRATED (#135, `openodke.calibration`), filled in when the report is
-  written or printed from the prompts and models `run` names.
+  written or printed from the prompts, models and claim formats `run` names.
 
 1.1 adds the sections that score without gold, or with gold that is
 incomplete, each `null` when not asked for: **judged_precision**, a judge's
@@ -40,6 +40,11 @@ pipelines' recall relative to the pool of what they found (#146,
 and F1 with every surface form the fact-equivalence judge called the gold fact
 counted as a hit, beside the strict numbers, which it never replaces (#143,
 `openodke.eval.equivalence`).
+
+1.3 fills **calibration** (#135), and adds `run.claim_formats`: how each
+grounder prompt the run sent wrote its claim, so a judge's card is the card of
+the format it ran. A 1.2 report has none, and reads each as its prompt's
+default.
 
 `eval_report.schema.json`, beside this file, is the contract. `check_report`
 holds a report to it in plain Python, with no dependency; every report the
@@ -74,7 +79,7 @@ from openodke.ground.checks import CHECKS, schema_problem
 from openodke.ontology import Ontology
 from openodke.types import Fact, Frozen
 
-SCHEMA_VERSION = "1.2"
+SCHEMA_VERSION = "1.3"
 SCHEMA_PATH = Path(__file__).with_name("eval_report.schema.json")
 
 
@@ -239,6 +244,9 @@ class Run(Frozen):
     models: dict[str, str] = Field(default_factory=dict)
     # Registered prompt keys the stages sent, `id@version` (DECISIONS #27).
     prompts: tuple[str, ...] = ()
+    # Added in 1.3: each grounder prompt key -> how its claim was written (inline,
+    # labelled, sentence, triple), which code decides, not the prompt (#135).
+    claim_formats: dict[str, str] = Field(default_factory=dict)
     dataset: Dataset | None = None
 
 
@@ -452,7 +460,9 @@ class EvalReport(Frozen):
         Each registered judge prompt the run sent, on the model of its role:
         the grounder's prompts on `ground`, the pair and fact-equivalence
         judges' on `judge` or else `ground`. Its card's line, or UNCALIBRATED.
-        A `ground.span` key is read with its default claim format, inline.
+        A grounder's prompt is read with the claim format `run.claim_formats`
+        records for it, or its prompt's default (inline for `ground.span`) in
+        a report from before 1.3.
         """
         if self.calibration:
             return self
@@ -1009,7 +1019,8 @@ def _provenance(report: EvalReport) -> list[str]:
     return lines
 
 
-# Each judge prompt id, the judge it is, and how a grounder's prompt writes the fact.
+# Each judge prompt id, the judge it is, and how a grounder's prompt writes the fact
+# by default: what a report from before 1.3, which records no claim format, is read as.
 _JUDGES = {
     "ground.span": ("ground", "inline"),
     "ground.paper": ("ground", "triple"),
@@ -1033,6 +1044,7 @@ def calibration_of(run: Run, lenient: Lenient | None = None) -> tuple[CardStatus
         if judge is None:
             continue
         if judge == "ground":
+            claim_format = run.claim_formats.get(key, claim_format)
             model = run.models.get("ground")
         else:
             given = lenient.model if judge == "fact_equiv" and lenient is not None else None

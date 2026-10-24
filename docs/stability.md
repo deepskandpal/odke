@@ -39,8 +39,8 @@ refuses another major version by name.
 | Format | Version field | Now | Schema |
 |---|---|---|---|
 | [Triples input](inputs.md) | `schema_version`, on each row, optional | 1.0 | `openodke/interop/triples.schema.json` |
-| [Run report](validator.md#the-report), `ValidationReport` | `schema_version` | 1.0 | `openodke/validation_report.schema.json` |
-| [Eval report](evaluation.md) | `schema_version` | 1.2 | `openodke/eval/eval_report.schema.json` |
+| [Run report](validator.md#the-report), `ValidationReport` | `schema_version` | 1.1 | `openodke/validation_report.schema.json` |
+| [Eval report](evaluation.md) | `schema_version` | 1.3 | `openodke/eval/eval_report.schema.json` |
 | [Run manifest](run.md#the-run-manifest) | `manifest_version` | 1 | |
 
 ## Deprecated

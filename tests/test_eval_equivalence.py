@@ -432,7 +432,7 @@ def test_the_section_is_in_the_report_beside_the_rows_and_reads_back(tmp_path: P
     rows, how = extraction_rows([("extract", ADA_SAID, None)], ADA_GOLD)
     report = from_stage(evaluate_extraction(ADA_GOLD, ADA_SAID), rows=rows, bootstrap=how)
     report = report.model_copy(update={"lenient": section})
-    assert report.schema_version == "1.2"
+    assert report.schema_version == "1.3"
     assert check_report(report.model_dump(mode="json")) == []
     # Written, it names the judge it called and that judge's standing (#135).
     written = read_report(report.write(tmp_path / "r.json"))

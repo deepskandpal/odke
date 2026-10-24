@@ -380,6 +380,7 @@ def report_run(
         run=Run(
             models=models_called(ablation.all_calls, ablation.models),
             prompts=ablation.prompts,
+            claim_formats=ablation.claim_formats,
             dataset=scoring.dataset,
         ),
     )

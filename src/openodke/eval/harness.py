@@ -441,6 +441,8 @@ class Checked:
     notes: list[str]
     # Each fact the gate refused, and its reason: the diagnosis's refused bucket.
     refused: list[tuple[Fact, str]] = field(default_factory=list)
+    # How the grounder wrote each claim, by its prompt key (`Run.claim_formats`).
+    claim_formats: dict[str, str] = field(default_factory=dict)
 
 
 def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = None) -> Checked:
@@ -509,6 +511,11 @@ def check(facts: Sequence[Fact], corpus: Corpus, config: str | Path | None = Non
         models=models_called(meter.records, configured),
         notes=notes,
         refused=kept.refused,
+        claim_formats={
+            c.prompt: c.claim_format
+            for c in done.calibration
+            if c.judge == "ground" and c.claim_format is not None
+        },
     )
 
 
@@ -584,6 +591,7 @@ def _score(
     run = Run(
         models=checked.models if checked is not None else {},
         prompts=checked.prompts if checked is not None else (),
+        claim_formats=checked.claim_formats if checked is not None else {},
         dataset=corpus.dataset,
     )
     lines = [*notes, *(checked.notes if checked is not None else ())]
@@ -846,6 +854,7 @@ def adjudicated(
     default `LLMGrounder` on the default models; metered either way, so the
     report names the model it called.
     """
+    from openodke.calibration import claim_formats
     from openodke.eval.adjudication import NEEDED, RUNS, adjudicate, write_audit
     from openodke.eval.cost import CostMeter
 
@@ -884,6 +893,7 @@ def adjudicated(
         update={
             "models": {**models_called(meter.records, configured), **report.run.models},
             "prompts": tuple(dict.fromkeys([*report.run.prompts, *prompts])),
+            "claim_formats": {**claim_formats(grounder), **report.run.claim_formats},
         }
     )
     return report.model_copy(
