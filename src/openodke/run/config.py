@@ -157,12 +157,11 @@ DEFAULTS: dict[str, StageSpec] = {"scorer": StageSpec(use="evidence")}
 
 # The stages whose pass-through, named, every command reads as the stage left
 # out, so naming it changes neither the run nor its config hash (#40). Not the
-# scorer (left out, it is `DEFAULTS`'s), the gate (`odke eval ablation` reads a
-# gate left out as the verdict gate), or the constrainer (a Neo4j bootstrap
-# reads one left out as `Neo4jConstrainer`).
-_PASSTHROUGH_IS_LEFT_OUT = frozenset(
-    {"chunker", "router", "grounder", "normalizer", "resolver", "corroborator", "inferrer"}
-)
+# others: left out, the scorer is `DEFAULTS`'s; `odke validate --config` and
+# the harness give a grounder, normalizer, resolver, corroborator and gate
+# left out the Validator's defaults; `odke eval ablation` reads a gate left out
+# as the verdict gate; and a Neo4j bootstrap, a constrainer as `Neo4jConstrainer`.
+_PASSTHROUGH_IS_LEFT_OUT = frozenset({"chunker", "router", "inferrer"})
 
 
 class InputSpec(_Strict):
@@ -379,9 +378,10 @@ class RunConfig(_Strict):
         Stages and inputs are in the shape a file gives them,
         `{use: name, option: ...}`. A stage left out is the one `odke run`
         fills it with (`DEFAULTS`), or stays out; a pass-through named that
-        every command reads as the stage left out is left out. So one pipeline
-        is one config however it is written (release audit S4). What a run
-        manifest records and hashes (`openodke.manifest`).
+        every command reads as the stage left out (`_PASSTHROUGH_IS_LEFT_OUT`)
+        is left out. So a stage left out, its pass-through and the default
+        scorer named are one config (release audit S4). What a run manifest
+        records and hashes (`openodke.manifest`).
         """
         data = self.model_dump(mode="json", exclude={"stages", "inputs", "store_lookup"})
         data["models"] = self.models.canonical()
