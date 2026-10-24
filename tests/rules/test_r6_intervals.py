@@ -7,12 +7,17 @@ stratum sample as if it were one random sample, so its range held the truth
 zero width when every label agreed, so at 99% precision it held the truth 71%
 of the time with 100 labels (finding 6).
 
-The check, for every interval on a share (`stats.wilson`, PPI's corrected and
-labels-only ranges, the refusal precision):
+The check, for every closed-form interval on a share (`stats.wilson`, PPI's
+corrected and labels-only ranges, the refusal precision):
 
 - **width above zero**, whatever the labels, as property tests (hypothesis);
 - **coverage near the stated level**: exact for Wilson, simulated and seeded
   for the others, never below the level less 5 points.
+
+Not here: the percentile ranges `openodke.eval.bootstrap` puts beside a
+precision, recall or F1. They resample documents, and are zero width when every
+resample agrees (one document, or every fact right), which the release audit
+checked as intended.
 
 Deterministic: hypothesis is derandomised and every simulation is seeded, so a
 failure here is the code's, never the draw's.

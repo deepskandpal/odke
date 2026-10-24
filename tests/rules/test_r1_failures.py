@@ -11,10 +11,11 @@ The check: make every model call fail, or hand in a run that failed. Every
 command that scores exits non-zero or leaves the failed part out and says
 so; none writes a number made from the failure.
 
-What it covers: `odke bench run`, `odke eval ablation`, `odke eval pipeline
---validator`, `odke validate --update`, and the bench scripts behind the
-published tables: `conflicts.py`, `competitors.py`, `layer.py`, `volume.py`
-and `tables.py`. A new command that scores belongs in this file.
+What it covers: `odke bench run`, `odke eval ablation`, `odke eval pipeline`
+with `--validator`, `--adjudicate` and `--lenient`, `odke validate --update`,
+and the bench scripts behind the published tables: `conflicts.py`,
+`competitors.py`, `layer.py`, `volume.py` and `tables.py`. A new command that
+scores belongs in this file.
 """
 
 from __future__ import annotations
@@ -78,10 +79,12 @@ def every_model_call_fails(monkeypatch: pytest.MonkeyPatch) -> Iterator[type[_Re
 
 def test_every_place_a_client_is_resolved_is_made_to_fail() -> None:
     """A module that binds `resolve` and is not patched would reach a real provider here."""
-    assert bindings_of_resolve() == set(RESOLVERS), (
-        f"{sorted(bindings_of_resolve() ^ set(RESOLVERS))}: list every module that binds the "
-        "registry's `resolve` in RESOLVERS in tests/rules/_support.py, so the rules can make "
-        "every model call fail, or answer it, without a network."
+    found = bindings_of_resolve()
+    assert found == RESOLVERS, (
+        f"{sorted(set(found.items()) ^ set(RESOLVERS.items()))}: list every module that binds "
+        "the registry's `resolve`, under the name it binds, in RESOLVERS in "
+        "tests/rules/_support.py, so the rules can make every model call fail, or answer it, "
+        "without a network."
     )
 
 
@@ -129,6 +132,30 @@ def test_odke_eval_pipeline_validator(
     args += ["--labels", "triples/gold.jsonl", "--validator", "--config", "triples/odke.yaml"]
     result = runner.invoke(app, ["eval", "pipeline", *args])
     _no_score("odke eval pipeline --validator", result)
+
+
+@pytest.mark.parametrize(
+    "judge",
+    [
+        pytest.param(
+            "--adjudicate",
+            marks=_found_here("`odke eval pipeline --adjudicate` scores judgements that failed", 3),
+        ),
+        pytest.param(
+            "--lenient",
+            marks=_found_here("`odke eval pipeline --lenient` scores judgements that failed", 3),
+        ),
+    ],
+)
+def test_odke_eval_pipeline_judged(
+    judge: str, every_model_call_fails: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    copy_example("triples", tmp_path)
+    monkeypatch.chdir(tmp_path)
+    args = ["--predictions", "triples/triples.jsonl", "--documents", "triples/texts"]
+    args += ["--labels", "triples/gold.jsonl", "--config", "triples/odke.yaml"]
+    result = runner.invoke(app, ["eval", "pipeline", *args, judge, "judged.jsonl"])
+    _no_score(f"odke eval pipeline {judge}", result)
 
 
 # --------------------------------------------------------------------------- #

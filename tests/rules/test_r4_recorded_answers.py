@@ -13,20 +13,21 @@ removed. Every request of the second run must reach the live model.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 import pytest
 import yaml
-from _support import BENCH, SRC, LiveModel, answer_every_model_with, copy_example
+from _support import BENCH, EXAMPLES, SRC, LiveModel, answer_every_model_with, copy_example
 from typer.testing import CliRunner
 
 from openodke.cli.main import app
 
 runner = CliRunner()
 
-# The four grounding calls `examples/triples` makes: its recording has four answers.
-RECORDED = 4
+# The grounding calls `examples/triples` makes: one per answer in its recording.
+RECORDED = len(json.loads((EXAMPLES / "triples" / "recorded" / "ground.json").read_text("utf-8")))
 MODEL = "anthropic/claude-haiku-4-5-20251001"
 TRIPLES = ["--facts", "triples/triples.jsonl", "--texts", "triples/texts", "-o", "out"]
 FIX = (

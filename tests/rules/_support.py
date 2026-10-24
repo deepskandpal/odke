@@ -7,8 +7,8 @@ network, no key, no bill.
 
 from __future__ import annotations
 
+import ast
 import importlib
-import re
 import shutil
 import threading
 from collections.abc import Sequence
@@ -75,12 +75,39 @@ def answer_every_model_with(monkeypatch: Any, client: Any) -> None:
         monkeypatch.setattr(modules[name], attribute, lambda spec, _client=client: _client)
 
 
-def bindings_of_resolve() -> set[str]:
-    """The modules under `src/` that bind `resolve` from the registry at import time."""
-    found = {"openodke.llm.registry"}
-    binding = re.compile(r"^from openodke\.llm\.registry import .*\bresolve\b", re.M)
+def bindings_of_resolve() -> dict[str, str]:
+    """Each module under `src/` that binds the registry's `resolve` on import, and the name.
+
+    Read from the syntax tree, so every spelling counts: absolute or relative, from
+    `openodke.llm` or `openodke.llm.registry`, on one line or several. An import inside a
+    function looks the name up when it runs, so it is patched already and is left out.
+    """
+    found = {"openodke.llm.registry": "resolve"}
     for path in sorted(SRC.rglob("*.py")):
-        if binding.search(path.read_text(encoding="utf-8")):
-            parts = path.relative_to(SRC.parent).with_suffix("").parts
-            found.add(".".join(parts[:-1] if parts[-1] == "__init__" else parts))
+        parts = path.relative_to(SRC.parent).with_suffix("").parts
+        package = parts[:-1]
+        module = ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
+        for node in _module_level(ast.parse(path.read_text(encoding="utf-8")).body):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            base = list(package[: len(package) - node.level + 1]) if node.level else []
+            source = ".".join([*base, *(node.module.split(".") if node.module else [])])
+            if source not in ("openodke.llm", "openodke.llm.registry"):
+                continue
+            for alias in node.names:
+                if alias.name == "resolve":
+                    found[module] = alias.asname or alias.name
     return found
+
+
+def _module_level(body: list[ast.stmt]) -> list[ast.stmt]:
+    """The statements that run on import: the module's, and those under its `if` and `try`."""
+    out: list[ast.stmt] = []
+    for node in body:
+        out.append(node)
+        if isinstance(node, ast.If | ast.Try):
+            for block in (node.body, node.orelse, getattr(node, "finalbody", [])):
+                out += _module_level(block)
+            for handler in getattr(node, "handlers", []):
+                out += _module_level(handler.body)
+    return out
