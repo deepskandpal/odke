@@ -22,6 +22,7 @@ from openodke.eval.formats import Refusal, RefusalLabel, load_jsonl
 from openodke.eval.refusals import (
     MAX_TEXT,
     SAMPLE_FILE,
+    _stratified,
     bench_sets,
     cut,
     precision,
@@ -380,6 +381,83 @@ def _label(judgement: str, dataset: str = "t2k", gold: bool | None = None) -> Re
     )
 
 
+# --------------------------------------------------------------------------- #
+# The stratified precision, simulated
+# --------------------------------------------------------------------------- #
+
+
+def _held(strata: list[tuple[str, int, float]], n: int, reps: int) -> float:
+    """How often the stratified 95% range holds the true refusal precision, over seeded draws.
+
+    `(dataset, size, share right)` per stratum. The refusals are made once;
+    each rep draws which of them were right refusals, then the sample.
+    """
+    import random
+
+    refusals = [
+        Refusal.model_construct(
+            id=f"{name}-{i:05d}", claim="c", text="t", verdict="not_found", reason="r",
+            predicate="p", dataset=name, extractor=None, stratum_size=None,
+        )
+        for name, size, _ in strata
+        for i in range(size)
+    ]  # fmt: skip
+    shares = [share for _, size, share in strata for _ in range(size)]
+    held = 0
+    for rep in range(reps):
+        rng = random.Random(rep)
+        right = {r.id: rng.random() < share for r, share in zip(refusals, shares, strict=True)}
+        truth = sum(right.values()) / len(right)
+        labels = [
+            RefusalLabel.model_construct(
+                **dict(drawn), judgement="refusal_correct" if right[drawn.id] else "refusal_wrong"
+            )
+            for drawn in sample(refusals, n, seed=rep)
+        ]
+        found = _stratified(labels)
+        assert found["low"] is not None and found["high"] is not None
+        held += found["low"] <= truth <= found["high"]  # type: ignore[operator]
+    return held / reps
+
+
+@pytest.mark.parametrize(
+    ("strata", "n", "measured"),
+    [
+        # The release audit's case: pooled, it read 62% [52%, 71%] against 87%, and held 0 of 2,000.
+        pytest.param(
+            [("big", 1000, 0.9), ("small", 50, 0.3)], 100, 0.952, id="1000 at 90%, 50 at 30%"
+        ),
+        pytest.param(
+            [("a", 500, 0.7), ("b", 300, 0.9), ("c", 100, 0.5)], 60, 0.956, id="three strata"
+        ),
+        # The shape of the 10 Oct refusal labels: six strata of 8 to 83, 100 drawn.
+        pytest.param(
+            [
+                ("a", 83, 0.35),
+                ("b", 51, 0.3),
+                ("c", 20, 0.25),
+                ("d", 35, 0.2),
+                ("e", 28, 0.25),
+                ("f", 8, 0.25),
+            ],
+            100,
+            0.968,
+            id="six small strata",
+        ),  # fmt: skip
+    ],
+)
+def test_the_stratified_range_holds_its_level(
+    strata: list[tuple[str, int, float]], n: int, measured: float
+) -> None:
+    """Release audit 5: each stratum weighted by its size, Wilson on the effective sample size.
+
+    `measured` is the coverage offline, 5,000 seeded populations each; here,
+    200, so a draw may sit a few points from it. Never under 90%.
+    """
+    found = _held(strata, n, reps=200)
+    assert found >= 0.90 and abs(found - measured) < 0.04, (found, measured)
+
+
 def test_refusal_precision_counts_gold_wrong_as_right_and_sets_unsure_aside() -> None:
     labels = (
         [_label("refusal_correct")] * 6
@@ -391,14 +469,32 @@ def test_refusal_precision_counts_gold_wrong_as_right_and_sets_unsure_aside() ->
     assert (found["precision"], found["judged"], found["unsure"]) == (0.8, 10, 3)
     assert (found["low"], found["high"]) == wilson(8, 10)
     assert (found["gold_listed"], found["gold_wrong_of_listed"]) == (4, 0.5)
+    # One stratum's labels are a simple random sample of it, so they pool, sizes or not.
+    t2k = [label for label in labels if label.dataset == "t2k"]
+    assert (
+        "refusal precision 1.000 [0.610, 1.000] (Wilson 95%), 6 judged, 3 unsure set aside"
+        in report_refusals(t2k).render()
+    )
+    # Two strata and no sizes: each on its own, never pooled (release audit 5).
     report = report_refusals(labels, path="labels.jsonl")
     (stage,) = report.stages
-    assert set(stage.breakdown) == {"all", "dataset: redocred", "dataset: t2k"}
-    assert stage.breakdown["dataset: t2k"]["precision"] == 1.0
-    text = report.render()
-    assert (
-        "refusal precision 0.800 [0.490, 0.943] (Wilson 95%), 10 judged, 3 unsure set aside" in text
-    )
+    assert set(stage.breakdown) == {
+        "all",
+        "stratum: redocred / not_found",
+        "stratum: t2k / not_found",
+    }
+    assert stage.breakdown["all"]["precision"] is None
+    assert stage.breakdown["stratum: t2k / not_found"]["precision"] == 1.0
+    assert stage.breakdown["stratum: redocred / not_found"]["precision"] == 0.5
+    assert "refusal precision: not pooled" in report.render()
+    # The sizes given back: each stratum weighted by its own, not by how many were drawn.
+    sizes = {("t2k", "", "not_found"): 90, ("redocred", "", "not_found"): 10}
+    (stage,) = report_refusals(labels, sizes=sizes).stages
+    assert stage.breakdown["all"]["precision"] == pytest.approx(0.9 * 1.0 + 0.1 * 0.5)
+    assert set(stage.breakdown) == {
+        "all", "dataset: redocred", "dataset: t2k",
+        "stratum: redocred / not_found", "stratum: t2k / not_found",
+    }  # fmt: skip
     with pytest.raises(ValueError, match="no labels"):
         report_refusals([])
 
@@ -445,13 +541,27 @@ def test_odke_eval_refusals_draws_the_sheets_and_scores_the_ticks(
     labels = tmp_path / "labels.jsonl"
     read = runner.invoke(app, ["label", "read", str(out), "-o", str(labels)])
     assert read.exit_code == 0, read.output
+    # Each row read back carries its stratum's size: 1 for redocred's, 2 for the other.
+    rows = [json.loads(line) for line in labels.read_text().splitlines()]
+    assert sorted(row["stratum_size"] for row in rows) == [1, 2]
     scored = runner.invoke(app, ["eval", "refusals", "--labels", str(labels)])
     assert scored.exit_code == 0, scored.output
+    # The right refusal stands for a stratum of 1, the wrong one for a stratum of 2: 1/3,
+    # where pooling the draws as one random sample said 0.500 (release audit 5).
     assert (
-        "refusal precision 0.500 [0.095, 0.905] (Wilson 95%), 2 judged, 0 unsure" in scored.output
-    )
+        "refusal precision 0.333 [0.045, 0.841] (each of 2 strata weighted by its size, "
+        "3 refusals; Wilson 95% on an effective 2.0 labels), 2 judged, 0 unsure set aside"
+    ) in " ".join(scored.output.split())
     as_json = runner.invoke(app, ["eval", "refusals", "--labels", str(labels), "--json"])
-    assert json.loads(as_json.output)["stages"][0]["metrics"]["precision"] == 0.5
+    assert json.loads(as_json.output)["stages"][0]["metrics"]["precision"] == pytest.approx(1 / 3)
+    # Labels with their sizes taken off are reported per stratum, until the run gives them back.
+    bare = tmp_path / "bare.jsonl"
+    bare.write_text("".join(json.dumps({**row, "stratum_size": None}) + "\n" for row in rows))
+    alone = runner.invoke(app, ["eval", "refusals", "--labels", str(bare), "--json"])
+    assert json.loads(alone.output)["stages"][0]["metrics"]["precision"] is None
+    again = runner.invoke(app, ["eval", "refusals", str(bench), "--labels", str(bare), "--json"])
+    assert again.exit_code == 0, again.output
+    assert json.loads(again.output)["stages"][0]["metrics"]["precision"] == pytest.approx(1 / 3)
 
 
 @pytest.mark.parametrize(
@@ -463,8 +573,8 @@ def test_odke_eval_refusals_draws_the_sheets_and_scores_the_ticks(
             "--by-predicate is for precision",
         ),
         (
-            ["eval", "refusals", "x", "--labels", "l"],
-            "--labels reads the ticked sample back, on its own",
+            ["eval", "refusals", "x", "--labels", "l", "--make-sheet", "d"],
+            "--make-sheet draws a sample and --labels reads one back",
         ),
         (["eval", "refusals", "x"], "writes its sample with --make-sheet DIR"),
         (["eval", "extract", "--make-sheet", "d"], "these are for precision and refusals"),

@@ -2020,9 +2020,26 @@ def _eval_refusals(
             "refusals reads runs, with --documents and --make-sheet, or --labels; nothing else"
         )
     if labels is not None:
-        if runs or make_sheet is not None or documents is not None:
-            raise ValueError("--labels reads the ticked sample back, on its own")
-        return report_refusals(load_jsonl(labels, RefusalLabel), path=str(labels))
+        if make_sheet is not None:
+            raise ValueError(
+                "--make-sheet draws a sample and --labels reads one back: one at a time"
+            )
+        ticked = load_jsonl(labels, RefusalLabel)
+        sizes = None
+        if runs:
+            # The runs the sample was drawn from: each stratum's size, for labels that lack it.
+            docs = load_documents(documents) if documents is not None else None
+            drawn_from = [refusal for path in runs for refusal in read_refusals(path, docs)]
+            known = {refusal.id for refusal in drawn_from}
+            if strays := [label.id for label in ticked if label.id not in known]:
+                raise ValueError(
+                    f"{len(strays)} of {len(ticked)} labels are not among the runs' refusals, "
+                    f"e.g. {strays[0]}: give the runs the sample was drawn from"
+                )
+            sizes = dict(strata(drawn_from))
+        elif documents is not None:
+            raise ValueError("--documents is for the runs; --labels alone needs none")
+        return report_refusals(ticked, path=str(labels), sizes=sizes)
     if not runs:
         raise ValueError(
             "refusals needs a run to draw from (odke ground or odke validate -o output, or a "

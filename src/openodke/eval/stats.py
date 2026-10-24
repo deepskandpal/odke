@@ -286,12 +286,14 @@ def bootstrap_interval(
     return _percentile(values, alpha) if len(values) > 1 else None
 
 
-def wilson(successes: int, n: int, level: float = 1 - ALPHA) -> tuple[float, float] | None:
+def wilson(successes: float, n: float, level: float = 1 - ALPHA) -> tuple[float, float] | None:
     """The Wilson score interval for a share: `successes` of `n`, at `level`.
 
     Arithmetic, so no dependency. Unlike the normal approximation it stays
     inside [0, 1] and is not empty at 0 or `n` successes, which is where a
     small hand-labelled sample tends to land. None with nothing labelled.
+    `n` may be an effective sample size and `successes` the share times it,
+    as for a stratified sample (`openodke.eval.refusals`).
     """
     if n < 0 or not 0 <= successes <= n:
         raise ValueError(f"successes must be between 0 and n, got {successes} of {n}")

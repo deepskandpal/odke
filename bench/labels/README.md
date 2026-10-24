@@ -378,8 +378,10 @@ command, are the record.
 - `refusals/labels.jsonl`: the 100 rows as labelled, each a `RefusalLabel`: the
   claim as the grounder read it, the text, the verdict and its reason, whether
   the gold lists the fact, and the owner's judgement. `source` is relative to
-  the bench workspace. Score it with
-  `odke eval refusals --labels bench/labels/refusals/labels.jsonl`.
+  the bench workspace. The rows were drawn before a sample recorded its
+  strata's sizes, so score it with the runs it was drawn from, which give
+  them back (`--labels` alone reports each stratum on its own):
+  `odke eval refusals "$CMP/redocred" "$CMP/t2k" --labels bench/labels/refusals/labels.jsonl`.
 
 The sheets lived in the owner's vault at `deepanshu-kandpal/openodke.dev/labels/refusals/`
 and were read back with `odke label read`. The question on every item: does the
@@ -401,7 +403,22 @@ correct` and `gold wrong`) over the 95 judged:
 | LGT | 36 | 11 | 0.306 [0.180, 0.469] |
 | neo4j-graphrag | 34 | 11 | 0.324 [0.191, 0.492] |
 
-So about 7 in 10 of these refusals lost a fact the text states. The grounder is
+**Weighted by stratum (24 Oct 2026, release audit 5).** The sample took an
+equal share of each of its six strata (dataset × extractor), so the table above,
+which pools the draws as one random sample, weights openodke's 8 Text2KGBench
+refusals as heavily as LGT's 83 on Re-DocRED. Each stratum weighted by its size
+in the 225, read from the saved runs, which still hold all 100 labelled rows:
+
+| | Judged | Refusal precision [95%] |
+|---|---:|---|
+| **all** | 95 | **0.330 [0.244, 0.430]** |
+| Re-DocRED | 51 | 0.376 [0.256, 0.513] |
+| Text2KGBench | 44 | 0.231 [0.131, 0.374] |
+| openodke | 25 | 0.239 [0.115, 0.434] |
+| LGT | 36 | 0.317 [0.189, 0.480] |
+| neo4j-graphrag | 34 | 0.382 [0.239, 0.549] |
+
+So about 2 in 3 of these refusals lost a fact the text states. The grounder is
 too strict, and more so on Text2KGBench's one-sentence passages. The gold
 agrees: of the 22 refused facts it lists, the labeller found 15 stated in the
 text, 6 not (3 ticked `gold wrong`, 3 `refusal correct`; the precision

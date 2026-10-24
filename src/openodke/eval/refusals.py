@@ -18,8 +18,25 @@ ticks one of four answers:
 
 Read back (`odke label read`), the labels give the **refusal precision**: the
 right refusals, correct and gold wrong, over every judgement but unsure, with
-its Wilson 95% interval beside it, overall and per dataset, extractor and
-verdict (`report_refusals`).
+its 95% interval beside it, overall, per dataset, extractor and verdict, and
+per stratum (`report_refusals`).
+
+The sample takes an equal share of each stratum, so a small stratum is drawn
+far more often than its size says. Pooled as one random sample, 1,000
+refusals 90% right and 50 that are 30% right read as 62% [52%, 71%], against
+a truth of 87%, and over 2,000 draws the range held the truth 0 times (release
+audit 5). So each drawn refusal carries its stratum's size (`stratum_size`),
+and a row that spans strata **weights each stratum by its size**. Its range is
+a Wilson interval on the sample's effective size: p̂(1 − p̂) over the stratified
+variance, Σ W²·p̃(1 − p̃)/n·(1 − n/N) over the strata, where W is a stratum's
+share of the refusals, N its size, n its judged labels, and p̃ its right ones
+with one right and one wrong added, so a stratum whose labels all agree still
+leaves doubt; at most the labels judged. In simulation that holds the truth
+95% to 99% of the time, 95.2% on the case above (`tests/test_eval_refusals.py`).
+Labels with no sizes (drawn by hand, or before sizes were recorded) are
+reported per stratum only, each a simple random sample of its own; the runs
+they were drawn from give the sizes back (`sizes`, or
+`odke eval refusals RUN... --labels LABELS`).
 
 What it reads (`read_refusals`), any of:
 
@@ -83,7 +100,7 @@ BECAUSE = {
 
 DESCRIPTION = """\
 odke eval refusals RUN... [--documents DOCS] --make-sheet DIR [--n 100] [--seed 0]
-odke eval refusals --labels LABELS
+odke eval refusals [RUN... [--documents DOCS]] --labels LABELS
 
 What the grounder threw away, for a person to judge. RUN is any of: an
 `odke ground` output (its directory, or facts.jsonl), an `odke validate -o`
@@ -99,7 +116,12 @@ item: refusal correct, refusal wrong (the text states the fact), gold wrong
 
 --labels reads the ticks back (`odke label read DIR -o LABELS`) and reports
 the refusal precision, correct and gold wrong over everything but unsure,
-with its Wilson 95% interval, overall and per dataset, extractor and verdict."""
+with its 95% interval, overall, per dataset, extractor and verdict, and per
+stratum. The sample takes an equal share of each stratum, so each stratum is
+weighted by how many refusals it holds, which --make-sheet records on every
+row. Labels with no sizes are reported per stratum only, unless the runs
+they were drawn from come too (RUN... --labels LABELS): their sizes are
+read from the runs."""
 
 
 # --------------------------------------------------------------------------- #
@@ -406,11 +428,12 @@ def _quotas(sizes: Mapping[Any, int], n: int) -> dict[Any, int]:
 def sample(refusals: Sequence[Refusal], n: int = SAMPLE, *, seed: int = SEED) -> list[Refusal]:
     """`n` refusals at random, stratified by dataset, extractor and verdict, spread over predicates.
 
-    Each stratum gets an equal share, as its size allows (`_quotas`). Within
-    one, the predicates take turns, in an order drawn by seed, each giving a
-    refusal drawn at random, so no predicate takes the stratum. The sample is
-    shuffled, so a sheet mixes strata. Asking for as many as there are draws
-    them all.
+    Each stratum gets an equal share, as its size allows (`_quotas`), and each
+    refusal drawn carries its stratum's size (`stratum_size`), which the
+    precision weights it by. Within one, the predicates take turns, in an
+    order drawn by seed, each giving a refusal drawn at random, so no
+    predicate takes the stratum. The sample is shuffled, so a sheet mixes
+    strata. Asking for as many as there are draws them all.
     """
     if n < 1:
         raise ValueError(f"a sample needs at least one refusal, got n={n}")
@@ -428,11 +451,12 @@ def sample(refusals: Sequence[Refusal], n: int = SAMPLE, *, seed: int = SEED) ->
         rng.shuffle(order)
         for name in order:
             rng.shuffle(by_predicate[name])
-        taken = 0
+        taken, size = 0, len(strata[key])
         while taken < quotas[key]:
             for name in order:
                 if taken < quotas[key] and by_predicate[name]:
-                    drawn.append(by_predicate[name].pop())
+                    picked = by_predicate[name].pop()
+                    drawn.append(picked.model_copy(update={"stratum_size": size}))
                     taken += 1
     rng.shuffle(drawn)
     return drawn
@@ -478,17 +502,94 @@ def strata(refusals: Iterable[Refusal]) -> list[tuple[tuple[str, str, str], int]
 
 
 def precision(labels: Sequence[RefusalLabel]) -> dict[str, Metric]:
-    """The refusal precision of `labels`, its Wilson 95% interval, and each judgement's count."""
+    """The refusal precision of `labels` as one simple random sample: one stratum's.
+
+    The right refusals over every judgement but unsure, its Wilson 95%
+    interval, and each judgement's count. Labels that span strata of a
+    stratified sample are `_stratified`'s.
+    """
     counts: Counter[str] = Counter(str(label.judgement) for label in labels)
     judged = len(labels) - counts["unsure"]
     right = counts["refusal_correct"] + counts["gold_wrong"]
     interval = wilson(right, judged)
-    listed = [label for label in labels if label.gold]
     return {
         "precision": right / judged if judged else None,
         "low": interval[0] if interval else None,
         "high": interval[1] if interval else None,
         "judged": judged,
+        **_counted(labels, counts),
+    }
+
+
+def _stratified(labels: Sequence[RefusalLabel]) -> dict[str, Metric]:
+    """The refusal precision of a stratified sample: each stratum weighted by its size.
+
+    Every label carries its stratum's size (`stratum_size`). A stratum's
+    precision is its right refusals over its judged labels; the row's is their
+    mean, each weighted by the stratum's share of the refusals. The 95% range
+    is Wilson's on the effective sample size, p̂(1 − p̂) over the stratified
+    variance Σ W²·p̃(1 − p̃)/n·(1 − n/N), with p̃ a stratum's share with one right
+    and one wrong added, and at most the labels judged; one stratum is a simple
+    random sample, and gets `precision`'s interval. A stratum whose every label
+    is unsure has no precision and no weight: `unweighted` counts them.
+    """
+    groups: dict[tuple[str, str, str], list[RefusalLabel]] = defaultdict(list)
+    for label in labels:
+        groups[_stratum(label)].append(label)
+    rows: list[tuple[int, int, int]] = []
+    for key, group in sorted(groups.items()):
+        where = " / ".join(part for part in key if part)
+        sizes = {label.stratum_size for label in group}
+        if len(sizes) != 1 or None in sizes:
+            raise ValueError(
+                f"stratum {where}: its labels carry {'no' if None in sizes else 'different'} "
+                "stratum sizes; each must carry the size of the stratum it was drawn from"
+            )
+        (size,) = sizes
+        assert size is not None
+        found = precision(group)
+        judged = int(found["judged"] or 0)
+        if judged > size:
+            raise ValueError(
+                f"stratum {where}: {judged} judged labels from a stratum of {size}: the sizes "
+                "are not those of the refusals these labels were drawn from"
+            )
+        rows.append(
+            (size, judged, int(found["refusal_correct"] or 0) + int(found["gold_wrong"] or 0))
+        )
+    weighed = [(size, judged, right) for size, judged, right in rows if judged]
+    out: dict[str, Metric] = {
+        **precision(labels),
+        "precision": None,
+        "low": None,
+        "high": None,
+        "strata": len(rows),
+        "unweighted": len(rows) - len(weighed),
+        "refusals": sum(size for size, _, _ in rows),
+    }
+    if len(weighed) == 1:
+        found = precision([label for label in labels if label.judgement != "unsure"])
+        return {**out, **{k: found[k] for k in ("precision", "low", "high")}, "effective_n": None}
+    if not weighed:
+        return out
+    total = sum(size for size, _, _ in weighed)
+    share = sum(size / total * right / judged for size, judged, right in weighed)
+    spread = 0.0
+    for size, judged, right in weighed:
+        tilted = (right + 1) / (judged + 2)
+        spread += (size / total) ** 2 * tilted * (1 - tilted) / judged * (1 - judged / size)
+    effective = float(sum(judged for _, judged, _ in weighed))
+    if spread > 0 and 0 < share < 1:
+        effective = min(effective, share * (1 - share) / spread)
+    interval = wilson(share * effective, effective)
+    assert interval is not None
+    return {**out, "precision": share, "low": interval[0], "high": interval[1],
+            "effective_n": effective}  # fmt: skip
+
+
+def _counted(labels: Sequence[RefusalLabel], counts: Counter[str]) -> dict[str, Metric]:
+    listed = [label for label in labels if label.gold]
+    return {
         **{name: counts[name] for name in JUDGEMENTS},
         # Of the refusals the gold lists, how many the person found the gold wrong on.
         "gold_listed": len(listed),
@@ -496,22 +597,72 @@ def precision(labels: Sequence[RefusalLabel]) -> dict[str, Metric]:
     }
 
 
-def report_refusals(labels: Sequence[RefusalLabel], *, path: str | None = None) -> EvalReport:
-    """The refusal precision with its interval, overall and per dataset, extractor and verdict."""
+def report_refusals(
+    labels: Sequence[RefusalLabel],
+    *,
+    path: str | None = None,
+    sizes: Mapping[tuple[str, str, str], int] | None = None,
+) -> EvalReport:
+    """The refusal precision and its interval: overall, per dataset, extractor, verdict, stratum.
+
+    A row that spans strata weights each by its size (`_stratified`): the
+    size each label carries, or else `sizes`, by (dataset, extractor,
+    verdict), as `strata` counts the runs the sample was drawn from. With
+    neither, only the strata are reported, each a simple random sample of its
+    own, since pooling them would weight a small stratum as heavily as a large
+    one. A sample from one stratum is that stratum's, sizes or not.
+    """
     if not labels:
         raise ValueError("no labels: tick the sheets, and read them back with odke label read")
-    overall = precision(labels)
-    breakdown: dict[str, dict[str, Metric]] = {"all": overall}
-    for field in ("dataset", "extractor", "verdict"):
-        groups: dict[str, list[RefusalLabel]] = defaultdict(list)
-        for label in labels:
-            value = getattr(label, field)
-            if value is not None:
-                groups[str(value)].append(label)
-        if len(groups) > 1:
-            for value in sorted(groups):
-                breakdown[f"{field}: {value}"] = precision(groups[value])
-    notes = [_headline(overall)]
+    known = dict(sizes or {})
+    sized = [
+        label
+        if label.stratum_size is not None or _stratum(label) not in known
+        else label.model_copy(update={"stratum_size": known[_stratum(label)]})
+        for label in labels
+    ]
+    keys = sorted({_stratum(label) for label in sized})
+    weighted = all(label.stratum_size is not None for label in sized)
+    breakdown: dict[str, dict[str, Metric]] = {}
+    notes: list[str] = []
+    if weighted:
+        overall = _stratified(sized)
+        weighted = overall.get("effective_n") is not None
+        for field in ("dataset", "extractor", "verdict"):
+            groups: dict[str, list[RefusalLabel]] = defaultdict(list)
+            for label in sized:
+                value = getattr(label, field)
+                if value is not None:
+                    groups[str(value)].append(label)
+            if len(groups) > 1:
+                for value in sorted(groups):
+                    breakdown[f"{field}: {value}"] = _stratified(groups[value])
+        notes.append(_headline(overall, weighted=weighted))
+        if overall["unweighted"]:
+            notes.append(
+                f"{overall['unweighted']} stratum(s) had every label unsure, so no precision "
+                "and no weight; the rest are weighted among themselves"
+            )
+    elif len(keys) == 1:
+        overall = precision(sized)
+        notes.append(_headline(overall, weighted=False))
+    else:
+        overall = {**precision(sized), "precision": None, "low": None, "high": None}
+        notes.append(
+            f"refusal precision: not pooled. These labels carry no stratum sizes, and the "
+            f"sample took an equal share of each of its {len(keys)} strata, so pooling them "
+            "would weight a small stratum as heavily as a large one. Each stratum is reported "
+            "on its own; give the runs the sample was drawn from (odke eval refusals RUN... "
+            "--labels LABELS) to weight them by size"
+        )
+    breakdown = {"all": overall, **breakdown}
+    if len(keys) > 1:
+        for key in keys:
+            group = [label for label in sized if _stratum(label) == key]
+            breakdown[f"stratum: {' / '.join(p for p in key if p)}"] = {
+                **precision(group),
+                **({"refusals": group[0].stratum_size} if group[0].stratum_size else {}),
+            }
     stage = StageReport(
         stage="refusals",
         n=len(labels),
@@ -523,13 +674,19 @@ def report_refusals(labels: Sequence[RefusalLabel], *, path: str | None = None) 
     return from_stage(stage, run=Run(dataset=dataset))
 
 
-def _headline(found: Mapping[str, Metric]) -> str:
+def _headline(found: Mapping[str, Metric], *, weighted: bool) -> str:
     unsure = found["unsure"]
     if found["precision"] is None:
         return f"refusal precision: nothing judged ({unsure} unsure)"
+    how = (
+        f"each of {found['strata']} strata weighted by its size, {found['refusals']} refusals; "
+        f"Wilson 95% on an effective {float(found['effective_n'] or 0):.1f} labels"
+        if weighted
+        else "Wilson 95%"
+    )
     return (
         f"refusal precision {found['precision']:.3f} [{found['low']:.3f}, {found['high']:.3f}] "
-        f"(Wilson 95%), {found['judged']} judged, {unsure} unsure set aside"
+        f"({how}), {found['judged']} judged, {unsure} unsure set aside"
     )
 
 
