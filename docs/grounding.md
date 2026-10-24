@@ -200,8 +200,8 @@ order. The client must be thread-safe; `ScriptedClient` is not.
 
 | Field | Default |
 |---|---|
-| `attempts` | `4`, in total |
-| `base_delay` | `0.5` s |
+| `attempts` | `6`, in total |
+| `base_delay` | `1` s; with `multiplier`, waits of up to 1, 2, 4, 8 and 16 s, 31 s in all |
 | `multiplier` | `2` |
 | `max_delay` | `30` s; a server's `Retry-After` wins, capped here |
 | `jitter` | `true`: full jitter |

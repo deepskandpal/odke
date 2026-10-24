@@ -46,13 +46,17 @@ class RetryPolicy(BaseModel):
     with full jitter by default — many threads that hit one rate limit together
     must not all come back together — and a server's `Retry-After` wins when it
     sends one, capped at `max_delay`.
+
+    The default waits up to 1 + 2 + 4 + 8 + 16 = 31 s over six tries: long
+    enough for a per-minute rate limit that sends no `Retry-After`, which four
+    tries from 0.5 s (3.5 s in all) were not (release audit finding 8).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     # Total tries, the first included: 1 means never retry.
-    attempts: int = Field(default=4, ge=1)
-    base_delay: float = Field(default=0.5, ge=0)
+    attempts: int = Field(default=6, ge=1)
+    base_delay: float = Field(default=1.0, ge=0)
     multiplier: float = Field(default=2.0, ge=1)
     max_delay: float = Field(default=30.0, ge=0)
     jitter: bool = True

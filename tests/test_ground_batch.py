@@ -204,6 +204,29 @@ def test_backoff_grows_caps_and_jitters_below_the_cap() -> None:
         assert 0.0 <= jittered.delay(retry) <= policy.delay(retry)
 
 
+def test_the_default_policy_outlasts_a_per_minute_rate_limit_without_retry_after() -> None:
+    """A 429 with no `Retry-After` for 30 s is weather the default waits out (release audit 8).
+
+    At jitter's ceiling the default waits 1 + 2 + 4 + 8 + 16 = 31 s over six tries; the old
+    four tries from 0.5 s gave up after 3.5 s and dropped the document.
+    """
+    policy = RetryPolicy().model_copy(update={"jitter": False})
+    clock = [0.0]
+
+    def rate_limited() -> str:
+        if clock[0] < 30:
+            raise _http(429)
+        return "answered"
+
+    def sleep(seconds: float) -> None:
+        clock[0] += seconds
+
+    assert call_with_retry(rate_limited, policy, sleep=sleep) == "answered"
+    assert clock[0] == 31
+    # A server that says how long to wait is still believed.
+    assert RetryPolicy(jitter=False).delay(1, _http(429, **{"Retry-After": "3"})) == 3
+
+
 def test_a_servers_retry_after_wins_and_is_capped() -> None:
     assert retry_after(_http(429, **{"Retry-After": "3"})) == 3.0
     assert RetryPolicy(max_delay=30, jitter=False).delay(1, _http(429, **{"Retry-After": "3"})) == 3
