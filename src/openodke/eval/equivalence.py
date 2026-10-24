@@ -72,7 +72,7 @@ from openodke.eval.extraction import (
     normalise_value,
     per_document,
 )
-from openodke.eval.formats import GoldFact
+from openodke.eval.formats import FactPair, GoldFact
 from openodke.ground.llm import render_claim
 from openodke.ground.locate import locate_span
 from openodke.ground.retry import RetryPolicy, call_with_retry
@@ -447,6 +447,26 @@ class FactJudge:
                     passage,
                 )
                 for gold, predicted, passage in pairs
+            ]
+        )
+
+    def judge_rows(self, rows: Sequence[FactPair]) -> list[Equivalence]:
+        """Every `FactPair` as a fact sheet shows it, `first` as Fact 1, then swapped.
+
+        Each row's own relation, description and passage are sent, so the
+        judge reads what a person labelling the row read: how label set F is
+        calibrated. `gold_first` is the answer with `first` as Fact 1.
+        """
+        return self._decide_all(
+            [
+                (
+                    row.relation,
+                    row.description,
+                    render_claim(row.first),
+                    render_claim(row.second),
+                    row.passage,
+                )
+                for row in rows
             ]
         )
 

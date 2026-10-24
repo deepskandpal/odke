@@ -2388,8 +2388,7 @@ def calibrate_command(
     )
     try:
         card = grounding_card(facts, made, planted=[f for f in judged.facts if f.planted])
-        target = out if out.suffix == ".json" else out / f"{card.id}.json"
-        written = card.write(target)
+        written = card.write(out)
     except (ValueError, OSError) as exc:
         _data_error(exc)
     typer.echo(card.render())
