@@ -326,6 +326,16 @@ def test_odke_run_streams_the_example_with_the_calls_and_counts_of_one_batch(
     assert dry.sample and "facts that would be written:" in dry.render()
 
 
+def test_a_streamed_runs_cost_per_1000_documents_is_the_whole_runs(example: Path) -> None:
+    """Divided by every document the run read, not the last micro-batch's (release audit 14)."""
+    config = load_config(example / "odke.yaml")
+    whole = execute(config).stats["cost"]["metrics"]
+    # Eight documents, three at a time: the last micro-batch holds two.
+    streamed = execute(config, batch_size=3).stats["cost"]["metrics"]
+    assert streamed["documents"] == whole["documents"] == 8
+    assert streamed["tokens_per_1k_documents"] == whole["tokens_per_1k_documents"]
+
+
 def test_a_streamed_run_reads_its_documents_one_at_a_time_under_the_ids_one_batch_gives(
     example: Path,
 ) -> None:

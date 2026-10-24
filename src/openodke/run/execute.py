@@ -511,7 +511,8 @@ def collect_stats(
         stats["stopped"] = stop
     meter = built.context.meter
     if meter is not None:
-        cost = meter.report(documents=int(kg.stats.get("documents", 0))).as_stage_report()
+        # The run's documents, every micro-batch's: `kg` is the last micro-batch alone.
+        cost = meter.report(documents=int(stats.get("documents", 0))).as_stage_report()
         stats["cost"] = jsonable({"metrics": cost.metrics, "stages": cost.breakdown})
     cache = built.context.cache_stats()
     if cache is not None:
