@@ -92,6 +92,10 @@ def _fold(word: str) -> str:
     """One word as `name_key` compares it: accents dropped, casefolded, dots closed up."""
     if word == "&":
         return "and"
+    if word.isascii():
+        # NFKD leaves ASCII as it is and casefold is lower() there: the same key, without
+        # the Unicode tables, which were half of a cached rerun's CPU (release audit S7).
+        return word.lower().replace(".", "")
     decomposed = unicodedata.normalize("NFKD", word)
     bare = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
     return bare.casefold().replace(".", "")

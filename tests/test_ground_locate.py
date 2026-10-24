@@ -322,3 +322,34 @@ def test_odke_run_turns_it_on_in_the_grounders_options(tmp_path: Path) -> None:
     assert isinstance(grounder.locator, SpanLocator)
     config["stages"]["grounder"] = "llm"
     assert build(parse_config(config, base_dir=tmp_path)).stages["grounder"].locator is None
+
+
+def test_an_ascii_word_folds_as_unicode_would_without_the_unicode_tables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ASCII fast path (release audit S7): NFKD and casefold were half of a cached rerun's
+    CPU, and leave an ASCII word as `lower()` does. The key is the same either way."""
+    import string
+    import unicodedata
+
+    from openodke.ground import locate
+
+    def slow(word: str) -> str:
+        bare = "".join(
+            c for c in unicodedata.normalize("NFKD", word) if not unicodedata.combining(c)
+        )
+        return bare.casefold().replace(".", "")
+
+    words = ["Halden", "U.S.", "McDONALD's", "e2e-Stages", string.printable, "Ærø", "Straße"]
+    expected = {word: slow(word) for word in words}
+    assert {word: locate._fold(word) for word in words} == expected
+
+    class Refusing:
+        """Stands in for `unicodedata` in the locator alone; pytest's own use is left be."""
+
+        def __getattr__(self, name: str) -> object:
+            raise AssertionError("an ASCII word went through the Unicode tables")
+
+    monkeypatch.setattr(locate, "unicodedata", Refusing())
+    for word in words[:5]:
+        assert locate._fold(word) == expected[word]
