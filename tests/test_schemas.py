@@ -112,16 +112,23 @@ def test_the_schema_and_the_reader_agree_on_every_row() -> None:
 
 def test_the_run_report_schema_ships_inside_the_package_and_names_its_version() -> None:
     assert REPORT_SCHEMA_PATH.parent.name == "openodke" and REPORT_SCHEMA_PATH.is_file()
-    assert REPORT_VERSION == "1.0" and ValidationReport().schema_version == REPORT_VERSION
+    assert REPORT_VERSION == "1.1" and ValidationReport().schema_version == REPORT_VERSION
     version = _schema(REPORT_SCHEMA_PATH)["properties"]["schema_version"]
     assert version == {"type": "string", "pattern": r"^1\.[0-9]+$"}
 
 
+# Fields a minor version added, which a report from before it does not have.
+ADDED_IN = {"marked": "1.1", "calibration": "1.1"}
+
+
 def test_the_run_report_schema_names_every_field_of_the_report() -> None:
-    """Same fields, all required: what the report's JSON holds. The manifest is its own file."""
+    """Same fields, all of 1.0's required: what the report's JSON holds. The manifest is its own."""
     schema = _schema(REPORT_SCHEMA_PATH)
     fields = {name for name, f in ValidationReport.model_fields.items() if not f.exclude}
-    assert set(schema["properties"]) == fields == set(schema["required"])
+    assert set(schema["properties"]) == fields
+    assert set(schema["required"]) == fields - set(ADDED_IN)
+    for name, version in ADDED_IN.items():
+        assert f"Added in {version}, so not required" in schema["properties"][name]["description"]
     assert "manifest" not in fields
     assert schema["additionalProperties"] is False
 

@@ -1411,6 +1411,11 @@ def build(config: RunConfig) -> Built:
         for i, spec in enumerate(config.stages.sink)
     ]
     reextract_policy(config, stages["extractor"])
+    # Below its bar, the grounder's refusals are marked, not dropped (DECISIONS #54):
+    # read here, so every use of the built stages sees the same gate.
+    follow = getattr(stages.get("gate"), "follow_card", None)
+    if callable(follow):
+        follow(stages.get("grounder"))
     if config.batch_size is not None:
         check_streams(sinks)
     if config.bootstrap and not any(p.can_bootstrap for p in sinks):

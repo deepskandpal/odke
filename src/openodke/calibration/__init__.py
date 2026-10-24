@@ -42,12 +42,14 @@ from openodke.calibration.card import (
     uncalibrated_line,
 )
 from openodke.calibration.lookup import (
+    ACTIONS,
     CARDS_DIR,
     ENV,
     CardStatus,
     card_for,
     cards,
     judge_of,
+    standing,
     status,
     status_of,
 )
@@ -65,15 +67,17 @@ from openodke.calibration.measure import (
     swap_rule,
     voted,
 )
-from openodke.calibration.policy import DEFAULT_POLICY, Policy, Resolved, resolve
+
+# The switch itself, `policy.DEFAULT_POLICY`, is read where it lives, so it is not re-exported.
+from openodke.calibration.policy import Policy, Resolved, resolve
 
 __all__ = [
+    "ACTIONS",
     "BANDS",
     "BARS",
     "BAR_TEXT",
     "CARDS_DIR",
     "CARD_VERSION",
-    "DEFAULT_POLICY",
     "ENV",
     "FLIP_LIMIT",
     "UNCALIBRATED",
@@ -103,6 +107,7 @@ __all__ = [
     "pair_card",
     "resolve",
     "share",
+    "standing",
     "status",
     "status_of",
     "swap_rule",

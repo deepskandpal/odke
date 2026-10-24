@@ -162,7 +162,7 @@ class Totals:
         """
         stats = kg.stats
         self.batches += 1
-        for key in COUNTED:
+        for key in (*COUNTED, "marked"):
             self._counts[key] += int(stats.get(key) or 0)
         found = shape(kg)
         for key in ("facts", "edges", "properties", "entities"):
@@ -190,6 +190,9 @@ class Totals:
     def stats(self) -> dict[str, Any]:
         """The pipeline's counts for the run so far, keyed as `Pipeline.run` keys them."""
         out: dict[str, Any] = {key: self._counts[key] for key in COUNTED}
+        if self._counts["marked"]:
+            # As `Pipeline.run` counts it: only when the gate marked a fact (#54).
+            out["marked"] = self._counts["marked"]
         if self._failed:
             out["failed"] = dict(self._failed)
         if self._stopped is not None:

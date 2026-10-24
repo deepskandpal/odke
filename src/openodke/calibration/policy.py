@@ -47,22 +47,23 @@ def resolve(found: CardStatus | None, policy: Policy | None = None) -> Resolved:
     """Whether the judge `found` describes may act on its own word, under `policy`.
 
     `found` is None for a stage with no model judge, which has nothing to hold
-    back. `policy` defaults to `DEFAULT_POLICY`, read when called.
+    back. `policy` defaults to `DEFAULT_POLICY`, read when called. `why` is
+    short, and names no judge: a report prints it after the judge's line.
     """
     chosen = DEFAULT_POLICY if policy is None else policy
     if chosen not in ("card", "act", "hold"):
         raise ValueError(f"policy must be 'card', 'act' or 'hold', got {chosen!r}")
     if found is None:
-        return Resolved(True, "no model judge made these verdicts")
+        return Resolved(True, "no model judge")
     if chosen == "act":
-        return Resolved(True, "the default policy lets every judge act, whatever its card says")
+        return Resolved(True, "the default policy is 'act'")
     if chosen == "hold":
-        return Resolved(False, "the default policy lets no judge act on its own word")
+        return Resolved(False, "the default policy is 'hold'")
     if found.meets_bar:
-        return Resolved(True, f"{found.prompt} on {found.model} meets its calibration bar")
+        return Resolved(True, "its card meets the bar")
     if found.calibrated:
-        return Resolved(False, f"{found.prompt} on {found.model} is below its calibration bar")
-    return Resolved(False, f"{found.prompt} on {found.model or 'its model'} is UNCALIBRATED")
+        return Resolved(False, "its card is below the bar, DECISIONS #54")
+    return Resolved(False, "it has no card, DECISIONS #54")
 
 
 __all__ = ["DEFAULT_POLICY", "Policy", "Resolved", "resolve"]
