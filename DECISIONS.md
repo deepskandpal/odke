@@ -1145,6 +1145,15 @@ relation a pair holds), priced at the run's recall. On that run's
 extraction-alone row: wrong relation 156 → 15, the new bucket 47, output
 saturation 350 → 410, cross-sentence 762 → 794, scored apart 8 → 10.
 
+**Amended 24 Oct 2026 (release audit S17):** "differ at that fix's knobs
+alone" is now what the track record checks. It credited a fix whenever its
+knobs were among the changes, so a chunker and an extraction model changed
+together recorded the recall that moved as `wider-context`'s. Now every other
+change leaves the fix unattributed, with a note asking for `--applied`. Where
+a run writes (`stages.sink`, `manifest`) and the cache it reads
+(`models.cache`) are left out of the diff, since two runs into two folders
+differ there and nowhere that is scored.
+
 ### 39. The fact-equivalence judge reads only the pre-filter's pairs, in both orders, and its score sits beside the strict one
 
 A scorer compares strings after a normaliser. "Gabby Logan" for "Gabrielle

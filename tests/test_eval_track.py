@@ -121,6 +121,39 @@ def test_the_config_diff_names_the_fix_when_one_knob_changed(tmp_path: Path) -> 
     ]
 
 
+def test_a_fix_is_credited_only_when_its_knobs_alone_changed(tmp_path: Path) -> None:
+    """Release audit S17: DECISIONS #38 says "the two configs differ at that fix's knobs alone".
+
+    The chunker and the extraction model changed together, and the recall that
+    moved was recorded as wider-context's. Where a run writes, and the cache it
+    reads, are not things it scores, so they are no difference.
+    """
+    path = tmp_path / "record.jsonl"
+    before = {
+        "stages": {"chunker": {"use": "sentence"}, "sink": {"use": "jsonl", "directory": "a"}},
+        "models": {"extract": {"model": "small"}, "cache": ".cache-a"},
+    }
+    wider = {**before["stages"], "chunker": {"use": "none"}}
+    record_run(path, run_id(A), [fix("wider-context")], config=before)
+    other_model = {"stages": wider, "models": {"extract": {"model": "large"}, "cache": ".cache-a"}}
+    record_run(path, run_id(B), [], config=other_model)
+    lines, notes = record_comparison(compared(), A, B, [path])
+    assert lines == []
+    assert notes == [
+        "track record: the configs differ beyond wider-context's knobs, at "
+        "models.extract.model; name the fix with --applied if it alone moved the recall"
+    ]
+    # Another sink folder and another cache: still wider-context's alone.
+    moved = {
+        "stages": {**wider, "sink": {"use": "jsonl", "directory": "b"}},
+        "models": {"extract": {"model": "small"}, "cache": ".cache-b"},
+    }
+    record_run(path, run_id(B), [], config=moved)
+    (line,), notes = record_comparison(compared(), A, B, [path])
+    assert notes == [] and line.fix == "wider-context"
+    assert line.applied.startswith("config: stages.chunker.use")
+
+
 def _chunker() -> dict[str, Any]:
     return {"chunker": {"use": "sentence"}}
 
