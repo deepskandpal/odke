@@ -12,7 +12,7 @@ and [DECISIONS.md](DECISIONS.md) are the detail.
 
 - **The whole check:** `scripts/verify.sh`, ten steps, about seven minutes.
   CI runs the same script on Python 3.11 to 3.14, plus a live Neo4j job.
-- **The rules alone:** `uv run pytest tests/rules -q`, about 15 seconds. They
+- **The rules alone:** `uv run pytest tests/rules`, about 15 seconds. They
   also run after every edit under `src/` ([.claude/settings.json](.claude/settings.json)).
 - **A quick loop:** the test files your change touches. Tests never reach the
   network: model calls are answered by `src/openodke/llm/testing.py`.
@@ -52,16 +52,19 @@ kind of bug can happen. A failure message says what to do.
 | R6. Intervals behave | `tests/rules/test_r6_intervals.py` |
 
 Where the code still breaks a rule, the test is `xfail(strict=True)`, and its
-reason names the finding and the fix PR. A fix removes the marker: a rule
+reason names the finding and the fix PR: findings 1–20 and S1–S30 of the 1.0
+release audit (11 Oct 2026) or of the 9 Oct audit, and fix PRs 1–5, the pull
+requests into the 1.0 release branch that follow it. A fix removes the marker: a rule
 that passes with its marker still on fails CI. A new entry point (a command
-that scores, a sink, a cached client) goes into its rule's list.
+that scores, a sink, a read path, a cached client) goes into its rule's list.
 
 ## The pull request loop
 
 1. **Check the base:** `scripts/verify.sh` on the base commit. Note the result.
 2. **Reproduce:** a test that fails on the base, a rule's or the finding's own.
 3. **Record the failure:** `scripts/evidence.py record --side base --commit <base>
-   --run "<title>::<command>"`: the failing test, and the command a user would type.
+   --run "<title>::<command>"`: the failing test (a rule's with `--runxfail`, since
+   an xfail passes), and the command a user would type.
 4. **Fix** on a branch off the release branch, and remove the rule's marker.
 5. **Drive it:** run the CLI end to end on fixtures with recorded answers.
 6. **Record the fix:** the same commands, `--side head --here`.
