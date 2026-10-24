@@ -425,7 +425,11 @@ def write_sample(
             "any fact may be drawn, and a sheet shows the text it cites"
         )
     # Before anything is written: labels made from a sheet must join back (release audit 19).
-    shared = Counter((fact.id, homes[id(fact)].id) for fact in facts)
+    # A label joins the fact with its id that cites its document, over every document a
+    # fact cites (`report._pick`), so the check is over every one of them too.
+    shared = Counter(
+        (fact.id, doc) for fact in facts for doc in dict.fromkeys(e.doc_id for e in fact.evidence)
+    )
     if twice := [key for key, count in shared.items() if count > 1]:
         raise ValueError(
             f"{len(twice)} judged fact id(s) appear twice in one document, e.g. {twice[0][0]} "
