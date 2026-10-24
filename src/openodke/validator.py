@@ -102,6 +102,7 @@ from typing import Any, NamedTuple
 from pydantic import Field
 
 from openodke._batch import failed_summary
+from openodke.calibration import CardStatus, standing
 from openodke.corroborate import (
     EvidenceScorer,
     NativeResolver,
@@ -148,8 +149,8 @@ Facts = str | Path | Iterable[TripleRow | Mapping[str, Any] | Fact]
 
 # The run report's format (DECISIONS #48): a minor version adds fields, a major
 # one changes them. `validation_report.schema.json`, beside this file, is its
-# JSON Schema.
-REPORT_VERSION = "1.0"
+# JSON Schema. 1.1 adds `marked` and `calibration` (DECISIONS #54).
+REPORT_VERSION = "1.1"
 REPORT_SCHEMA_PATH = Path(__file__).with_name("validation_report.schema.json")
 
 
@@ -215,6 +216,13 @@ class ValidationReport(Frozen):
     tenant: str | None = None
     # Per sink, what it wrote, merged and skipped (`openodke.sinks.report`); None in a dry run.
     writes: dict[str, dict[str, Any]] | None = None
+    # Added in 1.1 (DECISIONS #54): facts the gate wrote marked for review instead
+    # of refusing, by the verdict that would have refused them, because their
+    # grounder is below its calibration bar;
+    marked: dict[str, int] = Field(default_factory=dict)
+    # and each model judge's calibration card line, or UNCALIBRATED, with what
+    # its word did in this job and why.
+    calibration: tuple[CardStatus, ...] = ()
     # The job's run manifest (#160). Not in the report's JSON, which the graph's
     # stats keep: it is a file of its own.
     manifest: RunManifest | None = Field(default=None, exclude=True)
@@ -264,6 +272,15 @@ class ValidationReport(Frozen):
         )
         why = ", ".join(f"{v} {k}" for k, v in self.refused_by.items() if v)
         lines.append(_row("refused", f"{self.refused} by the gate" + (f": {why}" if why else "")))
+        if self.marked:
+            held = ", ".join(f"{v} {k}" for k, v in self.marked.items() if v)
+            lines.append(
+                _row(
+                    "marked",
+                    f"{sum(self.marked.values())} written for review, not refused: {held} "
+                    "(odke.review)",
+                )
+            )
         held = f"; {self.restated} into one the store holds" if self.restated else ""
         lines.append(_row("merged", f"{self.merged} into a fact with the same signature{held}"))
         kinds = ", ".join(f"{v} {k}" for k, v in self.links.items())
@@ -298,6 +315,8 @@ class ValidationReport(Frozen):
             )
         if self.coverage is not None:
             lines.append(_row("coverage", coverage_summary(self.coverage)))
+        for judged in self.calibration:
+            lines.append(_row("calibration", judged.text()))
         if writes:
             lines.extend(self.write_lines())
         return "\n".join(lines)
@@ -724,6 +743,11 @@ class Validator:
             elif isinstance(spec := getattr(inner, "spec", None), ModelSpec):
                 recorder.served.note("ground", spec)
             grounder = CheckedGrounder(inner, ontology=ontology)
+        gate = self.gate if self.gate is not None else VerdictGate(schema=True)
+        # Below its bar, the grounder's refusals are marked, not dropped (DECISIONS #54).
+        follow = getattr(gate, "follow_card", None)
+        if callable(follow):
+            follow(grounder)
         resolver = self.resolver
         if resolver is None:
             batch: dict[str, Any] = {"embed": self.embed}
@@ -748,7 +772,7 @@ class Validator:
                 else SignatureCorroborator(ontology, store=() if dry_run else stores_of(sinks))
             ),
             "scorer": _given(self.scorer, EvidenceScorer),
-            "gate": self.gate if self.gate is not None else VerdictGate(schema=True),
+            "gate": gate,
         }
 
     def _report(
@@ -772,6 +796,11 @@ class Validator:
             reason: count - before.refused.get(reason, 0)
             for reason, count in _refused_by(stages["gate"]).items()
             if count - before.refused.get(reason, 0)
+        }
+        marked = {
+            verdict: count - before.marked.get(verdict, 0)
+            for verdict, count in _refused_by(stages["gate"], "marked").items()
+            if count - before.marked.get(verdict, 0)
         }
         own: dict[str, Any] = dict(getattr(source, "stats", {}))
         # A triples stage counts rows that found their text; a replay, facts.
@@ -828,6 +857,8 @@ class Validator:
             coverage=dict(coverage) if isinstance(coverage, Mapping) else None,
             stopped=dict(stopped) if isinstance(stopped, Mapping) else None,
             failed=dict(failed) if isinstance(failed, Mapping) else {},
+            marked=marked,
+            calibration=() if dry_run else tuple(standing(stages)),
         )
 
 
@@ -882,6 +913,7 @@ class _Before:
         self.judged = _spent(judge)
         self.counted = _counted(judge)
         self.refused = _refused_by(stages["gate"])
+        self.marked = _refused_by(stages["gate"], "marked")
 
 
 class _Texts:
@@ -1029,10 +1061,10 @@ def _given(stage: Any, default: Any, *args: Any) -> Any:
     return stage if stage is not None else default(*args)
 
 
-def _refused_by(gate: Any) -> dict[str, int]:
-    """A gate's refusals by reason, when it counts them as `VerdictGate` does."""
+def _refused_by(gate: Any, key: str = "refused") -> dict[str, int]:
+    """A gate's refusals by reason, or what it marked, when it counts them as `VerdictGate` does."""
     stats = getattr(gate, "stats", None)
-    refused = stats.get("refused") if isinstance(stats, Mapping) else None
+    refused = stats.get(key) if isinstance(stats, Mapping) else None
     return {str(k): int(v) for k, v in refused.items()} if isinstance(refused, Mapping) else {}
 
 

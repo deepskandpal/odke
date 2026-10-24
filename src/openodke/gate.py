@@ -76,8 +76,9 @@ class VerdictGate:
         self.refuse_not_found = refuse_not_found
         self.schema = schema
         self.on_refusal: OnRefusal | None = on_refusal
-        # The default as the grounder's card resolved it (`follow_card`).
+        # The default as the grounder's card resolved it (`follow_card`), and the judge.
         self._followed: tuple[OnRefusal, str] | None = None
+        self._judge: str | None = None
         self._accepted = 0
         self._refused: dict[str, int] = {}
         self._marked: dict[str, int] = {}
@@ -90,15 +91,18 @@ class VerdictGate:
         if self.on_refusal is None:
             from openodke.calibration import resolve, status_of
 
-            act, why = resolve(status_of(grounder))
+            found = status_of(grounder)
+            act, why = resolve(found)
             self._followed = ("drop" if act else "mark", why)
+            judge = f"{found.prompt} on {found.model}" if found and found.model else None
+            self._judge = judge or (found.prompt if found else None)
         return self
 
     @property
     def policy(self) -> tuple[OnRefusal, str]:
         """What a refusal on a grounding verdict does, "drop" or "mark", and why."""
         if self.on_refusal is not None:
-            return self.on_refusal, f"on_refusal={self.on_refusal!r} was given"
+            return self.on_refusal, f"on_refusal={self.on_refusal!r} given"
         if self._followed is not None:
             return self._followed
         return "drop", "no grounder was named, so no card was read"
@@ -122,7 +126,10 @@ class VerdictGate:
             if action == "mark":
                 self._marked[key] = self._marked.get(key, 0) + 1
                 self._accepted += 1
-                return ValidationVerdict(action="accept", reason=_REASONS[fact.verdict], review=why)
+                review = f"{self._judge}: {why}" if self._judge and self.on_refusal is None else why
+                return ValidationVerdict(
+                    action="accept", reason=_REASONS[fact.verdict], review=review
+                )
             self._refused[key] = self._refused.get(key, 0) + 1
             return ValidationVerdict(action="refuse", reason=_REASONS[fact.verdict])
         self._accepted += 1

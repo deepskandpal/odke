@@ -44,6 +44,14 @@ queued for a person.
 A budget stop (`openodke.llm.budget`) ends the calls, not the resolver: a pair
 the stop reached is `unasked`, makes no link, is not queued, and is asked
 again by the next run. `stats["stopped"]` says where the budget stood.
+
+**Below its bar, every pair goes to review** (DECISIONS #54). `on_decision`
+is what a decision does: "link" makes the link (and lets a batch merge on
+it), "review" keeps the decision, makes no link, and queues the pair for a
+person. Left out, the judge's calibration card on label set R decides: a card
+whose lower bound on the precision of "same" clears 0.9 links, one below it,
+or none, reviews (`openodke.calibration.policy`). A person's decision always
+links.
 """
 
 from __future__ import annotations
@@ -56,7 +64,7 @@ import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from openodke.chunking import sentences
 from openodke.ground.retry import RetryPolicy, call_with_retry
@@ -74,6 +82,9 @@ from openodke.llm.registry import resolve as resolve_client
 from openodke.llm.roles import ModelRoles
 from openodke.prompts import get as get_prompt
 from openodke.types import Document, Entity, EntityLink, Fact, Frozen, LinkKind
+
+if TYPE_CHECKING:
+    from openodke.calibration import CardStatus
 
 log = logging.getLogger("openodke.judge")
 
@@ -159,6 +170,12 @@ class PairDecision(Frozen):
     why: str | None = None
     prompt: str | None = None
     model: str | None = None
+    # Why a decision the judge made links nothing and went to review instead
+    # (DECISIONS #54): the judge is below its bar. None when it links.
+    review: str | None = None
+
+
+OnDecision = Literal["link", "review"]
 
 
 def swap_rule(forward: Answer, backward: Answer) -> Decision:
@@ -342,6 +359,11 @@ class PairJudge:
     A missing key or adapter raises instead, since it would fail every call. A
     budget stop does not: the resolver's rules still run, and the pairs it
     reached are `unasked`.
+
+    `on_decision` is "link" or "review" (DECISIONS #54); left out, the judge's
+    calibration card decides, and `policy` says which applies and why. Under
+    "review", a decision is kept with `review` set, links nothing, and the pair
+    is queued; `stats["review"]` counts them. `calibration` is its standing.
     """
 
     def __init__(
@@ -356,9 +378,13 @@ class PairJudge:
         max_workers: int = 8,
         retry: RetryPolicy | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        on_decision: OnDecision | None = None,
     ) -> None:
         if not 0.0 <= low <= 1.0:
             raise ValueError(f"low must be in [0, 1], got {low}")
+        if on_decision not in (None, "link", "review"):
+            raise ValueError(f"on_decision must be 'link' or 'review', got {on_decision!r}")
+        self.on_decision: OnDecision | None = on_decision
         if max_workers < 1:
             raise ValueError(f"max_workers must be at least 1, got {max_workers}")
         self.roles = roles if roles is not None else ModelRoles()
@@ -387,6 +413,7 @@ class PairJudge:
             "disagreed",
             *DECISIONS,
             "person",
+            "review",
             "queued",
             "no_context",
             "failed",
@@ -402,6 +429,23 @@ class PairJudge:
             if self._client is None:
                 self._client = resolve_client(self.spec)
             return self._client
+
+    @property
+    def calibration(self) -> CardStatus:
+        """This prompt and model's calibration card on label set R, or UNCALIBRATED."""
+        from openodke.calibration import status
+
+        return status("pair", PROMPT.key, self.spec.model)
+
+    @property
+    def policy(self) -> tuple[OnDecision, str]:
+        """What a decision of the judge's does, "link" or "review", and why."""
+        if self.on_decision is not None:
+            return self.on_decision, f"on_decision={self.on_decision!r} given"
+        from openodke.calibration import resolve
+
+        act, why = resolve(self.calibration)
+        return ("link" if act else "review"), why
 
     # ----------------------------------------------------------------------- #
     # Mentions
@@ -498,11 +542,22 @@ class PairJudge:
             decided[at] = self._decide(a, b, pairs[at][2], answers[2 * n], answers[2 * n + 1])
 
         out = [d for d in decided if d is not None]
-        for decision in out:
-            self.decisions.append(decision)
+        action, why = self.policy if asked else ("link", "")
+        for at, decision in enumerate(out):
             if decision.decision in DECISIONS and decision.by == "judge":
                 self._counts.bump(decision.decision)
-        self._enqueue([(p, d) for p, d in zip(pairs, out, strict=True) if d.decision == "unsure"])
+                if action == "review" and decision.decision != "unsure":
+                    self._counts.bump("review")
+                    decision = decision.model_copy(update={"review": why})
+                    out[at] = decision
+            self.decisions.append(decision)
+        self._enqueue(
+            [
+                (p, d)
+                for p, d in zip(pairs, out, strict=True)
+                if d.decision == "unsure" or d.review is not None
+            ]
+        )
         return out
 
     def _decide(
@@ -654,10 +709,12 @@ class PairJudge:
 def link_for(decision: PairDecision) -> EntityLink | None:
     """The link a decision makes: `SIMILAR` for same, `DIFFERENT` for different, else none.
 
+    A decision sent to review (`PairDecision.review`) makes none (DECISIONS #54).
+
     The score is the resolver's name score, as on any link it proposes; the
     reason says who decided, and on what.
     """
-    if decision.decision not in ("same", "different"):
+    if decision.decision not in ("same", "different") or decision.review is not None:
         return None
     kind = LinkKind.SIMILAR if decision.decision == "same" else LinkKind.DIFFERENT
     if decision.by == "person":
@@ -699,6 +756,7 @@ __all__ = [
     "PROMPT",
     "Answer",
     "Mention",
+    "OnDecision",
     "PairDecision",
     "PairJudge",
     "build_messages",

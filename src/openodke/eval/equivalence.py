@@ -59,7 +59,7 @@ from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from openodke.chunking import sentences
 from openodke.corroborate.judge import Answer, parse_answer, swap_rule
@@ -91,6 +91,9 @@ from openodke.llm.roles import ModelRoles
 from openodke.ontology import Ontology
 from openodke.prompts import get as get_prompt
 from openodke.types import Document, Entity, Fact, Frozen, SpanOrigin
+
+if TYPE_CHECKING:
+    from openodke.calibration import CardStatus
 
 log = logging.getLogger("openodke.equivalence")
 
@@ -395,6 +398,17 @@ class FactJudge:
             if self._client is None:
                 self._client = resolve_client(self.spec)
             return self._client
+
+    @property
+    def calibration(self) -> CardStatus:
+        """This prompt and model's calibration card on label set F, or UNCALIBRATED.
+
+        The lenient score sits beside the strict one either way, so nothing is
+        dropped on this judge's word; the card says how far to read the gap.
+        """
+        from openodke.calibration import status
+
+        return status("fact_equiv", PROMPT.key, self.spec.model)
 
     def description(self, relation: str) -> str | None:
         """The ontology's description of `relation`, matched by name, label or alias."""

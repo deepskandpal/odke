@@ -15,11 +15,11 @@ A card of yours for the same judge stands in front of the package's.
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
-from openodke.calibration.card import Card, load_card, uncalibrated_line
+from openodke.calibration.card import UNCALIBRATED, Card, load_card, uncalibrated_line
 from openodke.types import Frozen
 
 # The package's own cards. A module attribute, so a test can point it elsewhere.
@@ -41,10 +41,30 @@ class CardStatus(Frozen):
     card: str | None = None
     meets_bar: bool | None = None
     line: str
+    # In a run's report: what the judge's word did there, and why (DECISIONS #54).
+    # drop or mark for a grounder's refusals, link or review for the pair judge's
+    # decisions; None where the judge's answers drop nothing.
+    action: str | None = None
+    why: str | None = None
 
     @property
     def calibrated(self) -> bool:
         return self.card is not None
+
+    def text(self) -> str:
+        """The line a report prints: the card's, then what its word did and why."""
+        if self.action is None:
+            return self.line
+        return f"{self.line}; {ACTIONS.get(self.action, self.action)} ({self.why})"
+
+
+# What a judge's word did in a run, as a report says it.
+ACTIONS = {
+    "drop": "refusals dropped",
+    "mark": "refusals marked for review, not dropped",
+    "link": "decisions linked",
+    "review": "every pair sent to review, unlinked",
+}
 
 
 def _sources() -> Iterator[Path]:
@@ -151,11 +171,41 @@ def status_of(stage: Any) -> CardStatus | None:
     if isinstance(found, CardStatus):
         return found
     name = type(judge).__name__
-    return CardStatus(
-        judge="ground",
-        prompt=name,
-        line=f"{name}: UNCALIBRATED, a grounder with no calibration card",
-    )
+    return CardStatus(judge="ground", prompt=name, line=f"{name}: {UNCALIBRATED} (no card)")
 
 
-__all__ = ["CARDS_DIR", "ENV", "CardStatus", "card_for", "cards", "judge_of", "status", "status_of"]
+def standing(stages: Mapping[str, Any]) -> list[CardStatus]:
+    """Every model judge in a run's stages, with what its word did there.
+
+    The grounder, with the gate's `policy` when it has one, and the resolver's
+    pair judge, with its own. A stage holding no model judge adds nothing.
+    """
+    out: list[CardStatus] = []
+    grounder = status_of(stages.get("grounder"))
+    if grounder is not None:
+        policy = getattr(stages.get("gate"), "policy", None)
+        if isinstance(policy, tuple) and len(policy) == 2:
+            grounder = grounder.model_copy(update={"action": policy[0], "why": policy[1]})
+        out.append(grounder)
+    judge = getattr(stages.get("resolver"), "judge", None)
+    found = getattr(judge, "calibration", None)
+    if isinstance(found, CardStatus):
+        policy = getattr(judge, "policy", None)
+        if isinstance(policy, tuple) and len(policy) == 2:
+            found = found.model_copy(update={"action": policy[0], "why": policy[1]})
+        out.append(found)
+    return out
+
+
+__all__ = [
+    "ACTIONS",
+    "CARDS_DIR",
+    "ENV",
+    "CardStatus",
+    "card_for",
+    "cards",
+    "judge_of",
+    "standing",
+    "status",
+    "status_of",
+]

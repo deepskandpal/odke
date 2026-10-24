@@ -347,7 +347,7 @@ def label_hash(labels: Iterable[tuple[str, Any]]) -> str:
 
 def uncalibrated_line(prompt: str, model: str | None, claim_format: str | None = None) -> str:
     """What a report prints for a judge with no card."""
-    return f"{_who(prompt, model, claim_format)}: {UNCALIBRATED}, no calibration card"
+    return f"{_who(prompt, model, claim_format)}: {UNCALIBRATED} (no card)"
 
 
 def _who(prompt: str, model: str | None, claim_format: str | None) -> str:

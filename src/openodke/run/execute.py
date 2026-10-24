@@ -32,6 +32,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from openodke._batch import failed_summary
+from openodke.calibration import CardStatus, standing
 from openodke.corroborate.judge import judge_stop
 from openodke.corroborate.provenance import CONFLICT
 from openodke.coverage import summary as coverage_summary
@@ -501,6 +502,10 @@ def collect_stats(
         if report:
             stages[_REPORTED_AS.get(name, name)] = report
     stats["stages"] = stages
+    # Each model judge's card line, or UNCALIBRATED, and what its word did (#54).
+    judged = standing(built.stages)
+    if judged:
+        stats["calibration"] = [entry.model_dump(mode="json") for entry in judged]
     if "stopped" not in stats and (stop := judge_stop(stages.get("resolver"))) is not None:
         # The budget ran out in the pair judge, after everything else had asked.
         stats["stopped"] = stop
@@ -628,6 +633,8 @@ def render(result: RunResult) -> str:
     if stats.get("derived"):
         lines.append(_row("derived", f"{stats['derived']} inverse and symmetric partners"))
     lines.append(_row("refused", str(stats.get("refused", 0))))
+    if stats.get("marked"):
+        lines.append(_row("marked", f"{stats['marked']} written for review, not refused"))
     if isinstance(gaps := stats.get("coverage"), Mapping):
         lines.append(_row("coverage", coverage_summary(gaps)))
     if isinstance(asked := stats.get("reextract"), Mapping):
@@ -642,6 +649,9 @@ def render(result: RunResult) -> str:
         )
     )
     lines.append(_row("cost", _cost(stats)))
+    for judged in stats.get("calibration") or ():
+        if isinstance(judged, Mapping):
+            lines.append(_row("calibration", CardStatus.model_validate(judged).text()))
     if isinstance(limits := stats.get("budget"), Mapping):
         lines.append(_row("budget", budget_summary(limits, stats.get("spent") or {})))
     if isinstance(cache := stats.get("cache"), Mapping):

@@ -77,10 +77,35 @@
         {"type": "object", "additionalProperties": {"type": "object"}},
         {"type": "null"}
       ]
+    },
+    "marked": {
+      "description": "Added in 1.1, so not required: facts the gate wrote marked for review (qualifiers odke.review) instead of refusing, by the verdict that would have refused them, because their grounder is below its calibration bar (DECISIONS #54).",
+      "$ref": "#/$defs/counts"
+    },
+    "calibration": {
+      "description": "Added in 1.1, so not required: each model judge's calibration card line, or UNCALIBRATED, and what its word did in this job (DECISIONS #54).",
+      "type": "array",
+      "items": {"$ref": "#/$defs/card_status"}
     }
   },
   "$defs": {
     "count": {"type": "integer", "minimum": 0},
-    "counts": {"type": "object", "additionalProperties": {"type": "integer"}}
+    "counts": {"type": "object", "additionalProperties": {"type": "integer"}},
+    "card_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["judge", "prompt", "model", "claim_format", "card", "meets_bar", "line", "action", "why"],
+      "properties": {
+        "judge": {"type": "string"},
+        "prompt": {"type": "string"},
+        "model": {"type": ["string", "null"]},
+        "claim_format": {"type": ["string", "null"]},
+        "card": {"type": ["string", "null"]},
+        "meets_bar": {"type": ["boolean", "null"]},
+        "line": {"type": "string"},
+        "action": {"type": ["string", "null"], "enum": ["drop", "mark", "link", "review", null]},
+        "why": {"type": ["string", "null"]}
+      }
+    }
   }
 }
