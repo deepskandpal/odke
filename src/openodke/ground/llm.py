@@ -12,6 +12,13 @@ answers True or False, and only affirmed facts are kept. `context="document"`,
 `verdicts="binary"` and `VerdictGate(refuse_not_found=True)` together
 reproduce it, so the paper's claims can be tested as written.
 
+`prompt=` sends one of the two challengers for the default (#134), both from
+EnterpriseRAG-Bench (Onyx): `ground.onyx`, its fact validator word for word,
+which answers yes or no, and `ground.statement`, the same question answered
+three ways in JSON. Both read the fact as a plain sentence (`render_sentence`).
+A calibration card on label set G decides which prompt is the default
+(`openodke.calibration`); until then it is `ground.span`.
+
 The span check runs first, inside this grounder, every time. The model is only
 asked about a fact whose citation really resolves in the document, and never
 about one the free check already settled. `locate=True` then gives a fact that
@@ -29,7 +36,7 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from openodke.ground.locate import SpanLocator
 from openodke.ground.retry import RetryPolicy, call_with_retry
@@ -49,6 +56,9 @@ from openodke.prompts import Prompt
 from openodke.prompts import get as get_prompt
 from openodke.types import Document, Entity, Fact, GroundingVerdict, Polarity
 
+if TYPE_CHECKING:
+    from openodke.calibration import CardStatus
+
 log = logging.getLogger("openodke.ground")
 
 # The three answers the model may give. UNCHECKED is what a fact has before it
@@ -61,6 +71,14 @@ VERDICTS = (GroundingVerdict.SUPPORTED, GroundingVerdict.CONTRADICTED, Grounding
 # is what `stats["prompts"]` names.
 _SPAN = get_prompt("ground.span")
 _PAPER = get_prompt("ground.paper")
+# The challengers `prompt=` selects (#134): Onyx's validator, one user message
+# with no schema, and the three-way statement prompt with its own frame.
+_ONYX = get_prompt("ground.onyx")
+_STATEMENT = get_prompt("ground.statement")
+_STATEMENT_FRAME = get_prompt("ground.statement.user")
+# The prompt ids `LLMGrounder(prompt=...)` takes, any registered version of each.
+# `ground.paper` is the paper's binary prompt, chosen by `verdicts="binary"`.
+PROMPTS = ("ground.span", "ground.onyx", "ground.statement", "ground.paper")
 # The texts under their old names, for anything that imports them.
 SYSTEM_PROMPT = _SPAN.text
 PAPER_PROMPT = _PAPER.text
@@ -91,6 +109,7 @@ Verdicts = Literal["three_way", "binary"]
 # "labelled" names the three parts and drops the types (`_render_labelled`).
 # Opt-in until the grounding calibration decides the default.
 ClaimFormat = Literal["inline", "labelled"]
+_FIELD = re.compile(r"\{(\w+)\}")
 
 
 def render_claim(fact: Fact) -> str:
@@ -156,6 +175,38 @@ def _render_labelled(fact: Fact) -> str:
     return claim
 
 
+def render_sentence(fact: Fact) -> str:
+    """The fact as one plain sentence, as the statement prompts read it (#134).
+
+    Subject, relation and object as the text names them, with no types, quotes
+    or separators: `Glory and Gore author Lorde.` Identity-bearing qualifiers
+    follow in brackets, as `render_claim` keeps them. A denied fact reads "It is
+    not the case that …" and a partial one "Only partially, or under a stated
+    condition: …". Code, not a model call, so the same fact is the same
+    sentence in every run.
+    """
+    subject = fact.subject.label or fact.subject.key
+    predicate = fact.predicate.replace("_", " ")
+    if fact.object_entity is not None:
+        obj = fact.object_entity.label or fact.object_entity.key
+    else:
+        obj = _bare(fact.object_value)
+    sentence = f"{subject} {predicate} {obj}"
+    scoped = [
+        f"{key.replace('_', ' ')}: {_bare(fact.qualifiers[key])}"
+        for key in fact.identity_keys
+        if key in fact.qualifiers
+    ]
+    if scoped:
+        sentence += f" ({'; '.join(scoped)})"
+    sentence += "."
+    if fact.polarity is Polarity.DENIED:
+        return f"It is not the case that {sentence}"
+    if fact.polarity is Polarity.PARTIAL:
+        return f"Only partially, or under a stated condition: {sentence}"
+    return sentence
+
+
 def render_triple(fact: Fact) -> str:
     """The fact in the paper's grounder shape: `<subject, predicate(qualifier: value), object>`.
 
@@ -186,7 +237,12 @@ def render_triple(fact: Fact) -> str:
 
 
 def build_messages(
-    fact: Fact, passage: str, *, binary: bool = False, claim_format: ClaimFormat = "inline"
+    fact: Fact,
+    passage: str,
+    *,
+    binary: bool = False,
+    claim_format: ClaimFormat = "inline",
+    prompt: str | Prompt | None = None,
 ) -> list[Message]:
     """Exactly what the model is sent: the claim and the passage, nothing more.
 
@@ -194,9 +250,20 @@ def build_messages(
     span* supports the claim. `binary=True` sends the paper's prompt and triple
     instead; which passage it is asked against is the grounder's `context`.
     `claim_format="labelled"` writes the claim line with its parts named
-    (`ClaimFormat`); the system prompt is the same.
+    (`ClaimFormat`); the system prompt is the same. `prompt` names a
+    challenger, `ground.onyx` or `ground.statement` (a key or a `Prompt`),
+    which reads the fact as `render_sentence` writes it.
     """
-    if binary:
+    chosen = _chosen(prompt)
+    if chosen is not None and chosen.id == "ground.onyx":
+        return [Message(role="user", content=_fill(chosen.text, passage, render_sentence(fact)))]
+    if chosen is not None and chosen.id == "ground.statement":
+        frame = _STATEMENT_FRAME.text
+        return [
+            Message(role="system", content=chosen.text),
+            Message(role="user", content=_fill(frame, passage, render_sentence(fact))),
+        ]
+    if binary or (chosen is not None and chosen.id == "ground.paper"):
         return [
             Message(role="system", content=_PAPER.text),
             Message(
@@ -207,22 +274,49 @@ def build_messages(
         claim = f"Claim (subject | relation | object): {_render_labelled(fact)}"
     else:
         claim = f"Claim: {render_claim(fact)}"
+    system = chosen.text if chosen is not None else _SPAN.text
     return [
-        Message(role="system", content=_SPAN.text),
+        Message(role="system", content=system),
         Message(role="user", content=f"{claim}\n\nPassage:\n{passage}"),
     ]
 
 
-def parse_verdict(completion: Completion, *, binary: bool = False) -> GroundingVerdict | None:
+def _chosen(prompt: str | Prompt | None) -> Prompt | None:
+    if prompt is None or isinstance(prompt, Prompt):
+        return prompt
+    return get_prompt(prompt)
+
+
+def _fill(template: str, passage: str, statement: str) -> str:
+    """A statement template with each field filled in once, so braces in a passage stay text."""
+    values = {"answer": passage, "passage": passage, "statement": statement}
+    return _FIELD.sub(lambda m: values.get(m[1], m[0]), template)
+
+
+def parse_verdict(
+    completion: Completion, *, binary: bool = False, prompt: str | Prompt | None = None
+) -> GroundingVerdict | None:
     """The verdict in a completion, or None when there is not exactly one to read.
 
     Structured output is the normal path. A model that ignored the schema and
     answered with the bare word is still readable; one that wrote a sentence
     is not — "not supported" must never be read as `SUPPORTED`, so prose is a
     failed answer rather than a guess.
+
+    `prompt` names the prompt the completion answers, when it is a challenger.
+    `ground.onyx`'s reply is read as Onyx reads it: the first line naming "yes"
+    is `SUPPORTED`, and one naming "no" is `NOT_FOUND`. Onyx counts anything
+    else as no; here it is unreadable, as any grounder's unreadable answer is.
+    `ground.statement`'s reply is also read from a JSON object in the text, in
+    a code fence or not, since without a provider schema a model often wraps it.
     """
+    chosen = _chosen(prompt)
+    if chosen is not None and chosen.id == "ground.onyx":
+        return _parse_onyx(completion.text)
     value: object = completion.parsed.get("verdict") if completion.parsed else None
-    if binary:
+    if chosen is not None and chosen.id == "ground.statement" and not isinstance(value, str):
+        value = _json_verdict(completion.text)
+    if binary or (chosen is not None and chosen.id == "ground.paper"):
         return _parse_binary(value, completion.text)
     if not isinstance(value, str):
         match = _BARE_WORD.match(completion.text)
@@ -237,6 +331,33 @@ def parse_verdict(completion: Completion, *, binary: bool = False) -> GroundingV
 
 _BARE_WORD = re.compile(r"^\W*(supported|contradicted|not[\s_-]?found)\W*$", re.IGNORECASE)
 _BARE_BOOL = re.compile(r"^\W*(true|false|yes|no)\W*$", re.IGNORECASE)
+_YES = re.compile(r"\byes\b", re.IGNORECASE)
+_NO = re.compile(r"\bno\b", re.IGNORECASE)
+_OBJECT = re.compile(r"\{[^{}]*\}")
+
+
+def _parse_onyx(text: str) -> GroundingVerdict | None:
+    """Onyx's reading (`validate_single_fact`): "yes" on the first line, else "no"."""
+    stripped = text.strip()
+    first = stripped.splitlines()[0].strip() if stripped else ""
+    if _YES.search(first):
+        return GroundingVerdict.SUPPORTED
+    if _NO.search(first):
+        return GroundingVerdict.NOT_FOUND
+    return None
+
+
+def _json_verdict(text: str) -> object:
+    """The `verdict` of the one JSON object in `text`, fenced or not; None without one."""
+    found = []
+    for match in _OBJECT.finditer(text):
+        try:
+            data = json.loads(match.group(0))
+        except ValueError:
+            continue
+        if isinstance(data, dict) and "verdict" in data:
+            found.append(data["verdict"])
+    return found[0] if len(found) == 1 else None
 
 
 def _parse_binary(value: object, text: str) -> GroundingVerdict | None:
@@ -262,6 +383,30 @@ def _literal(value: object) -> str:
     # JSON spelling: strings arrive quoted, so their boundary is unambiguous,
     # and numbers, booleans and null read the same way in every run.
     return json.dumps(value, default=str, ensure_ascii=False)
+
+
+def _prompt_for(prompt: str | None, verdicts: str) -> Prompt:
+    """The prompt a grounder sends: the one named, or its mode's default."""
+    if prompt is None:
+        return _PAPER if verdicts == "binary" else _SPAN
+    chosen = get_prompt(prompt)
+    if chosen.id not in PROMPTS:
+        raise ValueError(f"prompt must be one of {', '.join(PROMPTS)}; got {prompt!r}")
+    if (chosen.id == "ground.paper") != (verdicts == "binary"):
+        raise ValueError(
+            "ground.paper is the paper's binary prompt, sent with verdicts='binary'; "
+            f"got prompt={prompt!r} with verdicts={verdicts!r}"
+        )
+    return chosen
+
+
+def _schema_for(prompt: Prompt) -> dict[str, Any] | None:
+    """The response schema sent with `prompt`: none for Onyx's, which answers in a word."""
+    if prompt.id == "ground.paper":
+        return BINARY_SCHEMA
+    if prompt.id == "ground.onyx":
+        return None
+    return GROUNDING_SCHEMA
 
 
 class LLMGrounder:
@@ -296,6 +441,13 @@ class LLMGrounder:
     default. The extra calls go through `widen_client` when one is given, so a
     cost meter can count them apart; `stats["widen"]` counts them either way.
 
+    `prompt` names the registered prompt to send: `ground.span` by default (or
+    `ground.paper` with `verdicts="binary"`), or a challenger, `ground.onyx` or
+    `ground.statement` (#134), by id or `id@version`. A challenger reads the
+    fact as `render_sentence` writes it, so `claim_format` stays "inline".
+    `calibration` is the grounder's standing: its calibration card's line, or
+    UNCALIBRATED (`openodke.calibration`).
+
     `ground_many` is the batched path: a document's facts at once, with at most
     `max_workers` model calls in flight. `ground_documents` is the same across
     many documents, and is what the pipeline uses, so a corpus of one-row
@@ -318,6 +470,7 @@ class LLMGrounder:
         widen: bool = False,
         widen_client: LLMClient | None = None,
         claim_format: ClaimFormat = "inline",
+        prompt: str | None = None,
     ) -> None:
         if max_workers < 1:
             raise ValueError(f"max_workers must be at least 1, got {max_workers}")
@@ -337,10 +490,18 @@ class LLMGrounder:
                 "widen=True re-asks against the sentence around a narrow span, and "
                 "context='document' already shows the model the whole document"
             )
+        chosen = _prompt_for(prompt, verdicts)
+        if claim_format == "labelled" and chosen.id != "ground.span":
+            raise ValueError(
+                f"claim_format='labelled' rewrites ground.span's claim line; {chosen.key} reads "
+                "the fact as a plain sentence"
+            )
         self.context: Context = context
         self.claim_format: ClaimFormat = claim_format
-        self.binary = verdicts == "binary"
-        self.prompt: Prompt = _PAPER if self.binary else _SPAN
+        self.binary = chosen.id == "ground.paper"
+        self.prompt: Prompt = chosen
+        # The user-message frame a challenger sends beside its instructions.
+        self._frame: Prompt | None = _STATEMENT_FRAME if chosen.id == "ground.statement" else None
         self.roles = roles if roles is not None else ModelRoles()
         self.spec: ModelSpec = self.roles.ground
         self.client: LLMClient = client if client is not None else self.roles.client_for("ground")
@@ -519,7 +680,9 @@ class LLMGrounder:
 
     def _judge(self, fact: Fact, passage: str, *, widened: bool = False) -> GroundingVerdict | None:
         """The model's verdict on `fact` against `passage`, or None when there is none to read."""
-        messages = build_messages(fact, passage, binary=self.binary, claim_format=self.claim_format)
+        messages = build_messages(
+            fact, passage, binary=self.binary, claim_format=self.claim_format, prompt=self.prompt
+        )
         counts = self._widened if widened else self._counts
 
         def on_retry(attempt: int, exc: BaseException, wait: float) -> None:
@@ -550,7 +713,7 @@ class LLMGrounder:
             log.warning("grounding call failed for fact %s, %s: %s", fact.id, left, exc)
             return None
         self._account(completion, widened=widened)
-        verdict = parse_verdict(completion, binary=self.binary)
+        verdict = parse_verdict(completion, binary=self.binary, prompt=self.prompt)
         if verdict is None:
             counts.bump("unparseable")
             log.warning(
@@ -560,7 +723,7 @@ class LLMGrounder:
 
     def _complete(self, messages: list[Message], *, widened: bool = False) -> Completion:
         with self._slots:
-            schema = BINARY_SCHEMA if self.binary else GROUNDING_SCHEMA
+            schema = _schema_for(self.prompt)
             client = self.widen_client if widened else self.client
             try:
                 completion = client.complete(messages, spec=self.spec, schema=schema)
@@ -593,13 +756,38 @@ class LLMGrounder:
                     self._widen_cost = (self._widen_cost or 0.0) + completion.cost_usd
 
     @property
+    def prompt_keys(self) -> list[str]:
+        """Every registered prompt a call sends: the instructions, then any frame."""
+        return [self.prompt.key, *([self._frame.key] if self._frame is not None else [])]
+
+    @property
+    def claim_line(self) -> str:
+        """How the fact is written in the message, as a calibration card names it.
+
+        "inline" or "labelled" for `ground.span` (`claim_format`), "sentence"
+        for a challenger (`render_sentence`), "triple" for the paper's prompt.
+        """
+        if self.binary:
+            return "triple"
+        if self.prompt.id == "ground.span":
+            return self.claim_format
+        return "sentence"
+
+    @property
+    def calibration(self) -> CardStatus:
+        """This prompt and model's calibration card, as reports print it, or UNCALIBRATED."""
+        from openodke.calibration import status
+
+        return status("ground", self.prompt.key, self.spec.model, self.claim_line)
+
+    @property
     def stats(self) -> dict[str, Any]:
         """The stage's run report. `cost_usd` is None until a provider reports one."""
         out: dict[str, Any] = self._counts.snapshot()
         with self._cost_lock:
             out["cost_usd"] = self._cost
-        # The registered prompt the calls sent, by key: none when no call was made.
-        out["prompts"] = [self.prompt.key] if out["calls"] else []
+        # The registered prompts the calls sent, by key: none when no call was made.
+        out["prompts"] = self.prompt_keys if out["calls"] else []
         # How the claim line was written: code, not a registered text, so a
         # calibration card needs it beside the prompt key.
         out["claim_format"] = self.claim_format
@@ -619,11 +807,13 @@ __all__ = [
     "BINARY_SCHEMA",
     "GROUNDING_SCHEMA",
     "PAPER_PROMPT",
+    "PROMPTS",
     "SYSTEM_PROMPT",
     "VERDICTS",
     "LLMGrounder",
     "build_messages",
     "parse_verdict",
     "render_claim",
+    "render_sentence",
     "render_triple",
 ]

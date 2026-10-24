@@ -58,14 +58,36 @@ FACT_EQUIV = (
 )
 
 
+# The grounder's two challengers (#134): Onyx's validator verbatim, and its
+# three-way adaptation, which both its keys carry.
+ONYX = (
+    "EnterpriseRAG-Bench's INDIVIDUAL_FACT_VALIDATOR_PROMPT, verbatim (Onyx, arXiv "
+    "2605.05253; MIT, © 2026 DanswerAI, Inc.)"
+)
+STATEMENT = (
+    "openodke, after EnterpriseRAG-Bench's INDIVIDUAL_FACT_VALIDATOR_PROMPT (Onyx, arXiv "
+    "2605.05253, MIT), three-way"
+)
+# The SHA-256 of Onyx's INDIVIDUAL_FACT_VALIDATOR_PROMPT as its repository builds
+# it (`src/prompts/answer_evaluation.py` at d36685e, the string after `.strip()`).
+ONYX_UPSTREAM = "1ad236930950fa8445b9728a47f1dc755c893dc26a2c6e3e8072684f249b24ba"
+
+
+def test_onyx_s_validator_is_word_for_word_the_original() -> None:
+    assert get("ground.onyx@1").sha256 == ONYX_UPSTREAM
+
+
 def test_every_prompt_says_where_it_came_from() -> None:
     assert {p.key: p.source for p in registered()} == {
         "extract.repair@1": "openodke",
         "extract@1": "openodke",
         "fact_equiv.user@1": FACT_EQUIV,
         "fact_equiv@1": FACT_EQUIV,
+        "ground.onyx@1": ONYX,
         "ground.paper@1": "ODKE+ App. B, verbatim",
         "ground.span@1": "openodke",
+        "ground.statement.user@1": STATEMENT,
+        "ground.statement@1": STATEMENT,
         "infer.repair@1": "openodke",
         "infer@1": "openodke",
         "pair.user@1": PAIR,
