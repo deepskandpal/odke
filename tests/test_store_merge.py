@@ -257,6 +257,32 @@ def test_odke_run_with_merge_grows_a_restated_facts_support(tmp_path: Path) -> N
     assert len(founder.supported_by) == 2
 
 
+def test_a_python_rerun_over_the_same_folder_is_the_same_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Release audit 7: support counted reruns, and an update retracted nothing."""
+    from openodke.loaders import DirectoryLoader
+
+    (tmp_path / "texts").mkdir()
+    (tmp_path / "texts" / "a.txt").write_text(TEXT, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    sink = JsonlSink(tmp_path / "store", merge=True)
+    validator = Validator(
+        ONTOLOGY, grounder=PassThroughGrounder(), gate=PassThroughGate(), sinks=[sink]
+    )
+
+    def rows() -> list[dict[str, str]]:
+        return [{"doc": "a", "subject": "Ada Lovelace", "subject_type": "Person",
+                 "predicate": "employer", "object": "Acme", "object_type": "Company"}]  # fmt: skip
+
+    for _ in range(3):
+        validator.validate(rows(), DirectoryLoader().load("texts"))
+    (fact,) = [f for f in _lines(tmp_path / "store") if f.predicate == "employer"]
+    assert fact.support == 1 and [s.doc_ids for s in fact.supported_by] == [("texts/a.txt",)]
+    _, report = validator.validate([], DirectoryLoader().load("texts"), update=True)
+    assert report.retracted is not None and report.retracted["cited"] == 2
+
+
 def test_jsonl_without_merge_replaces_the_file_and_reads_nothing(tmp_path: Path) -> None:
     sink = JsonlSink(tmp_path)
     _validate(sink, "a", _employed("a"), _hq("a"))

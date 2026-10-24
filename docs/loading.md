@@ -33,7 +33,7 @@ returns an iterator, so a file of any size [streams](run.md#streaming).
 | `columns` | `ParquetLoader` | every column |
 | `strip_boilerplate` | `HtmlLoader` | `False`; `True` drops `nav` and `footer` |
 | `per_page`, `page_separator` | `PdfLoader` | `False`, `"\n\n"` |
-| `pattern`, `missing_extras`, `encoding` | `DirectoryLoader` | `"**/*"`, `"warn"`, each loader's own |
+| `pattern`, `missing_extras`, `encoding`, `relative_to` | `DirectoryLoader` | `"**/*"`, `"warn"`, each loader's own, the current directory |
 
 ### Text and Markdown
 
@@ -112,6 +112,10 @@ hands each file to the loader for its suffix, in sorted order.
 - A file whose extra is missing is skipped with a `MissingExtraWarning` naming
   the install command. `missing_extras="raise"` raises instead.
 - `loaders={".suffix": loader}` replaces the suffix table (Python only).
+- Each document's id is its file's path relative to `relative_to` (the current
+  directory when left out), as `odke validate --texts` names it: `texts/a.txt`,
+  or `corpus/register.csv#L2` for a record. A rerun over the same files cites
+  the same documents, so a merging store counts each source once.
 
 ## Chunking
 
