@@ -319,6 +319,7 @@ def test_an_update_whose_text_failed_exits_non_zero(
     again = runner.invoke(app, ["validate", "--config", "fails.yaml", "-o", "store", "--update"])
     sys.modules.pop("rule1_stages", None)
     assert "corvid" in again.output, again.output
+    assert "error: texts/corvid.txt: retracted, not rewritten; run it again" in again.output
     assert again.exit_code != 0, (
         "`odke validate --update` exited 0 though a text failed: its old facts were retracted "
         "and nothing replaced them, so they read as retired. With --update, a failed text "

@@ -1154,13 +1154,12 @@ def validate_command(
         raise typer.Exit(EXIT_BUDGET)
     _every_document_failed(report.failed, report.documents)
     if report.unrewritten:
-        # Retracted before they failed, so their facts read as retired (DECISIONS #37).
-        typer.echo(
-            f"error: {_count(len(report.unrewritten), 'text')} retracted and not rewritten: "
-            f"{', '.join(report.unrewritten)}; run the update again",
-            err=True,
-        )
-        raise typer.Exit(1)
+        # Retracted before they failed, so their facts read as retired (DECISIONS #37):
+        # one `error:` line a text.
+        from openodke.validator import UNREWRITTEN
+
+        lines = [f"{doc}: {UNREWRITTEN}" for doc in report.unrewritten]
+        _fail(RuntimeError("\n".join(lines)), 1)
 
 
 def _every_document_failed(failed: Any, documents: int) -> None:
