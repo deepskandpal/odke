@@ -37,7 +37,6 @@ FIX = (
     "(for example `<cache>/replay/<hash of the replay file>`), in every place that builds "
     "a cached client."
 )
-RELEASE_1 = pytest.mark.xfail(strict=True, reason="release audit finding 1; fixed in fix PR 2")
 
 
 def _without_replay(project: Path) -> Path:
@@ -102,10 +101,7 @@ ENTRY_POINTS = {
 }
 
 
-@pytest.mark.parametrize(
-    "command",
-    [pytest.param(name, marks=RELEASE_1) for name in ENTRY_POINTS],
-)
+@pytest.mark.parametrize("command", list(ENTRY_POINTS))
 def test_a_rerun_without_the_recording_asks_the_live_model(
     command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -143,7 +139,7 @@ def test_every_place_that_caches_a_model_is_an_entry_point_of_this_rule() -> Non
         "bench/layer.py",
         "bench/labels/claim_format.py",
         # The calibration runner: a provider behind the cache, or with --replay recorded
-        # answers cached apart, under <cache>/replay/<hash of the file> (test_bench_calibrate).
+        # answers cached apart, in `openodke.llm.cache.replay_directory` (test_bench_calibrate).
         "bench/calibrate.py",
     }
     found = set()

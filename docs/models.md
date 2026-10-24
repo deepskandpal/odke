@@ -227,8 +227,10 @@ In `odke run`, `models: {cache: .odke-cache}` names the directory, relative to
 the config. `odke validate` and `odke ground` read the same key from `--config`,
 and all three take `--cache DIR`, which overrides it. The cache answers in front
 of `models.replay` and the provider alike, and a rerun answered entirely from it
-needs no provider adapter and no key. The run report gains a `cache` line, hits
-and misses, and `stats["cache"]`.
+needs no provider adapter and no key. A recording's answers are kept apart, under
+`DIR/replay/<the file's hash>`, so a run with its replay lines deleted asks the
+model rather than replaying the recording as the model's answer. The run report
+gains a `cache` line, hits and misses, and `stats["cache"]`.
 
 ## Concurrency per provider
 

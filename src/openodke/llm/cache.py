@@ -43,6 +43,13 @@ process. Any object with `get(key)` and `put(key, entry)` is a store too.
 Two threads asking the same new question at once both call the model; the
 second answer overwrites the first. The thread pools in this library ask
 different questions, so the cache does not hold one caller back for another.
+
+A recorded answer (`models.replay`) is cached apart from the model's, under
+`<cache>/replay/<the recording's hash>` (`replay_directory`). The key names the
+model a request was for, not who answered it, so a recording kept under the
+model's key would answer a later live run, with no key and no call, as if the
+model had (release audit finding 1, rule R4). Each recording has its own
+folder, so an edited recording is a fresh cache.
 """
 
 from __future__ import annotations
@@ -193,6 +200,17 @@ class DirectoryCache:
 
     def __len__(self) -> int:
         return sum(1 for _ in self.directory.glob("*/*.json"))
+
+
+def replay_directory(cache: str | os.PathLike[str], recording: str | os.PathLike[str]) -> Path:
+    """Where answers replayed from `recording` are cached: `<cache>/replay/<its hash>`.
+
+    Never the cache itself: there a recorded answer would pass for the live
+    model's. The hash is of the file's bytes, so an edited recording starts a
+    fresh folder. Every command that caches a recording, and the bench, asks here.
+    """
+    digest = hashlib.sha256(Path(recording).read_bytes()).hexdigest()[:16]
+    return Path(cache) / "replay" / digest
 
 
 class CachedClient:
