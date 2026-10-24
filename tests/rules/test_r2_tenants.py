@@ -47,7 +47,6 @@ from test_neo4j_sink import FakeDriver
 runner = CliRunner()
 
 TENANTS = ("acme", "globex")
-RELEASE_3 = pytest.mark.xfail(strict=True, reason="release audit finding 3; fixed in fix PR 1")
 
 # --------------------------------------------------------------------------- #
 # Writes: one graph as two tenants, through every sink a store is loaded from
@@ -100,7 +99,7 @@ RDF_IGNORES_THE_TENANT = pytest.mark.xfail(
     reason="found by R2 in PR 0, not in the release audit: the RDF sink writes two tenants' "
     "identical IRIs; proposed for fix PR 1, the maintainer's call",
 )
-MARKS = {"neo4j": (), "cypher_file": RELEASE_3, "neo4j_admin_csv": RELEASE_3}
+MARKS = {"neo4j": (), "cypher_file": (), "neo4j_admin_csv": ()}
 
 
 def _identities(sink: str, out: Path, driver: FakeDriver) -> set[str]:

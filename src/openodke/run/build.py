@@ -840,11 +840,15 @@ class _WriterPlan(SinkPlan):
     needs: Extra | None = None
     what = ""
 
+    # Takes the run's tenant (`tenant=`), as a store-shaped sink must (DECISIONS #44).
+    tenanted = False
+
     def __init__(self, options: dict[str, Any], ctx: Context, where: str) -> None:
         if self.needs is not None:
             require_extra(self.needs, self.what, where)
         self.where = where
         self.ontology = ctx.ontology
+        self.tenant = ctx.config.tenant
         self.options = dict(options)
         self.target = self._target(ctx)
         self._make()
@@ -862,6 +866,8 @@ class _WriterPlan(SinkPlan):
         self, cls: Callable[..., Any], options: Mapping[str, Any], reserved: Sequence[str] = ()
     ) -> Any:
         injected = {"ontology": self.ontology}
+        if self.tenanted:
+            injected["tenant"] = self.tenant
         return construct(cls, options, self.where, injected=injected, reserved=reserved)
 
     def _make(self) -> Any:  # pragma: no cover - every plan overrides it
@@ -875,6 +881,7 @@ class _WriterPlan(SinkPlan):
 class _CypherFilePlan(_WriterPlan):
     name = "cypher_file"
     streams = False
+    tenanted = True
     profile = CypherFileSink.profile
     what = "CypherFileSink"
 
@@ -885,7 +892,7 @@ class _CypherFilePlan(_WriterPlan):
     def describe(self, kg: KnowledgeGraph) -> list[str]:
         statements = self._make().statements(kg)
         schema = len(Neo4jConstrainer().schema(self.ontology))
-        rows = sum(len(s.rows) for s in plan(kg, ontology=self.ontology))
+        rows = sum(len(s.rows) for s in plan(kg, ontology=self.ontology, tenant=self.tenant))
         return [
             f"cypher_file → {self.target}: {len(statements)} statements ({schema} schema, "
             f"{len(statements) - schema} UNWIND … MERGE), {rows} rows"
@@ -895,6 +902,7 @@ class _CypherFilePlan(_WriterPlan):
 class _Neo4jAdminCsvPlan(_WriterPlan):
     name = "neo4j_admin_csv"
     streams = False
+    tenanted = True
     profile = Neo4jAdminCsvSink.profile
     target_key = "directory"
     what = "Neo4jAdminCsvSink"

@@ -403,8 +403,10 @@ assert checked_under(checked.facts, companies) == [fact]
 
 ## Cypher file
 
-`CypherFileSink(path, *, ontology=None, batch_size=500)` writes `Neo4jSink`'s
+`CypherFileSink(path, *, ontology=None, batch_size=500, tenant=None)` writes `Neo4jSink`'s
 statements as a script, opening with the bootstrap DDL when given an ontology.
+A `tenant` keys the script as it keys the driver's writes ([Tenants](#tenants));
+`odke run` and the Validator pass theirs.
 Replay it with `cypher-shell -a <uri> -u <user> -f graph.cypher`; replaying
 twice changes nothing.
 
@@ -416,9 +418,10 @@ CypherFileSink(out / "graph.cypher", ontology=ontology).write(kg)
 
 ## neo4j-admin CSV
 
-`Neo4jAdminCsvSink(directory, *, ontology=None, delimiter=",", array_delimiter=";")`
+`Neo4jAdminCsvSink(directory, *, ontology=None, delimiter=",", array_delimiter=";", tenant=None)`
 writes one CSV file per node or relationship group, with typed headers, and an
-`import.args` file. An import builds a new database.
+`import.args` file. An import builds a new database. A `tenant` keys the IDs
+and signatures as the driver keys them.
 
 ```python
 from openodke.sinks.bulk import Neo4jAdminCsvSink

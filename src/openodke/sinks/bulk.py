@@ -32,6 +32,7 @@ from openodke.sinks.neo4j import (
     plan,
     projection_property,
 )
+from openodke.tenants import tenant_name
 from openodke.types import KnowledgeGraph
 
 # --------------------------------------------------------------------------- #
@@ -129,6 +130,12 @@ class CypherFileSink:
     The file is rewritten on every `write`; a graph always compiles to the same
     bytes, so two writes of one graph leave one identical file. So it does not
     stream: a run in micro-batches would leave the last one.
+
+    `tenant` keys the script as `Neo4jSink(tenant=...)` keys its writes
+    (DECISIONS #44): `<tenant>/<key>` for every entity, signatures hashed with
+    the tenant, and `tenant` on every node and fact, so two tenants' scripts
+    loaded into one store never merge. `scoped(tenant)` is the same file for
+    one tenant; `odke run` and the Validator scope it to theirs.
     """
 
     profile = Neo4jSink.profile
@@ -141,19 +148,35 @@ class CypherFileSink:
         *,
         ontology: Ontology | None = None,
         batch_size: int = 500,
+        tenant: str | None = None,
     ) -> None:
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1")
         self.path = Path(path)
         self.ontology = ontology
         self.batch_size = batch_size
+        self.tenant = tenant_name(tenant)
+
+    def scoped(self, tenant: str | None) -> CypherFileSink:
+        """This file, written for `tenant`; the sink itself when it is that tenant's already.
+
+        A sink scoped to another tenant is refused: one file never holds two.
+        """
+        tenant = tenant_name(tenant)
+        if tenant == self.tenant:
+            return self
+        if self.tenant is not None:
+            raise ValueError(f"this sink writes tenant {self.tenant!r}, not {tenant!r}")
+        return CypherFileSink(
+            self.path, ontology=self.ontology, batch_size=self.batch_size, tenant=tenant
+        )
 
     def statements(self, kg: KnowledgeGraph) -> list[str]:
         """Each statement of the script, without its terminating `;`, in run order."""
         out: list[str] = []
         if self.ontology is not None:
             out += Neo4jConstrainer().schema(self.ontology)
-        for statement in plan(kg, ontology=self.ontology):
+        for statement in plan(kg, ontology=self.ontology, tenant=self.tenant):
             for batch in _batches(statement.rows, self.batch_size):
                 out.append(_inline(statement, batch))
         return out
@@ -230,6 +253,11 @@ class Neo4jAdminCsvSink:
     graph use `Neo4jSink` or `CypherFileSink`. Files are rewritten on every
     `write`, and one graph always produces the same bytes, so it does not
     stream.
+
+    `tenant` keys the files as `Neo4jSink(tenant=...)` keys its writes
+    (DECISIONS #44): `<tenant>/<key>` IDs, signatures hashed with the tenant,
+    and a `tenant` column on every node and fact. `scoped(tenant)` is the same
+    directory for one tenant; `odke run` and the Validator scope it to theirs.
     """
 
     profile = Neo4jSink.profile
@@ -242,6 +270,7 @@ class Neo4jAdminCsvSink:
         ontology: Ontology | None = None,
         delimiter: str = ",",
         array_delimiter: str = ";",
+        tenant: str | None = None,
     ) -> None:
         if delimiter not in _DELIMITERS or array_delimiter not in _DELIMITERS:
             raise ValueError(f"delimiters must each be one of {sorted(_DELIMITERS)!r}")
@@ -251,12 +280,31 @@ class Neo4jAdminCsvSink:
         self.ontology = ontology
         self.delimiter = delimiter
         self.array_delimiter = array_delimiter
+        self.tenant = tenant_name(tenant)
+
+    def scoped(self, tenant: str | None) -> Neo4jAdminCsvSink:
+        """These files, written for `tenant`; the sink itself when it is that tenant's already.
+
+        A sink scoped to another tenant is refused: one import never holds two.
+        """
+        tenant = tenant_name(tenant)
+        if tenant == self.tenant:
+            return self
+        if self.tenant is not None:
+            raise ValueError(f"this sink writes tenant {self.tenant!r}, not {tenant!r}")
+        return Neo4jAdminCsvSink(
+            self.directory,
+            ontology=self.ontology,
+            delimiter=self.delimiter,
+            array_delimiter=self.array_delimiter,
+            tenant=tenant,
+        )
 
     # -- the layout ---------------------------------------------------------- #
 
     def tables(self, kg: KnowledgeGraph) -> list[Table]:
         """Every file `write` would produce, in import order. Pure, so it is testable."""
-        statements = plan(kg, ontology=self.ontology)
+        statements = plan(kg, ontology=self.ontology, tenant=self.tenant)
         nodes: dict[str, dict[str, dict[str, Any]]] = {}
         spaces: dict[str, list[str]] = {}
         for st in (s for s in statements if s.kind == "entity"):
