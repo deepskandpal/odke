@@ -45,8 +45,6 @@ LEVEL = 0.95
 FLOOR = LEVEL - 0.05
 FEW = settings(max_examples=40, derandomize=True, deadline=None, database=None)
 
-RELEASE_5 = pytest.mark.xfail(strict=True, reason="release audit finding 5; fixed in fix PR 3")
-
 
 # --------------------------------------------------------------------------- #
 # Wilson: the interval every share uses
@@ -180,7 +178,6 @@ def _overall(labels: list[RefusalLabel]) -> tuple[float, float, float]:
     return float(found["precision"]), float(found["low"]), float(found["high"])  # type: ignore[arg-type]
 
 
-@RELEASE_5
 def test_the_refusal_precision_covers_its_level(tmp_path: Path) -> None:
     """The audit's case: 1,000 refusals 90% right, and 50 that are 30% right."""
     refusals, right = _refusals([("big", 1000, 900), ("small", 50, 15)])
@@ -198,7 +195,6 @@ def test_the_refusal_precision_covers_its_level(tmp_path: Path) -> None:
     )
 
 
-@RELEASE_5
 @settings(max_examples=15, derandomize=True, deadline=None, database=None)
 @given(
     big=st.integers(1, 400),

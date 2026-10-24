@@ -690,8 +690,15 @@ odke eval refusals --labels refusal-labels.jsonl
 - **An item** shows the claim, the verdict and reason, any gold, and the text,
   with boxes `refusal correct`, `refusal wrong`, `gold wrong`, `unsure`.
 - **The refusal precision** is right refusals (`refusal correct`, `gold wrong`)
-  over every judgement but unsure, with a Wilson 95% interval, overall and per
-  stratum.
+  over every judgement but unsure, overall, per dataset, extractor and
+  verdict, and per stratum. Equal shares draw a small stratum far more often
+  than its size says, so every drawn row records its stratum's size, and a row
+  that spans strata weights each stratum by it, with a Wilson 95% interval on
+  the sample's effective size (stratified variance). Pooled as one random
+  sample instead, 1,000 refusals 90% right and 50 that are 30% right read as
+  62% against a true 87%. Labels with no sizes are reported per stratum only,
+  unless the runs they were drawn from come too:
+  `odke eval refusals RUN... --labels LABELS`.
 
 ```python
 from openodke.eval import RefusalLabel, report_refusals
@@ -738,7 +745,7 @@ odke eval pipeline --labels gold.jsonl --documents texts/ --predictions out.json
     --lenient pairs.jsonl                           # near misses judged; strict stays
 
 odke eval refusals runs/cmp --make-sheet sheets/ --n 100   # what the grounder refused, to tick
-odke eval refusals --labels refusal-labels.jsonl    # refusal precision, Wilson 95%
+odke eval refusals --labels refusal-labels.jsonl    # refusal precision, strata weighted by size
 ```
 
 `--run package.module:Name` runs a stage over the labels (a class is built

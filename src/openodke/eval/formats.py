@@ -30,7 +30,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from openodke.types import Chunk, Document, Evidence, Fact, Frozen, GroundingVerdict, LinkKind
 
@@ -142,6 +142,9 @@ class Refusal(Frozen):
     and `reason` say why it was refused. `gold` is whether the run's gold lists
     the fact, and None with no gold. `predicate`, `extractor` and `dataset` are
     what a sample is stratified on, and `source` the output it came from.
+    `stratum_size` is how many refusals its stratum (dataset, extractor and
+    verdict) held when the sample was drawn: the refusal precision weights the
+    stratum by it. A row made by hand has none.
     """
 
     id: str
@@ -156,6 +159,7 @@ class Refusal(Frozen):
     dataset: str | None = None
     doc_id: str | None = None
     source: str | None = None
+    stratum_size: int | None = Field(default=None, ge=1)
 
 
 class RefusalLabel(Refusal):
