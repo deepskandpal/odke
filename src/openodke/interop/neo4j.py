@@ -24,14 +24,12 @@ from collections.abc import Iterable, Mapping
 from datetime import date, datetime
 from typing import Any
 
-from openodke.corroborate.provenance import CONFLICT, SCORE, SOURCE_FORM
+from openodke.corroborate.provenance import JSON_STAMPS
 from openodke.interop.triples import TripleRow
 from openodke.sinks.neo4j import _PROVENANCE, CLAIM_LABEL, ENTITY_LABEL
 from openodke.tenants import tenant_name, unscoped
 from openodke.types import Document, Fact, GroundingVerdict, LinkKind, SpanOrigin
 
-# The stamps a sink stores as JSON text, read back as the mappings they were.
-_STAMPS = frozenset({SOURCE_FORM, CONFLICT, SCORE})
 # Relationships openodke writes that are not facts: the resolver's links.
 _LINKS = sorted(kind.value.upper() for kind in LinkKind)
 # One verdict for a relationship read as several rows: the corroborator's order.
@@ -278,13 +276,17 @@ def _evidence(properties: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 def _stamp(key: str, value: Any) -> Any:
-    """An `odke.` stamp the sink stored as JSON text, as the mapping it was."""
-    if key in _STAMPS and isinstance(value, str):
+    """An `odke.` stamp the sink stored as JSON text, as the mapping or list it was.
+
+    The stamps are `openodke.corroborate.provenance.JSON_STAMPS`, the list the
+    sink's own reader decodes too, so a graph read back corroborates as written.
+    """
+    if key in JSON_STAMPS and isinstance(value, str):
         try:
             loaded = json.loads(value)
         except json.JSONDecodeError:
             return value
-        return loaded if isinstance(loaded, dict) else value
+        return loaded if isinstance(loaded, dict | list) else value
     return value
 
 

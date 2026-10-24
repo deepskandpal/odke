@@ -37,6 +37,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from openodke._batch import is_config_error, told
 from openodke.chunking import sentences
+from openodke.corroborate.provenance import REEXTRACT
 from openodke.coverage import CoverageReport, NameMatcher, identity, known_entities
 from openodke.llm.budget import BudgetExceeded
 from openodke.ontology import Ontology
@@ -44,8 +45,6 @@ from openodke.types import Chunk, Document, Entity, Fact, GroundingVerdict, Span
 
 log = logging.getLogger("openodke.reextract")
 
-# On Fact.qualifiers: {"window": [start, end]}, the gap a fact came back from.
-REEXTRACT = "odke.reextract"
 
 Ground = Callable[[list[tuple[list[Fact], Document]]], list[list[Fact]]]
 
