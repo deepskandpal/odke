@@ -147,6 +147,82 @@ _register(
     source="openodke",
 )
 
+# Two challengers for `ground.span` (#134), from EnterpriseRAG-Bench (Onyx,
+# arXiv 2605.05253; code MIT, © 2026 DanswerAI, Inc., the notice in NOTICE).
+# They compete with it on label set G's gate split, and a calibration card
+# decides the default. Sent by `LLMGrounder(prompt=...)`.
+#
+# `ground.onyx` is Onyx's `INDIVIDUAL_FACT_VALIDATOR_PROMPT`
+# (`src/prompts/answer_evaluation.py`) word for word, a template sent as one
+# user message, as Onyx sends it: `{answer}` is the passage and `{statement}`
+# the fact as a plain sentence (`render_sentence`). Its yes or no is read as
+# Onyx reads it, from the first line.
+_ONYX_SOURCE = (
+    "EnterpriseRAG-Bench's INDIVIDUAL_FACT_VALIDATOR_PROMPT, verbatim (Onyx, arXiv "
+    "2605.05253; MIT, © 2026 DanswerAI, Inc.)"
+)
+_register(
+    "ground.onyx",
+    1,
+    (
+        "You are an answer validator. Given an answer and a statement, determine if the answer "
+        "is consistent with and contains the information in the statement. The answer may "
+        "contain more details or richer information than the statement but as long as it does "
+        "not contradict the statement, this is valid. If there are negative statements such as "
+        '"The answer must not say...", it is valid if the answer mentions the statement with '
+        "caveats or qualifications. It is valid if additional context is shared for "
+        "completeness however hallucinations are not allowed. Output a simple yes or no for if "
+        "the answer is consistent with and contains the information in the statement.\n"
+        "\n"
+        "## Answer\n"
+        "```\n"
+        "{answer}\n"
+        "```\n"
+        "\n"
+        "## Statement\n"
+        "```\n"
+        "{statement}\n"
+        "```\n"
+        "\n"
+        "CRITICAL: output only a simple yes if the answer is consistent with the statement or a "
+        "no if the answer does not contain the information in the statement or contradicts the "
+        "statement."
+    ),
+    source=_ONYX_SOURCE,
+)
+
+# `ground.statement` keeps Onyx's meaning (extra detail is fine, a
+# contradiction is not) with `ground.span`'s three answers and JSON. The plan
+# drafted it as `ground.statement@0`; registered versions start at 1, as
+# `pair` and `fact_equiv` did. Its user message, a template, frames the
+# passage and the statement as Onyx's sections do.
+_STATEMENT_SOURCE = (
+    "openodke, after EnterpriseRAG-Bench's INDIVIDUAL_FACT_VALIDATOR_PROMPT (Onyx, arXiv "
+    "2605.05253, MIT), three-way"
+)
+_register(
+    "ground.statement",
+    1,
+    (
+        "You are a claim validator. You are given a passage from a source document and one "
+        "statement taken from a knowledge graph. Decide whether the passage contains the "
+        "information in the statement. Judge from the passage alone.\n"
+        "The passage may contain more detail than the statement; that is fine as long as it "
+        "does not contradict it.\n"
+        'Answer "supported" if the passage contains or clearly implies the statement, '
+        '"contradicted" if the passage states something incompatible with it, and "not_found" '
+        "if the passage does not settle it either way.\n"
+        'Reply with JSON only: {"verdict": "supported" | "contradicted" | "not_found"}'
+    ),
+    source=_STATEMENT_SOURCE,
+)
+_register(
+    "ground.statement.user",
+    1,
+    "## Passage\n```\n{passage}\n```\n\n## Statement\n```\n{statement}\n```",
+    source=_STATEMENT_SOURCE,
+)
+
 # The paper's grounder prompt, sent by `LLMGrounder(verdicts="binary")`: ODKE+
 # App. B word for word, with its worked example left out.
 _register(
