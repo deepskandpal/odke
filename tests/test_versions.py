@@ -371,6 +371,11 @@ def test_the_diff_says_which_stored_facts_the_old_ontology_checked(tmp_path: Pat
     assert "the same schema: nothing to validate again" in same.output
     empty = runner.invoke(app, ["ontology", "diff", str(old), str(new), "--store", str(tmp_path)])
     assert empty.exit_code == 2 and "holds no facts.jsonl" in empty.output
+    # A directory holds one tenant: another tenant's read of it is refused (#44).
+    other = runner.invoke(
+        app, ["ontology", "diff", str(old), str(new), "--store", store, "--tenant", "acme"]
+    )
+    assert other.exit_code == 2 and "holds tenant None" in other.output
 
 
 def test_the_diff_reads_a_neo4j_store_through_its_index(

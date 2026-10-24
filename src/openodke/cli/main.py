@@ -189,6 +189,12 @@ def ontology_diff(
         "--password-env",
         help="Neo4j: the environment variable holding the password. Never a flag or a file.",
     ),
+    tenant: str | None = typer.Option(
+        None,
+        "--tenant",
+        help="With --store: read this tenant's facts alone (DECISIONS #44). Left out, a Neo4j "
+        "store is read whole.",
+    ),
 ) -> None:
     """Added, removed and changed types, predicates, qualifiers and cardinality.
 
@@ -197,8 +203,9 @@ def ontology_diff(
 
     With --store, the next question too: which stored facts the old ontology
     checked, by the fingerprint each fact carries (`odke.ontology`), so the
-    facts a breaking change may no longer fit can be validated again. Exit 2
-    is a store that cannot be read.
+    facts a breaking change may no longer fit can be validated again. With
+    --tenant, that tenant's facts alone; a JSONL directory holds one tenant,
+    and one holding another is refused. Exit 2 is a store that cannot be read.
     """
     before, after = _load_or_exit(old), _load_or_exit(new)
     changes = before.diff(after)
@@ -211,7 +218,7 @@ def ontology_diff(
             text_property=None, database=database, user=user, password_env=password_env
         )
         try:
-            for line in _checked_lines(store, before, after, connection):
+            for line in _checked_lines(store, before, after, connection, tenant):
                 typer.echo(line)
         except (ValueError, ImportError, OSError) as exc:
             _fail(exc)
@@ -219,10 +226,13 @@ def ontology_diff(
         raise typer.Exit(1)
 
 
-def _checked_lines(store: str, old: Ontology, new: Ontology, connection: _Store) -> list[str]:
+def _checked_lines(
+    store: str, old: Ontology, new: Ontology, connection: _Store, tenant: str | None = None
+) -> list[str]:
     """Which facts in `store` each ontology last checked, as `odke ontology diff` prints it."""
     from openodke.corroborate import checked_by, checked_under
     from openodke.eval.spans import load_facts
+    from openodke.sinks.jsonl import JsonlSink
 
     first, second = old.fingerprint, new.fingerprint
     if "://" in store:
@@ -230,7 +240,8 @@ def _checked_lines(store: str, old: Ontology, new: Ontology, connection: _Store)
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            with Neo4jSink(driver=connection.driver(store), database=connection.database) as sink:
+            driver = connection.driver(store)
+            with Neo4jSink(driver=driver, database=connection.database, tenant=tenant) as sink:
                 stale = sink.checked_under(first)
                 current = len(sink.checked_under(second)) if second != first else len(stale)
         _echo_warnings(caught)
@@ -239,6 +250,9 @@ def _checked_lines(store: str, old: Ontology, new: Ontology, connection: _Store)
         directory = Path(store)
         if not (directory / "facts.jsonl").is_file():
             raise ValueError(f"{directory} holds no facts.jsonl: not a store odke wrote")
+        if tenant is not None:
+            # A directory holds one tenant: refused when it holds another (#44).
+            JsonlSink(directory, tenant=tenant)._own_tenant()
         facts = load_facts(directory)
         stale = checked_under(facts, first)
         current = len(checked_under(facts, second))
