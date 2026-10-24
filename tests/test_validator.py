@@ -140,11 +140,18 @@ def test_a_dry_run_calls_no_model_and_writes_nothing() -> None:
 
 
 def test_a_neo4j_sink_writes_through_its_driver() -> None:
-    driver = FakeDriver()
+    # A store never bootstrapped has no signature index to merge through: refused (#53).
+    sink = Neo4jSink(driver=FakeDriver(), ontology=PLACES)
+    validator = Validator(PLACES, client=RecordedClient(RECORDED), sinks=[sink])
+    with pytest.raises(ValueError, match=r"no index for \w+\.signature.*bootstrap: true"):
+        validator.validate(ROWS, [A, B])
+    assert sink._driver.writes == []
+
+    driver = FakeDriver.bootstrapped(*PLACES.predicates)
     sink = Neo4jSink(driver=driver, ontology=PLACES)
     validator = Validator(PLACES, client=RecordedClient(RECORDED), sinks=[sink])
-    # A store never bootstrapped has no signature index to merge through, and says so.
-    with pytest.warns(UserWarning, match=r"no index for \w+\.signature"):
+    # A predicate the ontology does not declare gets no index: not read, and said.
+    with pytest.warns(UserWarning, match=r"no index for opened_in\.signature"):
         kg, _ = validator.validate(ROWS, [A, B])
     assert driver.writes, "nothing was written"
     rows = [row for _, params in driver.writes for row in params["rows"]]

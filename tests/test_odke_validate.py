@@ -16,6 +16,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from openodke import Ontology
 from openodke.cli.main import app
 from openodke.sinks import neo4j as neo4j_module
 from test_neo4j_sink import FakeDriver
@@ -166,7 +167,9 @@ def _neo4j_sink() -> dict[str, Any]:
 def test_a_configs_neo4j_sink_writes_through_its_driver(
     here: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    driver = FakeDriver()
+    ontology = Ontology.from_json(here / "triples" / "ontology.json")
+    # Bootstrapped: the indexes the DDL makes, as `SHOW INDEXES` then lists them.
+    driver = FakeDriver.bootstrapped(*ontology.predicates)
     monkeypatch.setattr(neo4j_module, "_connect", lambda uri, auth: driver)
     monkeypatch.setenv("ODKE_SECRET", "not-a-real-password")
     config = yaml.safe_load((here / "triples" / "odke.yaml").read_text(encoding="utf-8"))
@@ -175,10 +178,11 @@ def test_a_configs_neo4j_sink_writes_through_its_driver(
     (here / "triples" / "neo4j.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
     result = _validate("--config", "triples/neo4j.yaml")
     assert result.exit_code == 0, result.output
-    # The constraints first, then the graph.
+    # The constraints first, then the store merge's read, then the graph.
     modes = [mode for mode, _, _ in driver.calls]
     first_write = modes.index("write")
-    assert modes[:first_write] and set(modes[:first_write]) == {"auto"}
+    assert modes[:first_write] and set(modes[:first_write]) == {"auto", "read"}
+    assert modes.index("read") > modes.index("auto")
     assert "bootstrap     applied" in result.output
     assert any("MERGE (n:`Company` {key: row.key})" in cypher for cypher, _ in driver.writes)
     assert driver.closed

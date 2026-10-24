@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import uuid
 import warnings
 from collections.abc import Mapping, Sequence
@@ -23,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from openodke import (
@@ -47,6 +49,7 @@ from openodke.corroborate import (
     partners,
 )
 from openodke.sinks import JsonlSink
+from openodke.sinks import neo4j as neo4j_module
 from openodke.sinks.neo4j import (
     SHOW_INDEXES,
     Neo4jConstrainer,
@@ -483,26 +486,69 @@ def test_neo4j_reads_a_batch_once_through_the_signature_indexes() -> None:
     assert [s.source for s in fact.supported_by] == ["doc:a", "doc:b"]
 
 
-def test_a_predicate_without_a_signature_index_is_not_read_and_says_so() -> None:
-    driver = Stored(indexed=("hq",))
-    sink = Neo4jSink(driver=driver)
+_ENTITY_KEY = {
+    "name": "odke_entity_key",
+    "type": "RANGE",
+    "entityType": "NODE",
+    "labelsOrTypes": ["Entity"],
+    "properties": ["key"],
+}
+
+
+def test_a_store_never_bootstrapped_is_refused_naming_the_bootstrap() -> None:
+    """Release audit S16, call G (DECISIONS #53): it warned and skipped the merge.
+
+    So every rerun replaced the stored support lists, with a warning the only
+    sign. Now the read a write merges through is refused, and says how to
+    bootstrap. Nothing is read, so nothing is written.
+    """
+    never = Stored(indexed=())
+    with pytest.raises(ValueError, match=r"no index for employer\.signature.*bootstrap: true"):
+        Neo4jSink(driver=never).stored([_employed("b")])
+    assert [mode for mode, _, _ in never.calls] == ["auto"]  # SHOW INDEXES, and nothing read
+
+    # Bootstrapped, but not for this ontology: a predicate it declares has no index.
+    other = Stored(indexed=("hq",))
+    other.answers["SHOW INDEXES"].append(_ENTITY_KEY)
+    with pytest.raises(ValueError, match=r"employer\.signature.*bootstrap\(ontology\)"):
+        Neo4jSink(driver=other, ontology=ONTOLOGY).stored([_employed("b")])
+    # A predicate no ontology declares gets no index from a bootstrap: not read, and said.
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        assert sink.stored([_employed("b")]) == {}
+        assert Neo4jSink(driver=other).stored([_employed("b")]) == {}
     assert [str(w.message).split(",")[0] for w in caught] == [
         "the store has no index for employer.signature"
     ]
-    assert [mode for mode, _, _ in driver.calls] == ["auto"]  # SHOW INDEXES, and nothing read
+
+
+def test_odke_validate_into_a_store_never_bootstrapped_writes_nothing_and_says_how(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = Stored(indexed=())
+    monkeypatch.setattr(neo4j_module, "_connect", lambda uri, auth: driver)
+    monkeypatch.setenv("S16_STORE_PASSWORD", "not-a-real-password")
+    examples = Path(__file__).parent.parent / "examples" / "triples"
+    shutil.copytree(examples, tmp_path / "triples", ignore=shutil.ignore_patterns("out"))
+    config = yaml.safe_load((tmp_path / "triples" / "odke.yaml").read_text(encoding="utf-8"))
+    config["stages"]["sink"] = {"use": "neo4j", "uri": "bolt://store.invalid:7687",
+                                "password_env": "S16_STORE_PASSWORD"}  # fmt: skip
+    (tmp_path / "triples" / "neo4j.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(app, ["validate", "--config", "triples/neo4j.yaml"])
+    assert result.exit_code == 2, result.output
+    assert "was not bootstrapped" in result.output and "bootstrap: true" in result.output
+    assert driver.writes == []
 
 
 def test_bootstrap_makes_the_sink_read_its_indexes_again() -> None:
     driver = Stored(indexed=())
     sink = Neo4jSink(driver=driver)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+    with pytest.raises(ValueError, match="not bootstrapped"):
         sink.stored([_employed("b")])
-    driver.answers["SHOW INDEXES"] = [_signature_index("employer")]
-    sink.stored([_employed("b")])
+    # The indexes are read once: a store bootstrapped behind the sink's back is not seen.
+    driver.answers["SHOW INDEXES"] = [_ENTITY_KEY, _signature_index("employer")]
+    with pytest.raises(ValueError, match="not bootstrapped"):
+        sink.stored([_employed("b")])
     assert sum(cypher == SHOW_INDEXES for _, cypher, _ in driver.calls) == 1
     sink.bootstrap(ONTOLOGY)
     sink.stored([_employed("b")])

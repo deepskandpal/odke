@@ -127,7 +127,7 @@ def test_a_stored_node_comes_back_under_its_tenants_key_and_never_as_an_attribut
 
 
 def test_a_sink_scoped_to_a_tenant_shares_its_connection_and_never_writes_for_two() -> None:
-    driver = FakeDriver()
+    driver = FakeDriver.bootstrapped("employer", "employs", "hq")
     store = Neo4jSink(driver=driver, database="graph", batch_size=7)
     acme = store.scoped("acme")
     assert (acme._driver, acme.database, acme.batch_size, acme.tenant) == (
@@ -246,7 +246,7 @@ def test_read_neo4j_reads_one_tenants_facts_under_its_keys() -> None:
 def test_the_validator_scopes_its_sinks_and_its_lookup_and_reports_each_sinks_writes(
     tmp_path: Path,
 ) -> None:
-    driver = FakeDriver()
+    driver = FakeDriver.bootstrapped("employer", "employs", "hq")
     store = JsonlSink(tmp_path / "out", merge=True)
     validator = Validator(
         grounder=PassThroughGrounder(),
@@ -303,7 +303,7 @@ def test_the_commands_take_a_tenant(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 def test_a_tenant_holds_through_a_streamed_job_and_its_write_report_is_the_runs() -> None:
     """Every micro-batch writes the tenant's keys, and the report counts all of them once."""
-    driver = FakeDriver()
+    driver = FakeDriver.bootstrapped("employer", "employs", "hq")
     rows = [
         {"doc": "a", "subject": "Ada Lovelace", "subject_type": "Person", "predicate": "employer",
          "object": "Acme", "object_type": "Company", "quote": "Ada Lovelace works at Acme."},
