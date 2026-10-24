@@ -23,11 +23,24 @@ them, and the variance is
 
     Var(y)/N + Var(y − f)·(1/n − 1/N)
 
-which is the paper's Var(f)/N + Var(y − f)/n with that overlap taken out. It
-is exact when every fact is labelled: the corrected number is then the labels'
-mean, with the labels' variance. Both variances are read off the labelled
-sample. **Labels only** is the classical interval on the same labels,
-ȳ ± z·s/√n, and **judge only** is the judge's share with no interval at all.
+which is the paper's Var(f)/N + Var(y − f)/n with that overlap taken out. Both
+variances are read off the labelled sample with **plus-two counts**, so a
+sample whose labels all agree still leaves doubt. Var(y) is p̃(1 − p̃) with
+p̃ = (Σy + 2)/(n + 4). y − f is −1, 0 or 1, so its variance is at most the
+share of facts where the judge and the label disagree, and that share is read
+the same way, (D + 2)/(n + 4) for D disagreements. Measured as they stand,
+a precise pipeline's labels mostly all agree, both variances are zero, and the
+range shrinks to a point: at 99% precision with a judge wrong 1% of the time,
+the "95%" range held the truth 71% of the time on 100 labels (release audit
+6). With plus-two counts it holds 97% to 100% of the time across the settings
+`tests/rules/test_r6_intervals.py` and `tests/test_eval_ppi.py` simulate, and
+is about twice as wide at 99%. When every fact is labelled the corrected
+number is the labels' mean, with the labels' interval.
+
+**Labels only** is the Wilson interval on the same labels
+(`openodke.eval.stats.wilson`), and **judge only** is the judge's share with no
+interval at all. A range is clipped to [0, 1] around its clipped centre, so a
+correction that overshoots still has width.
 
 Facts are treated as independent here, where the report's ranges resample
 documents (`openodke.eval.bootstrap`). The sample is drawn fact by fact, so
@@ -57,7 +70,7 @@ import random
 from collections import Counter
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from statistics import NormalDist, variance
+from statistics import NormalDist
 
 from openodke.eval.bootstrap import LEVEL, SEED
 from openodke.eval.eval_report import (
@@ -72,6 +85,7 @@ from openodke.eval.formats import GroundingLabel
 from openodke.eval.grounding import evaluate_grounding
 from openodke.eval.report import StageReport
 from openodke.eval.sheets import Made, make_sheets
+from openodke.eval.stats import wilson
 from openodke.ontology import Ontology
 from openodke.types import Document, Fact, GroundingVerdict
 
@@ -119,9 +133,10 @@ def prediction_powered(
 
     `judged` holds the judge's verdict on every fact, true for supported.
     `labelled` holds `(judge, label)` for each fact a person labelled, drawn at
-    random from the judged ones. The corrected and label shares carry their
-    normal intervals at `level`, clipped to [0, 1], and so does the corrected
-    number itself; with one label there is no variance and no interval, and
+    random from the judged ones. The corrected share carries PPI's normal
+    interval at `level`, its variances read with plus-two counts, and the
+    labels' share its Wilson interval; both are clipped to [0, 1], and so is
+    the corrected number itself. With one label there is no interval, and
     with none, no number.
     """
     if not 0 < level < 1:
@@ -134,30 +149,36 @@ def prediction_powered(
     judge = sum(map(bool, judged)) / big if big else None
     if judge is None or not small:
         return Estimate(value=judge), Estimate(value=None), Estimate(value=None)
-    truth = [float(y) for _, y in labelled]
-    gap = [float(y) - float(f) for f, y in labelled]
-    mean_truth, mean_gap = sum(truth) / small, sum(gap) / small
-    corrected = judge + mean_gap
+    right = sum(1 for _, y in labelled if y)
+    disagree = sum(1 for f, y in labelled if bool(f) != bool(y))
+    mean_truth = right / small
+    corrected = judge + (right - sum(1 for f, _ in labelled if f)) / small
     if small < 2:
         return Estimate(value=judge), _clipped(corrected, None), _clipped(mean_truth, None)
+    found = wilson(right, small, level)
+    assert found is not None
+    alone = Estimate(value=mean_truth, low=found[0], high=found[1])
+    if small == big:
+        # Every fact labelled: the labels are the whole set, and their own interval is the one.
+        return Estimate(value=judge), alone, alone
     z = NormalDist().inv_cdf((1 + level) / 2)
-    spread_truth, spread_gap = variance(truth), variance(gap)
+    # Plus-two counts: labels that all agree, or a judge that agrees with every one, still
+    # leave doubt (release audit 6). Var(y − f) is at most the share that disagrees.
+    share = (right + 2) / (small + 4)
+    spread_truth, spread_gap = share * (1 - share), (disagree + 2) / (small + 4)
     ppi = spread_truth / big + spread_gap * (1 / small - 1 / big)
-    classical = spread_truth / small
-    return (
-        Estimate(value=judge),
-        _clipped(corrected, z * math.sqrt(max(ppi, 0.0))),
-        _clipped(mean_truth, z * math.sqrt(classical)),
-    )
+    return Estimate(value=judge), _clipped(corrected, z * math.sqrt(ppi)), alone
 
 
 def _clipped(value: float, half: float | None) -> Estimate:
     def clip(x: float) -> float:
         return min(1.0, max(0.0, x))
 
+    centre = clip(value)
     if half is None:
-        return Estimate(value=clip(value))
-    return Estimate(value=clip(value), low=clip(value - half), high=clip(value + half))
+        return Estimate(value=centre)
+    # Around the clipped centre, so a correction past 0 or 1 still has width.
+    return Estimate(value=centre, low=clip(centre - half), high=clip(centre + half))
 
 
 def judged_precision(
@@ -212,8 +233,8 @@ def judged_precision(
         notes.append(f"{repeats} label(s) repeat a fact already labelled and were left out")
     if pairs and all(f == y for f, y in pairs):
         notes.append(
-            "the judge agreed with every label, so the correction is zero and the "
-            "interval is only the labels' own spread over the judged facts"
+            "the judge agreed with every label, so the correction is zero; the interval "
+            "still allows for the disagreements a sample this size can miss (plus-two counts)"
         )
     coverage = None
     if documents is not None:

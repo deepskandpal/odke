@@ -27,8 +27,8 @@ On the example below, 1,000 judged facts with 120 labelled:
 ```text
 precision without gold  (1000 facts judged, 120 labels)
   judge only   0.850                 the judge's verdicts, uncorrected
-  corrected    0.783 [0.717, 0.850]  prediction-powered (PPI), 95%
-  labels only  0.750 [0.672, 0.828]  the labels alone, 95%
+  corrected    0.783 [0.714, 0.853]  prediction-powered (PPI), 95%
+  labels only  0.750 [0.666, 0.819]  the labels alone, 95%
   the judge on the sample: 12 false support, 4 lost support
 ```
 
@@ -37,8 +37,11 @@ precision without gold  (1000 facts judged, 120 labels)
 - **Corrected** is `(1/N) Σ fᵢ + (1/n) Σ (yⱼ − fⱼ)` over N judged and n labelled
   facts, with PPI's closed-form normal interval, variance
   `Var(y)/N + Var(y − f)·(1/n − 1/N)` (the labelled facts are among the judged
-  ones), clipped to [0, 1].
-- **Labels only** is `ȳ ± 1.96·s/√n` on the same labels.
+  ones), clipped to [0, 1]. Both variances use **plus-two counts**: `Var(y)` is
+  `p̃(1 − p̃)` with `p̃ = (Σy + 2)/(n + 4)`, and `Var(y − f)` is bounded by the
+  disagreements, `(D + 2)/(n + 4)`. Labels that all agree still leave a range,
+  so a precise pipeline is not printed as `0.980 [0.980, 0.980]`.
+- **Labels only** is the Wilson interval on the same labels.
 - **Under 100 labels** the corrected number is an *uncalibrated estimate*
   (`calibrated` false).
 - **The judge on the sample** is `odke eval ground` over the labels.
@@ -67,10 +70,10 @@ judge, corrected, labels = prediction_powered(judged, labelled)
 assert judge.value == 0.85
 assert (round(corrected.value, 3), round(corrected.low, 3), round(corrected.high, 3)) == (
     0.783,
-    0.717,
-    0.85,
+    0.714,
+    0.853,
 )
-assert (round(labels.low, 3), round(labels.high, 3)) == (0.672, 0.828)
+assert (round(labels.low, 3), round(labels.high, 3)) == (0.666, 0.819)
 ```
 
 In Python, `judged_precision(facts, labels, documents=...)` returns the
