@@ -40,6 +40,17 @@ def _version(value: bool) -> None:
         raise typer.Exit()
 
 
+def _fail(exc: BaseException, code: int = 2) -> NoReturn:
+    """`error: ...` on stderr, then exit `code`: 2 for input that cannot be read (the default),
+    1 for a provider or a run that failed, 3 for a budget stop.
+
+    One `error:` line per problem: a sheet or a config can have several, each on its line.
+    """
+    for line in str(exc).splitlines() or [""]:
+        typer.echo(f"error: {line}", err=True)
+    raise typer.Exit(code) from exc
+
+
 def _load(path: Path) -> Ontology:
     # Never strict: these commands exist to show what is wrong with a schema,
     # and refusing to load it would hide exactly that.
@@ -52,8 +63,7 @@ def _load_or_exit(path: Path) -> Ontology:
     try:
         return _load(path)
     except (OntologyLoadError, ImportError) as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(1) from None
+        _fail(exc, 1)
 
 
 def _load_run_config(path: Path) -> RunConfig:
@@ -93,8 +103,7 @@ def _qualified(model: str | None, provider: str | None) -> str | None:
     try:
         return qualify(model, provider)
     except ValueError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(2) from None
+        _fail(exc, 2)
 
 
 @app.callback()
@@ -205,7 +214,7 @@ def ontology_diff(
             for line in _checked_lines(store, before, after, connection):
                 typer.echo(line)
         except (ValueError, ImportError, OSError) as exc:
-            _data_error(exc)
+            _fail(exc)
     if breaking and fail_on_breaking:
         raise typer.Exit(1)
 
@@ -418,15 +427,12 @@ def run_command(
         loaded = loaded.with_tenant(tenant)
         result = execute(loaded, dry_run=dry_run, replaying=replaying)
     except (ConfigError, ImportError) as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(2) from exc
+        _fail(exc, 2)
     except BudgetExceeded as exc:
         # Raised by a stage outside the pipeline's reach, so nothing was kept.
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(EXIT_BUDGET) from exc
+        _fail(exc, EXIT_BUDGET)
     except (ProviderError, OSError) as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+        _fail(exc, 1)
     for warning in result.warnings:
         typer.echo(f"warning: {warning}", err=True)
     typer.echo(result.render())
@@ -750,10 +756,9 @@ def ground_command(
             rows, docs, driver = _read_facts(adapter, facts, texts, store)
             rows = list(rows)
     except (ValueError, ConfigError, OntologyLoadError, ImportError, OSError) as exc:
-        _data_error(exc)
+        _fail(exc)
     except ProviderError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+        _fail(exc, 1)
     _echo_warnings(caught)
     try:
         with warnings.catch_warnings(record=True) as caught:
@@ -778,8 +783,7 @@ def ground_command(
         paths.append(manifest.write(out / FILE))
         observer.end(begun, {"facts": len(grounded.facts)})
     except (ProviderError, OSError) as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+        _fail(exc, 1)
     finally:
         if driver is not None:
             driver.close()
@@ -1068,11 +1072,10 @@ def validate_command(
             configured.store = stores_of(sinks)
     except (ValueError, ConfigError, OntologyLoadError, ImportError, OSError) as exc:
         _close(driver, [*lookups, *sinks])
-        _data_error(exc)
+        _fail(exc)
     except ProviderError as exc:
         _close(driver, [*lookups, *sinks])
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+        _fail(exc, 1)
     _echo_warnings(caught)
     try:
         with warnings.catch_warnings(record=True) as caught:
@@ -1089,10 +1092,9 @@ def validate_command(
             )
     except ValueError as exc:
         # A streamed job reads its rows as it goes, so a bad one is met here.
-        _data_error(exc)
+        _fail(exc)
     except (ProviderError, OSError) as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+        _fail(exc, 1)
     finally:
         _close(driver, [*lookups, *sinks])
     _echo_warnings(caught)
@@ -1233,7 +1235,7 @@ def reconcile_command(
             report = Reconciler([store], hard_delete=hard_delete).delete(delete)
     except (ValueError, OntologyLoadError, ImportError, OSError) as exc:
         _close(None, [store])
-        _data_error(exc)
+        _fail(exc)
     _close(None, [store])
     _echo_warnings(caught)
     typer.echo(report.render())
@@ -1292,8 +1294,7 @@ def ontology_infer(
         loader = DirectoryLoader()
         docs = [doc for path in paths for doc in loader.load(path)]
     except (OSError, ValueError, ImportError) as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(2) from None
+        _fail(exc, 2)
     if not docs:
         # From the loader's own table, so the hint cannot fall behind what it reads.
         suffixes = ", ".join(loader.loaders)
@@ -1317,8 +1318,7 @@ def ontology_infer(
         typer.echo(f"error: {exc}\n--no-llm runs the deterministic proposers alone.", err=True)
         raise typer.Exit(1) from None
     except ValueError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(2) from None
+        _fail(exc, 2)
 
     evidence = evidence_path(out)
     try:
@@ -1329,8 +1329,7 @@ def ontology_infer(
             notes=notes(inference),
         )
     except ImportError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(2) from None
+        _fail(exc, 2)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
     evidence.write_text(
@@ -1369,14 +1368,12 @@ def ontology_freeze(
         typer.echo(f"not frozen: {_count(len(exc.diagnostics), 'error')}")
         raise typer.Exit(1) from None
     except ValueError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(2) from None
+        _fail(exc, 2)
     target = out if out is not None else path
     try:
         text = render(frozen, fmt=format_for(target), header=frozen_header(frozen))
     except (ValueError, ImportError) as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(2) from None
+        _fail(exc, 2)
     target.write_text(text, encoding="utf-8")
     when = frozen.frozen_at.isoformat() if frozen.frozen_at else "now"
     typer.echo(f"frozen: {target} (by {frozen.frozen_by} at {when})")
@@ -1872,11 +1869,9 @@ def eval_stage(
         if report_to is not None:
             report.write(report_to)
     except (ValueError, OSError, ImportError) as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(2) from exc
+        _fail(exc, 2)
     except (ProviderError, PipelineError) as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+        _fail(exc, 1)
     if as_json:
         # The 0.x stages print their own report, as they did; the newer ones have no 0.x form.
         shown = (
@@ -2195,13 +2190,6 @@ label_app = typer.Typer(
 app.add_typer(label_app, name="label")
 
 
-def _data_error(exc: Exception) -> NoReturn:
-    # One `error:` line per problem: a sheet can have several, each with its line.
-    for line in str(exc).splitlines():
-        typer.echo(f"error: {line}", err=True)
-    raise typer.Exit(2) from exc
-
-
 @label_app.command("make")
 def label_make(
     kind: str = typer.Argument(..., help="grounding, pair or fact."),
@@ -2228,7 +2216,7 @@ def label_make(
     try:
         made = make_sheets(kind, items, out, per_sheet=per_sheet)
     except (ValueError, OSError) as exc:
-        _data_error(exc)
+        _fail(exc)
     for warning in made.warnings:
         typer.echo(f"warning: {warning}", err=True)
     typer.echo(f"wrote {_count(len(made.sheets), 'sheet')} to {out}: {made.first} to {made.last}")
@@ -2253,7 +2241,7 @@ def label_read(
         reading = read_sheets(path)
         written = reading.write(out)
     except (ValueError, OSError) as exc:
-        _data_error(exc)
+        _fail(exc)
     typer.echo(reading.summary())
     for target, n in written:
         typer.echo(f"wrote {target}: {_count(n, 'row')}")
@@ -2345,10 +2333,9 @@ def calibrate_command(
             claim_format=claim_format,
         )
     except (ValueError, ConfigError, LookupError, ImportError, OSError) as exc:
-        _data_error(exc)
+        _fail(exc)
     except ProviderError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+        _fail(exc, 1)
     every = [*rows, *fakes]
     try:
         judged = ground_labelled(
@@ -2358,8 +2345,7 @@ def calibrate_command(
         typer.echo(f"error: the budget stopped the run: {exc}", err=True)
         raise typer.Exit(EXIT_BUDGET) from exc
     except ProviderError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+        _fail(exc, 1)
     facts = [f for f in judged.facts if not f.planted]
     cost = judged.cost_usd
     per_1000 = cost / (len(every) * runs) * 1000 if cost is not None and not judged.cached else None
@@ -2384,7 +2370,7 @@ def calibrate_command(
         card = grounding_card(facts, made, planted=[f for f in judged.facts if f.planted])
         written = card.write(out)
     except (ValueError, OSError) as exc:
-        _data_error(exc)
+        _fail(exc)
     typer.echo(card.render())
     typer.echo("")
     typer.echo(f"wrote {written}")
@@ -2434,8 +2420,7 @@ def bench_fetch(
         else:
             module.fetch(dest, splits=tuple(split or ("dev", "test")))
     except (ValueError, OSError) as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(2) from exc
+        _fail(exc, 2)
     typer.echo(f"fetched {dataset} into {dest}")
 
 
@@ -2503,8 +2488,7 @@ def bench_prepare(
         else:
             module.prepare(root, out, split=split, limit=limit, **models)
     except (ValueError, OSError) as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(2) from exc
+        _fail(exc, 2)
     typer.echo(f"prepared {out}; run it with: odke bench run {dataset} {out}")
 
 
@@ -2532,11 +2516,9 @@ def bench_run(
         report = module.evaluate(prepared)
         report.write(target)
     except (ValueError, OSError, ImportError) as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(2) from exc
+        _fail(exc, 2)
     except ProviderError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+        _fail(exc, 1)
     if as_json:
         typer.echo(report.stages[0].model_dump_json(indent=2))
         return
