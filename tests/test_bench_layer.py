@@ -246,3 +246,23 @@ def test_the_budget_stops_the_job_and_the_table_refuses_what_it_left(tmp_path: P
     assert client.calls == 1
     with pytest.raises(SystemExit, match="stopped by the budget"):
         layer.table(out, cache, resamples=10)
+
+
+def test_the_layer_measures_the_validators_defaults_where_a_set_names_pass_throughs(
+    tmp_path: Path,
+) -> None:
+    """A prepared set names its normaliser and resolver `passthrough` (release audit 16).
+
+    That keeps `odke bench run` and the harness on one pipeline; the layer
+    measures the Validator's own resolver, and its value normaliser when asked,
+    as it did when sets left the two out.
+    """
+    folder = _prepared(tmp_path)
+    saved = json.loads((folder / "odke.json").read_text())
+    named = {**saved["stages"], "normalizer": "passthrough", "resolver": "passthrough"}
+    _write(folder / "odke.json", {**saved, "stages": named})
+    triples = tmp_path / "triples.jsonl"
+    plain = layer.run_config(folder, triples, "lgt")["stages"]
+    assert plain["normalizer"] == "passthrough" and "resolver" not in plain
+    kept = layer.run_config(folder, triples, "lgt", value_normalizer=True)["stages"]
+    assert "normalizer" not in kept and "resolver" not in kept

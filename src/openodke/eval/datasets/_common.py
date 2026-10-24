@@ -147,12 +147,16 @@ def run_config(
 
     No chunker, so each document reaches the extractor whole — the paper's unit
     is a page — and no value normalizer, so values stay in the words the gold
-    uses. `paper=True` is ODKE+'s own grounder and gate: the whole context,
-    True or False, and only affirmed facts kept. `relations` is the ontology's
-    size: the extractor is shown every relation a type can take, as a
-    competitor given the same schema is, not the default 25-predicate snippet.
-    `max_tokens` is the extractor's output room: 16,000 leaves a reasoning
-    model space to think; lower it for a model with a smaller output cap.
+    uses. The normalizer and the resolver are named `passthrough`, not left
+    out: `odke bench run` reads a stage left out as a pass-through, and the
+    Validator (`odke eval pipeline --bench --validator`) as its own default, so
+    one set scored two ways (release audit 16). `paper=True` is ODKE+'s own
+    grounder and gate: the whole context, True or False, and only affirmed
+    facts kept. `relations` is the ontology's size: the extractor is shown
+    every relation a type can take, as a competitor given the same schema is,
+    not the default 25-predicate snippet. `max_tokens` is the extractor's
+    output room: 16,000 leaves a reasoning model space to think; lower it for a
+    model with a smaller output cap.
     """
     grounder: dict[str, Any] = {"use": "llm"}
     gate: dict[str, Any] = {"use": "verdict"}
@@ -171,6 +175,10 @@ def run_config(
             # and "13 March 1963" rewritten to "1963-03-13" scores as wrong. The
             # corroborator still merges, scores and gates. (The paper's corroborator
             # does normalise; on these datasets that would only measure the scorer.)
+            # Named, not left out, so every command that runs the set runs the same
+            # stages: the Validator fills a stage left out with its own default.
+            "normalizer": "passthrough",
+            "resolver": "passthrough",
             "corroborator": "signature",
             "scorer": "evidence",
             "gate": gate,
