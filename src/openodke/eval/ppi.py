@@ -96,6 +96,8 @@ SAMPLE = 150
 MINIMUM_LABELS = 100
 SAMPLE_FILE = "sample.jsonl"
 TITLE = "precision"
+# The qualifiers openodke stamps on a fact: left off the blind copy a sheet is made from.
+STAMPS = "odke."
 
 RECALL = "recall is not claimed: with no gold, nothing says what was missed"
 
@@ -400,7 +402,8 @@ def write_sample(
     Every judged fact must cite one of `documents`, since any of them may be
     drawn and a sheet shows the text a fact cites. The drawn facts go out with
     their verdict reset to unchecked and their confidence to zero, so nothing
-    on a sheet or beside it shows what the judge said. `out/sample.jsonl`
+    on a sheet or beside it shows what the judge said, and without the `odke.*`
+    qualifiers the pipeline stamped on them. `out/sample.jsonl`
     holds the rows the sheets were made from. A directory that already holds a
     sample or sheets is refused: those may be hours of ticks.
     """
@@ -432,7 +435,16 @@ def write_sample(
     drawn = sample(facts, n, seed=seed, by=predicate if by_predicate else None)
     rows = []
     for fact in drawn:
-        blind = fact.model_copy(update={"verdict": GroundingVerdict.UNCHECKED, "confidence": 0.0})
+        # The judge's own stamps go too: `odke.score`'s weight maps one to one to its
+        # verdict, and `odke.check` says a free check refused it (release audit S19).
+        unstamped = {k: v for k, v in fact.qualifiers.items() if not k.startswith(STAMPS)}
+        blind = fact.model_copy(
+            update={
+                "verdict": GroundingVerdict.UNCHECKED,
+                "confidence": 0.0,
+                "qualifiers": unstamped,
+            }
+        )
         doc = homes[id(fact)]
         rows.append({"text": doc.text, "fact": blind.model_dump(mode="json"), "doc_id": doc.id})
     target.mkdir(parents=True, exist_ok=True)

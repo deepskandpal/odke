@@ -435,6 +435,11 @@ def test_by_predicate_each_predicate_gets_its_share() -> None:
 
 def test_the_sample_goes_out_blind_and_comes_back_as_labels(tmp_path: Path) -> None:
     facts = [_fact(i, "supported" if i % 4 else "not_found") for i in range(12)]
+    # The judge's score stamp maps one to one to its verdict (release audit S19).
+    facts = [
+        f.model_copy(update={"qualifiers": {"odke.score": {"verdict": 0.05}, "unit": "year"}})
+        for f in facts
+    ]
     doc = Document(id="d1", text=TEXT)
     drawn, made = write_sample(facts, [doc], tmp_path / "sheets", n=5, seed=1)
     assert len(drawn) == 5 and made.items == 5
@@ -442,6 +447,9 @@ def test_the_sample_goes_out_blind_and_comes_back_as_labels(tmp_path: Path) -> N
     assert [r["fact"]["id"] for r in rows] == [f.id for f in drawn]
     # Nothing beside the sheet says what the judge said.
     assert {r["fact"]["verdict"] for r in rows} == {"unchecked"}
+    assert all(r["fact"]["qualifiers"] == {"unit": "year"} for r in rows)
+    sidecar = (tmp_path / "sheets" / "sheet-01.items.jsonl").read_text()
+    assert "odke.score" not in sidecar and "odke.score" not in made.sheets[0].read_text()
     assert {r["doc_id"] for r in rows} == {"d1"} and rows[0]["text"] == TEXT
     sheet = made.sheets[0]
     sheet.write_text(sheet.read_text().replace("- [ ] supported", "- [x] supported"))
