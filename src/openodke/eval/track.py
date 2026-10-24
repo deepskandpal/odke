@@ -246,21 +246,48 @@ def summary(lines: Sequence[Line], path: str | Path) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
+# Where a run writes, and the response cache it reads: neither changes what it scores.
+UNSCORED = ("stages.sink", "manifest", "models.cache")
+
+
+def _under(key: str, prefixes: Iterable[str]) -> bool:
+    return any(key == p or key.startswith(f"{p}.") for p in prefixes)
+
+
 def _from_configs(a: RunLine, b: RunLine | None) -> tuple[dict[str, str], list[str]]:
-    """The fix A predicted whose knobs alone the configs differ at, if exactly one."""
+    """The fix A predicted whose knobs alone the configs differ at, if exactly one.
+
+    The sinks, the manifest and the cache are left out of the diff: two runs
+    writing to different folders differ there and nowhere that is scored. Any
+    other change beyond the fix's knobs leaves it unattributed (DECISIONS #38):
+    a recall that moved with two things changed is not one fix's measurement.
+    """
     if b is None or a.config is None or b.config is None:
         return {}, ["track record: no config for both runs to diff; name the fix with --applied"]
     before, after = _flat(a.config), _flat(b.config)
-    changed = sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
+    changed = sorted(
+        k
+        for k in before.keys() | after.keys()
+        if before.get(k) != after.get(k) and not _under(k, UNSCORED)
+    )
     touched: dict[str, list[str]] = {}
     for prediction in a.predictions:
         knobs = REMEDIES[prediction.fix].knobs if prediction.fix in REMEDIES else ()
-        hits = [k for k in changed if any(k == n or k.startswith(f"{n}.") for n in knobs)]
+        hits = [k for k in changed if _under(k, knobs)]
         if hits:
             touched[prediction.fix] = hits
     if len(touched) > 1:
         names = ", ".join(sorted(touched))
         return {}, [f"track record: the config change touches {names}; name one with --applied"]
+    for fix, hits in touched.items():
+        if others := [k for k in changed if k not in hits]:
+            shown = ", ".join(others[:3]) + (
+                f", and {len(others) - 3} more" if len(others) > 3 else ""
+            )
+            return {}, [
+                f"track record: the configs differ beyond {fix}'s knobs, at {shown}; name the "
+                "fix with --applied if it alone moved the recall"
+            ]
     return {
         fix: "config: "
         + "; ".join(f"{k} {before.get(k, '(unset)')} → {after.get(k, '(unset)')}" for k in keys)
