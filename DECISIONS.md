@@ -1133,6 +1133,18 @@ fact whose entity was never extracted counts as cross-sentence. Gains overlap,
 so they never add. And the inverse replay matches a partner on the triple,
 which is what Re-DocRED scores but not every detail a labelled `Fact` carries.
 
+**Amended 24 Oct 2026 (release audit 11):** a prediction that is a hit is a
+true fact, not a confusion, so "wrong relation" counts only predictions that
+are not hits. A pair often holds two true relations: on the published
+Re-DocRED run, 141 of the 156 "wrong relation" misses had only a hit linking
+their pair. Those misses now fall through the buckets, and one that reaches the
+third tier goes to an eleventh bucket, **pair linked by another true relation**,
+ahead of "entity never extracted" and "both seen but not linked", which would
+be false for it (47 on that run). Its fix is `every-relation` (ask for every
+relation a pair holds), priced at the run's recall. On that run's
+extraction-alone row: wrong relation 156 → 15, the new bucket 47, output
+saturation 350 → 410, cross-sentence 762 → 794, scored apart 8 → 10.
+
 ### 39. The fact-equivalence judge reads only the pre-filter's pairs, in both orders, and its score sits beside the strict one
 
 A scorer compares strings after a normaliser. "Gabby Logan" for "Gabrielle

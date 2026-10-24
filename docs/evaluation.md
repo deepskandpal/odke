@@ -57,13 +57,13 @@ lists every mismatch, and each report is checked when written and read.
 |---|---|
 | Key | What it holds |
 |---|---|
-| `schema_version` | `"1.3"` |
+| `schema_version` | `"1.4"` |
 | `title`, `n`, `run` | what was scored and how many rows; the version, models, prompts, each grounder prompt's claim format (`claim_formats`, 1.3) and dataset |
 | `bootstrap` | how the ranges were drawn |
 | `rows[]` | one per configuration scored against gold: `performance` (`precision`, `recall`, `f1`, each `{value, low, high}`, `micro` or `macro`), `counts` (`hits`, `over_extraction`, `under_extraction`, `uncited`, …), `conformance`, `hallucination`, `cost`, `latency` |
 | `stages[]`, `notes[]` | the `StageReport`s; what a number cannot say |
 | `comparison` | [`compare`](#was-the-change-real)'s result |
-| `diagnosis[]`, `fixes[]` | [where it loses facts](#where-does-it-lose-facts) and [what should change](#what-should-change) |
+| `diagnosis[]`, `fixes[]` | [where it loses facts](#where-does-it-lose-facts) and [what should change](#what-should-change); the `linked_other` bucket is 1.4 |
 | `calibration` | each model judge the run called, with its [calibration card](calibration.md)'s line or UNCALIBRATED (1.3) |
 | `judged_precision`, `pooled_recall` | [precision](labels.md#precision-the-judge-corrected) and [recall](labels.md#recall-a-pool-of-pipelines) without gold, when asked for |
 | `adjudication`, `lenient` | the [adjudicated](#is-the-gold-complete) and [lenient](#surface-forms-the-lenient-score) scores, when asked for |
@@ -106,14 +106,15 @@ the first bucket its evidence fits ([DECISIONS #38](decisions.md#38)), with
 |---|---|---|---|
 | 1 | relation never offered | the extractor was not shown the relation for the subject's type | `--trace` |
 | 2 | refused by the Validator | the gate refused a matching prediction | `--validator` |
-| 3 | wrong relation | a prediction links the pair with another relation | predictions |
+| 3 | wrong relation | a prediction links the pair with another relation, and is not itself a hit | predictions |
 | 4 | inverse direction | a prediction links the pair the other way round | predictions, ontology |
 | 5 | surface form | a prediction with the relation and one end is the gold fact in other words | predictions, `--lenient` |
 | 6 | same triple, scored apart | a type, polarity or qualifier differs, or it paired with another gold fact | predictions |
 | 7 | cross-sentence | nothing came near, and the evidence spans sentences | the dataset, else the text |
 | 8 | output saturation | nothing came near, output is flat against length, and the document is long | the texts |
-| 9 | entity never extracted | an end is in no prediction for the document | predictions |
-| 10 | both seen but not linked | both ends are, never in one prediction | predictions |
+| 9 | pair linked by another true relation | a prediction that is a hit links the pair with another relation | predictions |
+| 10 | entity never extracted | an end is in no prediction for the document | predictions |
+| 11 | both seen but not linked | both ends are, never in one prediction | predictions |
 
 - **`--trace`** is the run's `manifest.json`, or the run config that made the
   predictions (its extractor's snippets are read, with no call).
@@ -169,6 +170,7 @@ Each bucket maps to a fix and its knob, ranked by expected recall gain
 | `check-details` | scored apart | the ontology's types and qualifiers | misses × the row's recall / gold |
 | `wider-context` | cross-sentence | `stages.chunker` | misses × same-sentence recall / gold |
 | `smaller-chunks` | output saturation | `stages.chunker`, `models.extract.max_tokens` | misses × the short documents' recall / gold |
+| `every-relation` | pair linked by another true relation | the extraction prompt; each predicate's `description` | misses × the row's recall / gold |
 | `reextract` | entity never extracted, not linked | `reextract:` | misses × the row's recall / gold |
 
 `expected` is exact where the fix replays, else assumes the bucket is found as
