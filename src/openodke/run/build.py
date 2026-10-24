@@ -925,6 +925,7 @@ class _Neo4jAdminCsvPlan(_WriterPlan):
 class _RdfPlan(_WriterPlan):
     name = "rdf"
     streams = False
+    tenanted = True
     needs = RDFLIB
     what = "RdfSink"
 

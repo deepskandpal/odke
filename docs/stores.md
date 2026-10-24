@@ -202,7 +202,8 @@ Two tenants who state the same claim own two facts in one store
 ([DECISIONS #44](decisions.md#44)). Give the tenant once:
 `Validator(..., tenant="acme")`, `tenant: acme` in a run config, or `--tenant
 acme` on `odke run`, `validate` and `reconcile`; every sink and lookup with
-`scoped(tenant)` is scoped.
+`scoped(tenant)` is scoped: Neo4j, the Cypher file, neo4j-admin CSV, RDF and
+JSONL.
 
 Its keys are `acme/<key>`, its signatures are hashed with `acme`, and its nodes
 and relationships carry `tenant: "acme"` (an attribute or qualifier named
@@ -433,13 +434,14 @@ assert (out / "import" / "import.args").is_file()
 
 ## RDF
 
-`RdfSink(path, *, format=None, base="https://example.org/odke/", schema=None, ontology=None)`
+`RdfSink(path, *, format=None, base="https://example.org/odke/", schema=None, ontology=None, tenant=None)`
 writes each fact as a reified `rdf:Statement` with its provenance, evidence
 (`odke:evidence`) and sources (`odke:supported_by`), in `odke:`
 (`https://openodke.dev/vocab#`). The plain triple `<s> <predicate> <o>`
 follows the [projection](#projection-and-reruns) rule. An ontology adds the
 schema as OWL and types values by range. The suffix picks the format: `.ttl`,
-`.nt`, `.jsonld` or `.json`.
+`.nt`, `.jsonld` or `.json`. A `tenant` goes into every entity and fact IRI, and
+`odke:tenant` names it.
 
 ```python
 from openodke.sinks.rdf import RdfSink
