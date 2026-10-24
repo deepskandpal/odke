@@ -107,6 +107,18 @@ def test_a_gain_is_better() -> None:
     assert paired_bootstrap(a, b).verdict == "better"
 
 
+def test_a_fractional_item_score_is_kept_whole() -> None:
+    """Release audit S21: a score of 0.4 was truncated to 0, so +0.1 on each item read as +0.25."""
+    a = [0.4, 0.6, 0.7, 0.9] * 10
+    b = [round(x + 0.1, 10) for x in a]
+    result = paired_bootstrap(a, b)
+    assert (result.a, result.b) == (pytest.approx(0.65), pytest.approx(0.75))
+    assert result.difference == pytest.approx(0.1)
+    assert result.interval[0] == pytest.approx(0.1) and result.verdict == "better"
+    low, high = bootstrap_interval(a) or (0.0, 0.0)
+    assert low < 0.65 < high and low > 0.5
+
+
 def test_the_same_seed_gives_the_same_interval() -> None:
     a, b = _pass_fail(both=240, gained=12, lost=18, neither=30)
     assert paired_bootstrap(a, b, seed=7) == paired_bootstrap(a, b, seed=7)

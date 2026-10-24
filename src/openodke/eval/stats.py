@@ -332,7 +332,8 @@ def _z(alpha: float, power: float) -> float:
 
 
 def _vectors(items: Sequence[Item]) -> list[Totals]:
-    return [tuple(item) if isinstance(item, tuple) else (int(item),) for item in items]
+    # A score stays as it is: 0.4 is not 0 (release audit S21); a bool sums as 0 or 1.
+    return [tuple(item) if isinstance(item, tuple) else (item,) for item in items]
 
 
 def _totals(vectors: Sequence[Totals]) -> Totals:
