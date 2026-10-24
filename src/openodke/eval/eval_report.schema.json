@@ -54,8 +54,8 @@
     },
     "calibration": {
       "type": "array",
-      "description": "Reserved for #135: the grounder's calibration cards.",
-      "items": {"type": "object"}
+      "description": "Each model judge the run called (#135): its registered prompt, its model, its calibration card's id and line, or UNCALIBRATED where there is none. Reserved and empty in 1.0 and 1.1.",
+      "items": {"$ref": "#/$defs/card_status"}
     },
     "judged_precision": {
       "description": "Added in 1.1, so not required: precision with no gold, a judge corrected by a labelled sample (#144); null when not asked for.",
@@ -75,6 +75,22 @@
     }
   },
   "$defs": {
+    "card_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["judge", "prompt", "model", "claim_format", "card", "meets_bar", "line", "action", "why"],
+      "properties": {
+        "judge": {"type": "string"},
+        "prompt": {"type": "string"},
+        "model": {"type": ["string", "null"]},
+        "claim_format": {"type": ["string", "null"]},
+        "card": {"type": ["string", "null"]},
+        "meets_bar": {"type": ["boolean", "null"]},
+        "line": {"type": "string"},
+        "action": {"type": ["string", "null"]},
+        "why": {"type": ["string", "null"]}
+      }
+    },
     "metric": {"type": ["integer", "number", "null"]},
     "share": {"type": ["number", "null"]},
     "count": {"type": "integer", "minimum": 0},

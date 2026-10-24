@@ -23,8 +23,10 @@ knowing which stage made the report. So an Evaluator run also writes an
 - **fixes**: what should change, ranked by the recall gain the arithmetic
   expects, each with its track record of predicted against measured
   (`openodke.eval.fixes`, `openodke.eval.track`, #141);
-- **comparison**: this run against a baseline (#142); **calibration**: empty,
-  and typed, until #135 fills it.
+- **comparison**: this run against a baseline (#142); **calibration**: each
+  model judge the run called, with its calibration card's line or
+  UNCALIBRATED (#135, `openodke.calibration`), filled in when the report is
+  written or printed from the prompts and models `run` names.
 
 1.1 adds the sections that score without gold, or with gold that is
 incomplete, each `null` when not asked for: **judged_precision**, a judge's
@@ -57,6 +59,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
+from openodke.calibration.lookup import CardStatus
 from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED, Range, bootstrap
 from openodke.eval.compare import Comparison
 from openodke.eval.cost import CallRecord, StageCost
@@ -429,8 +432,9 @@ class EvalReport(Frozen):
     fixes: tuple[Fix, ...] = ()
     # this run against a baseline: `odke eval compare`'s block, as `--json` prints it (#142),
     comparison: Comparison | None = None
-    # and, typed and empty until filled, the grounder's calibration cards (#135).
-    calibration: tuple[dict[str, Any], ...] = ()
+    # and each model judge's calibration card line, or UNCALIBRATED (#135):
+    # `calibrated()` fills it from `run`, as `write` and `render` do.
+    calibration: tuple[CardStatus, ...] = ()
     # Added in 1.1, so a 1.0 report has none of them: precision with no gold,
     # the judge corrected by a labelled sample (#144).
     judged_precision: JudgedPrecision | None = None
@@ -442,12 +446,25 @@ class EvalReport(Frozen):
     # gold fact counted as hits, beside the strict numbers (#143).
     lenient: Lenient | None = None
 
+    def calibrated(self) -> EvalReport:
+        """The report with `calibration` filled from the judges `run` names, if it is empty.
+
+        Each registered judge prompt the run sent, on the model of its role:
+        the grounder's prompts on `ground`, the pair and fact-equivalence
+        judges' on `judge` or else `ground`. Its card's line, or UNCALIBRATED.
+        A `ground.span` key is read with its default claim format, inline.
+        """
+        if self.calibration:
+            return self
+        found = calibration_of(self.run, self.lenient)
+        return self.model_copy(update={"calibration": found}) if found else self
+
     def as_json(self) -> str:
-        return self.model_dump_json(indent=2)
+        return self.calibrated().model_dump_json(indent=2)
 
     def write(self, path: str | Path) -> Path:
         """The report as JSON at `path`, checked against the schema first."""
-        data = self.model_dump(mode="json")
+        data = self.calibrated().model_dump(mode="json")
         problems = check_report(data)
         if problems:
             raise ValueError("the report does not match its schema: " + "; ".join(problems[:5]))
@@ -491,7 +508,7 @@ class EvalReport(Frozen):
             lines += ["", *render_fixes(self.fixes)]
         if self.comparison is not None:
             lines += ["", *self.comparison.render().splitlines()]
-        lines += ["", *_provenance(self)]
+        lines += ["", *_provenance(self.calibrated())]
         return "\n".join(lines)
 
 
@@ -648,7 +665,11 @@ def from_stage(
     diagnosis: Sequence[Bucket] = (),
     fixes: Sequence[Fix] = (),
 ) -> EvalReport:
-    """A stage's report as an eval report: titled and counted as the stage is."""
+    """A stage's report as an eval report: titled and counted as the stage is.
+
+    Its `calibration` is filled from `run`: each judge it names, with its
+    card's line or UNCALIBRATED.
+    """
     return EvalReport(
         title=report.stage,
         n=report.n,
@@ -659,7 +680,7 @@ def from_stage(
         notes=tuple(notes),
         diagnosis=tuple(diagnosis),
         fixes=tuple(fixes),
-    )
+    ).calibrated()
 
 
 # --------------------------------------------------------------------------- #
@@ -983,7 +1004,41 @@ def _provenance(report: EvalReport) -> list[str]:
         lines.append("  models   " + ", ".join(f"{role} {m}" for role, m in run.models.items()))
     if run.prompts:
         lines.append("  prompts  " + ", ".join(run.prompts))
+    for judged in report.calibration:
+        lines.append(f"  calibration  {judged.text()}")
     return lines
+
+
+# Each judge prompt id, the judge it is, and how a grounder's prompt writes the fact.
+_JUDGES = {
+    "ground.span": ("ground", "inline"),
+    "ground.paper": ("ground", "triple"),
+    "ground.onyx": ("ground", "sentence"),
+    "ground.statement": ("ground", "sentence"),
+    "pair": ("pair", None),
+    "fact_equiv": ("fact_equiv", None),
+}
+
+
+def calibration_of(run: Run, lenient: Lenient | None = None) -> tuple[CardStatus, ...]:
+    """Each model judge `run` sent a prompt to, with its card's line or UNCALIBRATED (#135)."""
+    from openodke.calibration import status
+
+    keys = list(run.prompts)
+    if lenient is not None and lenient.judge not in keys:
+        keys.append(lenient.judge)
+    out: list[CardStatus] = []
+    for key in dict.fromkeys(keys):
+        judge, claim_format = _JUDGES.get(key.rpartition("@")[0] or key, (None, None))
+        if judge is None:
+            continue
+        if judge == "ground":
+            model = run.models.get("ground")
+        else:
+            given = lenient.model if judge == "fact_equiv" and lenient is not None else None
+            model = given or run.models.get("judge") or run.models.get("ground")
+        out.append(status(judge, key, model, claim_format))
+    return tuple(out)
 
 
 __all__ = [
@@ -1010,6 +1065,7 @@ __all__ = [
     "Performance",
     "Row",
     "Run",
+    "calibration_of",
     "check_report",
     "conformance",
     "conforms",
