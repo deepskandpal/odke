@@ -1517,8 +1517,8 @@ def eval_stage(
         "grounding sheets, with the texts from --documents. refusals: draw a stratified "
         "sample of the runs' refusals and write it here as refusal sheets.",
     ),
-    sample_size: int = typer.Option(
-        150,
+    sample_size: int | None = typer.Option(
+        None,
         "--n",
         min=1,
         help="precision and refusals --make-sheet: how many to draw (150 facts; 100 refusals).",
@@ -1659,7 +1659,7 @@ def eval_stage(
     }
     sampled = {
         "--make-sheet": make_sheet is not None,
-        "--n": sample_size != 150,
+        "--n": sample_size is not None,
         "--by-predicate": by_predicate,
     }
     # The flags compare shares with another stage, which takes them as its own.
@@ -1900,7 +1900,7 @@ def _eval_precision(
     describe: bool,
     others: tuple[Any, ...],
     make_sheet: Path | None,
-    sample_size: int,
+    sample_size: int | None,
     seed: int,
     by_predicate: bool,
 ) -> Any:
@@ -1908,7 +1908,7 @@ def _eval_precision(
     from openodke.eval.eval_report import Dataset
     from openodke.eval.formats import GroundingLabel, load_jsonl
     from openodke.eval.harness import load_documents
-    from openodke.eval.ppi import DESCRIPTION, SAMPLE_FILE, report_precision, write_sample
+    from openodke.eval.ppi import DESCRIPTION, SAMPLE, SAMPLE_FILE, report_precision, write_sample
     from openodke.eval.spans import load_facts
 
     if describe:
@@ -1932,7 +1932,12 @@ def _eval_precision(
         if docs is None:
             raise ValueError("--make-sheet needs --documents: a sheet shows the text a fact cites")
         drawn, made = write_sample(
-            judged, docs, make_sheet, n=sample_size, seed=seed, by_predicate=by_predicate
+            judged,
+            docs,
+            make_sheet,
+            n=sample_size if sample_size is not None else SAMPLE,
+            seed=seed,
+            by_predicate=by_predicate,
         )
         how = f"seed {seed}" + (", by predicate" if by_predicate else "")
         typer.echo(
@@ -1971,7 +1976,7 @@ def _eval_refusals(
     describe: bool,
     others: tuple[Any, ...],
     make_sheet: Path | None,
-    sample_size: int,
+    sample_size: int | None,
     seed: int,
 ) -> Any:
     """`odke eval refusals`: the sample as sheets (None), or the labels' report."""
@@ -2009,7 +2014,7 @@ def _eval_refusals(
         raise ValueError("refusals writes its sample with --make-sheet DIR")
     docs = load_documents(documents) if documents is not None else None
     found = [refusal for path in runs for refusal in read_refusals(path, docs)]
-    n = sample_size if sample_size != 150 else SAMPLE
+    n = sample_size if sample_size is not None else SAMPLE
     drawn, made = write_sample(found, make_sheet, n=n, seed=seed)
     picked = Counter((r.dataset or "", r.extractor or "", r.verdict) for r in drawn)
     typer.echo(
