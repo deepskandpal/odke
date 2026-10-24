@@ -321,7 +321,7 @@ class SignatureCorroborator:
             copies = NearDuplicates(self.documents, self.near_duplicates)
         merged = [self._merge(members, copies) for members in groups.values()]
         if self.store and merged:
-            merged = self._with_store(merged, copies)
+            merged = self._with_store(merged, copies, groups)
         if copies is not None:
             counts = self.stats["near_duplicates"]
             counts["compared"] += copies.compared
@@ -344,9 +344,15 @@ class SignatureCorroborator:
                 refuted |= set(recorded)
             elif f.verdict is GroundingVerdict.CONTRADICTED:
                 refuted |= {e.doc_id for e in f.evidence}
-        # A text that supports the claim now is no longer held against it.
+        # A text that no longer contradicts the claim (it supports it now, or is
+        # silent on it) is no longer held against it.
         supported = [f for f in everyone if f.verdict is GroundingVerdict.SUPPORTED]
-        refuted -= {e.doc_id for f in supported for e in f.evidence}
+        refuted -= {
+            e.doc_id
+            for f in everyone
+            if f.verdict is not GroundingVerdict.CONTRADICTED
+            for e in f.evidence
+        }
         # Each member with the evidence it brings. Beside support, a contradicting
         # text's evidence is left out, and a member that was nothing but contradicting
         # texts with it: its claim, its clock, its confidence and its extractor are not
@@ -423,7 +429,12 @@ class SignatureCorroborator:
             }
         )
 
-    def _with_store(self, facts: list[Fact], copies: NearDuplicates | None) -> list[Fact]:
+    def _with_store(
+        self,
+        facts: list[Fact],
+        copies: NearDuplicates | None,
+        groups: Mapping[tuple[Any, ...], list[Fact]] | None = None,
+    ) -> list[Fact]:
         """The batch merged with what the stores already hold under each signature (#153).
 
         A stored fact merges with its incoming twin as two members of one claim
@@ -452,7 +463,10 @@ class SignatureCorroborator:
             same = [twin for twin in found if (DERIVED in twin.qualifiers) == derived]
             if same:
                 counts["merged"] += 1
-                fact = self._merge([fact, *same], copies)
+                # The batch's own texts, one by one, with the stored twin: each text's
+                # verdict still decides what of it counts (release audit 2).
+                own = (groups or {}).get(fact.signature) or [fact]
+                fact = self._merge([*own, *same], copies)
             out.append(fact)
         return _shared(out)
 
