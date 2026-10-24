@@ -302,11 +302,13 @@ def test_one_pipeline_written_three_ways_is_one_config(tmp_path: Path) -> None:
 
     left_out = hashed()
     assert hashed(router="passthrough") == left_out
+    assert hashed(chunker="passthrough", inferrer="passthrough") == left_out
     assert hashed(scorer="evidence") == left_out
-    assert hashed(normalizer="passthrough", resolver="passthrough") == left_out
-    # Left out, odke run scores with `evidence`, so a pass-through scorer is another run; and
-    # a Neo4j bootstrap reads a constrainer left out as Neo4jConstrainer.
-    assert hashed(scorer="passthrough") != left_out
+    # Left out, odke run scores with `evidence`; `odke validate --config` grounds, normalises,
+    # resolves, corroborates and gates with the Validator's defaults; a Neo4j bootstrap
+    # constrains with Neo4jConstrainer. A pass-through named is another run in each.
+    for stage in ("scorer", "grounder", "normalizer", "resolver", "corroborator", "gate"):
+        assert hashed(**{stage: "passthrough"}) != left_out, stage
     assert hashed(constrainer="passthrough") != left_out
 
 
