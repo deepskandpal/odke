@@ -39,6 +39,7 @@ from openodke.calibration.card import (
     Share,
     Vote,
 )
+from openodke.eval.report import cohen_kappa
 from openodke.eval.stats import bootstrap_interval, wilson
 
 VERDICTS = ("supported", "contradicted", "not_found")
@@ -120,16 +121,27 @@ def share(k: int, n: int) -> Share:
 
 
 def kappa(pairs: Sequence[tuple[str, str]], classes: Sequence[str]) -> Kappa:
-    """Cohen's κ between two raters' labels, each pair (person, judge), with its interval."""
+    """Cohen's κ between two raters' labels, each pair (person, judge), with its interval.
+
+    The κ is the Evaluator's own (`openodke.eval.report.cohen_kappa`), on the
+    full sample and on every bootstrap resample of it.
+    """
     index = {c: i for i, c in enumerate(classes)}
     k = len(classes)
     cells = [index[a] * k + index[b] for a, b in pairs]
 
+    def matrix(totals: Sequence[int | float]) -> dict[str, dict[str, int]]:
+        return {
+            a: {b: int(totals[i * k + j]) for j, b in enumerate(classes)}
+            for i, a in enumerate(classes)
+        }
+
     def statistic(totals: tuple[int | float, ...], n: int) -> float | None:
-        return _kappa(totals, k)
+        found = cohen_kappa(matrix(totals))
+        return None if found is None else float(found)
 
     totals = tuple(cells.count(c) for c in range(k * k))
-    value = _kappa(totals, k)
+    value = statistic(totals, len(cells))
     if value is None or not cells:
         return Kappa(value=value, n=len(cells))
     vectors = [tuple(1 if c == cell else 0 for c in range(k * k)) for cell in cells]
@@ -139,19 +151,6 @@ def kappa(pairs: Sequence[tuple[str, str]], classes: Sequence[str]) -> Kappa:
     return Kappa(
         value=value, low=min(interval[0], value), high=max(interval[1], value), n=len(cells)
     )
-
-
-def _kappa(totals: Sequence[int | float], k: int) -> float | None:
-    n = sum(totals)
-    if not n:
-        return None
-    observed = sum(totals[i * k + i] for i in range(k)) / n
-    rows = [sum(totals[i * k + j] for j in range(k)) / n for i in range(k)]
-    cols = [sum(totals[j * k + i] for j in range(k)) / n for i in range(k)]
-    expected = sum(r * c for r, c in zip(rows, cols, strict=True))
-    if expected >= 1.0:
-        return None
-    return (observed - expected) / (1.0 - expected)
 
 
 def swap_rule(forward: str | None, backward: str | None) -> str:

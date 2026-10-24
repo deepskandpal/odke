@@ -40,6 +40,7 @@ judge), `results.md` and `results.json`.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import threading
@@ -275,13 +276,17 @@ class Meter:
 
 
 def client_for(model: str, cache: Path | None, replay: Path | None = None) -> Meter:
-    """The model's client behind the cache, or, with `replay`, recorded answers (no call)."""
-    inner: LLMClient = (
-        RecordedClient.from_fixture(replay)
-        if replay is not None
-        else roles_for(model).client_for("ground")
-    )
-    return Meter(CachedClient(inner, cache))
+    """The model's client behind the cache, or, with `replay`, recorded answers (no call).
+
+    Recorded answers are cached apart, under `<cache>/replay/<the file's hash>`,
+    never under the live model's key: a later live run is never answered from a
+    recording (rule R4, release audit finding 1).
+    """
+    if replay is None:
+        return Meter(CachedClient(roles_for(model).client_for("ground"), cache))
+    recorded = RecordedClient.from_fixture(replay)
+    digest = hashlib.sha256(replay.read_bytes()).hexdigest()[:16]
+    return Meter(CachedClient(recorded, cache / "replay" / digest if cache is not None else None))
 
 
 # --------------------------------------------------------------------------- #
