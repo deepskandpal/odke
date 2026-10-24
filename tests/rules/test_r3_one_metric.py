@@ -27,7 +27,6 @@ from openodke import Entity, Evidence, Fact, Span
 from openodke.eval.extraction import evaluate_extraction, per_document
 from openodke.eval.formats import GoldFact
 
-RELEASE_16 = pytest.mark.xfail(strict=True, reason="release audit finding 16; fixed in fix PR 3")
 S29 = pytest.mark.xfail(strict=True, reason="release audit S29; fixed in fix PR 5")
 
 
@@ -82,7 +81,6 @@ def _dated_set(tmp_path: Path) -> Path:
     return text2kgbench.prepare(raw, "ont_1_movie", tmp_path / "set")
 
 
-@RELEASE_16
 def test_the_validator_row_scores_a_bench_set_as_the_set_scores_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

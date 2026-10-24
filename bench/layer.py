@@ -298,6 +298,13 @@ def run_config(
     # the set's gate predates it.
     stages["gate"] = gate | {"schema": True}
     stages["extractor"] = {"use": "triples", "path": str(triples.resolve()), "extractor": system}
+    # A prepared set names its normaliser and resolver as pass-throughs, so that
+    # `odke bench run` and the harness run one pipeline (release audit 16). The
+    # layer measures the Validator's defaults, as it did when sets left them out.
+    if stages.get("resolver") == "passthrough":
+        del stages["resolver"]
+    if stages.get("normalizer") == "passthrough":
+        del stages["normalizer"]
     resolver = stages.get("resolver")
     if isinstance(resolver, dict):
         # The pair judge is off unless asked for (DECISIONS #34).
