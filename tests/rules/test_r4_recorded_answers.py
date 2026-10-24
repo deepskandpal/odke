@@ -13,8 +13,8 @@ removed. Every request of the second run must reach the live model.
 
 from __future__ import annotations
 
+import importlib
 import re
-import sys
 from pathlib import Path
 
 import pytest
@@ -84,7 +84,9 @@ def test_a_rerun_without_the_recording_asks_the_live_model(
 
     live = LiveModel()
     monkeypatch.setattr("openodke.llm.registry.resolve", lambda spec: live)
-    monkeypatch.setattr(sys.modules["openodke.run.build"], "resolve_client", lambda spec: live)
+    # `openodke.run.build`, the module: `openodke.run` names a function `build` too.
+    built = importlib.import_module("openodke.run.build")
+    monkeypatch.setattr(built, "resolve_client", lambda spec: live)
     second = runner.invoke(app, live_args)
     # Exit 2 is a config the command refused before any model was asked.
     assert second.exit_code != 2, second.output
