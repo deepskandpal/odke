@@ -36,22 +36,27 @@ def _load(name: str) -> ModuleType:
 # --------------------------------------------------------------------------- #
 
 
-def _xfails() -> list[tuple[str, ast.Call]]:
-    found = []
+def _xfails() -> tuple[list[tuple[str, ast.Call]], list[str]]:
+    """Every `xfail(...)` call under tests/rules, and every bare `xfail` that is not called."""
+    calls, bare = [], []
     for path in sorted((ROOT / "tests" / "rules").glob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "xfail"
-            ):
-                found.append((f"{path.name}:{node.lineno}", node))
-    return found
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        called = set()
+        for node in ast.walk(tree):
+            func = node.func if isinstance(node, ast.Call) else None
+            if isinstance(func, ast.Attribute) and func.attr == "xfail":
+                calls.append((f"{path.name}:{node.lineno}", node))
+                called.add(id(func))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr == "xfail" and id(node) not in called:
+                bare.append(f"{path.name}:{node.lineno}")
+    return calls, bare
 
 
 def test_a_rule_waits_only_on_a_strict_xfail_that_names_its_fix() -> None:
-    marks = _xfails()
+    marks, bare = _xfails()
     assert marks, "no rule is waiting on a fix: drop this test with the last marker"
+    assert not bare, f"xfail markers with no strict=True and no reason: {bare}"
     loose = []
     for where, call in marks:
         keywords = {k.arg: k.value for k in call.keywords}
@@ -94,9 +99,12 @@ def test_a_recording_is_asciicast_v2_and_exits_as_its_command(tmp_path: Path) ->
     assert "first" in text and "second" in text
 
 
-def test_a_command_that_cannot_run_exits_127(tmp_path: Path) -> None:
+def test_a_command_that_cannot_run_exits_as_a_shell_would(tmp_path: Path) -> None:
     record = _load("record")
     assert record.main(["-o", str(tmp_path / "x.cast"), "--", "odke-no-such-program"]) == 127
+    script = tmp_path / "not-executable.sh"
+    script.write_text("echo hi\n")
+    assert record.main(["-o", str(tmp_path / "y.cast"), "--", str(script)]) == 126
 
 
 # --------------------------------------------------------------------------- #
@@ -131,8 +139,29 @@ def test_the_evidence_bundle_has_the_desks_shape(tmp_path: Path) -> None:
     assert len(found) == 3 and any("five or fewer" in p for p in found)
 
 
-def test_a_recording_lands_in_the_bundle(tmp_path: Path) -> None:
+def test_a_base_whose_recordings_all_pass_shows_no_failure() -> None:
     evidence = _load("evidence")
+    data = evidence.skeleton()
+    data["base"]["recordings"] = [{"title": "t", "command": "c", "file": "f", "exit": 0}]
+    assert any("none shows the failure" in p for p in evidence.problems(data))
+    data["base"]["recordings"][0]["exit"] = 1
+    assert evidence.problems(data) == []
+    data["base"]["commit"] = data["head"]["commit"] = "abc"
+    assert any("is the head's" in p for p in evidence.problems(data))
+
+
+def test_a_base_recording_refuses_the_head(tmp_path: Path) -> None:
+    evidence = _load("evidence")
+    common = ["--out", str(tmp_path), "--branch", "fix/example"]
+    assert evidence.main([*common, "init", "--head", "HEAD"]) == 0
+    assert evidence.main([*common, "record", "--side", "base", "--run", "true"]) == 2
+
+
+def test_a_recording_lands_in_the_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    evidence = _load("evidence")
+    # `--here` refuses a checkout with uncommitted changes; this test runs in one too.
+    git = evidence.git
+    monkeypatch.setattr(evidence, "git", lambda *a, **k: "" if a[0] == "status" else git(*a, **k))
     out = tmp_path / "desk"
     run = f"says hello::{sys.executable} -c \"print('hello')\""
     assert (

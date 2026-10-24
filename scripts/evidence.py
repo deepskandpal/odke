@@ -9,9 +9,10 @@ reads the bundle; nothing here posts anywhere.
 
     evidence.py init --title "..." --summary "..." --finding "release 1" --rule R4 \\
         --decision "#50" --risk numbers --base 311c54a --head HEAD
-    evidence.py record --side base --commit 311c54a \\
-        --run "the rule fails::uv run pytest tests/rules/test_r4_recorded_answers.py -q"
-    evidence.py record --side head --here --run "the rule passes::uv run pytest tests/rules -q"
+    evidence.py record --side base \\
+        --run "the rule fails::uv run pytest tests/rules/test_r4_recorded_answers.py --runxfail"
+    evidence.py record --side head --here \\
+        --run "the rule fails::uv run pytest tests/rules/test_r4_recorded_answers.py --runxfail"
     evidence.py set base.verify='"10/10 passed"' --merge review.json
     evidence.py ci --pr 230
     evidence.py check
@@ -20,8 +21,11 @@ The bundle goes to `--out`, else `$ODKE_DESK/<branch>`, else
 `$TMPDIR/desk/<branch>` (the branch's `/` becomes `-`). `set` and `--merge`
 deep-merge JSON into the file: objects merge, lists and values replace. A
 recording runs `scripts/record.py` in a temporary worktree of the commit it
-records, unless `--here`; the commands are the same ones on base and head.
-Standard library only.
+records (the side's commit from `init` when `--commit` is left out), or in
+this checkout with `--here`, which must be clean. The commands are the same on
+base and head. A rule's test that waits on its fix is an xfail, which passes,
+so a base recording runs it with `--runxfail` to show the failure; `check`
+refuses a base whose every recording exits 0. Standard library only.
 """
 
 from __future__ import annotations
@@ -154,6 +158,14 @@ def problems(data: Mapping[str, Any], directory: Path | None = None) -> list[str
     for item in data["review"]:
         if item.get("outcome") not in OUTCOMES:
             found.append(f"review: {item.get('finding')!r}: outcome is one of {OUTCOMES}")
+    shown = data["base"]["recordings"]
+    if shown and all(at.get("exit") == 0 for at in shown):
+        found.append(
+            "base.recordings: every one exits 0, so none shows the failure; record the failing "
+            "test with --runxfail"
+        )
+    if data["base"]["commit"] and data["base"]["commit"] == data["head"]["commit"]:
+        found.append("base.commit is the head's: record the base on the base commit")
     for side in SIDES:
         for at in data[side]["recordings"]:
             missing = {"title", "command", "file", "exit"} - set(at)
@@ -186,18 +198,23 @@ def record_side(
 ) -> list[dict[str, Any]]:
     """Each run recorded on `commit`'s tree; appended to the side's recordings."""
     data = load(directory)
-    resolved = git("rev-parse", commit or "HEAD")
+    resolved = git("rev-parse", commit or data[side]["commit"] or "HEAD")
+    other = data["head" if side == "base" else "base"]["commit"]
+    if side == "base" and other and resolved == git("rev-parse", other):
+        raise ValueError("the base to record is the head: give --commit, or init --base first")
     worktree: Path | None = None
-    if here:
-        if git("rev-parse", "HEAD") != resolved:
-            raise ValueError(f"--here records the checkout, which is not at {commit}")
-        tree = REPO
-    else:
-        worktree = Path(tempfile.mkdtemp(prefix=f"evidence-{side}-"))
-        git("worktree", "add", "--detach", str(worktree), resolved)
-        tree = worktree
     made = []
     try:
+        if here:
+            if git("rev-parse", "HEAD") != resolved:
+                raise ValueError(f"--here records the checkout, which is not at {resolved[:12]}")
+            if git("status", "--porcelain", "--untracked-files=no"):
+                raise ValueError("--here records the checkout, which has uncommitted changes")
+            tree = REPO
+        else:
+            worktree = Path(tempfile.mkdtemp(prefix=f"evidence-{side}-"))
+            git("worktree", "add", "--detach", str(worktree), resolved)
+            tree = worktree
         start = len(data[side]["recordings"])
         for n, run in enumerate(runs, start=start + 1):
             title, command = parse_run(run)
@@ -210,7 +227,10 @@ def record_side(
             made.append({"title": title, "command": command, "file": name, "exit": status})
     finally:
         if worktree is not None:
-            subprocess.run(["git", "worktree", "remove", "--force", str(worktree)], cwd=REPO)
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", str(worktree)],
+                cwd=REPO, capture_output=True, check=False,
+            )  # fmt: skip
             shutil.rmtree(worktree, ignore_errors=True)
     data[side]["commit"] = resolved
     data[side]["recordings"] = [*data[side]["recordings"], *made]

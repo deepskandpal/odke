@@ -42,7 +42,7 @@ def main() -> int:
         return 0
     checks = [
         ["uv", "run", "--quiet", "ruff", "check", str(path)],
-        ["uv", "run", "--quiet", "pytest", "tests/rules", "-q", "--tb=short"],
+        ["uv", "run", "--quiet", "pytest", "tests/rules", "--tb=short"],
     ]
     failed = []
     for argv in checks:

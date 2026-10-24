@@ -45,12 +45,12 @@ def record(
     cwd: Path | None = None,
 ) -> int:
     """Run `command` in a pseudo-terminal of `width` × `height`, write `out`, return its status."""
-    main, child = pty.openpty()
-    fcntl.ioctl(child, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
     env = {**os.environ, "TERM": os.environ.get("TERM", "xterm-256color")}
     env.update(COLUMNS=str(width), LINES=str(height))
+    main, child = pty.openpty()
     started = time.time()
     try:
+        fcntl.ioctl(child, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
         process = subprocess.Popen(
             command, stdin=child, stdout=child, stderr=child, cwd=cwd, env=env, close_fds=True
         )
@@ -132,6 +132,9 @@ def main(argv: list[str] | None = None) -> int:
     except FileNotFoundError as exc:
         print(f"record.py: cannot run {command[0]}: {exc}", file=sys.stderr)
         return 127
+    except PermissionError as exc:
+        print(f"record.py: cannot run {command[0]}: {exc}", file=sys.stderr)
+        return 126
 
 
 if __name__ == "__main__":
