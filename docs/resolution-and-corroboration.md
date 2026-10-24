@@ -441,7 +441,13 @@ assertion, nor a p50 value with a p95 one
 ([DECISIONS #14](decisions.md#14), [#15](decisions.md#15)). The rest is
 reconciled:
 
-- **Evidence** is unioned.
+- **Evidence** is unioned, except from a text that contradicts a claim another
+  member supports. That text is no source for the claim: its evidence, sources,
+  confidence and valid time are left out, and `odke.conflict` records its
+  documents as `contradicted_in` (status `contradicted`, or beside a contest's
+  decision). The record outlives later merges, and goes for a document that
+  comes back supporting the claim. Delete the supporting text, and the fact is
+  retired, not left standing on the one that contradicts it.
 - **`support`** counts independent sources: `source_of(evidence)` is the URI's
   host without `www.`, else the document. Pass `source=` to decide otherwise.
 - **`supported_by`** names them: the [support list](#support-lists).

@@ -359,6 +359,47 @@ def test_two_jsonl_writers_into_one_directory_at_once_do_not_crash(tmp_path: Pat
     assert _lines(tmp_path)
 
 
+@pytest.mark.parametrize("first", ["supports", "contradicts"])
+def test_a_contradicting_text_never_holds_a_stored_fact_up(first: str, tmp_path: Path) -> None:
+    """Release audit 2, across the store, and the verifier's case: delete the supporting text.
+
+    Text a supports the claim and b contradicts it, written in either order.
+    The stored fact is supported by a alone, b is recorded against it, and once
+    a is deleted the fact is retired: b, which says otherwise, does not keep it.
+    """
+    from openodke import GroundingVerdict, Reconciler
+
+    sink = JsonlSink(tmp_path, merge=True)
+    supports = ("a", _employed("a", verdict=GroundingVerdict.SUPPORTED))
+    contradicts = ("b", _employed("b", verdict=GroundingVerdict.CONTRADICTED))
+    for doc, fact in (supports, contradicts) if first == "supports" else (contradicts, supports):
+        _validate(sink, doc, fact)
+    (fact,) = [f for f in _lines(tmp_path) if f.predicate == "employer"]
+    assert fact.verdict is GroundingVerdict.SUPPORTED
+    assert [s.source for s in fact.supported_by] == ["doc:a"] and fact.support == 1
+    assert fact.qualifiers[CONFLICT]["contradicted_in"] == ["b"]
+
+    Reconciler([sink]).delete(["a"])
+    (gone,) = [f for f in _lines(tmp_path) if f.predicate == "employer"]
+    assert (gone.support, gone.supported_by, gone.retired_at is not None) == (0, (), True)
+
+
+def test_neo4j_keeps_the_record_of_a_contradicting_text_through_a_merge() -> None:
+    """The record is JSON text on the relationship, and reads back to merge again."""
+    from openodke import GroundingVerdict
+
+    (stored,) = SignatureCorroborator().corroborate(
+        [_employed("a", verdict=GroundingVerdict.SUPPORTED),
+         _employed("b", verdict=GroundingVerdict.CONTRADICTED)]
+    )  # fmt: skip
+    sink = Neo4jSink(driver=Stored(stored))
+    (fact,) = SignatureCorroborator(store=sink).corroborate(
+        [_employed("c", verdict=GroundingVerdict.SUPPORTED)]
+    )
+    assert [s.source for s in fact.supported_by] == ["doc:a", "doc:c"]
+    assert fact.qualifiers[CONFLICT]["contradicted_in"] == ["b"]
+
+
 def test_jsonl_without_merge_replaces_the_file_and_reads_nothing(tmp_path: Path) -> None:
     sink = JsonlSink(tmp_path)
     _validate(sink, "a", _employed("a"), _hq("a"))

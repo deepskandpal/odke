@@ -27,7 +27,10 @@ SOURCE_FORM = "odke.source_form"
 NAME_KEY = "odke.name_key"
 
 # On Fact.qualifiers: the corroborator's decision about a contested value —
-# {"status": "won" | "lost" | "tied", "reason": <a sentence>, ...}.
+# {"status": "won" | "lost" | "tied", "reason": <a sentence>, ...}. A claim some
+# texts contradict while another supports it also records them here, under
+# "contradicted_in" (status "contradicted" when nothing was contested): they are
+# not its sources (release audit 2).
 CONFLICT = "odke.conflict"
 
 # On Fact.qualifiers: the scorer's inputs, so a score can be read back and
@@ -137,12 +140,34 @@ def stamp_checked(fact: Fact, fingerprint: str | None) -> Fact:
     return fact.model_copy(update={"qualifiers": {**fact.qualifiers, ONTOLOGY: fingerprint}})
 
 
+def contradicted_in(fact: Fact) -> tuple[str, ...]:
+    """The documents recorded as contradicting a claim that another source supports."""
+    conflict = fact.qualifiers.get(CONFLICT)
+    found = conflict.get("contradicted_in") if isinstance(conflict, Mapping) else None
+    return tuple(sorted({str(d) for d in found})) if isinstance(found, list | tuple) else ()
+
+
+def contradiction(docs: Iterable[str]) -> dict[str, Any]:
+    """The conflict record of a supported claim that `docs` contradict (release audit 2)."""
+    listed = sorted(set(docs))
+    text = "the text " if len(listed) == 1 else "the texts "
+    verb = "contradicts" if len(listed) == 1 else "contradict"
+    return {
+        "status": "contradicted",
+        "contradicted_in": listed,
+        "reason": f"Not counted as support: {text}{', '.join(listed)} {verb} the claim, "
+        "which another source supports.",
+    }
+
+
 def unstamped(fact: Fact) -> Fact:
     """The fact as extraction left it, with the conflict and score stamps removed.
 
     Both stamps are functions of the batch they were computed in. A stage run
     again over its own output has to start from the extractor's confidence, or
-    every pass would compound the previous pass's penalty.
+    every pass would compound the previous pass's penalty. The texts recorded
+    as contradicting a supported claim are not of the batch, so they stay, as
+    the conflict record `contradiction` makes.
     """
     score, conflict = fact.qualifiers.get(SCORE), fact.qualifiers.get(CONFLICT)
     if score is None and conflict is None:
@@ -155,6 +180,8 @@ def unstamped(fact: Fact) -> Fact:
     ):
         confidence = float(conflict["confidence_before"])
     qualifiers = {k: v for k, v in fact.qualifiers.items() if k not in (SCORE, CONFLICT)}
+    if refuted := contradicted_in(fact):
+        qualifiers[CONFLICT] = contradiction(refuted)
     return fact.model_copy(update={"confidence": confidence, "qualifiers": qualifiers})
 
 
