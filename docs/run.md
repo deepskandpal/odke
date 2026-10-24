@@ -260,7 +260,7 @@ manifest ([DECISIONS #40](decisions.md#40)):
 |---|---|
 | `manifest_version` | `1` |
 | `command`, `dry_run` | `run`, `validate` or `ground`; a dry run writes none |
-| `config`, `config_hash` | the config resolved with every default (for `validate` and `ground`, their options; for the Validator, its stages), and its SHA-256 |
+| `config`, `config_hash` | the config resolved with every default (for `validate` and `ground`, their options; for the Validator, its stages), and its SHA-256; a stage left out and its `passthrough` named hash alike (not the scorer, gate or constrainer, whose left-out reading differs), as do the scorer left out and `evidence` named |
 | `config_file`, `base_dir` | the config's file and directory |
 | `models` | per role, the `model` asked for and the ids `served` |
 | `prompts` | each [registered prompt](models.md#prompts) sent, with its SHA-256 |
@@ -279,7 +279,7 @@ beside the config as `<name>.manifest.json`; `odke validate` writes it into
 `odke run --from-manifest PATH` runs one again as resolved, refusing (exit 2)
 when the ontology or a document changed, naming each, and taking no `--model`,
 `--widen`, `--cache`, `--batch-size`, `--tenant` or budget flag; another
-openodke version only warns. To rerun an `odke validate` or `odke ground`
+openodke version only warns, and a field a newer version added is read past. To rerun an `odke validate` or `odke ground`
 manifest, pass its `config.models` as a `--config` file (`{"models": ...}`) and
 the rest as flags.
 

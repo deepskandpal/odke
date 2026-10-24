@@ -144,6 +144,27 @@ class StageSpec(_Strict):
         return ":" in self.use
 
 
+# What `odke run` fills a stage with when the config leaves it out, where the
+# pass-through would be a worse answer than an opinion. The library keeps its
+# pass-through default (DECISIONS #20); this is the CLI's, and a config that
+# names the stage — `passthrough` included — always wins.
+#
+# `scorer`: without one, `Fact.confidence` arrives at the sink as whatever the
+# extractor put there, one constant for every fact whatever the grounder found,
+# and a threshold set against it silently accepts everything (#81).
+# `EvidenceScorer` is the formula the package already documents.
+DEFAULTS: dict[str, StageSpec] = {"scorer": StageSpec(use="evidence")}
+
+# The stages whose pass-through, named, every command reads as the stage left
+# out, so naming it changes neither the run nor its config hash (#40). Not the
+# scorer (left out, it is `DEFAULTS`'s), the gate (`odke eval ablation` reads a
+# gate left out as the verdict gate), or the constrainer (a Neo4j bootstrap
+# reads one left out as `Neo4jConstrainer`).
+_PASSTHROUGH_IS_LEFT_OUT = frozenset(
+    {"chunker", "router", "grounder", "normalizer", "resolver", "corroborator", "inferrer"}
+)
+
+
 class InputSpec(_Strict):
     """A file or directory, and the loader that reads it when not the default."""
 
@@ -244,7 +265,7 @@ class StagesConfig(_Strict):
     normalizer: StageSpec | None = None
     resolver: StageSpec | None = None
     corroborator: StageSpec | None = None
-    # Left out, `odke run` scores with `evidence` (`run.build.DEFAULTS`).
+    # Left out, `odke run` scores with `evidence` (`DEFAULTS`).
     scorer: StageSpec | None = None
     gate: StageSpec | None = None
     # One sink or several; none writes nothing.
@@ -356,7 +377,10 @@ class RunConfig(_Strict):
         spec `ModelRoles` resolves it to, so a config that leaves a key or a
         role to its default and one that names that default are one config.
         Stages and inputs are in the shape a file gives them,
-        `{use: name, option: ...}`, and a stage left out stays out. What a run
+        `{use: name, option: ...}`. A stage left out is the one `odke run`
+        fills it with (`DEFAULTS`), or stays out; a pass-through named that
+        every command reads as the stage left out is left out. So one pipeline
+        is one config however it is written (release audit S4). What a run
         manifest records and hashes (`openodke.manifest`).
         """
         data = self.model_dump(mode="json", exclude={"stages", "inputs", "store_lookup"})
@@ -370,8 +394,11 @@ class RunConfig(_Strict):
             spec = getattr(self.stages, name)
             if name == "sink":
                 stages[name] = [_given(sink) for sink in spec]
-            elif spec is not None:
-                stages[name] = _given(spec)
+                continue
+            spec = spec or DEFAULTS.get(name)
+            if spec is None or (name in _PASSTHROUGH_IS_LEFT_OUT and spec.use == "passthrough"):
+                continue
+            stages[name] = _given(spec)
         data["stages"] = stages
         data["store_lookup"] = _given(self.store_lookup) if self.store_lookup else None
         return data
