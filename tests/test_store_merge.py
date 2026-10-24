@@ -283,6 +283,82 @@ def test_a_python_rerun_over_the_same_folder_is_the_same_sources(
     assert report.retracted is not None and report.retracted["cited"] == 2
 
 
+def test_a_jsonl_file_is_never_read_half_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Release audit S15: two writers into one directory crashed on a torn manifest.json.
+
+    Each file is written beside its target and renamed into place, so whatever
+    reads the directory while a write is under way finds the whole old file.
+    """
+    import openodke._files as files
+
+    sink = JsonlSink(tmp_path, merge=True)
+    _validate(sink, "a", _employed("a"))
+    seen: list[str] = []
+    real = files.os.replace
+
+    def meanwhile(source: str, target: Any) -> None:
+        held = Path(target)
+        if held.is_file():
+            text = held.read_text(encoding="utf-8")
+            # Whole, so a second writer's read of it cannot fail.
+            lines = [text] if held.suffix == ".json" else text.splitlines()
+            assert all(isinstance(json.loads(line), dict) for line in lines)
+            seen.append(held.name)
+        real(source, target)
+
+    monkeypatch.setattr(files.os, "replace", meanwhile)
+    _validate(sink, "b", _employed("b"))
+    assert {"manifest.json", "facts.jsonl", "entities.jsonl"} <= set(seen)
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_a_file_written_whole_keeps_the_umasks_permissions(tmp_path: Path) -> None:
+    """Written beside its target and renamed, a file is still the mode the umask gives.
+
+    A temporary file from `tempfile.mkstemp` would be 0600, and the store's
+    files and its manifest unreadable to the group a store is shared with.
+    """
+    old = os.umask(0o022)
+    try:
+        sink = JsonlSink(tmp_path / "store", merge=True)
+        _, report = _validate(sink, "a", _employed("a"))
+        assert report.manifest is not None
+        report.manifest.write_into(tmp_path / "store" / "manifest.json")
+        report.manifest.write(tmp_path / "run.json")
+    finally:
+        os.umask(old)
+    written = [*sorted((tmp_path / "store").iterdir()), tmp_path / "run.json"]
+    assert {p.name for p in written} >= {"manifest.json", "facts.jsonl", "entities.jsonl"}
+    assert {p.name: oct(p.stat().st_mode & 0o777) for p in written} == {
+        p.name: oct(0o644) for p in written
+    }
+
+
+def test_two_jsonl_writers_into_one_directory_at_once_do_not_crash(tmp_path: Path) -> None:
+    """Release audit S15, under load: the writers race on every file, and none fails."""
+    import threading
+
+    failures: list[BaseException] = []
+
+    def writer(name: str) -> None:
+        try:
+            for n in range(12):
+                _validate(JsonlSink(tmp_path, merge=True), f"{name}{n}", _employed(f"{name}{n}"))
+        except BaseException as exc:  # noqa: BLE001 - every failure is the finding
+            failures.append(exc)
+
+    threads = [threading.Thread(target=writer, args=(name,)) for name in "xyz"]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert failures == []
+    json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert _lines(tmp_path)
+
+
 def test_jsonl_without_merge_replaces_the_file_and_reads_nothing(tmp_path: Path) -> None:
     sink = JsonlSink(tmp_path)
     _validate(sink, "a", _employed("a"), _hq("a"))
