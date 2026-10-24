@@ -1586,3 +1586,54 @@ every Neo4j write statement ends in `RETURN count(*)`; and the gate's name
 *Cost:* a pinned list is one more file to edit, and an addition fails CI until
 it is. That is the point: an export is a promise, so it should take a line in
 a diff to make one. The old names stay, warning, for the whole of 1.x.
+
+### 50. Six rules are tests over the whole codebase, and every pull request carries its evidence
+
+Two audits two days apart found forty major findings, and they fall into a
+few repeating kinds: a failure read as a number, a read that forgets the
+tenant, one number computed two ways, a recorded answer passing for a real
+one, a secret quoted in a message, a range that does not hold its level. An
+agent copies the patterns a repository shows it, the bad ones too, and a
+review that fixes one copy misses the next. So each kind is written down
+once, as a test of every place the codebase can commit it. The approach is
+OpenAI's "Harness engineering: leveraging Codex in an agent-first world"
+(February 2026), adapted: a short map for agents (`AGENTS.md`), rules that
+tests enforce, one loop for every pull request, and an escalation list for
+what needs a person (`HUMAN.md`).
+
+**A rule is a test over the whole codebase, not over one call site.** In
+`tests/rules/`: R1, a failure never becomes a number; R2, the tenant goes
+everywhere; R3, a metric is computed in one place; R4, a recorded answer
+never passes for a real one; R5, secrets stay home; R6, intervals behave.
+Each lists its entry points, every command that scores, every sink and read
+path, every place a client is cached or resolved, and a check beside it fails
+when a new one appears that the rule does not list. A failure message is the
+fix ("Every read path must filter on `tenant`"), so an agent reads the fix in
+the error. The rules run on recorded answers, with no network, in about
+fifteen seconds, after every edit under `src/` (`.claude/settings.json`) and
+in every CI run.
+
+**Where today's code breaks a rule, the test is a strict xfail, and the fix
+removes the marker.** Its reason names the finding and the fix pull request
+that owns it. `xfail_strict` holds for the whole suite, so a rule that starts
+passing with its marker in place fails CI: the list of known breaks cannot go
+stale, and a fix is not finished until its marker is gone. A kind of finding
+seen twice becomes the next rule.
+
+**Every pull request carries its evidence.** `scripts/verify.sh` on the base;
+a terminal recording of the failure on the base, and of the same commands on
+the head (`scripts/record.py`, asciicast v2); the change file by file, with
+its risk tags; the review trail, each finding fixed or dropped as unproven;
+the build failures and their fixes; and what needs the maintainer. It is one
+`evidence.json` per pull request (`scripts/evidence.py`), which the
+maintainer's review desk reads. A finding without a failing case does not
+count, and a reviewer watches the failure rather than trusting a description
+of it. Merging stays the maintainer's.
+
+*Cost:* fifteen seconds on every edit to `src/` and in every CI run. R2's
+store is a fake that honours only the tenant filters this codebase writes, so
+a read written another way has to be taught to it. Rules over the whole
+codebase also find what no audit listed: R1 found three commands that score a
+run whose every model call failed, which wait as strict xfails until the
+maintainer places them. And every known break is a marker someone has to
+delete.
