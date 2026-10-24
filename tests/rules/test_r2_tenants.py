@@ -239,10 +239,15 @@ _INDEXES = [
         ("evidence", "FULLTEXT", "evidence_doc_ids"),
     )
 ] + [
-    {"name": f"odke_key_{label}", "type": "RANGE", "entityType": "NODE",
-     "labelsOrTypes": [label], "properties": ["key"]}
+    {"name": f"odke_{what}_{label}", "type": kind, "entityType": "NODE",
+     "labelsOrTypes": [label], "properties": props}
     for label in ("Company", "Person")
+    for what, kind, props in (
+        ("key", "RANGE", ["key"]),
+        ("names", "FULLTEXT", ["label", "aliases"]),
+    )
 ]  # fmt: skip
+_SIDES = {"Company": "subject", "Person": "object"}
 
 _IS_TENANT = re.compile(r"\w+\.`?tenant`? = \$tenant\b")
 _NO_TENANT = re.compile(r"\w+\.`?tenant`? IS NULL")
@@ -290,17 +295,29 @@ class TwoTenantStore(FakeDriver):
             asked = {row["signature"] for row in params["rows"]}
             return [r for r in records if r["signature"] in asked]
         if "row.value" in cypher:
-            out = []
-            for row in params["rows"]:
-                for r in records:
-                    for side in ("subject", "object"):
-                        if r[f"{side}_key"] == row["value"]:
-                            node = {"key": row["value"], "label": r[f"{side}_label"]}
-                            if r["owner"] is not None:
-                                node["tenant"] = r["owner"]
-                            out.append({"block": row["block"], "node": node})
-            return out
+            return [
+                {"block": row["block"], "node": self._node(r, side)}
+                for row in params["rows"]
+                for r in records
+                for side in ("subject", "object")
+                if r[f"{side}_key"] == row["value"]
+            ]
+        if "queryNodes" in cypher:
+            # A name matches every owner's node of the index's type: the tenant filter decides.
+            side = _SIDES[params["index"].rsplit("_", 1)[-1]]
+            return [
+                {"block": row["block"], "node": self._node(r, side)}
+                for row in params["rows"]
+                for r in records
+            ]
         return records
+
+    @staticmethod
+    def _node(record: dict[str, Any], side: str) -> dict[str, Any]:
+        node = {"key": record[f"{side}_key"], "label": record[f"{side}_label"]}
+        if record["owner"] is not None:
+            node["tenant"] = record["owner"]
+        return node
 
 
 def _owner_in(text: str | None) -> str:
