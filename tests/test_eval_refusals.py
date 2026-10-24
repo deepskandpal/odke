@@ -408,6 +408,27 @@ def test_refusal_precision_counts_gold_wrong_as_right_and_sets_unsure_aside() ->
 # --------------------------------------------------------------------------- #
 
 
+def test_an_explicit_n_is_told_apart_from_the_default(
+    bench: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--n 150` draws 150, though 150 is the flag's default for precision (release audit S2)."""
+    from openodke.eval import refusals as module
+
+    asked: list[int] = []
+    draw = module.write_sample
+
+    def spy(*args: Any, n: int, **kwargs: Any) -> Any:
+        asked.append(n)
+        return draw(*args, n=n, **kwargs)
+
+    monkeypatch.setattr(module, "write_sample", spy)
+    for n, flag in ((module.SAMPLE, []), (150, ["--n", "150"])):
+        out = tmp_path / f"sheets-{n}"
+        made = runner.invoke(app, ["eval", "refusals", str(bench), "--make-sheet", str(out), *flag])
+        assert made.exit_code == 0, made.output
+    assert asked == [100, 150]
+
+
 def test_odke_eval_refusals_draws_the_sheets_and_scores_the_ticks(
     bench: Path, tmp_path: Path
 ) -> None:
