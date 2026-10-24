@@ -30,7 +30,8 @@ from openodke.corroborate import (
     ValueNormalizer,
     independent_sources,
 )
-from openodke.corroborate.provenance import REVIEW
+from openodke.corroborate.inverses import partners
+from openodke.corroborate.provenance import REVIEW, contradicted_in
 
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
 ACME = Entity(key="c1", type="Company", label="Acme")
@@ -367,6 +368,69 @@ def test_the_record_of_a_contradicting_text_outlives_the_next_merge() -> None:
         [again, _fact("Jane Doe", _ev("b"), verdict=V.SUPPORTED)]
     )
     assert CONFLICT not in settled.qualifiers and settled.support == 3
+
+
+def test_a_contradicting_texts_qualifiers_are_not_the_claims() -> None:
+    """Review of release audit 2: its start time and role still shaped the merged claim."""
+    V = GroundingVerdict
+    supports = _fact(
+        "Jane Doe", _ev("a"), verdict=V.SUPPORTED, qualifiers={"start_time": "2019", "role": "CEO"}
+    )
+    against = _fact(
+        "Jane Doe",
+        _ev("b", tier=SourceTier.AUTHORITATIVE),
+        verdict=V.CONTRADICTED,
+        qualifiers={"start_time": "2010", "role": "CTO"},
+        extractor="other",
+    )
+    (fact,) = SignatureCorroborator().corroborate([supports, against])
+    assert (fact.qualifiers["start_time"], fact.qualifiers["role"]) == ("2019", "CEO")
+    assert fact.extractor == supports.extractor
+
+
+def test_texts_are_left_out_one_at_a_time_not_with_the_fact_they_merged_into() -> None:
+    """Review of release audit 2: a batch fact merged from a not-found text and a
+    contradicting one was dropped whole beside a stored supported fact."""
+    V = GroundingVerdict
+    a = _fact("Jane Doe", _ev("a"), verdict=V.SUPPORTED)
+    batch = [_fact("Jane Doe", _ev("x"), verdict=V.NOT_FOUND),
+             _fact("Jane Doe", _ev("b"), verdict=V.CONTRADICTED)]  # fmt: skip
+    (merged,) = SignatureCorroborator().corroborate(batch)
+    assert merged.verdict is V.CONTRADICTED and contradicted_in(merged) == ("b",)
+    (later,) = SignatureCorroborator().corroborate([a, merged])
+    (together,) = SignatureCorroborator().corroborate([a, *batch])
+
+    def shown(fact: Fact) -> Any:
+        return sorted(e.doc_id for e in fact.evidence), contradicted_in(fact)
+
+    assert shown(later) == shown(together) == (["a", "x"], ("b",))
+
+
+def test_a_statement_that_replaced_a_derived_twin_keeps_its_source_when_it_moved() -> None:
+    """Review of #51: the re-merge took from a statement what its derived twin had lost."""
+    inverses = Ontology.from_dict(
+        {
+            "types": {"Person": {}, "Company": {}},
+            "predicates": {
+                "ceo": {"domain": ["Company"], "range": "Person"},
+                "ceo_of": {"domain": ["Person"], "range": "Company", "inverse_of": "ceo"},
+            },
+        }
+    )
+    jane = Entity(key="p:jane", type="Person", label="Jane Doe")
+    (parent,) = SignatureCorroborator(inverses).corroborate(
+        [Fact(subject=ACME, predicate="ceo", object_entity=jane, evidence=(_ev("a"),))]
+    )
+    (derived,) = partners([parent], inverses)
+
+    def stated(doc: str) -> Fact:
+        return Fact(subject=jane, predicate="ceo_of", object_entity=ACME, evidence=(_ev(doc),))
+
+    # B states it from a, over the derived twin it read; C states it from c meanwhile.
+    (b,) = SignatureCorroborator(inverses).corroborate([stated("a")])
+    (c,) = SignatureCorroborator(inverses).corroborate([stated("c")])
+    rebased = SignatureCorroborator(inverses).rebase(b, derived, c)
+    assert rebased is not None and sorted(e.doc_id for e in rebased.evidence) == ["a", "c"]
 
 
 def test_a_review_mark_survives_a_merge() -> None:

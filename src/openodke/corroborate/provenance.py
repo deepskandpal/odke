@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
-from openodke.types import Fact
+from openodke.types import Fact, GroundingVerdict
 
 if TYPE_CHECKING:
     from openodke.ontology import Ontology
@@ -147,17 +147,23 @@ def contradicted_in(fact: Fact) -> tuple[str, ...]:
     return tuple(sorted({str(d) for d in found})) if isinstance(found, list | tuple) else ()
 
 
-def contradiction(docs: Iterable[str]) -> dict[str, Any]:
-    """The conflict record of a supported claim that `docs` contradict (release audit 2)."""
+def contradiction(docs: Iterable[str], *, supported: bool = True) -> dict[str, Any]:
+    """The conflict record of a claim that `docs` contradict (release audit 2).
+
+    Beside a text that supports the claim, they are not counted as its support;
+    otherwise the record says which of the claim's texts they are, so a later
+    merge with support leaves out only those.
+    """
     listed = sorted(set(docs))
     text = "the text " if len(listed) == 1 else "the texts "
     verb = "contradicts" if len(listed) == 1 else "contradict"
-    return {
-        "status": "contradicted",
-        "contradicted_in": listed,
-        "reason": f"Not counted as support: {text}{', '.join(listed)} {verb} the claim, "
-        "which another source supports.",
-    }
+    said = f"{text}{', '.join(listed)} {verb} the claim"
+    reason = (
+        f"Not counted as support: {said}, which another source supports."
+        if supported
+        else f"{said[0].upper()}{said[1:]}."
+    )
+    return {"status": "contradicted", "contradicted_in": listed, "reason": reason}
 
 
 def unstamped(fact: Fact) -> Fact:
@@ -181,7 +187,8 @@ def unstamped(fact: Fact) -> Fact:
         confidence = float(conflict["confidence_before"])
     qualifiers = {k: v for k, v in fact.qualifiers.items() if k not in (SCORE, CONFLICT)}
     if refuted := contradicted_in(fact):
-        qualifiers[CONFLICT] = contradiction(refuted)
+        supported = fact.verdict is GroundingVerdict.SUPPORTED
+        qualifiers[CONFLICT] = contradiction(refuted, supported=supported)
     return fact.model_copy(update={"confidence": confidence, "qualifiers": qualifiers})
 
 

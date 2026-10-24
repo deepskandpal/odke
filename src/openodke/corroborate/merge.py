@@ -335,26 +335,47 @@ class SignatureCorroborator:
     def _merge(self, members: list[Fact], copies: NearDuplicates | None) -> Fact:
         first = members[0]
         everyone = members
-        # A text that contradicts the claim is no source for it (release audit 2):
-        # beside a member that supports the claim, a contradicting one is recorded,
-        # not counted. Its qualifiers, such as a review mark, still merge.
-        if any(f.verdict is GroundingVerdict.SUPPORTED for f in members):
-            members = [f for f in members if f.verdict is not GroundingVerdict.CONTRADICTED]
-        against = [f for f in everyone if f.verdict is GroundingVerdict.CONTRADICTED]
-        refuted = {d for f in everyone for d in contradicted_in(f)}
-        if len(members) < len(everyone):
-            refuted |= {e.doc_id for f in against for e in f.evidence}
+        # A text that contradicts the claim is no source for it (release audit 2). Which
+        # texts did is known one text at a time: a member's record names them, and a
+        # contradicted member with none is texts that all contradict.
+        refuted: set[str] = set()
+        for f in everyone:
+            if recorded := contradicted_in(f):
+                refuted |= set(recorded)
+            elif f.verdict is GroundingVerdict.CONTRADICTED:
+                refuted |= {e.doc_id for e in f.evidence}
+        # A text that supports the claim now is no longer held against it.
+        supported = [f for f in everyone if f.verdict is GroundingVerdict.SUPPORTED]
+        refuted -= {e.doc_id for f in supported for e in f.evidence}
+        # Each member with the evidence it brings. Beside support, a contradicting
+        # text's evidence is left out, and a member that was nothing but contradicting
+        # texts with it: its claim, its clock, its confidence and its extractor are not
+        # this claim's.
+        pairs = [(f, list(f.evidence)) for f in everyone]
+        if supported:
+            pairs = [(f, [e for e in ev if e.doc_id not in refuted]) for f, ev in pairs]
+            pairs = [
+                (f, ev)
+                for f, ev in pairs
+                if ev or not f.evidence or f.verdict is not GroundingVerdict.CONTRADICTED
+            ]
+        members = [f for f, _ in pairs]
         evidence: dict[tuple[Any, ...], Evidence] = {}
-        for fact in members:
-            for e in fact.evidence:
+        for _, brought in pairs:
+            for e in brought:
                 span = (e.span.start, e.span.end) if e.span else None
                 evidence.setdefault((e.doc_id, span, e.uri), e)
         cited = tuple(evidence.values())
         # Every member's sources as cited; which of them are copies is decided below.
+        # A member citing nothing counts the support it claims; one whose every text
+        # was left out counts none.
         sources: set[str] = set()
-        for fact in members:
-            own = {self.source(e) for e in fact.evidence}
-            sources |= own if own else independent_sources(fact, self.source)
+        for fact, brought in pairs:
+            own = {self.source(e) for e in brought}
+            if own:
+                sources |= own
+            elif not fact.evidence:
+                sources |= independent_sources(fact, self.source)
         # A group a member already carries is kept, so a later batch without
         # those texts still counts the copy once. One whose texts are all in
         # hand is decided again, at this threshold.
@@ -368,15 +389,22 @@ class SignatureCorroborator:
         if groups:
             sources = _collapse(sources, cited, groups, self.source)
         # Stable, so the first-seen member wins a tie.
-        ranked = sorted(everyone, key=self._strength, reverse=True)
-        qualifiers = self._qualifiers(everyone, ranked)
+        ranked = sorted(members, key=self._strength, reverse=True)
+        qualifiers = self._qualifiers(members, ranked)
+        # A stamp of a member left out still says what was done to the claim: a review
+        # mark, say. Its qualifiers of the claim itself do not merge.
+        for f in everyone:
+            for key, value in f.qualifiers.items():
+                if key.startswith("odke.") and key not in (NEAR_DUPLICATES, CONFLICT):
+                    qualifiers.setdefault(key, value)
         if groups:
             qualifiers[NEAR_DUPLICATES] = groups
-        # A text that now supports the claim is no longer recorded against it.
-        refuted -= {e.doc_id for e in cited}
-        if refuted:
-            qualifiers[CONFLICT] = contradiction(refuted)
-        extractors = sorted({f.extractor for f in everyone})
+        # Recorded where the claim holds texts that do not all agree, so a later merge
+        # leaves out only the ones that contradicted it.
+        mixed = any(f.verdict is not GroundingVerdict.CONTRADICTED for f in everyone)
+        if refuted and (supported or mixed or any(contradicted_in(f) for f in everyone)):
+            qualifiers[CONFLICT] = contradiction(refuted, supported=bool(supported))
+        extractors = sorted({f.extractor for f in members})
         present = {f.verdict for f in members}
         # A source with no evidence has no name: a claim any of whose members
         # cites nothing keeps its count and names none of its sources.
@@ -450,7 +478,10 @@ class SignatureCorroborator:
         if derived and now is not None and DERIVED not in now.qualifiers:
             return None
         merged = unstamped(fact)
-        gone = _documents(read) - _documents(now)
+        # What the store dropped since the read, of a twin this fact merged with: a
+        # statement that replaced a derived twin took nothing from it (#28).
+        twin = read if read is not None and (DERIVED in read.qualifiers) == derived else None
+        gone = _documents(twin) - _documents(now)
         if gone:
             merged = retract(merged, gone, datetime.now(UTC))
             if merged.retired_at is not None and fact.retired_at is None:
@@ -459,12 +490,15 @@ class SignatureCorroborator:
                 return None
         if now is not None and (DERIVED in now.qualifiers) == derived:
             merged = self._merge([merged, unstamped(now)], None)
+        # The gate's stamps, as this job's gate left them. One it did not make stays as
+        # the merge brought it, as the next job's would (pipeline): a review mark goes
+        # only from a claim that is now supported.
         qualifiers = dict(merged.qualifiers)
         for key in (ONTOLOGY, REVIEW):
             if key in fact.qualifiers:
                 qualifiers[key] = fact.qualifiers[key]
-            else:
-                qualifiers.pop(key, None)
+        if REVIEW not in fact.qualifiers and merged.verdict is GroundingVerdict.SUPPORTED:
+            qualifiers.pop(REVIEW, None)
         update: dict[str, Any] = {"qualifiers": qualifiers}
         decided = fact.qualifiers.get(CONFLICT)
         if isinstance(decided, Mapping) and decided.get("status") in ("won", "lost", "tied"):
