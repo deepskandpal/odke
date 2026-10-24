@@ -8,9 +8,10 @@ items; a comparison over different items measures the difference between the
 sets, so it is refused, naming the items only one side has.
 
 One metric is primary and decides the verdict: F1 where the rows carry counts,
-accuracy where they carry right or wrong. The others are guardrails, printed
-with their own intervals and never deciding, so that three metrics are not
-three chances of a false alarm on every run.
+accuracy where they carry right or wrong, where McNemar's exact test on the
+flips must agree as well (`openodke.eval.stats.paired_bootstrap`). The others
+are guardrails, printed with their own intervals and never deciding, so that
+three metrics are not three chances of a false alarm on every run.
 
 `Comparison` is one JSON block, `--json`, so a versioned eval report (#139) can
 carry it as its comparison section unchanged.
@@ -67,7 +68,8 @@ metric recomputed for both runs on each resample (a paired bootstrap; for
 corpus precision, recall and F1 the item is the document). The primary metric
 (F1 for counts, accuracy otherwise; --metric to choose) decides the verdict:
 worse or better when its whole 95% interval is one side of zero, inconclusive
-otherwise. The other metrics are guardrails: reported, never deciding.
+otherwise; for right-or-wrong items McNemar's exact test on the flips must
+also give p < 0.05. The other metrics are guardrails: reported, never deciding.
 
 Exit 1 when the verdict is worse. --fail-under X also exits 1 when the low end
 of B's 95% range for the primary metric is under X; --fail-on-inconclusive
@@ -214,7 +216,14 @@ def compare_items(
     exact = None
     if METRICS[primary][0] == ("correct",):
         exact = mcnemar([bool(r.correct) for r in rows_a], [bool(r.correct) for r in rows_b])
-        if (exact.p_value < 1 - main.level) != (main.verdict != "inconclusive"):
+        clear = main.interval[0] > 0 or main.interval[1] < 0
+        if clear and exact.p_value >= 1 - main.level:
+            notes.append(
+                f"the bootstrap's interval is clear of zero, but McNemar's exact test on the "
+                f"{main.flips} flips gives p = {exact.p_value:.3g}: too few of them lean one way "
+                "to call it, so the verdict is inconclusive"
+            )
+        elif not clear and exact.p_value < 1 - main.level:
             notes.append(
                 f"McNemar's exact test and the bootstrap disagree (p = {exact.p_value:.3g}): "
                 "the change is at the edge of what these items can show"

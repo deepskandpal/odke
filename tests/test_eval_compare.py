@@ -124,6 +124,24 @@ def test_a_paired_drop_is_worse_with_its_interval_flips_and_mcnemar(tmp_path: Pa
     assert "30 of 300 items changed (10.0%): 3 gained, 27 lost, McNemar exact p" in text
 
 
+def test_four_one_way_flips_are_no_verdict(tmp_path: Path) -> None:
+    """Release audit 10: four flips, all gained, read as "better", though McNemar's p is 0.125.
+
+    Four fair coins land one way one time in eight, so a gate on that fails a
+    pull request on noise. The bootstrap's interval is clear of zero; the
+    exact test on the flips is not, and a pass/fail verdict needs both.
+    """
+    a, b = _pass_fail(both=200, gained=4, lost=0, neither=96)
+    compared = compare_items(a, b)
+    assert compared.primary.interval[0] > 0
+    assert compared.mcnemar is not None and compared.mcnemar.p_value == 0.125
+    assert compared.verdict == "inconclusive"
+    assert any("McNemar's exact test on the 4 flips gives p = 0.125" in n for n in compared.notes)
+    result = runner.invoke(app, ["eval", "compare", *_files(tmp_path, b, a)])
+    assert result.exit_code == 0, result.output
+    assert "verdict inconclusive" in _flat(result.stdout)
+
+
 def test_items_are_paired_by_id_not_by_line(tmp_path: Path) -> None:
     a, b = _pass_fail(both=240, gained=3, lost=27, neither=30)
     in_order = compare_items(a, b)

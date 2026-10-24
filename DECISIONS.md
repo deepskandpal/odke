@@ -628,6 +628,19 @@ seeded comparisons of the same system came back 96.7% inconclusive. Offline,
 at 1,500 comparisons each, 95.2% to 95.3% came back inconclusive for pass/fail
 items and 94.7% to 94.9% for corpus F1.
 
+**Amended 24 Oct 2026 (release audit 10):** for pass/fail items, *better* and
+*worse* also need McNemar's exact test on the flips below α; otherwise the
+verdict is *inconclusive*. The bootstrap alone gave a verdict on no change
+12.5% of the time when 4 items flipped (four fair coins land one way one time
+in eight), 6.2% at 5 and 7.0% at 8, so as a CI gate it failed pull requests on
+noise. With the exact test beside it, a verdict on no change stays at or under
+5% at every flip count (`tests/test_eval_aa.py`, exact over every split). The
+A/A test's seed now comes back 98.3% inconclusive; offline, at 1,500
+comparisons each, 96.4% for 300 items and 97.9% for 100 (95.1% and 96.1% on
+the bootstrap alone, the same draws). Corpus F1 is not gated, and its rates
+stand. The cost is power: the exact test is conservative, so a pass/fail
+change at the detection limit is called a little less often.
+
 ### 30. A cached answer is keyed on everything that changes it, and costs 0.0
 
 A batch rerun after a crash, a sink change or a gate change asks the models
