@@ -8,10 +8,12 @@ the package are which.
 ## Public
 
 A name is public when a public module lists it in `__all__`. A module is public
-unless a part of its path starts with `_`. The `odke` command is public by its
-commands, flags and exit statuses; `openodke.cli` is not a Python API. The run
-config is public by its keys and the short names `use:` takes. A test pins all
-of it, so none of it changes by accident.
+unless a part of its path starts with `_`. A public function, class or method is
+public by the names and kinds of its parameters too, and a model by its fields.
+The `odke` command is public by its commands, flags and exit statuses;
+`openodke.cli` is not a Python API. The run config is public by its keys and the
+short names `use:` takes. A test pins all of it, so none of it changes by
+accident.
 
 ## Provisional
 
