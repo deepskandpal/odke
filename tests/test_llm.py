@@ -161,6 +161,37 @@ def test_an_unset_temperature_is_absent_from_the_payload() -> None:
     assert "temperature" not in json.loads(http.request.data)
 
 
+def test_openais_own_api_gets_max_completion_tokens() -> None:
+    """GPT-5 and later refuse `max_tokens` on OpenAI's API ("use
+    'max_completion_tokens' instead"), and every OpenAI model takes the newer name."""
+    http = _FakeHTTP(_openai_body())
+    OpenAICompatClient(opener=http).complete(
+        [Message(content="hi")], spec=ModelSpec(model="openai/gpt-5.4-mini", max_tokens=321)
+    )
+    sent = json.loads(http.request.data)
+    assert sent["max_completion_tokens"] == 321
+    assert "max_tokens" not in sent
+
+
+@pytest.mark.parametrize(
+    ("model", "base_url"),
+    [
+        ("ollama/llama3.1", None),
+        ("openrouter/openai/gpt-5.4-mini", None),
+        ("openai/my-model", "http://localhost:8000/v1"),
+    ],
+)
+def test_compatible_servers_keep_max_tokens(model: str, base_url: str | None) -> None:
+    """Servers that copy OpenAI's shape read `max_tokens`, not all of them the newer name."""
+    http = _FakeHTTP(_openai_body())
+    OpenAICompatClient(opener=http).complete(
+        [Message(content="hi")], spec=ModelSpec(model=model, base_url=base_url, max_tokens=321)
+    )
+    sent = json.loads(http.request.data)
+    assert sent["max_tokens"] == 321
+    assert "max_completion_tokens" not in sent
+
+
 def test_an_explicit_temperature_is_sent_unchanged() -> None:
     """Including 0.0, which is a setting the caller meant, not an absent one."""
     http = _FakeHTTP(_openai_body())

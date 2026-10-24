@@ -16,6 +16,7 @@ import http.client
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Sequence
 from typing import Any
@@ -64,7 +65,7 @@ class OpenAICompatClient:
         payload: dict[str, Any] = {
             "model": spec.model.split("/", 1)[-1],
             "messages": [{"role": m.role, "content": m.content} for m in messages],
-            "max_tokens": spec.max_tokens,
+            _limit_key(base): spec.max_tokens,
         }
         # Left out rather than defaulted: a model that accepts only one
         # temperature rejects the key itself, not just the value (#79).
@@ -108,6 +109,18 @@ class OpenAICompatClient:
             ) from None
 
         return _to_completion(body, spec)
+
+
+def _limit_key(base: str) -> str:
+    """The name of the output limit at `base`.
+
+    OpenAI's own API takes `max_completion_tokens` from every model, and its
+    GPT-5 and later models refuse `max_tokens` outright. The servers that copy
+    its shape (Ollama, vLLM, LM Studio, llama.cpp, OpenRouter, Together, Groq, a
+    gateway) all read `max_tokens`, and not all of them know the newer name.
+    """
+    host = urllib.parse.urlsplit(base).hostname or ""
+    return "max_completion_tokens" if host == "api.openai.com" else "max_tokens"
 
 
 def _key(spec: ModelSpec) -> str:

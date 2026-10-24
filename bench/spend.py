@@ -39,6 +39,7 @@ CAPS: dict[str, float] = {"anthropic": 20.0}
 PRICES: dict[str, tuple[float, float]] = {
     "anthropic/claude-haiku-4-5-20251001": (1.0, 5.0),
     "openai/gpt-4.1-mini-2025-04-14": (0.40, 1.60),
+    "openai/gpt-5.4-mini-2026-03-17": (0.75, 4.50),
 }
 
 

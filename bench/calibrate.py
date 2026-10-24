@@ -2,7 +2,7 @@
 
     uv run python bench/calibrate.py --estimate --cache DIR   # what a run would cost; no call
     uv run python bench/calibrate.py --cache DIR -o OUT       # the default Haiku, every judge
-    uv run python bench/calibrate.py --model openai/gpt-4.1-mini-2025-04-14 --cap openai=5 ...
+    uv run python bench/calibrate.py --model openai/gpt-5.4-mini-2026-03-17 --cap openai=10 ...
     uv run python bench/calibrate.py --model A --model B ...  # Claude and another: self-preference
 
 Grounding (label set G, `bench/labels/G`): four grounder variants, `ground.span@1`
