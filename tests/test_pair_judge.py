@@ -94,7 +94,11 @@ def _client(forward: str, backward: str, *, a: str = "Ada Lovelace", b: str = "L
 
 
 def _judge(client: Any, **options: Any) -> PairJudge:
-    judge = PairJudge(client=client, **options)
+    """A judge whose decisions link: these tests are about what a decision makes.
+
+    Its default, from its calibration card, is `test_calibration_policy`'s.
+    """
+    judge = PairJudge(client=client, **{"on_decision": "link", **options})
     judge.documents[DOC.id] = DOC
     return judge
 
@@ -288,7 +292,7 @@ def test_the_band_starts_at_low_and_stops_below_the_threshold() -> None:
     _, links, _ = _resolve(_judge(client, low=0.7), threshold=0.8)
     assert [link.reason for link in links] == [None] and client.calls == []
     with pytest.raises(ValueError, match="band starts at 0.95, above the threshold 0.9"):
-        NativeResolver(judge=PairJudge(client=client, low=0.95))
+        NativeResolver(judge=PairJudge(client=client, low=0.95, on_decision="link"))
 
 
 def test_without_a_judge_nothing_below_the_threshold_is_asked_or_linked() -> None:
@@ -640,7 +644,7 @@ def test_a_budget_the_judge_reaches_first_stops_the_job_during_resolve() -> None
 
 def test_a_dry_run_never_asks_the_judge() -> None:
     client = RecordedClient([])
-    _, report = Validator(PEOPLE, judge=PairJudge(client=client)).validate(
+    _, report = Validator(PEOPLE, judge=PairJudge(client=client, on_decision="link")).validate(
         ROWS, [DOC], dry_run=True
     )
     assert client.calls == [] and report.judge is None and report.calls == 0
@@ -656,7 +660,7 @@ def test_a_pipeline_hands_the_judge_its_texts_through_the_resolver() -> None:
         def extract(self, chunk: Any, ontology: Any) -> list[Fact]:
             return list(FACTS)
 
-    judge = PairJudge(client=_client("same", "same"))
+    judge = PairJudge(client=_client("same", "same"), on_decision="link")
     resolver = NativeResolver(judge=judge)
     assert resolver.documents is judge.documents
     from openodke.run.execute import register_documents

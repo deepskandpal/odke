@@ -93,7 +93,8 @@ class _DoubtsTheSecond:
 
 
 def test_in_a_pipeline_the_contradicted_fact_never_reaches_the_graph() -> None:
-    gate = VerdictGate()
+    # Dropping, as a grounder at its bar does; below it, it marks (test_calibration_policy).
+    gate = VerdictGate(on_refusal="drop")
     assert isinstance(gate, Gate)
     kg = Pipeline(Ontology(), _TwoBirthYears(), grounder=_DoubtsTheSecond(), gate=gate).run(
         [Document(id="d1", text="Ada was born in 1815.")]

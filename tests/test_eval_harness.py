@@ -298,7 +298,8 @@ def strict(tmp_path: Path) -> Iterator[Path]:
     copy = tmp_path / "triples"
     shutil.copytree(TRIPLES, copy, ignore=shutil.ignore_patterns("out"))
     config = yaml.safe_load((copy / "odke.yaml").read_text())
-    config["stages"]["gate"] = {"use": "verdict", "refuse_not_found": True}
+    # Strict on purpose: it refuses not_found too, and refuses rather than marks (#54).
+    config["stages"]["gate"] = {"use": "verdict", "refuse_not_found": True, "on_refusal": "drop"}
     path = copy / "strict.yaml"
     path.write_text(yaml.safe_dump(config))
     yield path

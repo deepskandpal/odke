@@ -159,7 +159,10 @@ def run_config(
     model with a smaller output cap.
     """
     grounder: dict[str, Any] = {"use": "llm"}
-    gate: dict[str, Any] = {"use": "verdict"}
+    # A benchmark measures the layer refusing on the grounder's word, as its
+    # published numbers were run; the gate's default, below the grounder's
+    # calibration bar, marks instead (DECISIONS #54). Said, so a rerun is the run.
+    gate: dict[str, Any] = {"use": "verdict", "on_refusal": "drop"}
     if paper:
         grounder |= {"context": "document", "verdicts": "binary"}
         gate |= {"refuse_not_found": True}

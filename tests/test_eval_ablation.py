@@ -47,13 +47,15 @@ def test_the_example_s_three_configurations(example: Path) -> None:
     counts = {
         name: (r["tp"], r["fp"], r["fn"], r["facts"], r["model_calls"]) for name, r in rows.items()
     }
+    # The grounder has no calibration card, so the gate marks the fact it contradicts
+    # for review instead of refusing it (DECISIONS #54): + grounding drops nothing.
     assert counts == {
         "extraction alone": (32, 4, 4, 36, 3),
-        "+ grounding": (32, 3, 4, 35, 39),
-        "+ corroboration": (34, 1, 2, 25, 39),
+        "+ grounding": (32, 4, 4, 36, 39),
+        "+ corroboration": (34, 2, 2, 26, 39),
     }
     assert rows["extraction alone"]["precision"] == pytest.approx(32 / 36)
-    assert rows["+ grounding"]["precision"] == pytest.approx(32 / 35)
+    assert rows["+ grounding"]["precision"] == pytest.approx(32 / 36)
     assert rows["+ corroboration"]["recall"] == pytest.approx(34 / 36)
     # Recorded responses carry no price: unknown, never 0.0.
     assert rows["+ grounding"]["cost_usd"] is None
@@ -75,13 +77,20 @@ def test_the_example_readme_prints_the_table_the_command_computes(example: Path)
 
 def test_the_notes_say_what_moved_and_what_the_gate_traded(example: Path) -> None:
     notes = _report(example).notes
-    assert notes[0] == "grounding moved precision from 0.889 to 0.914; recall 0.889 → 0.889"
+    assert (
+        notes[0] == "grounding did not move precision on these labels (0.889); recall 0.889 → 0.889"
+    )
     assert notes[1].startswith(
-        "normalising, resolving and corroborating moved precision from 0.914 to 0.971"
+        "normalising, resolving and corroborating moved precision from 0.889 to 0.944"
     )
     assert (
-        "of the 36 extracted facts, 32 are true: the gate kept 32 of them and 3 of the 4 false ones"
+        "of the 36 extracted facts, 32 are true: the gate kept 32 of them and 4 of the 4 false ones"
         in notes
+    )
+    assert (
+        "the gate marks what the grounder refuses for review instead of dropping it (it has no "
+        "card, DECISIONS #54); refusing contradicted would keep 32 of 32 true facts and 3 of 4 "
+        "false ones (precision 0.914)" in notes
     )
     assert (
         "refusing not_found as well would keep 19 of 32 true facts and 1 of 4 false ones "
@@ -124,7 +133,7 @@ def test_the_command_prints_the_table_and_writes_nothing(example: Path) -> None:
     as_json = runner.invoke(app, [*args, "--json"])
     assert StageReport.model_validate_json(as_json.output).metrics[
         "precision_grounding"
-    ] == pytest.approx(32 / 35)
+    ] == pytest.approx(32 / 36)
 
 
 @pytest.mark.parametrize(

@@ -109,7 +109,12 @@ class VerdictGate:
 
     @property
     def refused(self) -> frozenset[GroundingVerdict]:
-        """The verdicts this gate refuses, in the shape `openodke.eval.grounding.kept` takes."""
+        """The verdicts this gate refuses, in the shape `openodke.eval.grounding.kept` takes.
+
+        None while it marks instead (`policy`): it writes every one of them.
+        """
+        if self.policy[0] == "mark":
+            return frozenset()
         if self.refuse_not_found:
             return frozenset({GroundingVerdict.CONTRADICTED, GroundingVerdict.NOT_FOUND})
         return frozenset({GroundingVerdict.CONTRADICTED})
@@ -120,7 +125,7 @@ class VerdictGate:
             check, reason = problem
             self._refused[check] = self._refused.get(check, 0) + 1
             return ValidationVerdict(action="refuse", reason=f"schema: {reason}")
-        if fact.verdict in self.refused:
+        if fact.verdict in self._refusable():
             key = fact.verdict.value
             action, why = self.policy
             if action == "mark":
@@ -134,6 +139,12 @@ class VerdictGate:
             return ValidationVerdict(action="refuse", reason=_REASONS[fact.verdict])
         self._accepted += 1
         return ValidationVerdict(action="accept")
+
+    def _refusable(self) -> frozenset[GroundingVerdict]:
+        """The verdicts a refusal on the grounder's word applies to, dropped or marked."""
+        if self.refuse_not_found:
+            return frozenset({GroundingVerdict.CONTRADICTED, GroundingVerdict.NOT_FOUND})
+        return frozenset({GroundingVerdict.CONTRADICTED})
 
     @property
     def stats(self) -> dict[str, Any]:

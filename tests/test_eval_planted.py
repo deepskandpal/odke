@@ -262,7 +262,8 @@ def test_a_gate_that_refuses_a_true_fact_is_refused_by_the_validator(tmp_path: P
         "stages": {
             "extractor": {"use": "triples", "path": "triples.jsonl"},
             "grounder": "planted_stages:ContradictAda",
-            "gate": "verdict",
+            # A gate that refuses, as one does at its grounder's bar (DECISIONS #54).
+            "gate": {"use": "verdict", "on_refusal": "drop"},
         },
     }
     (tmp_path / "odke.json").write_text(json.dumps(config))

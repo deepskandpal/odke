@@ -37,6 +37,8 @@ from test_pair_judge import _client as pair_client
 from test_validator import PLACES, RECORDED, ROWS, A, B
 
 HAIKU = "anthropic/claude-haiku-4-5-20251001"
+# The package's own cards, which `tests/conftest.py` hides from every other test.
+SHIPPED = Path(__file__).parent.parent / "src" / "openodke" / "calibration" / "cards"
 ADA = Entity(key="Person:ada", type="Person", label="Ada")
 
 
@@ -108,9 +110,18 @@ def test_a_gate_told_no_grounder_drops_as_before_and_a_bad_option_is_refused() -
         VerdictGate(on_refusal="keep")  # type: ignore[arg-type]
 
 
-def test_until_the_first_cards_the_default_drops_and_says_so() -> None:
-    gate = VerdictGate().follow_card(LLMGrounder(client=ScriptedClient([])))
-    assert gate.policy == ("drop", "the default policy is 'act'")
+def test_the_shipped_card_decides_the_default_grounder_s_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The package's own card for Haiku 4.5 and ground.span@1 is below its bar: it marks."""
+    monkeypatch.setattr(lookup, "CARDS_DIR", SHIPPED)
+    grounder = LLMGrounder(client=ScriptedClient([]))
+    found = grounder.calibration
+    assert found.calibrated and found.meets_bar is False
+    assert VerdictGate().follow_card(grounder).policy == (
+        "mark",
+        "its card is below the bar, DECISIONS #54",
+    )
 
 
 @pytest.mark.usefixtures("card_policy")
@@ -225,14 +236,19 @@ def test_the_validator_reports_each_judge_and_what_it_marked(
     ) in text
 
 
-def test_the_validator_s_default_today_drops_and_its_report_says_why() -> None:
+def test_the_validator_s_default_marks_and_its_report_says_why() -> None:
     _, report = Validator(PLACES, client=RecordedClient(RECORDED)).validate(ROWS, [A, B])
-    assert report.marked == {} and report.refused_by == {"contradicted": 1, "predicate": 1}
+    assert report.marked == {"contradicted": 1} and report.refused_by == {"predicate": 1}
     assert [(c.action, c.why) for c in report.calibration] == [
-        ("drop", "the default policy is 'act'")
+        ("mark", "it has no card, DECISIONS #54")
     ]
     data = report.model_dump(mode="json")
     assert data["schema_version"] == "1.1" and data["calibration"][0]["card"] is None
+    # Asked to, it drops as it did before #54.
+    _, dropped = Validator(
+        PLACES, client=RecordedClient(RECORDED), gate=VerdictGate(schema=True, on_refusal="drop")
+    ).validate(ROWS, [A, B])
+    assert dropped.marked == {} and dropped.refused_by == {"contradicted": 1, "predicate": 1}
 
 
 def test_a_dry_run_reports_no_judge() -> None:

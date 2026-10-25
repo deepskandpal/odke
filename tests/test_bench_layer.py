@@ -145,7 +145,12 @@ def test_prepare_reads_each_extractor_back_and_validates_it_in_the_sets_own_mode
     }
     config = json.loads((out / "redocred" / "lgt" / "odke.json").read_text())
     assert config["stages"]["grounder"] == PAPER
-    assert config["stages"]["gate"] == {"use": "verdict", "refuse_not_found": True, "schema": True}
+    assert config["stages"]["gate"] == {
+        "use": "verdict",
+        "refuse_not_found": True,
+        "schema": True,
+        "on_refusal": "drop",
+    }
     assert "validator" not in config["stages"]
     assert config["stages"]["normalizer"] == "passthrough"
     assert config["models"]["ground"] == layer.GROUND_MODEL
