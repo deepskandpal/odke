@@ -27,6 +27,7 @@ from openodke import (
 )
 from openodke.corroborate import SCHEMA_SLICE
 from openodke.extract import LLMExtractor, response_schema
+from openodke.extract.llm import UnreadableReply
 from openodke.ground import LLMGrounder, RetryPolicy
 from openodke.llm import (
     Completion,
@@ -327,27 +328,50 @@ def test_a_malformed_reply_is_repaired_once(people: Ontology) -> None:
     assert all(c.cost_usd is None for c in extractor.calls)
 
 
-def test_an_unrepairable_reply_is_recorded_not_raised(
-    people: Ontology, caplog: pytest.LogCaptureFixture
+def test_an_unrepairable_reply_fails_its_chunk_and_keeps_what_the_model_said(
+    people: Ontology,
 ) -> None:
+    """No reply follows the contract: the chunk fails, it is no empty extraction (rule R1)."""
     doc, chunk = _doc_and_chunk(GRACE)
     extractor = LLMExtractor(client=ScriptedClient(["nope", "still nope"]), spec=LLAMA)
-    with caplog.at_level(logging.WARNING, logger="openodke.extract"):
-        assert extractor.extract(chunk, people) == []
-    assert [r.reason for r in extractor.rejections] == ["malformed reply"]
+    with pytest.raises(UnreadableReply, match=rf"{chunk.doc_id}#{chunk.index} after 2 attempts"):
+        extractor.extract(chunk, people)
     assert len(extractor.calls) == 2
     # A repair that failed keeps what the model actually said, both attempts of it.
     (kept,) = extractor.malformed
     assert (kept.doc_id, kept.chunk_index) == (chunk.doc_id, chunk.index)
     assert kept.replies == ("nope", "still nope")
-    assert extractor.empty_extractions == 1
-    warning = "".join(r.getMessage() for r in caplog.records)
-    assert f"{chunk.doc_id}#{chunk.index}" in warning and "LLMExtractor.malformed" in warning
+    # A failure, not a refusal of a candidate nor a passage with nothing in it.
+    assert (extractor.rejections, extractor.empty_extractions) == ([], 0)
+    assert isinstance(UnreadableReply("x"), ProviderError)
 
     single = LLMExtractor(client=ScriptedClient(["nope"]), spec=LLAMA, repairs=0)
-    assert single.extract(chunk, people) == []
+    with pytest.raises(UnreadableReply, match="after 1 attempts"):
+        single.extract(chunk, people)
     assert len(single.calls) == 1
     assert [m.replies for m in single.malformed] == [("nope",)]
+
+
+def test_a_document_whose_reply_is_unreadable_is_reported_as_failed_not_scored(
+    people: Ontology,
+) -> None:
+    """Through the pipeline: the document is left out and named, the others carry on."""
+    unread, _ = _doc_and_chunk(GRACE)
+    fine = Document(id="ada", text="Ada Lovelace was born in 1815.")
+    reply = {"entities": [{"type": "Person", "name": "Ada Lovelace", "facts": []}]}
+
+    class Answers:
+        def complete(self, messages: Any, *, spec: ModelSpec, schema: Any = None) -> Completion:
+            text = messages[-1].content
+            body = json.dumps(reply) if "Ada" in text else "Sure, here you go."
+            return Completion(text=body, model=spec.model)
+
+    extractor = LLMExtractor(client=Answers(), spec=LLAMA, structured=False)
+    graph = Pipeline(people, extractor).run([unread, fine])
+    failed = graph.stats["failed"]
+    assert list(failed) == [unread.id]
+    assert failed[unread.id].startswith("extract: UnreadableReply: no reply followed the contract")
+    assert graph.stats["empty_extractions"] == 1  # Ada's reply named her, and no fact
 
 
 def test_an_empty_extraction_is_counted_and_warned(
@@ -585,19 +609,16 @@ def test_a_concurrent_run_is_the_serial_run_exactly(people: Ontology) -> None:
     assert many.calls == one.calls
     assert many.rejections == one.rejections
     assert many.malformed == one.malformed
-    # And every count is exact: a repair for each malformed row, three empty kinds of four.
+    # And every count is exact: a repair for each malformed row, which fails its
+    # document, and two empty kinds of four.
     assert len(many.calls) == ROWS + ROWS // 4
-    assert [r.reason for r in many.rejections] == [
-        "malformed reply",
-        "quote not in the passage",
-        "malformed reply",
-        "quote not in the passage",
-    ]
+    assert [r.reason for r in many.rejections] == ["quote not in the passage"] * (ROWS // 4)
+    assert len(concurrent.stats["failed"]) == len(many.malformed) == ROWS // 4
     assert (
         many.empty_extractions
         == one.empty_extractions
         == concurrent.stats["empty_extractions"]
-        == 3 * ROWS // 4
+        == 2 * ROWS // 4
     )
 
 

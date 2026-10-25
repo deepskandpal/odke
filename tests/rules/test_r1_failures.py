@@ -7,9 +7,9 @@ script scoring a sentence that failed as an empty answer and a bad key as "no
 conflict found" (release audit, finding 12), and `--update` retiring a failed
 text's facts with exit 0 (finding 13).
 
-The check: make every model call fail, or hand in a run that failed. Every
-command that scores exits non-zero or leaves the failed part out and says
-so; none writes a number made from the failure.
+The check: make every model call fail, or every reply unreadable, or hand in
+a run that failed. Every command that scores exits non-zero or leaves the
+failed part out and says so; none writes a number made from the failure.
 
 What it covers: `odke bench run`, `odke eval ablation`, `odke eval pipeline`
 with `--validator`, `--adjudicate` and `--lenient`, `odke validate --update`,
@@ -75,8 +75,35 @@ def test_every_place_a_client_is_resolved_is_made_to_fail() -> None:
     )
 
 
-def _no_score(command: str, result: Any, written: Path | None = None) -> None:
-    assert _Refused.calls, f"`{command}` asked no model, so this proves nothing: {result.output}"
+class _Unreadable:
+    """Every model answers, and never in the contract: prose where JSON was asked for."""
+
+    calls = 0
+
+    def complete(
+        self, messages: Sequence[Message], *, spec: ModelSpec, schema: dict[str, Any] | None = None
+    ) -> Completion:
+        _Unreadable.calls += 1
+        return Completion(text="Sure! Here is what the passage says.", model=spec.model)
+
+
+@pytest.fixture
+def every_reply_unreadable(monkeypatch: pytest.MonkeyPatch) -> Iterator[type[_Unreadable]]:
+    """Every answer arrives, and none can be read: a failure too, not an empty answer."""
+    from openodke.llm import testing
+
+    _Unreadable.calls = 0
+    for client in (testing.RecordedClient, testing.ReplayClient, testing.ScriptedClient):
+        monkeypatch.setattr(client, "complete", _Unreadable.complete)
+    answer_every_model_with(monkeypatch, _Unreadable())
+    yield _Unreadable
+
+
+def _no_score(
+    command: str, result: Any, written: Path | None = None, *, asked: int | None = None
+) -> None:
+    asked = _Refused.calls if asked is None else asked
+    assert asked, f"`{command}` asked no model, so this proves nothing: {result.output}"
     leaked = written is not None and written.exists()
     assert result.exit_code != 0 and not leaked, (
         f"`{command}` exited {result.exit_code} after every model call failed"
@@ -99,6 +126,20 @@ def test_odke_bench_run(every_model_call_fails: Any, tmp_path: Path) -> None:
     prepared = text2kgbench.prepare(_t2k_raw(tmp_path), "ont_1_movie", tmp_path / "set")
     result = runner.invoke(app, ["bench", "run", "text2kgbench", str(prepared)])
     _no_score("odke bench run", result, prepared / "report.json")
+
+
+def test_odke_bench_run_whose_every_reply_was_unreadable(
+    every_reply_unreadable: Any, tmp_path: Path
+) -> None:
+    """PR 3's review: an unreadable extraction reply read as a passage with nothing in it."""
+    from openodke.eval.datasets import text2kgbench
+    from test_datasets import _t2k_raw
+
+    prepared = text2kgbench.prepare(_t2k_raw(tmp_path), "ont_1_movie", tmp_path / "set")
+    result = runner.invoke(app, ["bench", "run", "text2kgbench", str(prepared)])
+    _no_score(
+        "odke bench run", result, prepared / "report.json", asked=every_reply_unreadable.calls
+    )
 
 
 def test_odke_eval_ablation(every_model_call_fails: Any, example: Path) -> None:
