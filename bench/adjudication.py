@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -43,32 +42,19 @@ from typing import Any
 
 from openodke import Document, Fact
 from openodke.eval.adjudication import NEEDED, RUNS, ask
+from openodke.eval.datasets._common import read_jsonl
+from openodke.eval.stats import wilson
 from openodke.stages import Grounder
 
 G = Path(__file__).parent / "labels" / "G"
 VERDICTS = "G.verdicts.jsonl"
 DATASETS = ("text2kgbench", "redocred")
-Z = 1.959963984540054
-
-
-def wilson(hits: int, n: int) -> tuple[float, float] | None:
-    """The 95% Wilson interval of `hits` in `n`; None with nothing to count."""
-    if not n:
-        return None
-    p = hits / n
-    centre = (p + Z * Z / (2 * n)) / (1 + Z * Z / n)
-    half = Z * math.sqrt(p * (1 - p) / n + Z * Z / (4 * n * n)) / (1 + Z * Z / n)
-    return max(0.0, centre - half), min(1.0, centre + half)
-
-
-def _jsonl(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
 def not_in_gold(folder: Path = G) -> list[dict[str, Any]]:
     """G's items the gold does not count, real and planted: each sheet row with its private row."""
-    private = {row["id"]: row for row in _jsonl(folder / "items.private.jsonl")}
-    items = _jsonl(folder / "items.jsonl")
+    private = {row["id"]: row for row in read_jsonl(folder / "items.private.jsonl")}
+    items = read_jsonl(folder / "items.jsonl")
     out = []
     for number, item in enumerate(items, start=1):
         meta = private[f"G-{number:04d}"]
@@ -84,7 +70,7 @@ def collect(
 ) -> dict[str, list[str]]:
     """Every row's verdicts in each run, asked of `grounder` unless `out` already holds them."""
     path = out / VERDICTS
-    saved = {row["fact_id"]: row["verdicts"] for row in _jsonl(path)} if path.is_file() else {}
+    saved = {row["fact_id"]: row["verdicts"] for row in read_jsonl(path)} if path.is_file() else {}
     todo = [row for row in rows if row["fact_id"] not in saved]
     questions = [
         (
@@ -216,9 +202,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if (args.verdicts is None) == (args.model is None):
         parser.error("give --verdicts (an earlier run's) or --model (a live run), one of them")
     rows = not_in_gold(args.set)
-    labels = {row["fact"]["id"]: row["verdict"] for row in _jsonl(args.labels)}
+    labels = {row["fact"]["id"]: row["verdict"] for row in read_jsonl(args.labels)}
     if args.verdicts is not None:
-        verdicts = {row["fact_id"]: row["verdicts"] for row in _jsonl(args.verdicts)}
+        verdicts = {row["fact_id"]: row["verdicts"] for row in read_jsonl(args.verdicts)}
     else:
         from openodke.ground import LLMGrounder
         from openodke.llm import ModelRoles

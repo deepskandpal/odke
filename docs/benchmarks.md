@@ -291,7 +291,7 @@ By the support the corroborator counted:
 |---|---|---|---|
 | openodke | 1 | 393 | 43.0 [38.2, 47.9] |
 | openodke | 2 | 31 | 83.9 [67.4, 92.9] |
-| openodke | 3+ | 3 | 100.0 [43.8, 100.0] |
+| openodke | 3+ | 3 | 100.0 [43.9, 100.0] |
 | LLMGraphTransformer | 1 | 981 | 25.8 [23.2, 28.6] |
 | LLMGraphTransformer | 2 | 75 | 60.0 [48.7, 70.3] |
 | LLMGraphTransformer | 3+ | 20 | 80.0 [58.4, 91.9] |

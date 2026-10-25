@@ -27,9 +27,6 @@ from openodke import Entity, Evidence, Fact, Span
 from openodke.eval.extraction import evaluate_extraction, per_document
 from openodke.eval.formats import GoldFact
 
-S29 = pytest.mark.xfail(strict=True, reason="release audit S29; fixed in fix PR 5")
-
-
 # --------------------------------------------------------------------------- #
 # One input, one number
 # --------------------------------------------------------------------------- #
@@ -111,7 +108,6 @@ def test_the_validator_row_scores_a_bench_set_as_the_set_scores_it(
 # --------------------------------------------------------------------------- #
 
 
-@S29
 def test_a_shares_interval_is_defined_once() -> None:
     home = SRC / "eval" / "stats.py"
     copies = []

@@ -57,6 +57,7 @@ from openodke import Document, Fact, GroundingVerdict, Ontology, SpanOrigin
 from openodke.chunking import _segment
 from openodke.eval.cost import CostMeter, StageCost
 from openodke.eval.datasets.redocred import _norm, score
+from openodke.eval.stats import wilson
 from openodke.ground import LLMGrounder, locate_span
 from openodke.ground.llm import build_messages
 from openodke.interop.triples import read_triples, to_fact
@@ -305,16 +306,6 @@ def cached_run(
 # --------------------------------------------------------------------------- #
 
 
-def wilson(hits: int, n: int, z: float = 1.96) -> tuple[float, float]:
-    """The 95% Wilson interval of a proportion."""
-    if not n:
-        return 0.0, 1.0
-    p = hits / n
-    centre = (p + z * z / (2 * n)) / (1 + z * z / n)
-    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
-    return centre - half, centre + half
-
-
 def bootstrap(
     correct: Sequence[int], whole: Sequence[int], located: Sequence[int]
 ) -> dict[str, tuple[float, float]]:
@@ -365,7 +356,8 @@ def compare(
     kept_w = [int(v == SUPPORTED) for v in whole]
     kept_l = [int(v == SUPPORTED) for v in located]
     intervals = bootstrap(correct, kept_w, kept_l)
-    lo, hi = wilson(retest_agree, retest_n)
+    # The package's 95% Wilson interval; [0, 1] with nothing counted.
+    lo, hi = wilson(retest_agree, retest_n) or (0.0, 1.0)
     agreement = agree / len(answered) if answered else 0.0
     per_fact = {
         stage: (c.cost_usd if c.cost_usd is not None else _price(c)) / c.calls if c.calls else None
@@ -375,7 +367,7 @@ def compare(
         "facts": len(placed),
         "unchecked": len(placed) - len(answered),
         "agreement": agreement,
-        "agreement_ci": wilson(agree, len(answered)),
+        "agreement_ci": wilson(agree, len(answered)) or (0.0, 1.0),
         "confusion": dict(sorted(confusion.items())),
         "retest_sample": len(sample),
         "retest_agreement": retest_agree / retest_n if retest_n else None,
