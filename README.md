@@ -94,7 +94,7 @@ default span prompt. On Re-DocRED's documents the grounder
 raised precision for all four model-based extractors, by 1.8 to 4.3 points, for
 one Haiku call per triple ($4.23 to $9.01 per 1,000 documents), with F1 unchanged
 within its interval. On Text2KGBench's single sentences it lowered precision for
-every extractor, by 0.6 to 2.2 points. The pattern extractor found nothing in prose.
+every extractor, by 0.7 to 2.2 points. The pattern extractor found nothing in prose.
 
 The harness is the point: run the same command on a slice of your own corpus
 that you have labelled, and it tells you whether grounding earns its calls there.
