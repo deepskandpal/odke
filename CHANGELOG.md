@@ -13,6 +13,11 @@ corroborates, gates and writes any extractor's facts. The Evaluator
 (`openodke.eval`, `odke eval`, `odke bench`) runs a pipeline on benchmarks or
 your labels, and says where it loses facts and whether the Validator helps.
 
+1.0.0rc1 is its release candidate. It holds the fixes of the 1.0 release audit
+(11 Oct 2026; #225, #227, #228, #230, #231, #PR5), the first calibration
+cards and the default that follows them (#226, #232, DECISIONS #54), and the
+API trimmed before the freeze (DECISIONS #48).
+
 ### Breaking changes against 0.2.1
 
 - `openodke.Validator` names the whole layer; a `Validator` passed as the gate
@@ -25,6 +30,39 @@ your labels, and says where it loses facts and whether the Validator helps.
   `attribute_tenant` or `qualifier_tenant` (#214, DECISIONS #44).
 - RDF output uses the vocabulary `https://openodke.dev/vocab#` in place of
   `https://deepskandpal.github.io/odke/vocab#`; stored graphs keep theirs (#101).
+- `ModelRoles()` extracts with `anthropic/claude-sonnet-5-5`, where 0.2.1
+  extracted with `anthropic/claude-sonnet-5`; it grounds with
+  `anthropic/claude-haiku-4-5-20251001` as before (#173).
+- One document's error no longer fails a run: a document whose chunking,
+  extraction, grounding or normalising raises is left out and named in
+  `stats["failed"]`, and the run goes on; a run where every document failed
+  exits 1 (#198).
+- A gate left to its default follows its grounder's calibration card
+  (`DEFAULT_POLICY = "card"`, DECISIONS #54). The default grounder's card is
+  below its bar, so a fact it contradicts is written marked for review
+  (`qualifiers["odke.review"]`, `marked` in the report) instead of refused, and
+  a pair judge left to its default sends the pairs it decides to review.
+  `VerdictGate(on_refusal="drop")` and `PairJudge(on_decision="link")` keep the
+  old behaviour (#232).
+- The default `RetryPolicy` is 6 tries from 1 s (waits of 31 s at most, about
+  15 s on average with jitter) in place of 4 from 0.5 s (3.5 s at most), so a
+  run waits out a rate limit of a few seconds instead of dropping documents. It
+  governs the extractor, the grounder and the pair and equivalence judges
+  (#227, release audit 8).
+- A text that contradicts a claim another source supports no longer counts as
+  its support: it stays out of the evidence, `supported_by`, `support` and the
+  confidence, and `odke.conflict` records it as `contradicted_in` (#228,
+  release audit 2).
+- `DirectoryLoader` gives each document its path as its id (relative to the
+  current directory, or `relative_to=`), where it gave a random one, so a rerun
+  from Python is the same sources (#228, release audit 7).
+- `odke eval ablation` exits 1, and scores nothing, when a document failed in
+  the run (#231, rule R1).
+- `LLMExtractor`: a reply that no repair makes readable fails its chunk with
+  `UnreadableReply` (a `ProviderError`), so its document is left out and named
+  in `stats["failed"]`; it was a "malformed reply" rejection and an empty
+  extraction, which an ablation scored as misses. The raw text is still in
+  `malformed` (#PR5, rule R1).
 - Private, outside semver: `openodke.cli.main`'s functions,
   `extract._common.best_type` and `run.build.Context._replays` changed shape.
 
@@ -38,6 +76,44 @@ Changed during the 1.0 cycle, never released (DECISIONS #48):
   an untenanted lookup or retraction reads only untenanted data (#214).
 - Every Neo4j write statement ends in `RETURN count(*)` (#214).
 - `openodke.Validator` named the gate for a while, then the layer (#171, #185).
+- 112 import paths left `__all__` before the freeze, each new in 1.0 or
+  deprecated, and stay importable: the Neo4j sink's Cypher and row plumbing,
+  the manifest's recorder and hashing helpers, the stream's internals, the
+  pipeline harness's steps and the runner's helpers (`evaluate_pipeline` is
+  the Evaluator's one entry point), the 12 names new in `run.build` and
+  `run.execute`, `ground.llm.PAPER_PROMPT`, and all but 11 of
+  `openodke.calibration`'s. Every name in a 0.2.1 `__all__` stays (#PR5,
+  release audit call B, DECISIONS #48).
+- `openodke.infer` is provisional, and so are `Initiator`, `Retriever` and
+  `Router` (#PR5, calls B and C).
+- A run manifest's `config_hash` is of the config with a left-out scorer
+  filled as `odke run` fills it, and a named chunker, router or inferrer
+  pass-through left out, so such configs hash differently than under earlier
+  1.0 builds (#227).
+- A Neo4j store merge into a store never bootstrapped, or missing the
+  signature index of a predicate the ontology declares, raises (exit 2 from
+  `odke validate`) instead of warning and replacing the stored support lists
+  (#228, DECISIONS #53).
+- `odke validate --update` exits 1 when a text fails after it was retracted
+  (#228, release audit 13).
+- `odke eval compare`: for pass/fail items, `better` and `worse` also need
+  McNemar's exact p below α; a few one-way flips are `inconclusive` (#231,
+  DECISIONS #29).
+- `odke eval refusals --labels`: labels with no stratum sizes that span
+  several strata are reported per stratum, not pooled; give the runs they were
+  drawn from to weight them (#231).
+- `odke eval pipeline --validator` exits 1, and scores nothing, when a
+  document failed; `--adjudicate` and `--lenient` exit 1 when every model call
+  behind them failed (#231, rule R1).
+- `odke bench run` exits 1, and writes no report, when a document failed or a
+  budget stopped the run (#PR5, rule R1).
+- The eval report is schema 1.4: the `linked_other` recall bucket and the
+  `failed` counts (#231). The run report is 1.1 and the eval report was 1.3
+  for a while: `marked`, `calibration` and `run.claim_formats` (#226).
+- `VerdictGate.refused` is empty while the gate marks; the ablation's notes say
+  what refusing would have done (#232).
+- `openodke.observe.spend` is gone; `openodke.manifest.spent_of` is the one
+  helper (#227).
 
 ### Deprecated
 
@@ -53,6 +129,14 @@ replacement, and is removed in 2.0.0 (#171, #217, DECISIONS #48).
 | `Built.pipeline(validator=...)`, `StagesConfig.validator` | `Built.pipeline(gate=...)`, `StagesConfig.gate` |
 | `validator:` under `stages` in a run config | `gate:` |
 | `openodke.sinks.neo4j.cardinality_scope(predicate)` | `predicate.scope_keys` (#125) |
+| `openodke.ValidationVerdict`, `openodke.types.ValidationVerdict` | `openodke.GateVerdict` (#PR5) |
+| `openodke.eval.ValidationLabel`, `openodke.eval.formats.ValidationLabel` | `openodke.eval.GateLabel` (#PR5) |
+| `openodke.eval.evaluate_validation`, `openodke.eval.validation.evaluate_validation` | `openodke.eval.evaluate_gate` (#PR5) |
+| `odke eval validate` (also on stderr) | `odke eval gate`; the stage's labels, report and items keep the name `validate` (#PR5) |
+| `openodke.ground.llm.SYSTEM_PROMPT` | `openodke.prompts.get("ground.span").text` (#PR5) |
+
+No deprecated name is in an `__all__`, so `from openodke import *` imports none
+of them and warns about none; import one by name (#PR5, release audit call C).
 
 ### Added
 
@@ -110,8 +194,6 @@ replacement, and is removed in 2.0.0 (#171, #217, DECISIONS #48).
 - `odke label make` (`grounding`, `pair`, `fact`) writes markdown sheets to tick
   by hand, and `odke label read` reads them back as label rows (#175, #206).
 - Label set G: 600 grounding items for hand labels, in `bench/labels/G/` (#182).
-- `ModelRoles()` extracts with `anthropic/claude-sonnet-5-5` and grounds with
-  `anthropic/claude-haiku-4-5-20251001` (#173).
 
 #### Evaluator (0.4.0)
 
@@ -222,8 +304,6 @@ replacement, and is removed in 2.0.0 (#171, #217, DECISIONS #48).
   the `otel` extra and the application's tracer provider (#209).
 - `models.limits` and `set_limit` cap concurrent calls per provider across
   stages, and a `Retry-After` pauses that provider (#198).
-- A failing document is left out and named in `stats["failed"]`; a run where
-  every document failed exits 1 (#198).
 - Every fact the gate passes carries `odke.ontology`, the `Ontology.fingerprint`
   of the ontology that checked it (#215, DECISIONS #42).
 - A fact the model extracted carries `odke.schema_slice`, the fingerprint of
@@ -252,6 +332,95 @@ replacement, and is removed in 2.0.0 (#171, #217, DECISIONS #48).
 - The documentation is at <https://openodke.dev>; the old
   `deepskandpal.github.io/odke` URLs redirect (#101).
 - Python 3.14 is supported, and CI tests 3.11 to 3.14 (#122).
+
+#### Calibration, the release audit, the API freeze (1.0.0rc1)
+
+- The maintainer's hand labels for label sets G (200 of 600 items), F (100 of
+  300 pairs) and R (the 100-pair audit), and all 100 of the refusal audit, in
+  `bench/labels/`, under the sources' licences (#223).
+- `LLMGrounder(prompt=...)`: the grounder's two challengers from
+  EnterpriseRAG-Bench (Onyx, MIT), `ground.onyx@1` (verbatim) and
+  `ground.statement@1` (three-way), reading the fact as `render_sentence`
+  writes it (#226, #134).
+- Calibration cards, `openodke.calibration` (provisional): one per prompt
+  version and dated model, against a versioned label set, with the bar each
+  judge must clear to be a default; `odke calibrate` makes one from your own
+  grounding labels, and `ODKE_CARDS` names where yours are (#226, #135).
+- The first 20 cards ship: Claude Haiku 4.5, Claude Haiku 5.5, Claude Sonnet
+  5.5 and gpt-5.4-mini on the grounder's prompts, the pair judge and the
+  fact-equivalence judge. Every grounder and pair-judge card is below its bar;
+  every fact-equivalence card meets it. "Judge calibration" tables on the
+  Benchmarks page and in `docs/calibration.md` are made from them (#232).
+- Every run report prints each model judge's card line or UNCALIBRATED:
+  `odke validate` (run report 1.1, `calibration`), `odke run`, and the eval
+  report's `calibration` section (#226).
+- `VerdictGate(on_refusal="drop" | "mark")` and `PairJudge(on_decision="link" |
+  "review")`: below its bar, a judge's refusals are written marked for review
+  and its pair decisions go to review (#226, DECISIONS #54).
+- `bench/calibrate.py`, the grounder contest and the card runner, and
+  `bench/spend.py`, the spend guard over `bench/spend.jsonl` (#226).
+- `tenant=` and `scoped()` on `CypherFileSink`, `Neo4jAdminCsvSink` and
+  `RdfSink`, and `odke ontology diff --store --tenant` (#228, release audit 3,
+  20).
+- `DirectoryLoader(relative_to=)` names each document by its path relative to
+  a folder (#228).
+- Refusal precision weighted by stratum: `Refusal.stratum_size` and
+  `report_refusals(sizes=)`; `odke eval refusals RUN... --labels` reads the
+  sizes from the runs (#231, release audit 5).
+- The recall bucket `linked_other` ("pair linked by another true relation")
+  and the fix `every-relation` (#231, release audit 11).
+- Gate spellings of the eval APIs: `odke eval gate`, `openodke.eval.evaluate_gate`,
+  `openodke.eval.GateLabel` and `openodke.GateVerdict` (#PR5, release audit
+  call C).
+- `odke run`'s and the Validator's stats put the gate's counts under
+  `stages.gate`, and keep them under `stages.validator` until 2.0.0 (#PR5).
+- `odke run`'s stats and `GroundSummary` name their format version,
+  `schema_version` 1.0 (`run.execute.STATS_VERSION`,
+  `interop.ground.SUMMARY_VERSION`) (#PR5).
+- The run manifest ships its JSON Schema, `openodke/manifest.schema.json`
+  (`manifest.SCHEMA_PATH`) (#PR5).
+- The triples input and the eval report read a document of a later minor of
+  their major for the fields this version knows, at every level; in a document
+  of their own version or an older one, an unknown field is still refused
+  (#PR5, DECISIONS #52).
+- `tests/rules/`: six rules as tests over the whole codebase, with `AGENTS.md`
+  as the map, `HUMAN.md` as the escalation list, and terminal recordings and
+  an evidence bundle for every pull request (`scripts/record.py`,
+  `scripts/evidence.py`) (#225, DECISIONS #50).
+
+### Changed
+
+- The version is 1.0.0rc1, "Development Status :: 4 - Beta" (#PR5, release
+  audit S30).
+- The source archive holds the package and its notices alone (`src`,
+  `LICENSE`, `NOTICE`, `README.md`, `CHANGELOG.md`): 0.2.1's held the label
+  sets, CC BY-SA text, under an Apache-2.0 licence expression (#PR5, release
+  audit 17).
+- Every Neo4j fact relationship carries `odke.version`, a token each write
+  renews (#228, DECISIONS #51).
+- A streamed run into a merging JSONL store warns once that its time grows
+  with the square of the store (#228, S10).
+- `odke` prints an `error:` prefix on each line of a multi-line error, and the
+  span locator and coverage fold ASCII words without the Unicode tables, about
+  a fifth faster (#227, S6, S7).
+- Prepared bench sets name `normalizer: passthrough` and `resolver:
+  passthrough`, so `odke eval pipeline --bench --validator` runs what `odke
+  bench run` runs (#231, release audit 16); their gate says
+  `on_refusal: drop` (#232), and a T-REx set's pair judge
+  `on_decision: link` (#PR5), so the published numbers measure what each
+  judge decides.
+- The bench's Wilson intervals are the package's, with the exact z: one
+  published figure moves, the T-REx support table's 3+ row, [43.8, 100.0] to
+  [43.9, 100.0] (#PR5, release audit S29).
+- `bench/layer.py` leaves out a competitor's set whose extraction lost a
+  document, and says so: neo4j-graphrag's Text2KGBench rows are on 180 of 200
+  sentences (#PR5, release audit 12).
+- The public-API pin also holds every public callable's parameter names and
+  kinds and every model's fields (#230, release audit S23); CI re-makes
+  `bench/trex.py`'s published T-REx tables and runs `bench/test_competitors.py`
+  in a job of its own, with hash-pinned bench requirements (#230, S26).
+- Dependencies are taken only once they have been on PyPI for 7 days
+  (`[tool.uv] exclude-newer`) (#225).
 
 ### Fixed
 
@@ -305,6 +474,54 @@ replacement, and is removed in 2.0.0 (#171, #217, DECISIONS #48).
 - The release workflow's actions are pinned to commit SHAs (#122).
 - `odke eval --help` points to `odke bench` for public benchmarks, and
   `odke label read --help` names `RefusalLabel` (#222).
+- A recorded answer (`models.replay`) is never cached as the live model's:
+  recordings are cached under `<cache>/replay/<hash of the file>` (#227,
+  release audit 1).
+- A URL's password never reaches an error message, the manifest's `failed`
+  list, the logs, stderr or a dry run's Neo4j target (#227, release audit 9).
+- A streamed run's cost per 1,000 documents divides by every document, not the
+  last micro-batch's (#227, release audit 14).
+- `odke run --from-manifest` and `read_manifest` read a manifest a newer
+  release wrote, ignoring the fields they do not know (#227, release audit 18).
+- Warning events no longer print their bare names on stderr with text logs;
+  `odke eval refusals --n 150` draws 150; one pipeline written three ways
+  hashes alike; the manifest is written atomically (#227, S1, S2, S4, S8).
+- Two jobs writing one Neo4j at once no longer lose a source or bring back a
+  deleted one: a version on each fact, locked and compared on write (#228,
+  release audit 4, DECISIONS #51).
+- The Cypher-file, neo4j-admin CSV and RDF sinks key a tenant's writes, so two
+  tenants' files never merge, and `Neo4jSink.checked_under` reads one tenant's
+  facts (#228, release audit 3, 20).
+- A large retraction goes 500 documents a query; a grounder passed in reports
+  each job's free checks; both Neo4j readers decode the same stamps; retracting
+  a parent retires its derived partner in a tenant's store; an untenanted key
+  reading `<tenant>/...` never lands on that tenant's node; two writers into one
+  JSONL directory never read a torn file (#228, S9, S11-S15).
+- The standard-library OpenAI client sends `max_completion_tokens` to OpenAI's
+  own API, so GPT-5 and later can be called; compatible servers keep
+  `max_tokens` (#229).
+- `odke label read` refuses a line that looks like an item's heading but is not
+  one, naming its file and line (#230, S25).
+- The refusal precision weights each stratum by its size, with a stratified
+  Wilson range; PPI's corrected range no longer shrinks to zero width; `odke
+  eval compare` gives no verdict on a handful of flips (#231, release audit 5,
+  6, 10).
+- The miss diagnosis no longer counts a correct prediction as a wrong
+  relation; a triple written twice in one document is one prediction; labels
+  join facts read back from Neo4j by id and document (#231, release audit 11,
+  15, 19).
+- The track record credits a fix only when its knobs alone changed; an
+  in-process `--run` report names its prompt and model; the blind PPI sample
+  carries no `odke.*` stamps; the diagnosis and the lenient score share one
+  pre-filter; `paired_bootstrap` keeps fractional scores; sheets escape `&`
+  (#231, S17-S22).
+- `bench/conflicts.py`: a case whose document or grounding call failed is a
+  `failed` outcome, counted apart, and the run exits 1; a refused key read as
+  "no conflict found". `bench/volume.py` leaves a failed document out of the
+  cost per 1,000 (#PR5, release audit 12).
+- The docs home page and the README status match the benchmarks, the
+  calibration cards and 1.0 (#PR5, S27); `run.md`, `benchmarks.md` and
+  `evaluation.md` match the code (#PR5, S28).
 
 ## [0.2.1] — 2026-09-26
 
