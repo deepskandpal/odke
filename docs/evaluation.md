@@ -57,8 +57,6 @@ report from a later minor is read for the fields this version knows
 
 | Key | What it holds |
 |---|---|
-| Key | What it holds |
-|---|---|
 | `schema_version` | `"1.4"` |
 | `title`, `n`, `run` | what was scored and how many rows; the version, models, prompts, each grounder prompt's claim format (`claim_formats`, 1.3) and dataset |
 | `bootstrap` | how the ranges were drawn |
