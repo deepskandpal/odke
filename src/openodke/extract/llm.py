@@ -44,7 +44,7 @@ from openodke.extract._common import (
 )
 from openodke.ground.llm import render_claim
 from openodke.ground.retry import RetryPolicy, call_with_retry
-from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
+from openodke.llm.base import Completion, LLMClient, Message, ModelSpec, ProviderError
 from openodke.llm.budget import BudgetExceeded
 from openodke.llm.registry import resolve
 from openodke.llm.roles import ModelRoles
@@ -100,6 +100,16 @@ class MalformedReply:
     doc_id: str
     chunk_index: int
     replies: tuple[str, ...]
+
+
+class UnreadableReply(ProviderError):
+    """The model answered a chunk, and no reply, after the repairs, followed the contract.
+
+    A `ProviderError`, so it fails that chunk's document alone: the pipeline leaves
+    the document out and names it (`stats["failed"]`), and an evaluator scores
+    nothing the failure would turn into misses (rule R1). The raw replies are in
+    `LLMExtractor.malformed`.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,10 +208,13 @@ class LLMExtractor:
     tier (DECISIONS #19); an unregistered chunk is still checked, against itself.
 
     A reply that is not the contract gets `repairs` more attempts with a repair
-    prompt, then is recorded as a rejection rather than raised — one bad reply
-    should not end a ten-thousand-chunk run. A transient provider error, such as
-    a 429, is retried under `retry` as the grounder's are; one that outlasts it,
-    or that waiting cannot fix, still raises.
+    prompt; if none follows it, the chunk fails with `UnreadableReply`, its
+    replies kept in `malformed`. A failed chunk costs only its document, which
+    the pipeline leaves out and names, so one bad reply neither ends a
+    ten-thousand-chunk run nor reads as a passage with nothing in it. A
+    transient provider error, such as a 429, is retried under `retry` as the
+    grounder's are; one that outlasts it, or that waiting cannot fix, still
+    raises.
 
     `structured=False` sends no response schema: the model is held to the JSON
     shape by the prompt alone, and the parser and repair loop do the rest. That
@@ -306,10 +319,6 @@ class LLMExtractor:
         if not snippets:
             return []
         data = self._reply(chunk, self.messages(chunk, snippets), snippets, _PROMPT)
-        if data is None:
-            with self._lock:
-                self.empty_extractions += 1
-            return []
         with self._lock:
             since = len(self.rejections)
         facts = self._facts(chunk, ontology, snippets, data)
@@ -359,7 +368,7 @@ class LLMExtractor:
         user = f"Already extracted from this passage:\n{listed}\n\nPassage:\n{window.text}"
         messages = [Message(role="system", content=system), Message(role="user", content=user)]
         data = self._reply(window, messages, snippets, _REEXTRACT)
-        return [] if data is None else self._facts(window, ontology, snippets, data)
+        return self._facts(window, ontology, snippets, data)
 
     def reextract_snippets(
         self, ontology: Ontology, relations: Sequence[str]
@@ -394,8 +403,11 @@ class LLMExtractor:
         messages: list[Message],
         snippets: Sequence[OntologySnippet],
         prompt: Prompt,
-    ) -> dict[str, Any] | None:
-        """The contract from the model, after up to `repairs` repairs; None, recorded, if never."""
+    ) -> dict[str, Any]:
+        """The contract from the model, after up to `repairs` repairs; `UnreadableReply` if never.
+
+        The replies that never became the contract are kept in `malformed`.
+        """
         schema = response_schema(snippets) if self.structured else None
         data: dict[str, Any] | None = None
         replies: list[str] = []
@@ -423,18 +435,13 @@ class LLMExtractor:
                 Message(role="assistant", content=completion.text),
                 Message(role="user", content=_REPAIR_PROMPT.text),
             ]
-        self._reject(chunk, "malformed reply")
         kept = MalformedReply(doc_id=chunk.doc_id, chunk_index=chunk.index, replies=tuple(replies))
         with self._lock:
             self.malformed.append(kept)
-        log.warning(
-            "no reply followed the contract for chunk %s#%d after %d attempts; "
-            "nothing extracted. The raw text is in LLMExtractor.malformed",
-            chunk.doc_id,
-            chunk.index,
-            len(replies),
+        raise UnreadableReply(
+            f"no reply followed the contract for chunk {chunk.doc_id}#{chunk.index} after "
+            f"{len(replies)} attempts; the raw text is in LLMExtractor.malformed"
         )
-        return None
 
     def _facts(
         self,

@@ -78,6 +78,10 @@ narrower span inside it that tells one fact from its siblings
 | `max_workers` | 8 calls in flight, so the client must be thread-safe |
 
 `calls`, `rejections`, `empty_extractions` and `malformed` count what happened.
+A reply that no repair makes readable fails its chunk with `UnreadableReply`,
+a `ProviderError`, and keeps the raw text in `malformed`: the pipeline leaves
+that document out and names it in `stats["failed"]`, so it is never scored as
+a passage with nothing in it.
 
 ```python
 from openodke.extract import LLMExtractor
