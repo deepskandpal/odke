@@ -229,8 +229,18 @@ def _run_and_query(example: Path, driver: Any) -> None:
         ("Maya Okafor", "employer", "Corvid Analytics"),
         ("Maya Okafor", "employer", "Halden Robotics GmbH"),
         ("Halden Robotics GmbH", "legal_name", "Halden Robotics GmbH"),
+        # Contradicted by its own span; the default grounder is below its calibration
+        # bar, so the gate wrote it marked for review instead of refusing it (#54).
+        ("Halden Robotics GmbH", "headquarters", "Leeds"),
     }
     assert all(len(r["starts"]) == len(r["ends"]) >= 1 for r in provenance)
+    # The mark survives the store: `odke.review` written, and read back, as JSON.
+    (marked,) = rows(
+        "MATCH (c:Company {key: 'Company:halden robotics gmbh'})-[r:headquarters]->(v:Claim) "
+        "WHERE v.value = 'Leeds' RETURN r.verdict AS verdict, r.`odke.review` AS review"
+    )
+    assert marked["verdict"] == "contradicted"
+    assert json.loads(marked["review"])["reason"].startswith("grounding verdict contradicted")
 
     assert [r["headquarters"] for r in why] == ["Leeds", "Sheffield"]
     assert json.loads(why[1]["conflict"])["status"] == "lost"
@@ -245,10 +255,13 @@ def _run_and_query(example: Path, driver: Any) -> None:
         }
     ]
 
-    assert [(r["subject"], sorted(r["objects"])) for r in cardinality] == [
-        ("Company:halden robotics ltd", ["Leeds", "Sheffield"])
+    # The GmbH's marked head office sits beside the register's Munich, so the
+    # compiled check finds two companies with two head offices now.
+    assert sorted((r["subject"], sorted(r["objects"])) for r in cardinality) == [
+        ("Company:halden robotics gmbh", ["Leeds", "Munich"]),
+        ("Company:halden robotics ltd", ["Leeds", "Sheffield"]),
     ]
-    assert sum(r["facts"] for r in recent) == 25
+    assert sum(r["facts"] for r in recent) == 26
 
     # Run the pipeline again and write its graph twice: new fact ids and new
     # clocks, the same claims, so no count moves from what the first run wrote.
@@ -257,7 +270,7 @@ def _run_and_query(example: Path, driver: Any) -> None:
         "RETURN count(DISTINCT n) AS nodes, count(DISTINCT r) AS relationships"
     )
     first = driver.execute_query(count).records[0].data()
-    assert first == {"nodes": 24, "relationships": 29}
+    assert first == {"nodes": 25, "relationships": 30}
     again = execute(load_config(example / "odke.neo4j.yaml"), dry_run=True).graph
     auth = (os.environ.get("NEO4J_USER", "neo4j"), os.environ.get("NEO4J_PASSWORD", ""))
     with neo4j_module.Neo4jSink(os.environ["NEO4J_URI"], auth) as sink:
