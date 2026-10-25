@@ -248,7 +248,11 @@ def test_a_smaller_set_keeps_the_facts_it_picked_first(raw: Path, tmp_path: Path
     assert sorted(p.stem for p in (out / "docs").iterdir()) == ["Q12837", "Q29", "Q45"]
     assert meta["gold_facts"] == {"1": 4, "2": 0, "3+": 1}
     config = json.loads((out / "odke.json").read_text())
-    assert config["stages"]["resolver"] == {"use": "native", "judge": True}
+    # The judge links on its word whatever its card, as the gate refuses (#54): the
+    # published numbers measure what it decides (release audit PR 5, re-making T-REx).
+    assert config["stages"]["resolver"] == {"use": "native", "judge": {"on_decision": "link"}}
+    judge = build(load_config(out / "odke.json")).stages["resolver"].judge
+    assert judge is not None and judge.on_decision == "link"
     with pytest.raises(ValueError, match="unknown aligner"):
         trex.prepare(raw, tmp_path / "other", aligners=("Guess-Aligner",))
     with pytest.raises(FileNotFoundError, match="fetch first"):
