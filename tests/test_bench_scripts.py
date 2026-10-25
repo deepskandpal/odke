@@ -27,8 +27,13 @@ def _load(name: str) -> ModuleType:
     return module
 
 
+batch_normalize = _load("batch_normalize")
 competitors = _load("competitors")
+inverses = _load("inverses")
+locator = _load("locator")
+store_lookup = _load("store_lookup")
 tables = _load("tables")
+trex = _load("trex")
 
 
 # --------------------------------------------------------------------------- #
@@ -176,3 +181,323 @@ def test_rejected_by_grounder_is_what_the_gate_removed(tmp_path: Path) -> None:
     rows = [ln for ln in lines if " | + grounding | " in ln or " | + corroboration | " in ln]
     assert rows[0].startswith("|  | + grounding |") and rows[0].endswith("| 8 | 2 |")
     assert rows[1].endswith("| 6 | 2 |")
+
+
+# --------------------------------------------------------------------------- #
+# inverses.py
+# --------------------------------------------------------------------------- #
+
+
+def test_inverse_partners_are_scored_with_the_datasets_own_scorer(tmp_path: Path) -> None:
+    """Saved triples, no model: the partner the gold wants is recovered, and said to be."""
+    from openodke.eval.datasets import redocred
+    from openodke.eval.datasets._common import snake
+
+    located, contains = (redocred.RELATIONS[p] for p in ("P131", "P150"))
+    ontology = {
+        "types": {"Location": {}},
+        "predicates": {
+            snake(label): {"domain": ["Location"], "range": "Location"}
+            for label in redocred.RELATIONS.values()
+        },
+    }
+    labels = {snake(label): label for label in redocred.RELATIONS.values()}
+    _write(tmp_path, "ontology.json", ontology)
+    _write(tmp_path, "dataset.json", {"relation_labels": labels})
+    gold = {
+        "id": "test_0000",
+        "text": "Rennes is in Brittany. Brittany is in France.",
+        "entities": [["Rennes"], ["Brittany"], ["France"]],
+        "facts": [[1, located, 2], [2, contains, 1], [0, located, 1]],
+    }
+    (tmp_path / "gold.jsonl").write_text(json.dumps(gold) + "\n")
+    saved = {
+        "id": "test_0000",
+        "triples": [["Brittany", located, "France"], ["Rennes", located, "Paris"]],
+    }
+    (tmp_path / "predictions").mkdir()
+    (tmp_path / "predictions" / "extraction-alone.jsonl").write_text(json.dumps(saved) + "\n")
+
+    measured = inverses.measure_redocred(tmp_path)
+    first = measured["results"][0]
+    assert (first["pairs"], first["system"], first["row"]) == (
+        "#106's six",
+        "openodke",
+        "extraction alone",
+    )
+    assert (first["recall_before"], first["recall_after"]) == (1 / 3, 2 / 3)
+    assert (first["precision_before"], first["precision_after"]) == (1 / 2, 2 / 4)
+    assert first["partners"] == {"in gold": 1, "unlabelled": 0, "from a wrong fact": 1}
+    # The copy the pairs were added to loads strictly, and declares them.
+    issue = measured["ontologies"]["#106's six"]["predicates"]
+    assert issue[snake(located)]["inverse_of"] == snake(contains)
+    assert issue["spouse"]["symmetric"] is True
+
+
+# locator.py
+# --------------------------------------------------------------------------- #
+
+
+def _saved_run(tmp_path: Path) -> Path:
+    """A competitor's saved Re-DocRED run, three facts long: one kept, two refused."""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "test_0000.txt").write_text(
+        "Ada Lovelace was born in London. She died in Paris."
+    )
+    ontology = {
+        "name": "t",
+        "types": {"Person": {}, "City": {}},
+        "predicates": {"born_in": {"domain": ["Person"], "range": "City"}},
+    }
+    (tmp_path / "ontology.json").write_text(json.dumps(ontology))
+    (tmp_path / "dataset.json").write_text(json.dumps({"relation_labels": {"born_in": "born in"}}))
+    rows = [
+        {"doc": "test_0000", "subject": "Ada Lovelace", "predicate": "BORN_IN", "object": city}
+        for city in ("London", "Paris", "Rome")
+    ]
+    (tmp_path / "facts.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    (tmp_path / "predictions").mkdir()
+    kept = {"id": "test_0000", "triples": [["Ada Lovelace", "born in", "London"]]}
+    (tmp_path / "predictions" / "grounding.jsonl").write_text(json.dumps(kept) + "\n")
+    gold = {
+        "id": "test_0000",
+        "text": "",
+        "entities": [["Ada Lovelace"], ["London"], ["Paris"]],
+        "facts": [[0, "born in", 1]],
+    }
+    (tmp_path / "gold.jsonl").write_text(json.dumps(gold) + "\n")
+    return tmp_path
+
+
+def test_the_locator_bench_reads_the_saved_verdicts_and_places_facts(tmp_path: Path) -> None:
+    system = locator.System(_saved_run(tmp_path))
+    assert system.whole == ["supported", "not_found", "not_found"]
+    assert system.correct == [1, 0, 0]
+    placed, stats = locator.place(system)
+    # Paris is named in the sentence after the subject; Rome nowhere.
+    assert placed == [0, 1]
+    assert (stats["placed"], stats["two_sentence_windows"]) == (2, 1)
+
+
+def test_the_locator_bench_rule_passes_agreement_and_fails_a_lost_true_fact(
+    tmp_path: Path,
+) -> None:
+    system = locator.System(_saved_run(tmp_path))
+    same = locator.compare(system, [0, 1], ["supported", "not_found"], ["supported"], [0], {})
+    assert (same["agreement"], same["retest_agreement"], same["passes"]) == (1.0, 1.0, True)
+    assert same["confusion"] == {
+        "whole not_found / located not_found": 1,
+        "whole supported / located supported": 1,
+    }
+    lost = locator.compare(system, [0, 1], ["not_found", "not_found"], ["supported"], [0], {})
+    assert lost["agreement"] == 0.5 and lost["correct_kept_diff"][1] < 0
+    assert lost["passes"] is False
+    low, high = locator.wilson(95, 100)
+    assert low < 0.95 < high and round(low, 3) == 0.888
+
+
+# --------------------------------------------------------------------------- #
+# store_lookup.py
+# --------------------------------------------------------------------------- #
+
+
+def _mention(name: str, sentence: int, kind: str) -> dict[str, Any]:
+    return {"name": name, "sent_id": sentence, "pos": [0, 1], "type": kind}
+
+
+def test_the_store_lookup_bench_scores_links_into_each_documents_own_store(
+    tmp_path: Path,
+) -> None:
+    """First half stored, second half resolved against it, every pair of a document labelled."""
+    doc = {
+        "title": "Acme",
+        "sents": [["a"], ["b"], ["c"], ["d"]],
+        "vertexSet": [
+            # Named in both halves, differently: the link to find.
+            [_mention("Acme Corporation", 0, "ORG"), _mention("Acme Corp", 2, "ORG")],
+            # Stored only, and a near name of a different entity in the second half.
+            [_mention("Acme Widgets", 1, "ORG")],
+            [_mention("Acme Widget", 3, "ORG")],
+            # A value, neither stored nor looked up.
+            [_mention("1906", 0, "TIME"), _mention("1906", 3, "TIME")],
+            # A surname alone: the miss.
+            [_mention("Ada Lovelace", 0, "PER"), _mention("Lovelace", 3, "PER")],
+        ],
+        "labels": [],
+    }
+    data = tmp_path / "test_revised.json"
+    data.write_text(json.dumps([doc, doc]), encoding="utf-8")
+    result = store_lookup.run(data)
+
+    assert result["summary"]["stored_entities"] == 6 and result["findable"] == 4
+    by = {row["threshold"]: row for row in result["thresholds"]}
+    # At the default, one right link and one wrong one per document; the surname is missed.
+    assert (by[0.9]["links"], by[0.9]["link_precision"], by[0.9]["link_recall"]) == (4, 0.5, 0.5)
+    assert by[0.9]["kinds"] == {"similar": 4}
+    # A bar of 1.0 keeps only the exact name key: "Acme Corp" and "Acme Corporation" are "acme".
+    assert (by[1.0]["links"], by[1.0]["link_precision"]) == (2, 1.0)
+    # With no tenant, each document's mentions also link to the other's twin.
+    assert result["unscoped"]["links"] == 8 and result["unscoped"]["cross_document"] == 4
+    assert "| 0.9 (default) | 4 | 50.0 | 50.0 |" in store_lookup.table(result)
+
+
+# --------------------------------------------------------------------------- #
+# batch_normalize.py
+# --------------------------------------------------------------------------- #
+
+
+def _pair(doc: str, split: str, a: tuple[str, int], b: tuple[str, int]) -> dict[str, Any]:
+    """One R item, its label and its private row: two mentions with their clusters."""
+    sides = {
+        side: {"key": f"{doc}:{name}", "type": "Person", "label": name, "context": f"{name} ran."}
+        for side, (name, _) in (("a", a), ("b", b))
+    }
+    return {
+        "item": sides,
+        "label": {"a": sides["a"]["key"], "b": sides["b"]["key"], "same": a[1] == b[1]},
+        "private": {"doc": doc, "split": split, "clusters": [a[1], b[1]]},
+    }
+
+
+def test_the_batch_bench_scores_merged_pairs_on_each_split(tmp_path: Path) -> None:
+    """Two kings kept apart by their numbers; a surname only the perfect judge joins."""
+    rows = [
+        _pair("test_0001", "dev", ("Robert II", 1), ("Robert III", 2)),
+        _pair("test_0001", "dev", ("Ada Lovelace", 3), ("Lovelace", 3)),
+        _pair("test_0002", "gate", ("Velislaus Bible", 1), ("Velislav's Bible", 1)),
+    ]
+    for name, field in (
+        ("items.jsonl", "item"),
+        ("labels.jsonl", "label"),
+        ("items.private.jsonl", "private"),
+    ):
+        lines = "".join(json.dumps(row[field]) + "\n" for row in rows)
+        (tmp_path / name).write_text(lines, encoding="utf-8")
+    result = batch_normalize.run(tmp_path)
+    by = {row["setting"]: row for row in result["settings"]}
+
+    # The resolver as it was links the kings, counted as a merge, and a wrong one.
+    assert (by["current"]["dev"]["merged"], by["current"]["dev"]["right"]) == (1, 0)
+    assert (
+        by["batch, judge-free"]["dev"]["merged"],
+        by["batch, names alone"]["dev"]["merged"],
+    ) == (
+        0,
+        1,
+    )
+    assert by["batch + perfect judge"]["dev"]["right"] == 1
+    assert by["batch + perfect judge"]["stats"]["judge_calls"] == 0
+    assert all(row["gate"]["precision"] == 1.0 for row in result["settings"])
+    assert "| batch, judge-free | 0 (0 right) | — | 0.0% | 1 (1 right) | 100.0% | 100.0% |" in (
+        batch_normalize.table(result)
+    )
+
+    raw = [
+        {
+            "sents": [["x"]],
+            "vertexSet": [
+                [_mention("Acme Corp", 0, "ORG"), _mention("ACME Corporation", 0, "ORG")],
+                [_mention("Acme Corp.", 0, "ORG")],
+                [_mention("1906", 0, "TIME")],
+            ],
+        }
+    ]
+    natural = batch_normalize.natural(raw)
+    assert (natural["mentions"], natural["pairs"], natural["same"]) == (3, 3, 1)
+    rows_by = {row["setting"]: row for row in natural["settings"]}
+    # Three names with one key: the dataset's clusters call one pair of them one entity.
+    assert (rows_by["batch, judge-free"]["merged"], rows_by["batch, judge-free"]["right"]) == (3, 1)
+
+
+# --------------------------------------------------------------------------- #
+# trex.py
+# --------------------------------------------------------------------------- #
+
+# Each published T-REx run's report.json, corroboration.json and lookup.json, as
+# `odke bench run trex` and `trex.py lookup --judge` saved them (set80, and
+# LLMGraphTransformer's run on it), with the local path left out: counts over the
+# public T-REx sample, and no text.
+TREX_RUNS = Path(__file__).parent / "fixtures" / "bench" / "trex"
+BENCHMARKS = BENCH.parent / "docs" / "benchmarks.md"
+
+
+def test_trex_tables_make_the_published_tables_from_the_saved_runs() -> None:
+    """docs/benchmarks.md's T-REx tables, row for row (release audit S26)."""
+    made = trex.tables([TREX_RUNS / "set80", TREX_RUNS / "lgt"]).strip("\n").split("\n\n")
+    # Documents, the graph off and on, support, sources, the resolver: a header, a
+    # rule and a row per system and setting each.
+    assert [len(table.splitlines()) for table in made] == [8, 8, 8, 8, 10]
+    page = BENCHMARKS.read_text(encoding="utf-8")
+    unpublished = [table.splitlines()[0] for table in made if f"\n{table}\n" not in page]
+    assert not unpublished, (
+        f"trex.py tables no longer makes the published tables headed {unpublished}: "
+        "re-make the page from the saved runs, or find what changed the script"
+    )
+
+
+def test_trex_lookup_scores_the_links_to_the_store_by_wikidata_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from openodke import Entity, Evidence, Fact
+    from openodke.eval.datasets import trex as dataset
+    from test_trex import _opener
+
+    run = dataset.prepare(dataset.fetch(tmp_path / "raw", opener=_opener([])), tmp_path / "set")
+
+    def fact(doc: str, s: str, p: str, o: str, verdict: str = "supported", key: str = "") -> Fact:
+        def entity(name: str, key: str = "") -> Entity:
+            return Entity(
+                key=key or f"Entity:{name.lower().replace(' ', '_')}", type="Entity", label=name
+            )
+
+        return Fact(
+            subject=entity(s, key),
+            predicate=p,
+            object_entity=entity(o),
+            evidence=[Evidence(doc_id=f"docs/{doc}.txt")],
+            verdict=verdict,
+        )
+
+    border, continent = "shares_border_with", "continent"
+    facts = [
+        # Every other abstract of the facts the gate kept is the store: Q142 and Q45.
+        fact("Q142", "France", border, "Spain"),
+        fact("Q45", "Portugal", border, "Spain"),
+        # Refused, so its abstract is in neither half.
+        fact("Q12837", "Iberian Peninsula", border, "Spain", verdict="contradicted"),
+        # The batch: Portugal is the stored node by key; Kingdom of Spain and a
+        # Spain keyed apart both stand for Q29, which the store holds as Spain, so
+        # each is owed a link, and the rules make one, to the Spain of the same name.
+        fact("Q29", "Kingdom of Spain", border, "Portugal"),
+        fact("Q29", "Spain", continent, "Europe", key="Entity:spain_(country)"),
+        # Q46, which the store does not hold: no link is owed.
+        fact("Q46", "Europe", continent, "Iberian Peninsula"),
+    ]
+    (run / "facts").mkdir()
+    (run / "facts" / "grounded.jsonl").write_text(
+        "".join(f.model_dump_json() + "\n" for f in facts)
+    )
+
+    monkeypatch.setattr("sys.argv", ["trex.py", "lookup", str(run)])
+    trex.main()
+    assert json.loads((run / "lookup.json").read_text()) == {
+        "store": {"documents": 2, "entities": 3},
+        "batch": {"documents": 2, "entities": 5},
+        "same_node_by_key": 1,
+        "owed_a_link": 2,
+        "linked_of_owed": 1,
+        "recall": 0.5,
+        "links": {
+            "similar (rules)": {
+                "links": 1,
+                "right": 1,
+                "wrong": 0,
+                "uncheckable": 0,
+                "precision": 1.0,
+            }
+        },
+        "judge": {},
+    }
+    assert "store lookup: 1 the same node by key, 1 of 2 owed a link linked" in (
+        capsys.readouterr().out
+    )

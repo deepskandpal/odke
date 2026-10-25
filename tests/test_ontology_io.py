@@ -34,6 +34,15 @@ def _scoped() -> Ontology:
                 examples=("120.00",),
             ),
             "legal_name": Predicate(name="legal_name", domain=("Vendor",), required=True),
+            "parent": Predicate(
+                name="parent", domain=("Vendor",), range="Vendor", inverse_of="subsidiary"
+            ),
+            "subsidiary": Predicate(
+                name="subsidiary", domain=("Vendor",), range="Vendor", inverse_of="parent"
+            ),
+            "partner": Predicate(
+                name="partner", domain=("Vendor",), range="Vendor", symmetric=True
+            ),
         },
     )
 
@@ -67,6 +76,27 @@ def test_json_is_the_identity(ontology: Ontology) -> None:
     assert Ontology.from_json(ontology.model_dump_json()) == ontology
     assert Ontology.from_dict(ontology.model_dump()) == ontology
     assert Ontology.from_yaml(yaml.safe_dump(ontology.model_dump())) == ontology
+
+
+def test_an_inverse_declared_once_is_completed_in_every_format() -> None:
+    """`owl:inverseOf` holds both ways, and a schema usually says it once (DECISIONS #28)."""
+    as_yaml = """
+types: {Place: {}, Person: {}}
+predicates:
+  located_in: {domain: [Place], range: Place, inverse_of: contains}
+  contains: {domain: [Place], range: Place}
+  spouse: {domain: [Person], range: Person, symmetric: true}
+"""
+    from_yaml = Ontology.from_yaml(as_yaml)
+    assert from_yaml.predicates["contains"].inverse_of == "located_in"
+    assert from_yaml.inverses == {
+        "located_in": "contains",
+        "contains": "located_in",
+        "spouse": "spouse",
+    }
+    data = yaml.safe_load(as_yaml)
+    assert Ontology.from_dict(data) == from_yaml
+    assert Ontology.from_json(json.dumps(data)) == from_yaml
 
 
 def test_a_name_defaults_to_its_key() -> None:

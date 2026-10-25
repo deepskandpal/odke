@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from openodke._text import without_password
 from openodke.llm.base import (
     Completion,
     Message,
@@ -83,7 +84,8 @@ class LiteLLMClient:
         try:
             response = self._completion(**kwargs)
         except Exception as exc:  # noqa: BLE001 - litellm raises provider-specific types
-            raise ProviderError(f"{spec.model} call failed: {exc}") from exc
+            # litellm's message can quote `api_base`, password and all (release audit 9).
+            raise ProviderError(f"{spec.model} call failed: {without_password(str(exc))}") from exc
 
         if isinstance(response, dict):
             body, cost = response, response.get("_response_cost")

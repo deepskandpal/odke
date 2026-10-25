@@ -13,8 +13,8 @@ from typer.testing import CliRunner
 
 from openodke import Chunk, Document, Entity, Fact, Ontology
 from openodke.cli.main import app
-from openodke.eval import StageReport, dump_jsonl
-from openodke.eval.runner import evaluate_files, load_stage
+from openodke.eval import StageReport, dump_jsonl, read_report
+from openodke.eval.runner import evaluate_files, load_stage, report_files
 from openodke.stages import PassThroughRouter
 
 FIXTURES = Path(__file__).parent / "fixtures" / "eval"
@@ -60,11 +60,26 @@ def support(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("stage", ["route", "extract", "ground", "resolve", "score", "validate"])
+@pytest.mark.parametrize("stage", ["route", "extract", "ground", "resolve", "score", "gate"])
 def test_every_stage_scores_its_fixture_from_the_shell(stage: str) -> None:
-    result = runner.invoke(app, _files(stage))
+    files = _files("validate" if stage == "gate" else stage)
+    files[1] = stage
+    result = runner.invoke(app, files)
     assert result.exit_code == 0, result.output
-    assert result.output.startswith(f"{stage}  (n=")
+    # The gate's report keeps its stage's name, a format's value (DECISIONS #48).
+    assert result.output.startswith(f"{'validate' if stage == 'gate' else stage}  (n=")
+
+
+def test_the_gate_s_old_stage_name_warns_and_scores_the_same() -> None:
+    """`odke eval validate` is the 0.2 spelling of `odke eval gate` (release audit call C)."""
+    new, old = (
+        runner.invoke(app, _files("validate")[:1] + ["gate"] + _files("validate")[2:]),
+        (runner.invoke(app, _files("validate"))),
+    )
+    assert new.exit_code == old.exit_code == 0, old.output
+    warning = "warning: odke eval validate is deprecated: use odke eval gate. The old name is "
+    assert old.output.startswith(warning) and warning not in new.output
+    assert old.output.endswith(new.output)
 
 
 def test_the_route_report_leads_with_what_matters() -> None:
@@ -86,10 +101,11 @@ def test_json_output_is_a_stage_report() -> None:
     assert report.metrics["f1"] == pytest.approx(0.4)
 
 
-def test_help_says_the_fixtures_are_not_a_benchmark() -> None:
+def test_help_points_to_odke_bench_for_a_public_benchmark() -> None:
     result = runner.invoke(app, ["eval", "--help"])
     assert result.exit_code == 0
-    assert "not a benchmark" in _flat(result.output)
+    assert "odke bench prepare" in _flat(result.output)
+    assert "never a corpus" not in _flat(result.output)
 
 
 def test_describe_prints_the_formats_without_labels() -> None:
@@ -194,11 +210,11 @@ def test_run_scores_an_importable_router_over_the_labels() -> None:
 def test_run_validate_needs_an_ontology_and_uses_it(tmp_path: Path) -> None:
     labels = FIXTURES / "validate.labels.jsonl"
     with pytest.raises(ValueError, match="needs --ontology"):
-        evaluate_files("validate", labels, run="openodke.stages:PassThroughValidator")
+        evaluate_files("validate", labels, run="openodke.stages:PassThroughGate")
     ontology = tmp_path / "ontology.json"
     ontology.write_text(json.dumps({"name": "demo"}))
     report = evaluate_files(
-        "validate", labels, run="openodke.stages:PassThroughValidator", ontology=ontology
+        "validate", labels, run="openodke.stages:PassThroughGate", ontology=ontology
     )
     # Accepting everything agrees on the three accept rows only.
     assert report.metrics["agreement"] == 0.5
@@ -235,6 +251,38 @@ def test_run_extract_reads_documents_and_an_ontology(
     )
 
 
+def test_an_in_process_run_s_report_names_its_prompt_and_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Release audit S18: `--run mod:grounder --report` named no prompt and no model.
+
+    The calibration card of a judge is looked up by its prompt, model and claim
+    format, so a report of a grounder run in-process must say all three.
+    """
+    from openodke.ground import LLMGrounder
+    from openodke.llm import ModelRoles
+    from openodke.llm.testing import RecordedClient
+
+    roles = ModelRoles()
+    module = types.ModuleType("odke_eval_cli_grounder")
+    answers = RecordedClient([{"match": "", "response": {"verdict": "supported"}}])
+    module.GROUNDER = LLMGrounder(roles, client=answers)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    out = tmp_path / "report.json"
+    args = ["eval", "ground", "--labels", str(FIXTURES / "ground.labels.jsonl")]
+    result = runner.invoke(
+        app, [*args, "--run", f"{module.__name__}:GROUNDER", "--report", str(out)]
+    )
+    assert result.exit_code == 0, result.output
+    run = read_report(out).run
+    assert run.models == {"ground": roles.ground.model}
+    assert run.prompts == (module.GROUNDER.prompt.key,)
+    assert run.claim_formats == {module.GROUNDER.prompt.key: module.GROUNDER.claim_line}
+    # From a predictions file nothing ran here, and the report claims nothing.
+    plain = runner.invoke(app, [*_files("ground"), "--report", str(tmp_path / "plain.json")])
+    assert plain.exit_code == 0 and read_report(tmp_path / "plain.json").run.models == {}
+
+
 def test_load_stage_instantiates_a_class_and_takes_an_instance_as_is(
     support: types.ModuleType,
 ) -> None:
@@ -242,3 +290,97 @@ def test_load_stage_instantiates_a_class_and_takes_an_instance_as_is(
     assert load_stage(f"{SUPPORT}:ROUTER") is support.ROUTER
     with pytest.raises(ValueError, match="package.module:Name"):
         load_stage("openodke.stages")
+
+
+# --------------------------------------------------------------------------- #
+# The eval report (#139)
+# --------------------------------------------------------------------------- #
+
+
+def test_report_files_scores_extract_as_evaluate_files_does_with_ranges() -> None:
+    labels, predictions = FIXTURES / "extract.labels.jsonl", FIXTURES / "extract.predictions.jsonl"
+    report = report_files("extract", labels, predictions)
+    assert report.stages == (evaluate_files("extract", labels, predictions),)
+    (row,) = report.rows
+    assert row.performance.f1.value == pytest.approx(0.4)
+    assert report.run.dataset is not None
+    assert (report.run.dataset.documents, report.run.dataset.labels) == (2, 5)
+
+
+@pytest.mark.parametrize("stage", ["route", "ground", "resolve", "score", "validate"])
+def test_report_files_carries_any_other_stage_with_no_rows(stage: str) -> None:
+    labels = FIXTURES / f"{stage}.labels.jsonl"
+    predictions = FIXTURES / f"{stage}.predictions.jsonl"
+    found = predictions if predictions.exists() else None
+    report = report_files(stage, labels, found)
+    assert report.stages == (evaluate_files(stage, labels, found),)
+    assert report.rows == () and report.bootstrap is None
+
+
+def test_extract_takes_an_ontology_for_conformance(tmp_path: Path) -> None:
+    ontology = tmp_path / "ontology.json"
+    ontology.write_text(json.dumps({"name": "demo", "predicates": {"born": {"range": "integer"}}}))
+    report = report_files(
+        "extract",
+        FIXTURES / "extract.labels.jsonl",
+        FIXTURES / "extract.predictions.jsonl",
+        ontology=ontology,
+    )
+    found = report.rows[0].conformance
+    # Only the two `born` facts have a predicate this ontology declares.
+    assert found is not None and (found.conformant, found.facts) == (2, 5)
+
+
+def test_odke_eval_writes_the_report_and_json_stays_a_stage_report(tmp_path: Path) -> None:
+    out = tmp_path / "report.json"
+    args = _files("extract")
+    result = runner.invoke(app, [*args, "--report", str(out)])
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("extract  (n=5)\n")
+    assert "0.400 [" in result.output and "95% ranges: 2 documents" in result.output
+    assert result.output.rstrip().endswith(f"wrote {out}")
+    assert read_report(out).rows[0].performance.f1.value == pytest.approx(0.4)
+
+    again = tmp_path / "again.json"
+    as_json = runner.invoke(app, [*args, "--json", "--report", str(again)])
+    assert as_json.exit_code == 0, as_json.output
+    assert StageReport.model_validate_json(as_json.output).metrics["f1"] == pytest.approx(0.4)
+    assert read_report(again) == read_report(out)
+
+
+@pytest.mark.parametrize("stage", ["route", "ground", "resolve", "score", "validate"])
+def test_every_stage_writes_a_report(tmp_path: Path, stage: str) -> None:
+    out = tmp_path / f"{stage}.json"
+    result = runner.invoke(app, [*_files(stage), "--report", str(out)])
+    assert result.exit_code == 0, result.output
+    report = read_report(out)
+    assert report.stages[0].stage == stage and report.rows == ()
+
+
+def test_odke_eval_spans_and_ablation_write_a_report(tmp_path: Path, example: Path) -> None:
+    out = tmp_path / "spans.json"
+    facts = FIXTURES / "spans.facts.jsonl"
+    result = runner.invoke(app, ["eval", "spans", "--facts", str(facts), "--report", str(out)])
+    assert result.exit_code == 0, result.output
+    assert read_report(out).stages[0].stage == "spans"
+
+    out = tmp_path / "ablation.json"
+    config, gold = str(example / "odke.yaml"), str(example / "gold.jsonl")
+    args = ["eval", "ablation", "--config", config, "--labels", gold, "--report", str(out)]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert len(read_report(out).rows) == 3
+
+
+def test_odke_eval_compare_writes_its_block_into_a_report(tmp_path: Path) -> None:
+    for name, extra in (("a", 0), ("b", 1)):
+        rows = [{"id": f"d{i}", "tp": 3 + (extra and i % 2), "fp": 1, "fn": 1} for i in range(10)]
+        (tmp_path / f"{name}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    out = tmp_path / "report.json"
+    args = ["eval", "compare", str(tmp_path / "a.jsonl"), str(tmp_path / "b.jsonl")]
+    result = runner.invoke(app, [*args, "--report", str(out)])
+    assert result.exit_code == 0, result.output
+    assert result.output.rstrip().endswith(f"wrote {out}")
+    report = read_report(out)
+    assert report.comparison is not None and report.comparison.metric == "f1"
+    assert (report.title, report.n, report.rows) == ("compare", 10, ())

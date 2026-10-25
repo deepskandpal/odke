@@ -24,6 +24,7 @@ from openodke.llm import (
     ModelRoles,
     ModelSpec,
     OpenAICompatClient,
+    ProviderError,
     register,
     unregister,
 )
@@ -311,6 +312,46 @@ def test_litellm_is_not_left_to_find_the_vendor_key_for_a_redirected_call(
     # Not redirected, litellm reads the provider's own variable as it always has.
     client.complete([Message(content="hi")], spec=ModelSpec(model="anthropic/claude-sonnet-5"))
     assert "api_key" not in captured
+
+
+def test_a_url_password_never_reaches_a_providers_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Where the message is made, and again where a document's failure is put in words (#9)."""
+    import urllib.error
+
+    from openodke._batch import reason
+
+    gateway = "https://svc:Hunter2Secret@gateway.invalid/v1"
+
+    def unreachable(request: Any, timeout: Any = None) -> Any:
+        raise urllib.error.URLError("connection refused")
+
+    spec = ModelSpec(model="openai/gateway-large", base_url=gateway)
+    with pytest.raises(ProviderError) as compat:
+        OpenAICompatClient(opener=unreachable).complete([Message(content="hi")], spec=spec)
+
+    def quoting(**kwargs: Any) -> Any:
+        raise RuntimeError(f"Connection error to {kwargs['api_base']}")
+
+    with pytest.raises(ProviderError) as lite:
+        LiteLLMClient(completion_fn=quoting).complete([Message(content="hi")], spec=spec)
+    # A message from code that did not take it out: the backstop.
+    theirs = reason("extract", RuntimeError(f"upstream {gateway} refused"))
+    for message in (str(compat.value), str(lite.value), theirs):
+        assert "Hunter2Secret" not in message, message
+        assert "https://svc:<redacted>@gateway.invalid/v1" in message, message
+
+    # The real urllib, with no port: http.client reads the password as the port and quotes
+    # it, scheme and all gone, before any socket opens.
+    monkeypatch.setenv("GATEWAY_KEY", "k")
+    real = spec.model_copy(update={"api_key_env": "GATEWAY_KEY"})
+    with pytest.raises(ProviderError) as portless:
+        OpenAICompatClient().complete([Message(content="hi")], spec=real)
+    assert "Hunter2Secret" not in str(portless.value) and "api_key_env" in str(portless.value)
+    assert portless.value.__cause__ is None
+    # A raw `@` in a password: the password runs to the authority's last `@`.
+    assert reason("x", RuntimeError("https://u:p@ss@host/v1")) == (
+        "x: RuntimeError: https://u:<redacted>@host/v1"
+    )
 
 
 # --------------------------------------------------------------------------- #

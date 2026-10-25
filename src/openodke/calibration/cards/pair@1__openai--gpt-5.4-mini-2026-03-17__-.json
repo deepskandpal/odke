@@ -1,0 +1,83 @@
+{
+  "card_version": "1.0",
+  "judge": "pair",
+  "prompt": "pair@1",
+  "prompts": {
+    "pair@1": "200cea3e7826c9580adef303fe8fa89c0a9984baf59b84b75365e0e6ca2e4948",
+    "pair.user@1": "a6f683f85e2fed1012bf0c21c80d012bccf9d4258214c1498f309eb9c3b7bc68"
+  },
+  "model": "openai/gpt-5.4-mini-2026-03-17",
+  "claim_format": null,
+  "vote": "single",
+  "date": "2026-10-25",
+  "openodke": "0.2.1",
+  "labels": {
+    "name": "R",
+    "version": "Re-DocRED's own labels, the 100-pair audit over them (17 Oct 2026)",
+    "sha256": "2fab61b7ffe11c6004a603536fbc2b6d4243e0c5128c9c0355c0d9e31f215a75",
+    "split": "gate",
+    "n": 400
+  },
+  "cost_per_1000": 0.4492903125,
+  "grounding": null,
+  "pairs": {
+    "precision_same": {
+      "k": 175,
+      "n": 210,
+      "value": 0.8333333333333334,
+      "low": 0.7770376291626979,
+      "high": 0.8776530036644467
+    },
+    "recall_same": {
+      "k": 175,
+      "n": 205,
+      "value": 0.8536585365853658,
+      "low": 0.7987774948503974,
+      "high": 0.8955290897655109
+    },
+    "unsure": {
+      "k": 37,
+      "n": 400,
+      "value": 0.0925,
+      "low": 0.06785393449857381,
+      "high": 0.12489858538387784
+    },
+    "order_disagreement": {
+      "k": 37,
+      "n": 400,
+      "value": 0.0925,
+      "low": 0.06785393449857381,
+      "high": 0.12489858538387784
+    },
+    "confusion": {
+      "same": {
+        "same": 175,
+        "different": 22,
+        "unsure": 8
+      },
+      "different": {
+        "same": 35,
+        "different": 131,
+        "unsure": 29
+      }
+    },
+    "audited": 61,
+    "label_noise": {
+      "k": 17,
+      "n": 96,
+      "value": 0.17708333333333334,
+      "low": 0.11360507865666797,
+      "high": 0.26541040516808095
+    }
+  },
+  "equivalence": null,
+  "bar": {
+    "metric": "precision_same_low",
+    "threshold": 0.9,
+    "value": 0.7770376291626979,
+    "met": false,
+    "note": null
+  },
+  "self_agreement": null,
+  "notes": []
+}

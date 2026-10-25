@@ -18,6 +18,8 @@ are read directly:
 - `owl:FunctionalProperty` is `cardinality="single"`; every other property is
   `multi`, because OWL's open world lets a property hold any number of values
   unless it says otherwise;
+- `owl:inverseOf` is `inverse_of`, read on either side, since it holds both
+  ways; `owl:SymmetricProperty`, or a property its own inverse, is `symmetric`;
 - `rdfs:label` / `skos:prefLabel` is a predicate's label; `rdfs:comment` /
   `skos:definition` is a description, and a type with no comment takes its
   label as one when the label says more than the name; `skos:altLabel` and
@@ -28,13 +30,14 @@ predicate is used, and inventing a ranking from, say, declaration order would
 rank snippets by an accident of authoring; `from_neo4j` is where counts exist.
 
 Everything the model cannot hold is reported by the subject it was found on —
-restrictions, property characteristics other than functional, inverse and
-sub-properties, equivalence and disjointness, union ranges, unmapped
-datatypes, individuals, imports. With `strict` (the default) the conversion
-raises `OntologyLoadError` listing every one, as `from_pydantic` does: a
-dropped axiom is a rule the extractor is silently never held to. With
-`strict=False` whatever maps is loaded and the same list arrives as one
-`OntologyImportWarning`, which is what loading a large public ontology needs.
+restrictions, property characteristics other than functional and symmetric,
+sub-properties, an inverse that is not one named property, equivalence and
+disjointness, union ranges, unmapped datatypes, individuals, imports. With
+`strict` (the default) the conversion raises `OntologyLoadError` listing every
+one, as `from_pydantic` does: a dropped axiom is a rule the extractor is
+silently never held to. With `strict=False` whatever maps is loaded and the
+same list arrives as one `OntologyImportWarning`, which is what loading a large
+public ontology needs.
 Annotations outside the OWL, RDF, RDFS and SKOS vocabularies — Dublin Core,
 `rdfs:seeAlso` — are documentation and are not reported.
 """
@@ -128,6 +131,7 @@ _HANDLED_TYPES = frozenset(
         f"{_OWL}DatatypeProperty",
         f"{_RDF}Property",
         f"{_OWL}FunctionalProperty",
+        f"{_OWL}SymmetricProperty",
         f"{_OWL}AnnotationProperty",
         f"{_OWL}Ontology",
         f"{_OWL}NamedIndividual",
@@ -145,6 +149,7 @@ _HANDLED_PREDICATES = frozenset(
         f"{_RDFS}seeAlso",
         f"{_RDFS}isDefinedBy",
         f"{_OWL}hasKey",
+        f"{_OWL}inverseOf",
         f"{_OWL}versionInfo",
         f"{_OWL}versionIRI",
         f"{_OWL}deprecated",
@@ -326,7 +331,7 @@ class _Reader:
             types.setdefault(names[node], self.entity_type(node, names, property_names))
         predicates: dict[str, dict[str, Any]] = {}
         for node in sorted(properties, key=str):
-            predicate = self.predicate(node, names)
+            predicate = self.predicate(node, names, property_names)
             if predicate is not None:
                 predicates.setdefault(property_names[node], predicate)
         self.individuals(classes, properties)
@@ -367,6 +372,7 @@ class _Reader:
             f"{_OWL}DatatypeProperty",
             f"{_RDF}Property",
             f"{_OWL}FunctionalProperty",
+            f"{_OWL}SymmetricProperty",
         ):
             found.update(g.subjects(rdf_type, self.iri(kind)))
         for relation in (f"{_RDFS}domain", f"{_RDFS}range"):
@@ -435,7 +441,9 @@ class _Reader:
             ),
         }
 
-    def predicate(self, node: Node, names: dict[Node, str]) -> dict[str, Any] | None:
+    def predicate(
+        self, node: Node, names: dict[Node, str], property_names: dict[Node, str]
+    ) -> dict[str, Any] | None:
         g, rdf_type = self.g, self.iri(f"{_RDF}type")
         is_object = (node, rdf_type, self.iri(f"{_OWL}ObjectProperty")) in g
         is_datatype = (node, rdf_type, self.iri(f"{_OWL}DatatypeProperty")) in g
@@ -454,6 +462,7 @@ class _Reader:
         domain = self.domain(node, names)
         if range_ is None or domain is None:
             return None
+        inverse_of, symmetric = self.inverse(node, property_names)
         return {
             "name": self.local(node),
             "label": self.text(node, f"{_RDFS}label", f"{_SKOS}prefLabel"),
@@ -466,7 +475,31 @@ class _Reader:
             "aliases": tuple(
                 self.texts(node, (f"{_SKOS}altLabel", f"{_SKOS}hiddenLabel"), one=False)
             ),
+            "inverse_of": inverse_of,
+            "symmetric": symmetric,
         }
+
+    def inverse(self, node: Node, property_names: dict[Node, str]) -> tuple[str | None, bool]:
+        """`(inverse_of, symmetric)`: one named inverse at most, and itself means symmetric.
+
+        Only this side's `owl:inverseOf` is read. The axiom holds both ways, and
+        the ontology fills in the side a file left out when it loads.
+        """
+        g = self.g
+        symmetric = (node, self.iri(f"{_RDF}type"), self.iri(f"{_OWL}SymmetricProperty")) in g
+        named: set[str] = set()
+        for other in g.objects(node, self.iri(f"{_OWL}inverseOf")):
+            if other == node:
+                symmetric = True
+            elif other in property_names:
+                named.add(property_names[other])
+            else:
+                shown = self.show(other) if self.is_iri(other) else "an anonymous property"
+                self.report(node, f"owl:inverseOf {shown}, which is not a property declared here")
+        if len(named) > 1:
+            self.report(node, f"{len(named)} owl:inverseOf values — a predicate has one inverse")
+            return None, symmetric
+        return (named.pop() if named else None), symmetric
 
     def object_range(self, node: Node, ranges: list[Node], names: dict[Node, str]) -> str | None:
         if not ranges:

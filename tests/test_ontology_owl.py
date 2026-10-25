@@ -238,7 +238,6 @@ UNSUPPORTED = [
     ("Person", "subclass of an owl:Restriction on"),
     ("Person", "owl:disjointWith is not supported"),
     ("Company", "owl:equivalentClass is not supported"),
-    ("employer", "owl:inverseOf is not supported"),
     ("employs", "is a owl:InverseFunctionalProperty"),
     ("manages", "is a owl:TransitiveProperty"),
     ("manages", "rdfs:subPropertyOf is not supported"),
@@ -269,6 +268,67 @@ def test_not_strict_loads_what_maps_and_warns_with_the_same_problems() -> None:
     # An edge with no single named range is not guessed at; a literal falls back to string.
     assert set(ontology.predicates) == {"employer", "employs", "manages", "born_in_year", "name"}
     assert ontology.predicates["born_in_year"].range == "string"
+
+
+GEO_OWL = """
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix : <https://example.org/geo#> .
+
+:Place a owl:Class .
+:Person a owl:Class .
+:locatedIn a owl:ObjectProperty ; rdfs:domain :Place ; rdfs:range :Place ;
+    owl:inverseOf :contains .
+:contains a owl:ObjectProperty ; rdfs:domain :Place ; rdfs:range :Place .
+:spouse a owl:ObjectProperty, owl:SymmetricProperty ; rdfs:domain :Person ; rdfs:range :Person .
+:sibling a owl:ObjectProperty ; owl:inverseOf :sibling ; rdfs:domain :Person ; rdfs:range :Person .
+"""
+
+
+def test_inverse_of_and_symmetric_property_are_read() -> None:
+    """Declared once, as OWL files do; a property that is its own inverse is symmetric."""
+    geo = Ontology.from_owl(GEO_OWL)
+    predicates = geo.predicates
+    assert (predicates["locatedIn"].inverse_of, predicates["contains"].inverse_of) == (
+        "contains",
+        "locatedIn",
+    )
+    assert predicates["spouse"].symmetric and predicates["spouse"].inverse_of is None
+    assert predicates["sibling"].symmetric and predicates["sibling"].inverse_of is None
+    assert geo.inverses == {
+        "contains": "locatedIn",
+        "locatedIn": "contains",
+        "sibling": "sibling",
+        "spouse": "spouse",
+    }
+    assert geo.validate() == []
+
+
+def test_an_inverse_that_is_not_one_named_property_is_reported() -> None:
+    doc = """
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix : <https://example.org/geo#> .
+    :Place a owl:Class .
+    :locatedIn a owl:ObjectProperty ; rdfs:domain :Place ; rdfs:range :Place ;
+        owl:inverseOf :undeclared .
+    :near a owl:ObjectProperty ; rdfs:domain :Place ; rdfs:range :Place ;
+        owl:inverseOf :locatedIn , :within .
+    :within a owl:ObjectProperty ; rdfs:domain :Place ; rdfs:range :Place .
+    """
+    with pytest.raises(OntologyLoadError) as info:
+        Ontology.from_owl(doc)
+    assert sorted(info.value.problems) == [
+        ":locatedIn: owl:inverseOf :undeclared, which is not a property declared here",
+        ":near: 2 owl:inverseOf values — a predicate has one inverse",
+    ]
+
+
+def test_inverses_survive_the_rdf_sink_round_trip(tmp_path: Path) -> None:
+    geo = Ontology.from_owl(GEO_OWL)
+    path = tmp_path / "geo.ttl"
+    RdfSink(path, ontology=geo).write(KnowledgeGraph())
+    assert Ontology.from_owl(path) == geo.model_copy(update={"name": "untitled"})
 
 
 def test_a_clean_schema_loads_without_a_warning() -> None:

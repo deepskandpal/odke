@@ -1,5 +1,9 @@
 """Ontology inference: a bootstrap for a corpus that arrives with no schema.
 
+Provisional (DECISIONS #48): ontology inference is parked (DECISIONS #24), and
+most of it is undocumented, so it may change in a minor release when it is
+picked up again, with a CHANGELOG line.
+
 DECISIONS #8: inference is a bootstrap, not a mode. Nothing here runs on its
 own — `Pipeline` never calls it — and what it returns is an ontology marked
 `inferred=True`, for a person to review, edit and freeze before anything is

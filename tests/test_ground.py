@@ -14,6 +14,7 @@ from openodke import (
     Entity,
     Evidence,
     Fact,
+    GateVerdict,
     Grounder,
     GroundingVerdict,
     KnowledgeGraph,
@@ -21,7 +22,6 @@ from openodke import (
     Pipeline,
     Polarity,
     Span,
-    ValidationVerdict,
 )
 from openodke.ground import (
     LLMGrounder,
@@ -33,13 +33,17 @@ from openodke.ground import (
     parse_verdict,
     render_claim,
 )
-from openodke.ground.llm import GROUNDING_SCHEMA, SYSTEM_PROMPT
+from openodke.ground.llm import GROUNDING_SCHEMA
 from openodke.llm import Completion, ModelRoles, RecordedClient, ScriptedClient
+from openodke.prompts import get as _registered
 
 FIXTURE = Path(__file__).parent / "fixtures" / "llm" / "grounding.json"
 
 DOC = Document(id="d1", text="Ada Lovelace wrote the first algorithm. It ran on paper.")
 ADA = Entity(key="p1", type="Person", label="Ada Lovelace")
+
+# The default grounding prompt's text, as the registry holds it.
+SPAN_PROMPT = _registered("ground.span").text
 
 
 def _fact(*evidence: Evidence, **overrides: object) -> Fact:
@@ -294,7 +298,7 @@ def test_render_claim_shows_identity_qualifiers_and_hides_reconcilable_ones() ->
 def test_the_prompt_is_the_claim_and_the_cited_passage_and_nothing_more() -> None:
     """Not the document: the question is whether *this span* supports the claim."""
     system, user = build_messages(WROTE, WROTE_IT.span.resolve(CORPUS))  # type: ignore[union-attr]
-    assert system.role == "system" and system.content == SYSTEM_PROMPT
+    assert system.role == "system" and system.content == SPAN_PROMPT
     assert user.content == (
         'Claim: Ada Lovelace (Person) — wrote — "the first algorithm".\n\n'
         "Passage:\nAda Lovelace wrote the first algorithm in 1843."
@@ -302,7 +306,7 @@ def test_the_prompt_is_the_claim_and_the_cited_passage_and_nothing_more() -> Non
     assert "born in London" not in user.content
     # The cost story: this is sent once per fact and must stay a fraction of an
     # extraction prompt, which carries an ontology snippet and a whole chunk.
-    assert len(SYSTEM_PROMPT) < 600
+    assert len(SPAN_PROMPT) < 600
 
 
 @pytest.mark.parametrize(
@@ -407,6 +411,43 @@ def test_a_verdict_already_on_the_fact_costs_no_call() -> None:
     assert grounder.stats["skipped"] == 1
 
 
+def test_the_labelled_claim_names_its_parts_and_drops_the_types() -> None:
+    """Opt-in: the same claim, written the way the model is told to read it."""
+    passage = WROTE_IT.span.resolve(CORPUS)  # type: ignore[union-attr]
+    system, user = build_messages(WROTE, passage, claim_format="labelled")
+    assert system.content == SPAN_PROMPT
+    assert user.content == (
+        'Claim (subject | relation | object): Ada Lovelace | wrote | "the first algorithm"\n\n'
+        "Passage:\nAda Lovelace wrote the first algorithm in 1843."
+    )
+    _, denied = build_messages(DID_NOT_FINISH, "", claim_format="labelled")
+    assert denied.content.startswith(
+        "Claim (subject | relation | object): It is NOT the case that: "
+        "Charles Babbage | finished | Analytical Engine"
+    )
+    # The default is unchanged, so every recorded answer and label sheet still matches.
+    assert build_messages(WROTE, passage) == build_messages(WROTE, passage, claim_format="inline")
+
+
+def test_the_grounder_sends_the_labelled_claim_and_reports_it() -> None:
+    client = ScriptedClient(['{"verdict": "supported"}'])
+    grounder = LLMGrounder(client=client, claim_format="labelled")
+    grounder.ground(WROTE, CORPUS)
+    ((messages, _, _),) = client.calls
+    assert messages[1].content.startswith(
+        "Claim (subject | relation | object): Ada Lovelace | wrote"
+    )
+    assert grounder.stats["claim_format"] == "labelled"
+    assert _grounder().stats["claim_format"] == "inline"
+
+
+def test_claim_format_is_checked() -> None:
+    with pytest.raises(ValueError, match="claim_format"):
+        LLMGrounder(client=ScriptedClient(), claim_format="tabular")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="binary"):
+        LLMGrounder(client=ScriptedClient(), claim_format="labelled", verdicts="binary")
+
+
 def test_stats_are_the_stage_run_report() -> None:
     grounder = _grounder()
     for fact in (WROTE, BORN_IN_PARIS, BORN_IN_1815, _fact(INVENTED)):
@@ -432,10 +473,10 @@ class _AdaExtractor:
 
 
 class _GateOnVerdict:
-    def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
+    def validate(self, fact: Fact, ontology: Ontology) -> GateVerdict:
         if fact.verdict is GroundingVerdict.CONTRADICTED:
-            return ValidationVerdict(action="refuse", reason="contradicted by its own span")
-        return ValidationVerdict(action="accept")
+            return GateVerdict(action="refuse", reason="contradicted by its own span")
+        return GateVerdict(action="accept")
 
 
 class _Collect:
@@ -447,13 +488,13 @@ class _Collect:
 
 
 def test_end_to_end_a_contradicted_fact_never_reaches_the_sink() -> None:
-    """Stamp, then gate: the grounder marks it, the validator refuses it (DECISIONS #20)."""
+    """Stamp, then gate: the grounder marks it, the gate refuses it (DECISIONS #20)."""
     sink = _Collect()
     kg = Pipeline(
         Ontology(),
         _AdaExtractor(),
         grounder=_grounder(),
-        validator=_GateOnVerdict(),
+        gate=_GateOnVerdict(),
         sinks=[sink],
     ).run([CORPUS])
     assert [f.predicate for f in kg.facts] == ["wrote"]

@@ -10,6 +10,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# The same 7-day cooldown as pyproject's [tool.uv], for every uv call here,
+# including build environments and `--no-project` runs that skip the project.
+env:
+  UV_EXCLUDE_NEWER: "7 days"
+
 jobs:
   verify:
     name: verify (python ${{ matrix.python }})
@@ -116,6 +121,14 @@ jobs:
           NEO4J_PASSWORD: ci-${{ github.run_id }}
         run: |
           uv run pytest tests/test_neo4j_sink.py tests/test_neo4j_constraints.py tests/test_bulk_sinks.py tests/test_ontology_neo4j.py tests/test_e2e.py \
+            tests/test_interop_graphrag.py \
+            tests/test_interop_neo4j.py \
+            tests/test_store_lookup.py \
+            tests/test_support.py \
+            tests/test_store_merge.py \
+            tests/test_reconcile.py \
+            tests/test_versions.py \
+            tests/test_tenants.py \
             -k live_neo4j -rA --junitxml=live-neo4j.xml
           python3 - <<'EOF'
           import xml.etree.ElementTree as ET
@@ -128,4 +141,51 @@ jobs:
           print(f"live neo4j tests: {tests} selected, {ran} ran, {skipped} skipped, {failed} failed")
           if ran < 1 or skipped or failed:
               raise SystemExit("the live Neo4j tests must run, not skip")
+          EOF
+
+  # bench/test_competitors.py drives LLMGraphTransformer, neo4j-graphrag and
+  # LangExtract through bench/competitors.py, against a fake LiteLLM: no network
+  # and no key. The package never installs those libraries, and they need newer
+  # neo4j and pypdf than uv.lock holds, so this job builds the bench's own
+  # environment, pinned in bench/requirements.txt to the versions behind the
+  # published comparison, and runs the bench's tests in it. The bench scripts
+  # that need nothing more, bench/trex.py among them, are tested in verify
+  # (tests/test_bench_scripts.py).
+  bench:
+    name: bench competitors (python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: bench/requirements.txt
+
+      # Only the files resolved into bench/requirements.txt install: --require-hashes
+      # refuses any other upload of the same version. The package itself comes from
+      # this checkout, with no dependencies of its own (the file pins them), in a
+      # second call, since a local editable install has no hash to check.
+      - name: Install the bench environment
+        run: |
+          uv venv --python 3.12 bench/.venv
+          uv pip install --python bench/.venv/bin/python --require-hashes -r bench/requirements.txt
+          uv pip install --python bench/.venv/bin/python --no-deps -e .
+
+      # A skipped test is a green tick that proved nothing, as in the live job.
+      - name: Competitor tests
+        run: |
+          bench/.venv/bin/python -m pytest bench/test_competitors.py -rA --junitxml=bench.xml
+          python3 - <<'EOF'
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("bench.xml").getroot()
+          suite = root if root.tag == "testsuite" else root.find("testsuite")
+          tests, skipped = int(suite.get("tests")), int(suite.get("skipped"))
+          failed = int(suite.get("failures")) + int(suite.get("errors"))
+          ran = tests - skipped
+          print(f"bench tests: {tests} selected, {ran} ran, {skipped} skipped, {failed} failed")
+          if ran < 1 or skipped or failed:
+              raise SystemExit("the bench tests must run, not skip")
           EOF

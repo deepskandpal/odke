@@ -1,0 +1,12 @@
+# The bench's own environment (bench/README.md), pinned so CI's bench job runs
+# what the comparison ran: the competitor libraries bench/competitors.py drives,
+# at the versions each published run's usage.json records, and pytest. The
+# package's own dependencies come from pyproject.toml's llm and bench extras.
+# They need newer neo4j and pypdf than uv.lock holds, so this is an environment
+# beside the lock, never inside it. bench/requirements.txt is this file compiled
+# (its header says how).
+langchain-experimental==0.4.2
+neo4j-graphrag==1.22.0
+langextract==1.7.1
+json-repair
+pytest

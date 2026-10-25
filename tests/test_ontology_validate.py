@@ -214,3 +214,90 @@ def test_a_diagnostic_is_frozen_structured_data() -> None:
         diagnostic.code = "y"  # type: ignore[misc]
     with pytest.raises(ValidationError):
         Diagnostic(code="x", path="types.A", message="m", severity="fatal")  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------------------- #
+# Inverse and symmetric predicates (DECISIONS #28)
+# --------------------------------------------------------------------------- #
+
+
+def _places(**predicates: dict[str, object]) -> Ontology:
+    return Ontology.from_dict(
+        {"types": {"Place": {}, "Person": {}}, "predicates": predicates}, strict=False
+    )
+
+
+def test_a_clean_inverse_pair_and_a_symmetric_edge_validate() -> None:
+    ontology = _places(
+        located_in={"domain": ["Place", "Person"], "range": "Place", "inverse_of": "contains"},
+        contains={"domain": ["Place"], "range": "Place"},
+        spouse={"domain": ["Person"], "range": "Person", "symmetric": True},
+    )
+    assert ontology.validate() == []
+
+
+def test_an_inverse_that_does_not_exist_is_named_with_a_suggestion() -> None:
+    ontology = _places(
+        located_in={"domain": ["Place"], "range": "Place", "inverse_of": "contain"},
+        contains={"domain": ["Place"], "range": "Place"},
+    )
+    (diagnostic,) = ontology.validate()
+    assert (diagnostic.code, diagnostic.path) == (
+        "unknown-inverse",
+        "predicates.located_in.inverse_of",
+    )
+    assert "did you mean 'contains'?" in diagnostic.message
+    assert ontology.inverses == {}
+
+
+def test_a_property_has_no_inverse() -> None:
+    ontology = _places(
+        founded={"domain": ["Place"], "range": "date", "symmetric": True},
+        named={"domain": ["Place"], "range": "Place", "inverse_of": "label"},
+        label={"domain": ["Place"]},
+    )
+    assert _found(ontology) == [
+        ("inverse-not-edge", "predicates.founded.symmetric", "error"),
+        ("inverse-not-edge", "predicates.named.inverse_of", "error"),
+    ]
+    # Not completed onto the property, so the problem is reported once, where it was written.
+    assert ontology.predicates["label"].inverse_of is None
+    assert ontology.inverses == {}
+
+
+def test_an_inverse_holds_both_ways_or_is_refused() -> None:
+    ontology = _places(
+        itself={"domain": ["Place"], "range": "Place", "inverse_of": "itself"},
+        both={"domain": ["Person"], "range": "Person", "symmetric": True, "inverse_of": "spouse"},
+        spouse={"domain": ["Person"], "range": "Person", "symmetric": True},
+        to_spouse={"domain": ["Person"], "range": "Person", "inverse_of": "spouse"},
+        north_of={"domain": ["Place"], "range": "Place", "inverse_of": "south_of"},
+        above={"domain": ["Place"], "range": "Place", "inverse_of": "south_of"},
+        south_of={"domain": ["Place"], "range": "Place"},
+    )
+    assert [d for d in _found(ontology) if d[0] != "inverse-not-mutual"] == []
+    assert [d.path for d in ontology.validate()] == [
+        "predicates.itself.inverse_of",
+        "predicates.both.inverse_of",
+        "predicates.to_spouse.inverse_of",
+        "predicates.north_of.inverse_of",
+        "predicates.above.inverse_of",
+    ]
+    # Two claims on one inverse are not settled by declaration order.
+    assert ontology.predicates["south_of"].inverse_of is None
+    assert ontology.inverses == {"spouse": "spouse"}
+
+
+def test_an_inverse_must_swap_domain_and_range() -> None:
+    """A fact's object becomes its partner's subject, so the types have to line up."""
+    ontology = _places(
+        born_in={"domain": ["Person"], "range": "Place", "inverse_of": "birthplace_of"},
+        birthplace_of={"domain": ["Person"], "range": "Person"},
+        spouse={"domain": ["Place", "Person"], "range": "Person", "symmetric": True},
+    )
+    assert _found(ontology) == [
+        ("inverse-domain-range", "predicates.born_in.inverse_of", "error"),
+        ("inverse-domain-range", "predicates.spouse.symmetric", "error"),
+    ]
+    with pytest.raises(OntologyLoadError, match="inverse-domain-range"):
+        Ontology.from_dict(ontology.model_dump())

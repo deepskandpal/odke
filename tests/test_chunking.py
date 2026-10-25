@@ -7,6 +7,7 @@ import random
 import pytest
 
 from openodke import Chunk, Chunker, Document, Pipeline, SentenceChunker, Span
+from openodke.chunking import sentences
 
 # Words that cannot trip the abbreviation rules: never one letter, never in the
 # abbreviation list, and a mix of scripts, combining marks and emoji.
@@ -86,6 +87,12 @@ def test_generated_documents_keep_offsets_and_sentences(seed: int) -> None:
     # Every non-whitespace character is in exactly one chunk.
     covered = sum(len(c.text) - sum(ch.isspace() for ch in c.text) for c in chunks)
     assert covered == sum(not ch.isspace() for ch in doc.text)
+
+
+@pytest.mark.parametrize("seed", range(300))
+def test_sentences_are_the_boundaries_the_chunker_packs(seed: int) -> None:
+    doc, truth = _generated(seed)
+    assert sentences(doc.text) == truth
 
 
 def test_crlf_text_slices_back_exactly() -> None:

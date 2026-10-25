@@ -1,215 +1,183 @@
 # `odke run`
 
-`odke run` runs the whole pipeline from one file. The file names the inputs and
-how to read them, the ontology, which model does which job, which implementation
-fills each of the thirteen stages, and where the graph goes. It is data, for the
-same reason a `ModelSpec` is: it can be diffed, logged next to the graph it
-produced, and read by someone who has never seen the code. Every key is checked,
-so a misspelt stage name is an error with a suggestion rather than a stage silently
-left as the pass-through.
+`odke run` runs the pipeline from one config: the inputs, the ontology, the
+models, each of the thirteen stages, and where the graph goes.
 
 ```bash
-odke run examples/e2e/odke.yaml                          # run it and write the graph
-odke run examples/e2e/odke.yaml --dry-run                # load, extract and ground; print what would be written
-odke run examples/e2e/odke.yaml --model ollama/llama3.1  # every role on one model, whatever the config says
+odke run examples/triples/odke.yaml                          # run it and write the graph
+odke run examples/triples/odke.yaml --dry-run                # load, extract and ground; print what would be written
+odke run examples/triples/odke.yaml --model ollama/llama3.1  # every role on one model, whatever the config says
+odke run examples/triples/odke.yaml --budget-usd 1.50        # stop cleanly before spending more, keeping what is done
+odke run --from-manifest examples/triples/out                # run again what a run's manifest recorded
+odke run examples/triples/odke.yaml --log-format json        # every stage, document and model call as a JSON line
+odke run examples/triples/odke.yaml --batch-size 500         # stream: 500 documents at a time, in bounded memory
 ```
 
 | Exit status | Means |
 |---|---|
 | 0 | the run finished (a dry run included) |
-| 2 | the config cannot run: a bad key, a missing file, a missing extra |
-| 1 | the run failed: a provider error, or a file that could not be read or written |
-
-A YAML config (`.yaml`, `.yml`) needs the `yaml` extra; the same keys as JSON need
-nothing. [`examples/run.yaml`](https://github.com/deepskandpal/odke/blob/main/examples/run.yaml)
-comments every key. Everything the command does is reachable from Python as
-`openodke.run.execute(load_config(path))`.
+| 2 | the config cannot run: a bad key, missing file or missing extra |
+| 1 | the run failed: a provider error outside any one document, every document failing, or a file error |
+| 3 | the run stopped at its [budget](#budgets), and wrote what it kept |
 
 ## The config
 
+The smallest config replays another extractor's triples:
+
 ```yaml
+# examples/triples/odke.yaml
 ontology: ontology.json            # paths are relative to this file
 inputs:
-  - path: corpus/register.csv
-    loader: {use: csv, tier: curated}
-  - corpus/notes                   # a bare path: stages.loader, else the directory loader
-pythonpath: [.]                    # where a stage of your own is imported from
+  - path: texts                    # texts/halden.txt is the text the rows call "halden"
+    loader: {use: directory}
 models:
-  extract: anthropic/claude-sonnet-5
-  ground: {model: anthropic/claude-haiku-4-5-20251001, max_tokens: 256}
-  replay: {extract: recorded/extract.json, ground: recorded/ground.json}
-  meter: true
+  ground: anthropic/claude-haiku-4-5-20251001
+  replay: {ground: recorded/ground.json}
 stages:
-  chunker: {use: sentence, max_words: 120}
-  extractor: hybrid                # the one required stage
+  extractor: {use: triples, path: triples.jsonl, extractor: hand-written}
   grounder: llm
-  normalizer: {use: value, person_types: [Person]}
-  resolver: native
-  corroborator: signature
-  scorer: evidence
-  validator: verdict
+  gate: verdict
   sink: {use: jsonl, directory: out}
-bootstrap: false
 ```
 
-| Key | Required | What it is |
-|---|---|---|
-| `ontology` | yes | A JSON or YAML ontology (`.yaml`/`.yml` is read as YAML). Loaded strictly, so a schema with validation errors stops the run before anything is spent. |
-| `inputs` | yes, at least one | Files or directories. A string is a path read by the default loader; a mapping is `{path, loader}`. |
-| `pythonpath` | no | Directories put on `sys.path` before a `package.module:Name` stage is imported. |
-| `models` | no | Which model does which job, recorded responses, and the cost meter. |
-| `stages` | yes | Which implementation fills each of the thirteen stages. Only `extractor` is required. |
-| `bootstrap` | no, default `false` | Apply the ontology's constraints through the sink before the first write. |
+YAML needs the `yaml` extra; JSON needs nothing. Paths resolve against the
+config's directory.
+[`examples/run.yaml`](https://github.com/deepskandpal/odke/blob/main/examples/run.yaml)
+comments every key.
 
-Every relative path (the ontology, each input, `pythonpath`, replay files, a sink's
-output) resolves against the directory the config file is in, so a config runs the
-same from any working directory.
+| Key | Default | What it is |
+|---|---|---|
+| `ontology` | required | A JSON or YAML ontology, loaded strictly |
+| `inputs` | required | Paths, or `{path, loader}` ([below](#inputs)) |
+| `stages` | required | Each stage's implementation; only `extractor` is required ([below](#stages)) |
+| `models` | | The models and their calls ([below](#models)) |
+| `pythonpath` | | Put on `sys.path` before your own stages are imported |
+| `bootstrap` | `false` | [Apply the constraints](#bootstrap-and-the-constrainer) first |
+| `inverses` | when declared | `false` turns off [inverse partners](concepts.md#inverse-and-symmetric-partners) |
+| `coverage` | `true` | [The coverage report](grounding.md#what-extraction-left-behind-the-coverage-report) |
+| `reextract` | off | `true` or `{windows: N}`: [the re-extract hook](grounding.md#handing-a-gap-back-the-re-extract-hook) |
+| `store_lookup` | off | Resolve against the store ([below](#store_lookup)) |
+| `tenant` | off | The store's [tenant](stores.md#tenants); `--tenant` overrides it |
+| `manifest` | | Where else to write the [run manifest](#the-run-manifest) |
+| `batch_size` | off | [Stream](#streaming) N documents at a time; `--batch-size` overrides it |
 
 ### `inputs`
 
-An input's `loader` is a stage spec like any other: a short name, with options as
-extra keys. An input without one is read by `stages.loader`, and when that is left
-out too, by the `directory` loader, which reads every suffix it knows and warns
-about and skips a file whose extra is missing
-([Loaders](loaders-and-extraction.md#directories)).
-
-**Document ids are source paths.** A document read from a file gets the file's path
-relative to the config as its id, plus `#L<line>` for a record with a source line
-(CSV, TSV, JSONL) or `#<row>` for one without (JSON, Parquet): `corpus/register.csv#L2`.
-A second document from the same path is `~2`, `~3`. A labelled set and a provenance
-query can both name a document by a string you already know, instead of a UUID
-minted by the run.
+An input's `loader` is a [loader](loading.md#loaders)'s short name, with
+options as extra keys. Without one, `stages.loader` reads it, else the
+[`directory`](loading.md#directories) loader. A document's id is its file's
+path relative to the config, plus `#L<line>` (CSV, TSV, JSONL) or `#<row>`
+(JSON, Parquet) for a record, and `~2`, `~3` for a repeat:
+`corpus/register.csv#L2`.
 
 ### `models`
 
-`extract`, `ground` and `infer` are each a model string or a full `ModelSpec`
-(`model`, `temperature`, `max_tokens`, `timeout`, `base_url`, `api_key_env`, `extra`); left out,
-a role takes its `ModelRoles` default. Once `extract` is named, that default is the
-extraction model, for grounding too (at `max_tokens: 256`), so passages go nowhere
-the file did not name. Keys never go in the file: a provider reads
-its own environment variable, or the one `api_key_env` names. Which providers can
-be named, and which variable each reads, is
-[Models and providers](models.md) — or `odke models`, which also says whether the
-variable is set.
+| Key | What it is |
+|---|---|
+| `extract`, `ground`, `infer` | A model string or a `ModelSpec` (`model`, `temperature`, `max_tokens`, `timeout`, `base_url`, `api_key_env`, `extra`, and `repeat`, a draw's index that keys a repeated question apart in the [cache](models.md#the-response-cache)); left out, the [role's default](models.md#roles-and-defaults). Unset, `temperature` is left out of the request |
+| `replay` | A role's recorded responses: a cassette (`ReplayClient`) or match entries (`RecordedClient`) |
+| `meter` | `true` puts calls, tokens, USD and latency per stage in the stats |
+| `cache` | A directory of [model answers](models.md#the-response-cache); `--cache` overrides it |
+| `budget` | `usd`, `calls`, `input_tokens`, `output_tokens` ([Budgets](#budgets)) |
+| `limits` | Calls in flight per provider: `{anthropic: 8}` ([Concurrency](models.md#concurrency-per-provider)) |
 
-**`--model` overrides the block for one run.** `odke run odke.yaml --model
-openai/gpt-5.5` puts every role on that model and prints which; `--model-provider
-openai` supplies the prefix when the string has none. Only the model string
-changes, so grounding keeps its smaller `max_tokens`. A per-role choice stays a
-config decision.
-
-**`temperature` is unset by default**, and then left out of the request entirely,
-so the provider's own applies. Which temperatures a model accepts is a per-model
-fact — some accept only one — and openodke does not keep a table of it. Set the key
-and it is sent exactly as written, `0` included.
-
-- **`replay`** maps a role to a file of recorded responses, either a cassette
-  object (`ReplayClient`) or a list of match entries (`RecordedClient`), so a run
-  needs no key and no network. Delete the lines to call the models.
-- **`meter: true`** wraps every model client in a `CostMeter` and puts calls,
-  tokens, USD and latency per stage into the graph's stats. A cost no provider
-  reported stays unknown rather than being counted as zero.
+Keys come from the environment ([Keys](models.md#keys)). `--model` puts every
+role on one model string, keeping each role's `max_tokens`; `--model-provider`
+supplies a missing prefix.
 
 ### `stages`
 
-A stage is a built-in's short name or `package.module:Name` for your own, and
-either may take options. `grounder: llm` and `grounder: {use: llm, max_workers: 4}`
-are both accepted: every key except `use` is passed to the implementation as a
-keyword argument, and an option it does not take is an error listing the ones it
-does.
+A stage is a built-in's short name or your own `package.module:Name`, with
+options as extra keys: `grounder: {use: llm, max_workers: 4}`. An unknown
+option is an error listing the ones taken. Your own class is constructed with
+the options. Every stage is checked against its Protocol when the config is
+built.
 
-**A stage left out is the pass-through** from `openodke.stages`
-([DECISIONS #20](decisions.md)), and the stats say nothing about it.
+- **A stage left out** is the pass-through ([DECISIONS #20](decisions.md#20)),
+  except the scorer, which is `evidence` so confidence reflects the verdict;
+  `scorer: passthrough` opts out.
+- **`delegated`**, with `to:`, marks a stage the store does
+  ([DECISIONS #21](decisions.md#21)):
+  `resolver: {use: delegated, to: neo4j-graphrag:FuzzyMatchResolver}`.
+- **What `odke run` supplies** (the ontology, the model client, the documents)
+  and options that must be Python objects, such as `source`, are refused.
 
-**The scorer is the exception.** Left out, `odke run` fills it with `evidence`
-(`EvidenceScorer`), because the pass-through leaves `Fact.confidence` at whatever
-the extractor put there — one constant for every fact, whatever the grounder
-found — and a threshold set against that silently accepts everything. The library
-keeps its pass-through: `Pipeline` is for a caller who scores themselves, and this
-is the CLI's opinion, on a graph somebody is about to filter. `scorer: passthrough`
-opts out and hands the extractor's number to the sink unchanged.
-
-**A stage of your own** is `package.module:Name`. A class is constructed with the
-options; any other object is used as it is and takes no options. Either way it must
-satisfy the stage's Protocol, which is checked when the config is built rather than
-discovered halfway through a run.
-
-**`delegated`**, with `to:`, marks a stage the store does itself
-([DECISIONS #21](decisions.md)): `resolver: {use: delegated, to: neo4j-graphrag:FuzzyMatchResolver}`.
-Every stage but the chunker and the inferrer accepts it.
-
-**What `odke run` sets itself** is refused from the file with
-`set by odke run, not by the config`: the ontology (for the normaliser, the
-corroborator and the sinks), the model client and spec (for the model-backed
-stages), and the loaded documents (for the extractors). So are the options that
-would have to be a Python object, such as a corroborator's `source` callable.
-
-| Stage | Short names | Built from | Options |
-|---|---|---|---|
-| `loader` | `directory`, `text`, `markdown`, `html`, `pdf`, `docx`, `csv`, `tsv`, `json`, `jsonl`, `parquet` | the `openodke.loaders` classes | `tier`, and each class's own: `encoding`, `modality`, `records`, `delimiter`, `columns`, `pattern`; `html`: `strip_boilerplate`; `pdf`: `per_page`, `page_separator` |
-| `chunker` | `sentence`, `passthrough` | `SentenceChunker` | `max_words`, `overlap` |
-| `router` | `passthrough`, `delegated` | — | your own is `package.module:Name` |
-| `extractor` | `pattern`, `llm`, `hybrid`, `triples` | `PatternExtractor`, `LLMExtractor`, `HybridExtractor`, `TriplesExtractor` | `pattern`: `mappings`, `subject_type`, `confidence`; `llm`: `types`, `snippet_limit`, `confidence`, `repairs`, `retry` and `max_workers` (as the grounder's); `hybrid`: `llm` (options, or `false`), `pattern` (options); `triples`: `path` (required), `extractor`, `confidence` — another extractor's output, [in the triples format](triples.md) |
-| `grounder` | `span`, `llm`, `passthrough`, `delegated` | `SpanGrounder`, `LLMGrounder` | `llm`: `max_workers`, `retry` (`attempts`, `base_delay`, `multiplier`, `max_delay`, `jitter`) |
-| `normalizer` | `value`, `passthrough`, `delegated` | `ValueNormalizer` | `day_first`, `person_types` |
-| `resolver` | `native`, `passthrough`, `delegated` | `NativeResolver` | `threshold`, `nudge_up`, `nudge_down`, `max_block` |
-| `corroborator` | `signature`, `passthrough`, `delegated` | `SignatureCorroborator` | `half_life_days`, `freshness_floor`, `intervals` |
-| `scorer` | `evidence` (the default), `passthrough`, `delegated` | `EvidenceScorer` | `prior`, `verdict_weights` |
-| `validator` | `verdict`, `passthrough`, `delegated` | `VerdictValidator` | `refuse_not_found` |
-| `sink` | `jsonl`, `neo4j`, `cypher_file`, `neo4j_admin_csv`, `rdf`, `networkx` | the [sinks](sinks.md) | see [below](#sinks) |
-| `constrainer` | `neo4j`, `passthrough`, `delegated` | `Neo4jConstrainer` | — |
-| `inferrer` | `passthrough` only | — | `odke run` never infers ([below](#the-inferrer)) |
+| Stage | Short names | Options |
+|---|---|---|
+| `loader` | `directory`, `text`, `markdown`, `html`, `pdf`, `docx`, `csv`, `tsv`, `json`, `jsonl`, `parquet` | each loader's own ([Loading documents](loading.md#loaders)) |
+| `chunker` | `sentence`, `passthrough` | `max_words`, `overlap` |
+| `router` | `passthrough`, `delegated` | — |
+| `extractor` | `pattern`, `llm`, `hybrid`, `triples` | `pattern`: `mappings`, `subject_type`, `confidence`; `llm`: `types`, `snippet_limit`, `confidence`, `repairs`, `structured`, `retry`, `max_workers`; `hybrid`: `llm` (options, or `false`), `pattern`; `triples`: `path` (required), `extractor`, `confidence` ([Inputs](inputs.md#from-odke-run)) |
+| `grounder` | `span`, `llm`, `passthrough`, `delegated` | `llm`: `max_workers`, [`retry`](grounding.md#retries), `context`, `verdicts`, `locate`, `widen` ([Grounding](grounding.md#the-second-model-llmgrounder)); `--widen` sets `widen` |
+| `normalizer` | `value`, `passthrough`, `delegated` | `day_first`, `person_types` |
+| `resolver` | `native`, `passthrough`, `delegated` | `threshold`, `nudge_up`, `nudge_down`, `max_block`, `judge` ([below](#the-pair-judge)), `normalize_batch`, `context_floor` ([Resolve](resolution-and-corroboration.md#resolve)) |
+| `corroborator` | `signature`, `passthrough`, `delegated` | `half_life_days`, `freshness_floor`, `intervals`, `near_duplicates` |
+| `scorer` | `evidence` (the default), `passthrough`, `delegated` | `prior`, `verdict_weights` |
+| `gate` | `verdict`, `passthrough`, `delegated` | `refuse_not_found`, `schema` ([the gate](grounding.md#the-gate-verdictgate)) |
+| `sink` | `jsonl`, `neo4j`, `cypher_file`, `neo4j_admin_csv`, `rdf`, `networkx` | [below](#sinks) |
+| `constrainer` | `neo4j`, `passthrough`, `delegated` | — |
+| `inferrer` | `passthrough` only | [below](#the-inferrer) |
 
 ### Sinks
 
-`sink` takes one sink or a list of them; none writes nothing.
+`sink` takes one sink or a list; none writes nothing. Every sink but `jsonl`
+gets the ontology. A bad option or a missing extra fails while the config is
+built.
 
-| `use` | Writes | Options |
-|---|---|---|
-| `jsonl` | [`JsonlSink`](sinks.md#jsonl) | `directory` (required) |
-| `neo4j` | [`Neo4jSink`](neo4j.md) | `uri` or `uri_env` (one required); `user` or `user_env` (default `neo4j`); `password_env` (default `NEO4J_PASSWORD`); `database`; `batch_size` (default 500) |
-| `cypher_file` | [`CypherFileSink`](sinks.md#cypher-file) | `path` (required); `batch_size` (default 500) |
-| `neo4j_admin_csv` | [`Neo4jAdminCsvSink`](sinks.md#neo4j-admin-csv) | `directory` (required); `delimiter` (default `,`); `array_delimiter` (default `;`) |
-| `rdf` | [`RdfSink`](sinks.md#rdf), needs `rdf` | `path` (required); `format` (`turtle`, `nt`, `json-ld`; default from the suffix); `base`; `schema` |
-| `networkx` | [`NetworkXSink`](sinks.md#networkx), needs `networkx` | `path`: where to write the filled graph as node-link JSON. Without it the graph is filled in memory and written nowhere, so give it a `path`. |
+| `use` | Options |
+|---|---|
+| [`jsonl`](stores.md#jsonl) | `directory` (required); `merge` (default `false`): keep what the files hold, replacing what the run restates |
+| [`neo4j`](stores.md#neo4j) | `uri` or `uri_env` (one required); `user` or `user_env` (default `neo4j`); `password_env` (default `NEO4J_PASSWORD`); `database`; `batch_size`, rows a write transaction (default 500) |
+| [`cypher_file`](stores.md#cypher-file) | `path` (required); `batch_size` (default 500) |
+| [`neo4j_admin_csv`](stores.md#neo4j-admin-csv) | `directory` (required); `delimiter` (default `,`); `array_delimiter` (default `;`) |
+| [`rdf`](stores.md#rdf) | `path` (required); `format` (`turtle`, `nt`, `json-ld`; default from the suffix); `base`; `schema` |
+| [`networkx`](stores.md#networkx) | `path`: where to write the graph as node-link JSON, read back by `networkx.node_link_graph(data, edges="edges")` |
 
-`odke run` supplies the ontology to every sink but `jsonl`, so projections of
-multi-valued predicates are lists, the Cypher script opens with the constraint DDL,
-and the RDF file declares its schema. Paths resolve against the config. A sink is
-constructed while the config is built, so a bad option fails before anything
-runs, and a missing extra is a config error naming it:
-`stages.sink: RdfSink needs rdflib, which is not installed. Run: pip install "openodke[rdf]"`.
-The same holds for the `pdf`, `docx` and `parquet` loaders. A node-link file reads
-back with `networkx.node_link_graph(data, edges="edges")` (`link="edges"` before
-networkx 3.4), with dates and times as ISO strings.
-
-**A password never goes in a config file.** `password:` is refused with an error
-that says to name an environment variable with `password_env` instead. The
-variables are read when the sink is opened, which a dry run never does.
+`password:` is refused; `password_env` names the variable, read when the sink
+opens, which a dry run never does.
 
 ### `bootstrap` and the constrainer
 
-`bootstrap: true` applies the constrainer's DDL through the sink before the first
-write, and before any model is called, so a database that refuses the DDL fails
-the run while it is still free. It needs a sink that applies constraints (`neo4j`);
-with none, the config is refused. The DDL comes from `stages.constrainer`, or from
-`Neo4jConstrainer` when that is left out. Every statement is `IF NOT EXISTS`, so
-bootstrapping on every run is safe.
+`bootstrap: true` applies the constrainer's DDL (`stages.constrainer`, else
+`Neo4jConstrainer`) through the sink before the first write and before any model
+call. Every statement is `IF NOT EXISTS`. A config with no sink that applies
+constraints (`neo4j`) is refused.
+
+### `store_lookup`
+
+`store_lookup` hands the resolver a
+[store lookup](resolution-and-corroboration.md#resolving-against-the-store)
+(bringing `resolver: native` if none is named). `neo4j` reads the run's neo4j
+sink's store, on its connection, in the run's tenant; its options are `limit`
+(default 100) and the sink's connection keys, for another store.
+`package.module:Name` is your own `StoreLookup`. A dry run opens no store and
+warns. `odke validate --config` reads the same key.
+
+### The pair judge
+
+`resolver: {use: native, judge: true}` turns on the
+[pair judge](resolution-and-corroboration.md#the-pair-judge). A mapping sets
+`low` (default 0.7), `queue`, `reviewed` (which must exist), `max_workers` and
+`retry`. It asks the `ground` role's model and replay, metered as `judge`. A dry run asks it but writes no queue.
+
+```yaml
+stages:
+  resolver:
+    use: native
+    judge: {queue: review/pairs.jsonl, reviewed: review/reviewed.jsonl}
+```
 
 ### The inferrer
 
-`inferrer` accepts only `passthrough`. Anything else is refused:
-`odke run never infers an ontology`. Inference is a bootstrap, not a mode
-([DECISIONS #8](decisions.md)): run `odke ontology infer` once, review and freeze
-the result, and name the file under `ontology`. See
-[Ontology inference](inference.md).
+`inferrer` accepts only `passthrough`: `odke run never infers an ontology`.
+Run `odke ontology infer` once, review and freeze the result, and name it under
+`ontology` ([DECISIONS #8](decisions.md#8), [Ontology](ontology.md#drafting-one-parked)).
 
 ## Checked before anything runs
 
-Loading a config checks every key's type and name, reporting each problem on its
-own line by its dotted path, with a suggestion for a misspelling. Building it then
-loads the ontology, constructs every stage and each input's loader, opens the
-replay files and plans the sinks, and still loads no document and calls no model.
+Loading a config checks every key, by its dotted path, with a suggestion for a
+misspelling. Building it constructs every stage, loader and sink, loading no
+document and calling no model.
 
 ```python
 from openodke.run import ConfigError, build, parse_config
@@ -243,81 +211,258 @@ except ConfigError as exc:
 
 ## The dry run
 
-`--dry-run` loads, chunks, routes, extracts and grounds, then prints what it would
-have written instead of writing it: the per-stage report, the DDL `bootstrap` would
-apply, the statements or files each sink would produce, and the first twenty facts.
-**It opens no sink**, so it needs neither a database nor its password. It still
-calls the models, because what would be written depends on their answers; with
-`models.replay` it calls nothing.
+`--dry-run` runs every stage, then prints what it would write: the report, the
+`bootstrap` DDL, each sink's statements or files, and the first twenty facts.
+It opens no sink. It still calls the models, unless `models.replay` answers.
 
 ## What a run reports
 
-Every stage's own counts end up in `KnowledgeGraph.stats`, where the JSONL
-manifest and `odke eval` can read them, and the command prints them one line per
-stage:
+The report prints `KnowledgeGraph.stats` (here, `examples/e2e/`):
+
+```text
+odke run
+documents     8 (8 chunks; 0 skipped, 0 deferred, 0 empty)
+extractor     paths (paths llm+pattern, chunks 8, pattern_facts 20, llm_facts 18, merged 2, model_calls 3), rejections (quote not in the passage 1), prompts extract@1
+grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, supported 20, contradicted 1, not_found 15, prompts ground.span@1, claim_format inline, span (facts 36, located 36)
+corroborator  store (read 26), conflicts (lost 2, won 2)
+gate          accepted 26, marked (contradicted 1)
+refused       0
+marked        1 written for review, not refused
+coverage      0 of 5 sentences naming two known entities uncovered, 0 entities in no fact, 0 relations never offered, 0 unused
+graph         26 facts (8 edges, 18 properties), 7 entities, 4 links (different 1, similar 3)
+cost          39 model calls, 4980 tokens, USD unknown
+calibration   ground.span@1 on anthropic/claude-haiku-4-5-20251001 (inline): κ 0.12 [-0.09, 0.38] (n 104), below its bar (κ ≥ 0.6); fail-recall 0.20, false refusals 0.09, planted caught 0.80 (label set G gate, n 104, 2026-10-25); refusals marked for review, not dropped (its card is below the bar, DECISIONS #54)
+wrote         jsonl → …/examples/e2e/out: entities.jsonl 7, facts.jsonl 26, links.jsonl 4, manifest.json
+writes        0:JsonlSink: entities 7 written; facts 26 written; links 4 written
+manifest      …/examples/e2e/out/manifest.json
+```
 
 | Key in `stats` | Holds |
 |---|---|
-| `documents`, `chunks`, `skipped`, `deferred`, `refused` | the pipeline's own counts |
+| `schema_version` | the stats' format version, `"1.0"` ([Stability](stability.md#formats)) |
+| `documents`, `chunks`, `skipped`, `deferred`, `empty_extractions`, `derived`, `refused` | the [pipeline's counts](concepts.md#the-order-the-stages-run-in) |
+| `marked` | facts the gate wrote marked for review instead of refusing, below the grounder's [calibration bar](calibration.md#below-the-bar-nothing-is-dropped-on-a-judges-word); absent when none |
+| `calibration` | each model judge's card line, or UNCALIBRATED, with what its word did ([Calibration cards](calibration.md)) |
+| `candidates` | the facts that reached resolution |
 | `graph` | `facts`, `edges`, `properties`, `entities`, and `links` by kind |
-| `stages.extractor` | `paths` (the hybrid's `PathReport` totals), `rejections` by reason, or `model_calls`; for `triples`, rows by how their evidence was made (`cited`, `quoted`, `quote_not_found`, `context`), `unmatched_rows` and `ambiguous_rows` |
-| `stages.grounder` | calls, retries, failures, a count per verdict, tokens, `cost_usd`, and the span check's own counts |
-| `stages.corroborator` | `conflicts`: how many facts `won`, `lost` or `tied` a contest |
-| `stages.validator` | `accepted`, and `refused` by reason |
-| `stages.<name>` | anything else a stage reports by carrying a `stats` mapping, your own stages included |
-| `cost` | with `meter: true`: calls, tokens, USD and latency, in total and per role |
+| `stages.<name>` | each stage's `stats`, such as the [grounder's](grounding.md#the-second-model-llmgrounder), the gate's (as `gate`, and as `validator`, its 0.2 key, until 2.0.0), the [resolver's](resolution-and-corroboration.md#resolve) `store`, `judge` and `batch`, and the corroborator's `conflicts` |
+| `cost` | with `meter: true`: calls, tokens, USD and latency, per role, and `cached_calls` |
+| `cache` | with `models.cache`: `directory`, `hits`, `misses`, `failed` |
+| `spent`, `budget` | `calls`, tokens and `usd` (`None` if any call went unpriced); the limits set |
+| `failed` | the documents [left out](#when-one-document-fails), with reasons |
+| `stopped` | a budget stop's `limit`, `spent`, `stage`, and the chunks `unextracted` and facts `unchecked` |
+| `coverage`, `reextract` | with those options on |
+| `batches` | with `batch_size`, the micro-batches run; every count is the run's sum |
+| `writes` | per sink, what it wrote ([the write report](stores.md#the-write-report)) |
 
-A `DoubleStageWarning` raised while the pipeline is built is printed as a
-`warning:` line on standard error.
+A `DoubleStageWarning` prints as a `warning:` line.
 
-## The default gate: `VerdictValidator`
+## The run manifest
 
-The grounder stamps a verdict and drops nothing ([DECISIONS #20](decisions.md)), so
-something has to refuse. `validator: verdict` is that something:
+`odke run`, `odke validate`, `odke ground` and `Validator.validate` each write a
+manifest ([DECISIONS #40](decisions.md#40)):
 
-- **`contradicted` is always refused.** The cited passage was read, and it says
-  something else.
-- **`not_found` is accepted by default.** A passage that does not settle a claim is
-  not evidence against it, and a structured fact is grounded against its own cell,
-  which never names the subject, so a careful grounder answers `not_found` for most
-  of a CSV. `refuse_not_found: true` refuses those too, trading recall for
-  precision.
-- **`unchecked` is accepted.** Nothing was asked.
+| Field | Holds |
+|---|---|
+| `manifest_version` | `1`; its JSON Schema is `openodke/manifest.schema.json` ([Stability](stability.md#formats)) |
+| `command`, `dry_run` | `run`, `validate` or `ground`; a dry run writes none |
+| `config`, `config_hash` | the config resolved with every default (for `validate` and `ground`, their options; for the Validator, its stages), and its SHA-256; a chunker, router or inferrer left out and its `passthrough` named hash alike, as do the scorer left out and `evidence` named; any other stage's `passthrough` is a run of its own |
+| `config_file`, `base_dir` | the config's file and directory |
+| `models` | per role, the `model` asked for and the ids `served` |
+| `prompts` | each [registered prompt](models.md#prompts) sent, with its SHA-256 |
+| `ontology_version`, `ontology_hash` | the label and [`fingerprint`](ontology.md#freezing) |
+| `package` | `openodke`, `python`, `platform` |
+| `inputs` | each document's id and text SHA-256; the facts' `rows` and `hash`; a `hash` of both |
+| `cache`, `budget`, `started_at`, `ended_at` | the cache directory, the limits, UTC times |
+| `counts`, `spent`, `stopped`, `failed` | the run's counts, spend, budget stop and failed documents |
+| `run`, `job` | the [log events'](#logs-and-traces) run id, and `job.end`'s counts |
 
-It checks the verdict only, not domain or range. Its `stats` count what it accepted
-and why it refused, because the pipeline's own `refused` count cannot say why.
-Whether to refuse `not_found` on your corpus is a measurement:
-[`odke eval ablation`](evaluation.md#ablation) reports what refusing it would have
-kept and lost.
+It goes into each JSONL sink's `manifest.json`, to `manifest:` if set, else
+beside the config as `<name>.manifest.json`; `odke validate` writes it into
+`-o`, `odke ground` beside its summary. Secrets (`password`, `token`, `api_key`,
+`secret`, `authorization`, a URL's password) are `<redacted>` before hashing.
+
+`odke run --from-manifest PATH` runs one again as resolved, refusing (exit 2)
+when the ontology or a document changed, naming each, and taking no `--model`,
+`--widen`, `--cache`, `--batch-size`, `--tenant` or budget flag; another
+openodke version only warns, and a field a newer version added to the manifest is
+read past; a config option this version does not know is still refused, since it
+cannot run it. To rerun an `odke validate` or `odke ground`
+manifest, pass its `config.models` as a `--config` file (`{"models": ...}`) and
+the rest as flags.
 
 ```python
-from openodke import Entity, Fact, GroundingVerdict, Ontology, VerdictValidator
+from openodke.manifest import digest
+from openodke.run import execute, load_config
 
-gate = VerdictValidator()
-ada = Entity(key="p:ada", type="Person")
-verdicts = [GroundingVerdict.SUPPORTED, GroundingVerdict.NOT_FOUND, GroundingVerdict.CONTRADICTED]
-actions = [
-    gate.validate(
-        Fact(subject=ada, predicate="born", object_value=1815, verdict=v), Ontology()
-    ).action
-    for v in verdicts
-]
-assert actions == ["accept", "accept", "refuse"]
-print(gate.stats)
-# {'accepted': 2, 'refused': {'contradicted': 1}}
-assert VerdictValidator(refuse_not_found=True).refused == {
-    GroundingVerdict.CONTRADICTED,
-    GroundingVerdict.NOT_FOUND,
-}
+manifest = execute(load_config("examples/e2e/odke.yaml"), dry_run=True).manifest
+assert manifest is not None and manifest.dry_run
+print(manifest.models["ground"])
+# model='anthropic/claude-haiku-4-5-20251001' served=('anthropic/claude-haiku-4-5-20251001',)
+assert list(manifest.prompts) == ["extract@1", "ground.span@1"]
+assert manifest.config_hash == digest(manifest.config)
+assert manifest.counts["facts"] == 26 and len(manifest.inputs.documents) == 8
 ```
+
+`read_manifest(path)` reads one back; `from_manifest(path)` gives the
+`RunConfig` for `execute(config, replaying=manifest)`.
+
+## Logs and traces
+
+`--log-format json` on `odke run`, `validate` and `ground` writes each event as
+a JSON line on standard error ([DECISIONS #41](decisions.md#41)), with `ts`,
+`level`, `event`, `run`, `command`, `stage`, `document`, `counts`, `latency_s`
+and `cost`, `null` where they do not apply.
+
+| `event` | When | Its own |
+|---|---|---|
+| `job.start` | first | `dry_run` |
+| `stage` | per stage: `chunk`, `extract`, `ground`, `reextract`, `normalize`, `resolve`, `derive`, `corroborate`, `gate`, `write` | `counts`, `cost` |
+| `document` | per document grounded | `counts`: `chunks`, `facts`, verdicts |
+| `document.failed` | per document left out | `reason` |
+| `model.call` | per call | `model`, `served`, `cost`, `error` (its type) |
+| `job.end` | last | `counts`, `cost`, `documents`, `failed`, `stopped` |
+| `log` | any other record | `logger`, `template` |
+
+```text
+{"ts":"2026-10-10T11:14:00.808Z","level":"info","event":"job.end","run":"259bdbe59782","command":"run","stage":null,"document":null,"counts":{"facts_in":36,"facts_out":25,"refused":1,"merged":10,"linked":4,"review":0},"latency_s":0.132401,"cost":{"calls":39,"cached_calls":0,"input_tokens":4764,"output_tokens":216,"usd":null},"documents":8,"failed":0,"stopped":null}
+```
+
+`job.end`'s `counts` (`JobCounts`: `RunResult.job`, `ValidationReport.job`,
+`GroundSummary.job`) are the report's:
+
+| | `odke run` | `odke validate` | `odke ground` |
+|---|---|---|---|
+| `facts_in` | `candidates` | `facts_in` | `rows` |
+| `facts_out` | `graph.facts` | `facts_out` | `facts` |
+| `refused` | `refused` | `refused` | the free checks' refusals |
+| `merged` | in, plus `derived`, less refused and out | `merged` | 0 |
+| `linked` | the links, of every kind | `linked` | 0 |
+| `review` | the pairs the judge queued | `judge.queued` | 0 |
+
+An event never holds a passage, quote, entity name, prompt, reply or config. A
+stage's warning keeps its `template` but drops its arguments unless
+`--log-text`. A stage with its own client, such as a judge handed to the
+Validator, sends no `model.call` events. In Python, `configure_logs("json",
+stream=...)` installs the handler on the `openodke` logger and
+`configure_logs("text")` removes it.
+
+```python
+import io
+import json
+
+from openodke.observe import configure_logs
+from openodke.run import execute, load_config
+
+stream = io.StringIO()
+configure_logs("json", stream=stream)
+result = execute(load_config("examples/e2e/odke.yaml"), dry_run=True)
+configure_logs("text")
+events = [json.loads(line) for line in stream.getvalue().splitlines()]
+end = next(event for event in events if event["event"] == "job.end")
+print(end["counts"])
+# {'facts_in': 36, 'facts_out': 25, 'refused': 1, 'merged': 10, 'linked': 4, 'review': 0}
+assert end["counts"] == result.job.model_dump()
+assert [e["stage"] for e in events if e["event"] == "stage"][:3] == ["chunk", "extract", "ground"]
+```
+
+**OpenTelemetry** (`pip install "openodke[otel]"`; names
+[provisional](stability.md#provisional)): each job is a span (`odke run`), with
+a child per stage (`stage ground`) and model call (`model ground`), carrying
+counts and costs as `odke.*` attributes, sent to the tracer provider your
+application configures. `opentelemetry-instrument odke run ...` configures one
+from the environment; `openodke.observe.TRACER_PROVIDER` overrides it.
+
+## When one document fails
+
+A document whose chunking, extraction, grounding or normalising raises is left
+out whole, with its reason in `stats["failed"]`, and the batch goes on. Your
+own stage's batch that raises unattributed is retried a document at a time.
+With [the cache](models.md#the-response-cache), a rerun pays only for the
+failures. A configuration error or a budget stop still stops the run, and when
+every document fails the command exits 1.
+
+## Budgets
+
+`models.budget` (`usd`, `calls`, `input_tokens`, `output_tokens`), or
+`--budget-usd` and `--budget-calls` on `odke run`, `validate` and `ground`,
+caps a run's spend. One `Ledger` counts every call and stops the run cleanly
+at the first limit ([DECISIONS #32](decisions.md#32)).
+
+- **Each call is estimated first**: input tokens as characters over four, plus
+  four a message; output as `max_tokens`; USD at the run's price per token so
+  far. A call that fits only once calls in flight settle waits; one that does
+  not fit stops the run.
+- **USD before the first priced call** is checked after each call. A provider
+  that prices nothing never reaches a USD limit, so set `calls` or tokens too.
+- **A failed call or a cache hit** costs nothing.
+- **A stop keeps what the run has**: facts it reached first stay `unchecked`,
+  the deterministic stages and sinks still run, the report opens with
+  `stopped`, and the command exits 3.
+
+```text
+odke run
+stopped       at budget, calls 3 of 3, during ground: 4 facts left unchecked
+documents     2 (2 chunks; 0 skipped, 0 deferred, 0 empty)
+…
+grounder      facts 6, calls 2, prompt_tokens 254, completion_tokens 12, supported 2, unasked 4, …
+…
+cost          3 model calls, 886 tokens, USD unknown
+budget        calls 3 of 3
+wrote         jsonl → …/out: entities.jsonl 3, facts.jsonl 6, links.jsonl 0, manifest.json
+manifest      …/out/manifest.json
+```
+
+`Ledger(budget).client(inner)` holds any client to a budget; `Pipeline.run` and
+`Validator.validate` return the partial graph with `stats["stopped"]`:
+
+```python
+from openodke.llm import Budget, BudgetExceeded, Ledger, Message, ModelSpec, RecordedClient
+
+ledger = Ledger(Budget(calls=2, usd=1.50))
+client = ledger.client(RecordedClient([{"match": "Claim", "response": {"verdict": "supported"}}]))
+ask = [Message(content="Claim: … Passage: …")]
+for _ in range(2):
+    client.complete(ask, spec=ModelSpec(model="ollama/llama3.1"))
+try:
+    client.complete(ask, spec=ModelSpec(model="ollama/llama3.1"))
+except BudgetExceeded as exc:
+    print(exc)
+    assert exc.limit == "calls"
+# stopped at budget: calls 2 of 2; no further model call is made
+assert ledger.spent.calls == 2 and ledger.stopped is not None
+```
+
+## Streaming
+
+`batch_size: N` (or `--batch-size N`) runs N documents at a time through every
+stage and writes them ([DECISIONS #45](decisions.md#45)). `odke validate` and
+`Validator.validate(..., batch_size=N)` read N triples rows at a time, closing
+a micro-batch where the cited text changes. `odke run` holds a `triples`
+extractor's rows; stream those with `odke validate`.
+
+- **Inputs** are iterators: `read_triples`, the JSON Lines loader, a directory
+  walked a file at a time.
+- **Each micro-batch is written as made**: JSONL appends, Neo4j merges, your
+  own sink is written each time, and RDF, `cypher_file` and `neo4j_admin_csv`
+  are refused.
+- **One run**: one ledger and cache across micro-batches, summed counts, a
+  manifest that hashes the inputs as one batch, and a `--from-manifest` that
+  streams. `execute` returns the stats and no facts.
+- **The store joins micro-batches** through a sink that
+  [says what it holds](stores.md#merge-with-the-store), in `odke validate`.
+  Entities resolve across them only with [`store_lookup`](#store_lookup).
+
+A micro-batch does not see the others: a rival value in another is not
+contested (`check()` finds it), near-duplicates and coverage stay within it,
+and an entity two mention is counted twice.
 
 ## From Python
 
-`execute(config, *, dry_run=False)` returns a `RunResult`: the `graph`, whether it
-was a `dry_run`, the lines describing what was `written` (or would have been), the
-`bootstrap` DDL applied, the `warnings`, and `render()`, which is exactly what the
-command prints. `load_config(path)` reads a file; `parse_config(mapping, base_dir=...)`
-takes an already-parsed mapping.
+`execute(config, *, dry_run=False)` returns a `RunResult`: the `graph`,
+`dry_run`, the `written` lines, the `bootstrap` DDL, the `warnings`, and
+`render()`, what the command prints. `load_config(path)` reads a file and
+`parse_config(mapping, base_dir=...)` a parsed mapping.
 
 ```python
 from openodke.run import execute, load_config
@@ -326,79 +471,18 @@ result = execute(load_config("examples/e2e/odke.yaml"), dry_run=True)
 
 print(result.stats["graph"])
 # {'facts': 25, 'edges': 8, 'properties': 17, 'entities': 7, 'links': {'different': 1, 'similar': 3}}
-print(result.stats["stages"]["validator"])
+print(result.stats["stages"]["gate"])
 # {'accepted': 25, 'refused': {'contradicted': 1}}
 assert result.dry_run and result.written[0].startswith("jsonl → ")
 assert result.render().startswith("odke run — dry run, nothing written")
 ```
 
-## Walking through `examples/e2e`
-
 [`examples/e2e/`](https://github.com/deepskandpal/odke/blob/main/examples/e2e/README.md)
-is a small invented corpus run through all thirteen stages, on recorded model
-responses, so it needs no key, no network and no database.
-
-| Path | What it is |
-|---|---|
-| `corpus/register.csv` | A company-register extract: name, number, incorporation date, head office. Tier `curated` |
-| `corpus/staff.csv` | A staff directory. Tier `authoritative` |
-| `corpus/factsheet.md` | `Key: value` lines, loaded as `semi_structured` so both extraction paths read it |
-| `corpus/notes/*.md` | Two trade-press notes, prose. Tier `community` |
-| `ontology.json` | Two types and seven predicates; `headquarters` and `chief_executive` are single-valued |
-| `e2e_stages.py` | One stage of the example's own: registration numbers become external ids |
-| `recorded/` | The hand-authored model responses |
-| `odke.yaml`, `odke.neo4j.yaml` | The run into JSON Lines, and the same run into Neo4j |
-| `gold.jsonl` | 36 labelled facts, for the [ablation](evaluation.md#ablation) |
+runs every stage on an invented corpus with recorded responses, into JSONL
+(`odke.yaml`) or Neo4j (`odke.neo4j.yaml`):
 
 ```bash
 pip install "openodke[yaml]"
 odke run examples/e2e/odke.yaml
 ```
 
-```text
-odke run
-documents     8 (8 chunks; 0 skipped, 0 deferred, 0 empty)
-extractor     paths (paths llm+pattern, chunks 8, pattern_facts 20, llm_facts 18, merged 2, model_calls 3), rejections (quote not in the passage 1)
-grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, supported 20, contradicted 1, not_found 15, span (facts 36, located 36)
-corroborator  conflicts (lost 1, won 2)
-validator     accepted 25, refused (contradicted 1)
-refused       1
-graph         25 facts (8 edges, 17 properties), 7 entities, 4 links (different 1, similar 3)
-cost          39 model calls, 4980 tokens, USD unknown
-wrote         jsonl → …/examples/e2e/out: entities.jsonl 7, facts.jsonl 25, links.jsonl 4, manifest.json
-```
-
-Line by line:
-
-- **documents.** One per register row and per staff row (each record is rendered to
-  text, so a span can point into it), plus the factsheet and the two notes. `empty`
-  is the chunks that were extracted from and yielded nothing: zero here, and a
-  number to watch on a batch run, where a dropped extraction otherwise looks
-  exactly like a passage with no facts in it.
-- **extractor.** The pattern path read 20 facts from the CSV rows and the
-  factsheet's `Key: value` lines, exactly and without a model call. The model read
-  the three chunks with prose in them, once each, and two of its facts merged into
-  the factsheet's pattern facts. One quote the model gave is not in its passage, and
-  was dropped before anything else looked at it.
-- **grounder.** One call per fact, each shown the fact and its own cited span. The
-  one `contradicted` is a head office the model invented. Most of the fifteen
-  `not_found` are register and staff cells, grounded against a cell that cannot say
-  whose value it is.
-- **corroborator.** Normalisation made a note's "10 March 2014" and the register's
-  `2014-03-10` one claim. The register (curated) and a note (community) disagree on
-  one company's head office; the register won, and the note's value is kept at
-  reduced confidence with the reason attached.
-- **validator.** The default gate refused the `contradicted` fact and kept
-  `not_found`; refusing `not_found` here would throw away most of the register.
-- **graph.** 25 facts on 7 entities, and 4 links: one `DIFFERENT` between two
-  companies that share a name and not a registration number, and three `SIMILAR`.
-  Nothing was merged away.
-- **cost.** The recorded responses carry no price, so the cost is unknown rather
-  than zero.
-
-`odke.neo4j.yaml` is the same run with a Neo4j sink, `constrainer: neo4j` and
-`bootstrap: true`. Its dry run connects to nothing and prints the 15 statements the
-bootstrap would apply and the 16 `UNWIND … MERGE` statements the sink would send;
-the example's README goes on to the Cypher that shows where each fact came from.
-The recorded responses were written by hand to exercise every path of the
-pipeline, so none of these numbers says anything about any model.

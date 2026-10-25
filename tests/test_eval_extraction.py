@@ -134,6 +134,25 @@ def test_a_merged_fact_is_scored_in_every_document_it_cites(tmp_path: Path) -> N
     ]
 
 
+def test_a_triple_written_twice_in_one_document_counts_once() -> None:
+    """Release audit 15: an extractor that works chunk by chunk repeats triples.
+
+    The repeat is no second claim, so it is no false positive; the benchmark
+    scorers drop it too, and only the Validator's merge used to.
+    """
+    born = _in("d1", Fact(subject=ADA, predicate="born", object_value=1815))
+    once = evaluate_extraction(GOLD, [*PREDICTIONS, born]).metrics
+    twice = evaluate_extraction(GOLD, [*PREDICTIONS, born, born]).metrics
+    assert (twice["tp"], twice["fp"], twice["fn"]) == (once["tp"], once["fp"], once["fn"])
+    # Stated in another document, it is that document's claim, and counts there.
+    elsewhere = _in("d2", Fact(subject=ADA, predicate="born", object_value=1815))
+    again = evaluate_extraction(GOLD, [*PREDICTIONS, born, elsewhere]).metrics
+    assert again["fp"] == once["fp"] + 1
+    # Gold that lists a triple twice in one document says so: the repeat cannot be found.
+    report = evaluate_extraction([*GOLD, GOLD[0]], PREDICTIONS)
+    assert any("1 gold fact(s) repeat a triple" in note for note in report.notes)
+
+
 def test_a_cited_prediction_does_not_match_gold_in_another_document() -> None:
     """Babbage's employer in d1 is not evidence for Babbage's employer in d2."""
     wrong_doc = _in(

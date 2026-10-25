@@ -1,5 +1,8 @@
 """Re-DocRED (Tan et al., EMNLP 2022): relations across a whole Wikipedia passage.
 
+Provisional (DECISIONS #48): a benchmark adapter, as `openodke.eval.datasets`
+says. It may change in a minor release, with a CHANGELOG line.
+
 DocRED's documents — the opening paragraphs of Wikipedia articles, annotated
 with 96 Wikidata relations — with the missing labels that made DocRED's
 precision unmeasurable restored. The closest public stand-in for ODKE+'s own
@@ -25,10 +28,13 @@ import math
 import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 from openodke.eval.ablation import AblationRun, ablate
+from openodke.eval.bootstrap import Range
+from openodke.eval.cost import CallRecord
 from openodke.eval.datasets import _common
 from openodke.eval.datasets._common import (
     Opener,
@@ -42,6 +48,17 @@ from openodke.eval.datasets._common import (
     write_documents,
     write_json,
     write_jsonl,
+)
+from openodke.eval.diagnosis import Endpoint, GoldItem, Said, View
+from openodke.eval.eval_report import (
+    Conformance,
+    Counts,
+    Dataset,
+    EvalReport,
+    Hallucination,
+    Row,
+    performance,
+    spend,
 )
 from openodke.eval.report import Metric, StageReport
 
@@ -271,16 +288,21 @@ def prepare(
 
 
 def _gold_row(doc_id: str, doc: Mapping[str, Any]) -> dict[str, Any]:
+    """One document's gold: each entity's names and type, and each fact with its evidence.
+
+    `types` and `evidence` (the sentence ids that state each fact) are for the
+    diagnosis (#140); a set prepared before them has neither, and scores the same.
+    """
+    labels = [label for label in doc["labels"] if label["r"] in RELATIONS]
+    kinds = [cluster[0]["type"] for cluster in doc["vertexSet"]]
     return {
         "id": doc_id,
         "title": doc["title"],
         "text": detokenize(doc["sents"]),
         "entities": [sorted({m["name"] for m in cluster}) for cluster in doc["vertexSet"]],
-        "facts": [
-            [label["h"], RELATIONS[label["r"]], label["t"]]
-            for label in doc["labels"]
-            if label["r"] in RELATIONS
-        ],
+        "types": [TYPES.get(kind, kind) for kind in kinds],
+        "facts": [[label["h"], RELATIONS[label["r"]], label["t"]] for label in labels],
+        "evidence": [sorted(label.get("evidence", ())) for label in labels],
     }
 
 
@@ -293,28 +315,130 @@ def score(
     gold: Sequence[Mapping[str, Any]], predicted: Mapping[str, Sequence[Triple]]
 ) -> dict[str, Metric]:
     """Micro precision, recall and F1, relation conformance, and entity hallucination."""
+    return aggregate(documents(gold, predicted))
+
+
+def documents(
+    gold: Sequence[Mapping[str, Any]], predicted: Mapping[str, Sequence[Triple]]
+) -> list[dict[str, Any]]:
+    """Each document's counts, before they are pooled: what `aggregate` sums.
+
+    `tp` is the gold facts found, each once; `predicted` the distinct triples
+    predicted; `gold` the gold facts; then how many triples use one of the 96
+    relations, and how many are hallucinated.
+    """
     relations = {_norm(label) for label in RELATIONS.values()}
-    tp = n_pred = n_gold = conformant = hallucinated = 0
+    out = []
     for row in gold:
-        names = [{_norm(n) for n in cluster} for cluster in row["entities"]]
         facts = {(h, _norm(r), t) for h, r, t in row["facts"]}
         text = _norm(row["text"])
-        found: set[tuple[int, str, int]] = set()
         triples = list(dict.fromkeys(predicted.get(row["id"], ())))
-        n_pred += len(triples)
-        n_gold += len(facts)
+        found, _ = _matched(row, triples)
+        conformant = hallucinated = 0
         for subject, relation, obj in triples:
             rel, s, o = _norm(relation), _norm(subject), _norm(obj)
             conformant += rel in relations
             hallucinated += (s not in text) or (o not in text) or rel not in relations
-            heads = [i for i, cluster in enumerate(names) if s in cluster]
-            tails = [i for i, cluster in enumerate(names) if o in cluster]
-            match = next(
-                ((h, rel, t) for h in heads for t in tails if (h, rel, t) in facts - found), None
+        out.append(
+            {
+                "id": row["id"],
+                "tp": len(found),
+                "predicted": len(triples),
+                "gold": len(facts),
+                "conformant": conformant,
+                "hallucinated": hallucinated,
+            }
+        )
+    return out
+
+
+def _matched(
+    row: Mapping[str, Any], triples: Sequence[Triple]
+) -> tuple[set[tuple[int, str, int]], list[bool]]:
+    """The gold facts `triples` find, each once, and which triple found one, in order."""
+    names = [{_norm(n) for n in cluster} for cluster in row["entities"]]
+    facts = {(h, _norm(r), t) for h, r, t in row["facts"]}
+    found: set[tuple[int, str, int]] = set()
+    hits = []
+    for subject, relation, obj in triples:
+        rel, s, o = _norm(relation), _norm(subject), _norm(obj)
+        heads = [i for i, cluster in enumerate(names) if s in cluster]
+        tails = [i for i, cluster in enumerate(names) if o in cluster]
+        match = next(
+            ((h, rel, t) for h in heads for t in tails if (h, rel, t) in facts - found), None
+        )
+        if match is not None:
+            found.add(match)
+        hits.append(match is not None)
+    return found, hits
+
+
+def diagnosis_view(
+    gold: Sequence[Mapping[str, Any]],
+    predicted: Mapping[str, Sequence[Triple]],
+    refused: Mapping[str, Sequence[Triple]] | None = None,
+    *,
+    row: str = "",
+) -> View:
+    """The gold and `predicted` as the diagnosis reads them, matched as `score` matches them (#140).
+
+    An end of a gold fact is every mention of its entity, as `score` accepts
+    them; a fact's evidence sentences and its head's type come from the set
+    when it was prepared with them. `refused` is what a gate refused, by
+    document.
+    """
+    items: list[GoldItem] = []
+    said: list[Said] = []
+    kept: list[Said] | None = None if refused is None else []
+    for doc in gold:
+        clusters = doc["entities"]
+        ends = [Endpoint(frozenset(_norm(n) for n in c), tuple(c)) for c in clusters]
+        types, evidence = doc.get("types"), doc.get("evidence")
+        triples = list(dict.fromkeys(predicted.get(doc["id"], ())))
+        found, hits = _matched(doc, triples)
+        facts = {(h, _norm(r), t): (h, r, t, i) for i, (h, r, t) in enumerate(doc["facts"])}
+        for n, (key, (h, r, t, i)) in enumerate(facts.items()):
+            items.append(
+                GoldItem(
+                    id=f"{doc['id']}#{n + 1}",
+                    doc_id=doc["id"],
+                    subject=ends[h],
+                    relation=key[1],
+                    object=ends[t],
+                    found=key in found,
+                    subject_type=types[h] if types else None,
+                    evidence=tuple(evidence[i]) if evidence else (),
+                    text=f"{clusters[h][0]} · {r} · {clusters[t][0]}",
+                )
             )
-            if match is not None:
-                found.add(match)
-                tp += 1
+        said += [_said(doc["id"], t, hit) for t, hit in zip(triples, hits, strict=True)]
+        if kept is not None and refused is not None:
+            kept += [_said(doc["id"], t, False) for t in dict.fromkeys(refused.get(doc["id"], ()))]
+    texts = {doc["id"]: doc["text"] for doc in gold}
+    names = {_norm(label): label for label in RELATIONS.values()}
+    return View(
+        gold=items, said=said, refused=kept, texts=texts, relation=_norm, row=row, names=names
+    )
+
+
+def _said(doc_id: str, triple: Triple, hit: bool) -> Said:
+    s, r, o = triple
+    return Said(
+        doc_id=doc_id,
+        subject=_norm(s),
+        relation=_norm(r),
+        object=_norm(o),
+        forms=(s, o),
+        hit=hit,
+        text=f"{s} · {r} · {o}",
+    )
+
+
+def aggregate(units: Sequence[Mapping[str, Any]]) -> dict[str, Metric]:
+    """The pooled metrics from `documents`. Undefined precision and recall are 0.0, as DocRED's."""
+    tp, n_pred, n_gold, conformant, hallucinated = (
+        sum(u[k] for u in units) for k in ("tp", "predicted", "gold", "conformant", "hallucinated")
+    )
     precision = tp / n_pred if n_pred else 0.0
     recall = tp / n_gold if n_gold else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
@@ -329,14 +453,64 @@ def score(
     }
 
 
+HALLUCINATION = (
+    "Re-DocRED, openodke's scoring: the subject or object, case and punctuation ignored, is "
+    "nowhere in the passage, or the relation is not one of the 96"
+)
+
+
+def row(
+    name: str,
+    units: Sequence[Mapping[str, Any]],
+    metrics: Mapping[str, Metric],
+    ranges: Mapping[str, Range],
+    calls: Sequence[CallRecord] | None,
+) -> Row:
+    """One configuration's eval report row, from the same `documents` its metrics came from."""
+    tp, n_pred, n_gold, conformant, hallucinated = (
+        sum(u[k] for u in units) for k in ("tp", "predicted", "gold", "conformant", "hallucinated")
+    )
+    return Row(
+        name=name,
+        performance=performance(metrics, ranges),
+        counts=Counts(
+            hits=tp,
+            over_extraction=n_pred - tp,
+            under_extraction=n_gold - tp,
+            predicted=n_pred,
+            gold=n_gold,
+            documents=len(units),
+        ),
+        conformance=Conformance(
+            rate=float(metrics["onto_conf"] or 0.0),
+            conformant=conformant,
+            facts=n_pred,
+            checks=("predicate",),
+        ),
+        hallucination=Hallucination(
+            definition=HALLUCINATION,
+            hallucinated=hallucinated,
+            facts=n_pred,
+            rate=hallucinated / n_pred if n_pred else None,
+        ),
+        **spend(name, calls),
+    )
+
+
 def run(prepared: str | Path) -> StageReport:
     """Run `prepared/odke.json` three ways and score each (see `score`)."""
+    return evaluate(prepared).stages[0]
+
+
+def evaluate(prepared: str | Path) -> EvalReport:
+    """`run`, as the eval report: each row with its ranges over the documents."""
     from openodke.run.config import load_config
 
     folder = Path(prepared)
     meta = json.loads((folder / "dataset.json").read_text(encoding="utf-8"))
     gold = read_jsonl(folder / "gold.jsonl")
-    return score_run(ablate(load_config(folder / "odke.json")), gold, meta, save_to=folder)
+    ablation = ablate(load_config(folder / "odke.json"))
+    return report_run(ablation, gold, meta, save_to=folder, path=folder)
 
 
 def score_run(
@@ -347,14 +521,48 @@ def score_run(
     save_to: Path | None = None,
 ) -> StageReport:
     """Score an `AblationRun` already made — `run` without the model calls."""
-    return _common.score_run(
-        ablation,
-        gold,
-        meta,
+    return report_run(ablation, gold, meta, save_to=save_to).stages[0]
+
+
+def report_run(
+    ablation: AblationRun,
+    gold: Sequence[Mapping[str, Any]],
+    meta: Mapping[str, Any],
+    *,
+    save_to: Path | None = None,
+    path: str | Path | None = None,
+) -> EvalReport:
+    """`score_run`, as the eval report. `path` names the prepared set in its dataset."""
+    return _common.report_run(
+        ablation, gold, scoring(gold, meta, path=path), notes=_notes, save_to=save_to
+    )
+
+
+def scoring(
+    gold: Sequence[Mapping[str, Any]],
+    meta: Mapping[str, Any],
+    *,
+    hallucination: bool = True,
+    path: str | Path | None = None,
+) -> _common.Scoring:
+    """How a prepared set scores facts from any source: `documents`, `aggregate`, `row`.
+
+    `hallucination` is accepted for symmetry with Text2KGBench; this score needs no NLTK.
+    """
+    return _common.Scoring(
         stage=f"{NAME}:{meta['split']}",
-        score=lambda predicted: score(gold, predicted),
-        notes=_notes,
-        save_to=save_to,
+        meta=meta,
+        units=lambda predicted: documents(gold, predicted),
+        aggregate=aggregate,
+        row=row,
+        view=partial(diagnosis_view, gold),
+        dataset=Dataset(
+            name=NAME,
+            path=None if path is None else str(path),
+            documents=len(gold),
+            labels=sum(len(r["facts"]) for r in gold),
+            details={"split": meta["split"]},
+        ),
     )
 
 
@@ -381,10 +589,17 @@ __all__ = [
     "RELATIONS",
     "SPLITS",
     "TYPES",
+    "aggregate",
+    "diagnosis_view",
+    "documents",
+    "evaluate",
     "fetch",
     "prepare",
+    "report_run",
+    "row",
     "run",
     "score",
     "score_run",
+    "scoring",
     "to_ontology",
 ]

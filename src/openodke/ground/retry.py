@@ -23,6 +23,7 @@ from typing import TypeVar
 from pydantic import BaseModel, ConfigDict, Field
 
 from openodke.llm.base import MissingAPIKey, ProviderNotInstalled
+from openodke.llm.budget import BudgetExceeded
 
 T = TypeVar("T")
 
@@ -45,13 +46,19 @@ class RetryPolicy(BaseModel):
     with full jitter by default — many threads that hit one rate limit together
     must not all come back together — and a server's `Retry-After` wins when it
     sends one, capped at `max_delay`.
+
+    The default's six tries wait at most 1 + 2 + 4 + 8 + 16 = 31 s, and about
+    15 s on average under full jitter: enough to outlast a rate limit of a few
+    seconds that sends no `Retry-After`, which four tries from 0.5 s (3.5 s at
+    most) were not (release audit finding 8). A limit that holds for a minute
+    needs the server's `Retry-After`, or more `attempts`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     # Total tries, the first included: 1 means never retry.
-    attempts: int = Field(default=4, ge=1)
-    base_delay: float = Field(default=0.5, ge=0)
+    attempts: int = Field(default=6, ge=1)
+    base_delay: float = Field(default=1.0, ge=0)
     multiplier: float = Field(default=2.0, ge=1)
     max_delay: float = Field(default=30.0, ge=0)
     jitter: bool = True
@@ -68,8 +75,9 @@ class RetryPolicy(BaseModel):
 def is_transient(exc: BaseException) -> bool:
     """True when the same call, asked again after a wait, could plausibly answer."""
     chain = list(_chain(exc))
-    # Neither waiting nor asking again installs a package or sets a variable.
-    if any(isinstance(e, ProviderNotInstalled | MissingAPIKey) for e in chain):
+    # Neither waiting nor asking again installs a package, sets a variable or
+    # raises a budget.
+    if any(isinstance(e, ProviderNotInstalled | MissingAPIKey | BudgetExceeded) for e in chain):
         return False
     for e in chain:
         status = _status(e)

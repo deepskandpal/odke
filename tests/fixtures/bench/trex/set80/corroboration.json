@@ -1,0 +1,190 @@
+{
+  "graph": {
+    "off": {
+      "edges": 427,
+      "factual": 198,
+      "precision_factual": 0.4637002341920375,
+      "in_gold": 177,
+      "precision_gold": 0.41451990632318503,
+      "recall": {
+        "1": {
+          "found": 141,
+          "gold": 435,
+          "recall": 0.32413793103448274
+        },
+        "2": {
+          "found": 17,
+          "gold": 37,
+          "recall": 0.4594594594594595
+        },
+        "3+": {
+          "found": 18,
+          "gold": 41,
+          "recall": 0.43902439024390244
+        }
+      }
+    },
+    "on": {
+      "edges": 427,
+      "factual": 198,
+      "precision_factual": 0.4637002341920375,
+      "in_gold": 177,
+      "precision_gold": 0.41451990632318503,
+      "recall": {
+        "1": {
+          "found": 141,
+          "gold": 435,
+          "recall": 0.32413793103448274
+        },
+        "2": {
+          "found": 17,
+          "gold": 37,
+          "recall": 0.4594594594594595
+        },
+        "3+": {
+          "found": 18,
+          "gold": 41,
+          "recall": 0.43902439024390244
+        }
+      }
+    },
+    "on_two_or_more": {
+      "edges": 34,
+      "factual": 29,
+      "precision_factual": 0.8529411764705882,
+      "in_gold": 28,
+      "precision_gold": 0.8235294117647058,
+      "recall": {
+        "1": {
+          "found": 12,
+          "gold": 435,
+          "recall": 0.027586206896551724
+        },
+        "2": {
+          "found": 11,
+          "gold": 37,
+          "recall": 0.2972972972972973
+        },
+        "3+": {
+          "found": 5,
+          "gold": 41,
+          "recall": 0.12195121951219512
+        }
+      }
+    },
+    "by_support": {
+      "1": {
+        "edges": 393,
+        "factual": 169,
+        "precision_factual": 0.4300254452926209,
+        "in_gold": 149,
+        "precision_gold": 0.3791348600508906,
+        "recall": {
+          "1": {
+            "found": 129,
+            "gold": 435,
+            "recall": 0.296551724137931
+          },
+          "2": {
+            "found": 8,
+            "gold": 37,
+            "recall": 0.21621621621621623
+          },
+          "3+": {
+            "found": 13,
+            "gold": 41,
+            "recall": 0.3170731707317073
+          }
+        }
+      },
+      "2": {
+        "edges": 31,
+        "factual": 26,
+        "precision_factual": 0.8387096774193549,
+        "in_gold": 25,
+        "precision_gold": 0.8064516129032258,
+        "recall": {
+          "1": {
+            "found": 11,
+            "gold": 435,
+            "recall": 0.02528735632183908
+          },
+          "2": {
+            "found": 9,
+            "gold": 37,
+            "recall": 0.24324324324324326
+          },
+          "3+": {
+            "found": 5,
+            "gold": 41,
+            "recall": 0.12195121951219512
+          }
+        }
+      },
+      "3+": {
+        "edges": 3,
+        "factual": 3,
+        "precision_factual": 1.0,
+        "in_gold": 3,
+        "precision_gold": 1.0,
+        "recall": {
+          "1": {
+            "found": 1,
+            "gold": 435,
+            "recall": 0.0022988505747126436
+          },
+          "2": {
+            "found": 2,
+            "gold": 37,
+            "recall": 0.05405405405405406
+          },
+          "3+": {
+            "found": 0,
+            "gold": 41,
+            "recall": 0.0
+          }
+        }
+      }
+    },
+    "counted": {
+      "1": {
+        "found": 141,
+        "two_or_more": 12,
+        "two_or_more_pooled": 13
+      },
+      "2": {
+        "found": 17,
+        "two_or_more": 11,
+        "two_or_more_pooled": 11
+      },
+      "3+": {
+        "found": 18,
+        "two_or_more": 5,
+        "two_or_more_pooled": 5
+      }
+    }
+  },
+  "links": {
+    "similar (rules)": {
+      "links": 5,
+      "right": 2,
+      "wrong": 0,
+      "uncheckable": 3,
+      "precision": 1.0
+    },
+    "similar (judge)": {
+      "links": 5,
+      "right": 2,
+      "wrong": 1,
+      "uncheckable": 2,
+      "precision": 0.6666666666666666
+    },
+    "different (judge)": {
+      "links": 27,
+      "right": 12,
+      "wrong": 3,
+      "uncheckable": 12,
+      "precision": 0.8
+    }
+  }
+}

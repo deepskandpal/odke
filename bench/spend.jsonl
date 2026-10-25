@@ -1,0 +1,52 @@
+{"who": "pr2-widen:extract", "model": "anthropic/claude-sonnet-5-5", "calls": 18, "input_tokens": 103959, "output_tokens": 17618, "usd": 0.384098}
+{"who": "pr2-widen:ground", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 86, "input_tokens": 28850, "output_tokens": 791, "usd": 0.032805}
+{"who":"span-locator #112","model":"anthropic/claude-haiku-4-5-20251001","calls":1357,"input_tokens":487714,"output_tokens":10856,"usd":0.541994}
+{"who": "pr3-reextract:extract", "model": "anthropic/claude-sonnet-5-5", "calls": 20, "input_tokens": 68346, "output_tokens": 8505, "usd": 0.221742}
+{"who": "pr3-reextract:ground", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 28, "input_tokens": 9121, "output_tokens": 259, "usd": 0.010416}
+{"who": "trex-pilot:extract (openodke, 5 docs)", "model": "anthropic/claude-sonnet-5-5", "calls": 5, "input_tokens": 26240, "output_tokens": 5643, "usd": 0.10891}
+{"who": "trex-pilot:ground (openodke, 5 docs)", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 23, "input_tokens": 15726, "output_tokens": 184, "usd": 0.016646}
+{"who": "trex-pilot:extract (lgt smoke, 3 docs)", "model": "anthropic/claude-sonnet-5-5", "calls": 3, "input_tokens": 30919, "output_tokens": 2147, "usd": 0.083308}
+{"who": "trex-80:extract (openodke)", "model": "anthropic/claude-sonnet-5-5", "calls": 86, "input_tokens": 419964, "output_tokens": 64497, "usd": 1.484898}
+{"who": "trex-80:ground (openodke)", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 501, "input_tokens": 295289, "output_tokens": 3824, "usd": 0.314409}
+{"who": "trex-80:judge (openodke)", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 66, "input_tokens": 38508, "output_tokens": 2258, "usd": 0.049798}
+{"who": "trex-80:extract (LLMGraphTransformer)", "model": "anthropic/claude-sonnet-5-5", "calls": 80, "input_tokens": 816627, "output_tokens": 80239, "usd": 2.435644}
+{"who": "trex-80:ground (LLMGraphTransformer triples)", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 1349, "input_tokens": 578608, "output_tokens": 7328, "usd": 0.615248}
+{"who": "trex-80:judge, store lookup (openodke, bench/trex.py)", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 4, "input_tokens": 2416, "output_tokens": 158, "usd": 0.003206}
+{"who": "erb-conflicts pilot (2 cases):extract", "model": "anthropic/claude-sonnet-5-5", "calls": 4, "input_tokens": 12927, "output_tokens": 1289, "usd": 0.038744}
+{"who": "erb-conflicts pilot (2 cases):ground", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 4, "input_tokens": 8634, "output_tokens": 32, "usd": 0.008794}
+{"who": "erb-conflicts run 1 (20 cases):extract", "model": "anthropic/claude-sonnet-5-5", "calls": 36, "input_tokens": 144623, "output_tokens": 12211, "usd": 0.411356}
+{"who": "erb-conflicts run 1 (20 cases):ground", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 38, "input_tokens": 100475, "output_tokens": 304, "usd": 0.101995}
+{"who": "erb-conflicts run 2 (20 cases, extraction cached):ground", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 42, "input_tokens": 109663, "output_tokens": 336, "usd": 0.111343}
+{"who": "numbers #104: ground, Text2KGBench + Re-DocRED (T-REx from the cache)", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 1624, "input_tokens": 748327, "output_tokens": 12992, "usd": 0.813287}
+{"who": "numbers #104: LangExtract extraction smoke (Re-DocRED, 1 document)", "model": "anthropic/claude-sonnet-5-5", "calls": 1, "input_tokens": 2372, "output_tokens": 292, "usd": 0.007664}
+{"who": "numbers #104: LangExtract extraction, Text2KGBench ont_1-3 (60 sentences)", "model": "anthropic/claude-sonnet-5-5", "calls": 60, "input_tokens": 30526, "output_tokens": 10938, "usd": 0.170432}
+{"who": "numbers #104: LangExtract extraction, Re-DocRED (50 documents)", "model": "anthropic/claude-sonnet-5-5", "calls": 50, "input_tokens": 124163, "output_tokens": 23980, "usd": 0.488126}
+{"who": "numbers #104: ground, LangExtract (Re-DocRED, Text2KGBench ont_1-3; the rest from the cache)", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 173, "input_tokens": 90487, "output_tokens": 1384, "usd": 0.097407}
+{"who": "volume #164: pilot (3 documents)", "model": "anthropic/claude-sonnet-5-5", "calls": 3, "input_tokens": 12839, "output_tokens": 3248, "usd": 0.058158}
+{"who": "volume #164: pilot (3 documents)", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 13, "input_tokens": 4205, "output_tokens": 121, "usd": 0.00481}
+{"who": "volume #164: 5 per source type (45 documents; the pilot's 3 from the cache)", "model": "anthropic/claude-sonnet-5-5", "calls": 44, "input_tokens": 142305, "output_tokens": 48339, "usd": 0.768}
+{"who": "volume #164: 5 per source type (45 documents; the pilot's 3 from the cache)", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 117, "input_tokens": 37866, "output_tokens": 1097, "usd": 0.043351}
+{"who": "volume #164: cache rerun of the 45 documents (177 hits, 0 misses)", "model": "anthropic/claude-sonnet-5-5", "calls": 0, "input_tokens": 0, "output_tokens": 0, "usd": 0.0}
+{"who": "volume #164: cache rerun of the 45 documents (177 hits, 0 misses)", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 0, "input_tokens": 0, "output_tokens": 0, "usd": 0.0}
+{"who": "claim-format check #224: ground G 600 items, inline", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 600, "input_tokens": null, "output_tokens": null, "usd": 0.311}
+{"who": "claim-format check #224: ground G 600 items, labelled", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 600, "input_tokens": null, "output_tokens": null, "usd": 0.31}
+{"who": "calibration #134/#135: ground span-inline (phase 2, run 1)", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 526, "input_tokens": 248198, "output_tokens": 4991, "usd": 0.273153, "date": "2026-10-24"}
+{"who": "calibration #134/#135: ground span-labelled (phase 2, run 1)", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 526, "input_tokens": 247804, "output_tokens": 5021, "usd": 0.272909, "date": "2026-10-24"}
+{"who": "calibration #134/#135: ground onyx (phase 2, run 1)", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 789, "input_tokens": 281520, "output_tokens": 4686, "usd": 0.30495, "date": "2026-10-24"}
+{"who": "calibration #134/#135: ground statement (phase 2, run 1)", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 789, "input_tokens": 399870, "output_tokens": 7541, "usd": 0.437575, "date": "2026-10-24"}
+{"who": "calibration #134/#135: pair judge (phase 2, run 1)", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 800, "input_tokens": 471382, "output_tokens": 30196, "usd": 0.622362, "date": "2026-10-24"}
+{"who": "calibration #134/#135: fact-equivalence judge (phase 2, run 1)", "model": "anthropic/claude-haiku-4-5-20251001", "calls": 200, "input_tokens": 86982, "output_tokens": 1817, "usd": 0.096067, "date": "2026-10-24"}
+{"who": "calibration #134/#135: fact-equivalence judge, 10513 of them reasoning (phase 2, run 2 pilot)", "model": "anthropic/claude-haiku-5-5", "calls": 200, "input_tokens": 113960, "output_tokens": 12604, "usd": 0.017698, "date": "2026-10-24"}
+{"who": "calibration #134/#135: ground span-inline, 57895 of them reasoning (phase 2, run 2)", "model": "anthropic/claude-haiku-5-5", "calls": 789, "input_tokens": 509676, "output_tokens": 67382, "usd": 0.084659, "date": "2026-10-24"}
+{"who": "calibration #134/#135: ground span-labelled, 60112 of them reasoning (phase 2, run 2)", "model": "anthropic/claude-haiku-5-5", "calls": 789, "input_tokens": 508878, "output_tokens": 69490, "usd": 0.085633, "date": "2026-10-24"}
+{"who": "calibration #134/#135: ground onyx, 82873 of them reasoning (phase 2, run 2)", "model": "anthropic/claude-haiku-5-5", "calls": 789, "input_tokens": 387801, "output_tokens": 85370, "usd": 0.081465, "date": "2026-10-24"}
+{"who": "calibration #134/#135: ground statement, 13180 of them reasoning (phase 2, run 2)", "model": "anthropic/claude-haiku-5-5", "calls": 789, "input_tokens": 541656, "output_tokens": 23585, "usd": 0.065958, "date": "2026-10-24"}
+{"who": "calibration #134/#135: pair judge, 10898 of them reasoning (phase 2, run 2)", "model": "anthropic/claude-haiku-5-5", "calls": 800, "input_tokens": 623504, "output_tokens": 59193, "usd": 0.091947, "date": "2026-10-24"}
+{"who": "calibration #134/#135: fact-equivalence judge (phase 2, run 3 pilot)", "model": "openai/gpt-5.4-mini-2026-03-17", "calls": 200, "input_tokens": 56356, "output_tokens": 2649, "usd": 0.054187, "date": "2026-10-24"}
+{"who": "calibration #134/#135: ground span-inline (phase 2, run 3)", "model": "openai/gpt-5.4-mini-2026-03-17", "calls": 789, "input_tokens": 248193, "output_tokens": 12558, "usd": 0.242656, "date": "2026-10-24"}
+{"who": "calibration #134/#135: ground span-labelled (phase 2, run 3)", "model": "openai/gpt-5.4-mini-2026-03-17", "calls": 789, "input_tokens": 248724, "output_tokens": 12517, "usd": 0.242869, "date": "2026-10-24"}
+{"who": "calibration #134/#135: ground onyx (phase 2, run 3)", "model": "openai/gpt-5.4-mini-2026-03-17", "calls": 789, "input_tokens": 258306, "output_tokens": 3180, "usd": 0.208039, "date": "2026-10-24"}
+{"who": "calibration #134/#135: ground statement (phase 2, run 3)", "model": "openai/gpt-5.4-mini-2026-03-17", "calls": 789, "input_tokens": 274875, "output_tokens": 12292, "usd": 0.26147, "date": "2026-10-24"}
+{"who": "calibration #134/#135: pair judge (phase 2, run 3)", "model": "openai/gpt-5.4-mini-2026-03-17", "calls": 800, "input_tokens": 326291, "output_tokens": 25492, "usd": 0.359432, "date": "2026-10-24"}
+{"who": "calibration #134/#135: fact-equivalence judge, 4729 of them reasoning (phase 2, run 4 pilot)", "model": "anthropic/claude-sonnet-5-5", "calls": 200, "input_tokens": 113960, "output_tokens": 6867, "usd": 0.29659, "date": "2026-10-24"}
+{"who": "calibration #134/#135: ground span-inline, 37902 of them reasoning (phase 2, run 4)", "model": "anthropic/claude-sonnet-5-5", "calls": 789, "input_tokens": 509676, "output_tokens": 47902, "usd": 1.498372, "date": "2026-10-24"}

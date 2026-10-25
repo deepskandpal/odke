@@ -6,11 +6,18 @@ Two jobs, in order.
 carries polarity and identity-bearing qualifiers (DECISIONS #14, #15), so a
 denial never merges with its assertion and uptime at p50 never merges with
 uptime at p95; everything else about the claim is reconciled. Evidence is
-unioned. Reconcilable qualifiers agree, or take the interval union
+unioned, except that a text contradicting a claim another member supports is
+no source for it: its member is left out of the evidence, the support list and
+the confidence, and its documents are recorded under `odke.conflict` as
+`contradicted_in` (release audit 2). Reconcilable qualifiers agree, or take the interval union
 (`start_time` the earliest, `end_time` the latest), or take the best-ranked
 source's value. The valid clock takes the earliest start and latest end any
 source gave. `support` is the count of **independent sources**: forty pages
-from one host are one source, two chunks of one document are one.
+from one host are one source, two chunks of one document are one, and a page
+copied to another host counts once with its original when the corroborator has
+the texts to compare (`duplicates`). `supported_by` names those sources, one
+`Support` each, so `support` is its length: what a reconciler reads when a
+source changes or disappears.
 
 **Contest.** Two claims conflict when they share subject and predicate, the
 predicate is single-valued in the ontology, they agree on its `scope_keys` (the
@@ -27,7 +34,7 @@ where `age` is measured back from the newest evidence in the batch and `n_s` is
 the number of claims source `s` backs in the batch. The highest rank wins. A
 loser is **kept**, never dropped. Its confidence is multiplied by
 `rank / winning rank`, and `qualifiers["odke.conflict"]` records a sentence
-saying why, so a validator or a person can see the losing claim.
+saying why, so the gate or a person can see the losing claim.
 
 Agreement is volume-normalised. A raw count of agreeing sources — Pasternack and
 Roth's *Sums* — rewards whoever is loudest, and a scraper emitting ten thousand
@@ -52,9 +59,32 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from openodke.corroborate.provenance import CONFLICT, SOURCE_FORM, source_forms, unstamped
+from openodke.corroborate.duplicates import DEFAULT_THRESHOLD, NearDuplicates
+from openodke.corroborate.inverses import derived_from
+from openodke.corroborate.provenance import (
+    CONFLICT,
+    DERIVED,
+    NEAR_DUPLICATES,
+    ONTOLOGY,
+    REVIEW,
+    SOURCE_FORM,
+    contradicted_in,
+    contradiction,
+    near_duplicates,
+    source_forms,
+    unstamped,
+)
 from openodke.ontology import Ontology
-from openodke.types import Evidence, Fact, GroundingVerdict, Polarity, SourceTier
+from openodke.stages import FactLookup
+from openodke.types import (
+    Document,
+    Evidence,
+    Fact,
+    GroundingVerdict,
+    Polarity,
+    SourceTier,
+    Support,
+)
 
 SourceKey = Callable[[Evidence], str]
 
@@ -92,12 +122,87 @@ def source_of(evidence: Evidence) -> str:
 def independent_sources(fact: Fact, source: SourceKey = source_of) -> set[str]:
     """The distinct sources behind a fact, by `source`.
 
-    A fact with no evidence has no receipts to tell its sources apart, so it
-    counts as many as its `support` already claims, and never fewer than one.
+    The documents in one `odke.near_duplicates` group count as one source
+    between them, under the least of their keys. A fact with no evidence has
+    no receipts to tell its sources apart, so it counts as many as its
+    `support` already claims, and never fewer than one. A retired fact has
+    none: the reconciler took its last one away (#116).
     """
+    if fact.retired_at is not None:
+        return set()
     if not fact.evidence:
         return {f"fact:{fact.id}:{i}" for i in range(max(1, fact.support))}
-    return {source(e) for e in fact.evidence}
+    found = {source(e) for e in fact.evidence}
+    groups = near_duplicates(fact.qualifiers.get(NEAR_DUPLICATES))
+    return _collapse(found, fact.evidence, groups, source) if groups else found
+
+
+def _union(groups: Iterable[Iterable[str]]) -> list[frozenset[str]]:
+    """Groups that share a member joined into one, until none do."""
+    out: list[frozenset[str]] = []
+    for group in groups:
+        joined, apart = frozenset(group), []
+        for other in out:
+            if other & joined:
+                joined |= other
+            else:
+                apart.append(other)
+        out = [*apart, joined] if joined else apart
+    return out
+
+
+def _collapse(
+    sources: set[str],
+    evidence: Sequence[Evidence],
+    groups: Iterable[Iterable[str]],
+    source: SourceKey,
+) -> set[str]:
+    """`sources`, with the sources of each group of documents counted once."""
+    return set(_joined(sources, evidence, groups, source).values())
+
+
+def _joined(
+    sources: Iterable[str],
+    evidence: Sequence[Evidence],
+    groups: Iterable[Iterable[str]],
+    source: SourceKey,
+) -> dict[str, str]:
+    """Each source, mapped to the key it counts under: the least of its group's, or its own."""
+    joined: list[set[str]] = [{s} for s in sources]
+    for group in groups:
+        docs = set(group)
+        joined.append({source(e) for e in evidence if e.doc_id in docs})
+    return {member: min(g) for g in _union(joined) for member in g}
+
+
+def support_of(
+    evidence: Sequence[Evidence],
+    groups: Iterable[Iterable[str]] = (),
+    source: SourceKey = source_of,
+) -> tuple[Support, ...]:
+    """The support list a fact citing `evidence` carries: one `Support` per independent source.
+
+    Sources are counted as `independent_sources` counts them: by `source`, and
+    each group of near-duplicate documents in `groups` as one, under the least
+    of their keys. Entries are sorted by source key, and each names its
+    documents, its best tier and its newest clock.
+    """
+    if not evidence:
+        return ()
+    own = {source(e) for e in evidence}
+    joined = _joined(own, evidence, groups, source)
+    by_key: dict[str, list[Evidence]] = defaultdict(list)
+    for e in evidence:
+        by_key[joined[source(e)]].append(e)
+    return tuple(
+        Support(
+            source=key,
+            doc_ids=tuple(sorted({e.doc_id for e in cited})),
+            tier=max((e.tier for e in cited), key=lambda tier: tier.weight),
+            retrieved_at=max((e.retrieved_at for e in cited), key=_aware),
+        )
+        for key, cited in sorted(by_key.items())
+    )
 
 
 def _aware(moment: datetime) -> datetime:
@@ -157,6 +262,23 @@ class SignatureCorroborator:
     independent source. `half_life_days` and `freshness_floor` shape how much
     age discounts trust. `intervals` names the qualifiers that reconcile as
     bounds.
+
+    `documents` are the texts the evidence cites, by `Document.id`. Two of a
+    claim's documents from different sources whose 5-word shingles have a
+    Jaccard similarity of at least `near_duplicates` count as one source, and
+    `odke.near_duplicates` records the group; `None` turns the check off.
+    Without the texts nothing is compared. `odke run` and the Validator hand
+    over the documents they were given, and `stats["near_duplicates"]` counts
+    the pairs compared and found.
+
+    `store` is a `FactLookup`, or several: what the store already holds. After
+    the batch merges, each claim the store holds under the same signature
+    merges with it as one more member, in one read per store, so its support
+    list grows by the batch's new sources and its edge is rewritten rather
+    than added (#153). The Validator hands over every sink it writes to that
+    can say what it holds. `stats["store"]` counts the facts `read`, those
+    `merged` with a stored fact, and the derived ones `dropped` because the
+    store states the claim.
     """
 
     def __init__(
@@ -167,43 +289,138 @@ class SignatureCorroborator:
         half_life_days: float = 365.0,
         freshness_floor: float = 0.5,
         intervals: Mapping[str, Literal["min", "max"]] = DEFAULT_INTERVALS,
+        documents: Mapping[str, Document] | Iterable[Document] | None = None,
+        near_duplicates: float | None = DEFAULT_THRESHOLD,
+        store: FactLookup | Sequence[FactLookup] | None = None,
     ) -> None:
+        if near_duplicates is not None and not 0.0 < near_duplicates <= 1.0:
+            raise ValueError(f"near_duplicates must be in (0, 1] or None, got {near_duplicates}")
         self.ontology = ontology
         self.source = source
         self.half_life_days = half_life_days
         self.freshness_floor = freshness_floor
         self.intervals = intervals
+        items = documents.values() if isinstance(documents, Mapping) else documents or ()
+        self.documents: dict[str, Document] = {doc.id: doc for doc in items}
+        self.near_duplicates = near_duplicates
+        self.store: tuple[FactLookup, ...] = (
+            () if store is None else (store,) if isinstance(store, FactLookup) else tuple(store)
+        )
+        self.stats: dict[str, Any] = {
+            "near_duplicates": {"compared": 0, "found": 0},
+            "store": {"read": 0, "merged": 0, "dropped": 0},
+        }
 
     def corroborate(self, facts: Iterable[Fact]) -> list[Fact]:
         groups: dict[tuple[Any, ...], list[Fact]] = {}
         for fact in facts:
             fact = unstamped(fact)
             groups.setdefault(fact.signature, []).append(fact)
-        return self._contest([self._merge(members) for members in groups.values()])
+        copies = None
+        if self.near_duplicates is not None and self.documents:
+            copies = NearDuplicates(self.documents, self.near_duplicates)
+        merged = [self._merge(members, copies) for members in groups.values()]
+        if self.store and merged:
+            merged = self._with_store(merged, copies, groups)
+        if copies is not None:
+            counts = self.stats["near_duplicates"]
+            counts["compared"] += copies.compared
+            counts["found"] += copies.found
+        return self._contest(merged)
 
     # ----------------------------------------------------------------------- #
     # Merge
     # ----------------------------------------------------------------------- #
 
-    def _merge(self, members: list[Fact]) -> Fact:
+    def _merge(self, members: list[Fact], copies: NearDuplicates | None) -> Fact:
         first = members[0]
+        everyone = members
+        # A text that contradicts the claim is no source for it (release audit 2). Which
+        # texts did is known one text at a time: a member's record names them, and a
+        # contradicted member with none is texts that all contradict.
+        refuted: set[str] = set()
+        for f in everyone:
+            if recorded := contradicted_in(f):
+                refuted |= set(recorded)
+            elif f.verdict is GroundingVerdict.CONTRADICTED:
+                refuted |= {e.doc_id for e in f.evidence}
+        # A text that no longer contradicts the claim (it supports it now, or is
+        # silent on it) is no longer held against it.
+        supported = [f for f in everyone if f.verdict is GroundingVerdict.SUPPORTED]
+        refuted -= {
+            e.doc_id
+            for f in everyone
+            if f.verdict is not GroundingVerdict.CONTRADICTED
+            for e in f.evidence
+        }
+        # Each member with the evidence it brings. Beside support, a contradicting
+        # text's evidence is left out, and a member that was nothing but contradicting
+        # texts with it: its claim, its clock, its confidence and its extractor are not
+        # this claim's.
+        pairs = [(f, list(f.evidence)) for f in everyone]
+        if supported:
+            pairs = [(f, [e for e in ev if e.doc_id not in refuted]) for f, ev in pairs]
+            pairs = [
+                (f, ev)
+                for f, ev in pairs
+                if ev or not f.evidence or f.verdict is not GroundingVerdict.CONTRADICTED
+            ]
+        members = [f for f, _ in pairs]
         evidence: dict[tuple[Any, ...], Evidence] = {}
-        for fact in members:
-            for e in fact.evidence:
+        for _, brought in pairs:
+            for e in brought:
                 span = (e.span.start, e.span.end) if e.span else None
                 evidence.setdefault((e.doc_id, span, e.uri), e)
+        cited = tuple(evidence.values())
+        # Every member's sources as cited; which of them are copies is decided below.
+        # A member citing nothing counts the support it claims; one whose every text
+        # was left out counts none.
         sources: set[str] = set()
-        for fact in members:
-            sources |= independent_sources(fact, self.source)
+        for fact, brought in pairs:
+            own = {self.source(e) for e in brought}
+            if own:
+                sources |= own
+            elif not fact.evidence:
+                sources |= independent_sources(fact, self.source)
+        # A group a member already carries is kept, so a later batch without
+        # those texts still counts the copy once. One whose texts are all in
+        # hand is decided again, at this threshold.
+        found: list[Iterable[str]] = [
+            g for f in members for g in near_duplicates(f.qualifiers.get(NEAR_DUPLICATES))
+        ]
+        if copies is not None:
+            found = [g for g in found if not all(d in copies.documents for d in g)]
+            found.extend(copies.clusters(cited, self.source))
+        groups = tuple(sorted(tuple(sorted(g)) for g in _union(found) if len(g) > 1))
+        if groups:
+            sources = _collapse(sources, cited, groups, self.source)
         # Stable, so the first-seen member wins a tie.
         ranked = sorted(members, key=self._strength, reverse=True)
+        qualifiers = self._qualifiers(members, ranked)
+        # A stamp of a member left out still says what was done to the claim: a review
+        # mark, say. Its qualifiers of the claim itself do not merge.
+        for f in everyone:
+            for key, value in f.qualifiers.items():
+                if key.startswith("odke.") and key not in (NEAR_DUPLICATES, CONFLICT):
+                    qualifiers.setdefault(key, value)
+        if groups:
+            qualifiers[NEAR_DUPLICATES] = groups
+        # Recorded where the claim holds texts that do not all agree, so a later merge
+        # leaves out only the ones that contradicted it.
+        mixed = any(f.verdict is not GroundingVerdict.CONTRADICTED for f in everyone)
+        if refuted and (supported or mixed or any(contradicted_in(f) for f in everyone)):
+            qualifiers[CONFLICT] = contradiction(refuted, supported=bool(supported))
         extractors = sorted({f.extractor for f in members})
         present = {f.verdict for f in members}
+        # A source with no evidence has no name: a claim any of whose members
+        # cites nothing keeps its count and names none of its sources.
+        named = support_of(cited, groups, self.source) if all(f.evidence for f in members) else ()
         return first.model_copy(
             update={
-                "evidence": tuple(evidence.values()),
-                "support": len(sources),
-                "qualifiers": self._qualifiers(members, ranked),
+                "evidence": cited,
+                "support": len(named) if named else len(sources),
+                "supported_by": named,
+                "qualifiers": qualifiers,
                 "valid_from": _bound([f.valid_from for f in members], latest=False),
                 "valid_to": _bound([f.valid_to for f in members], latest=True),
                 "extractor": "+".join(extractors),
@@ -211,6 +428,103 @@ class SignatureCorroborator:
                 "verdict": next(v for v in _VERDICTS if v in present),
             }
         )
+
+    def _with_store(
+        self,
+        facts: list[Fact],
+        copies: NearDuplicates | None,
+        groups: Mapping[tuple[Any, ...], list[Fact]] | None = None,
+    ) -> list[Fact]:
+        """The batch merged with what the stores already hold under each signature (#153).
+
+        A stored fact merges with its incoming twin as two members of one claim
+        do, so the support list grows by the batch's sources. A derived fact
+        merges only with a derived one, because a statement of the claim wins
+        (DECISIONS #28): a derived twin of a stored statement is dropped, and a
+        statement replaces a stored derived twin. Each derived fact then takes
+        its parent's evidence and list, so the two stay shared. A retired twin
+        is nothing to merge with: the batch states the claim again, and it is
+        written as new (#116).
+        """
+        counts = self.stats["store"]
+        twins: dict[tuple[Any, ...], list[Fact]] = defaultdict(list)
+        for store in self.store:
+            for signature, stored in store.stored(facts).items():
+                if stored.retired_at is None:
+                    twins[signature].append(unstamped(stored))
+            counts["read"] += len(facts)
+        out: list[Fact] = []
+        for fact in facts:
+            found = twins.get(fact.signature, [])
+            derived = DERIVED in fact.qualifiers
+            if derived and any(DERIVED not in twin.qualifiers for twin in found):
+                counts["dropped"] += 1
+                continue
+            same = [twin for twin in found if (DERIVED in twin.qualifiers) == derived]
+            if same:
+                counts["merged"] += 1
+                # The batch's own texts, one by one, with the stored twin: each text's
+                # verdict still decides what of it counts (release audit 2).
+                own = (groups or {}).get(fact.signature) or [fact]
+                fact = self._merge([*own, *same], copies)
+            out.append(fact)
+        return _shared(out)
+
+    def rebase(self, fact: Fact, read: Fact | None, now: Fact | None) -> Fact | None:
+        """`fact`, which merged with `read` from the store, merged with `now` instead.
+
+        What a write does when the stored fact moved between its read and its
+        write (DECISIONS #51). The documents the store dropped since the read,
+        which a reconciler retracted, go from `fact`; what it gained, another
+        writer's sources, merges in as a stored twin does (#153). A derived fact
+        the store now states is dropped, None, as the store merge drops it; a
+        retired twin is nothing to merge with (#116). The stamps made after the
+        merge stay as `fact` has them: the contest's decision, the ontology that
+        checked it, a review mark. The scorer then scores it again; no model is
+        asked. A fact all of whose sources were retracted meanwhile is None too:
+        what the reconciler left stands.
+        """
+        from openodke.reconcile import retract
+
+        read = read if read is not None and read.retired_at is None else None
+        now = now if now is not None and now.retired_at is None else None
+        derived = DERIVED in fact.qualifiers
+        if derived and now is not None and DERIVED not in now.qualifiers:
+            return None
+        merged = unstamped(fact)
+        # What the store dropped since the read, of a twin this fact merged with: a
+        # statement that replaced a derived twin took nothing from it (#28).
+        twin = read if read is not None and (DERIVED in read.qualifiers) == derived else None
+        gone = _documents(twin) - _documents(now)
+        if gone:
+            merged = retract(merged, gone, datetime.now(UTC))
+            if merged.retired_at is not None and fact.retired_at is None:
+                # Every source this job brought was retracted while it ran: the
+                # store's state stands, and nothing is written.
+                return None
+        if now is not None and (DERIVED in now.qualifiers) == derived:
+            merged = self._merge([merged, unstamped(now)], None)
+        # The gate's stamps, as this job's gate left them. One it did not make stays as
+        # the merge brought it, as the next job's would (pipeline): a review mark goes
+        # only from a claim that is now supported.
+        qualifiers = dict(merged.qualifiers)
+        for key in (ONTOLOGY, REVIEW):
+            if key in fact.qualifiers:
+                qualifiers[key] = fact.qualifiers[key]
+        if REVIEW not in fact.qualifiers and merged.verdict is GroundingVerdict.SUPPORTED:
+            qualifiers.pop(REVIEW, None)
+        update: dict[str, Any] = {"qualifiers": qualifiers}
+        decided = fact.qualifiers.get(CONFLICT)
+        if isinstance(decided, Mapping) and decided.get("status") in ("won", "lost", "tied"):
+            # The contest's decision, over the support now held; its penalty again on a loser.
+            conflict = {k: v for k, v in decided.items() if k != "contradicted_in"}
+            if refuted := contradicted_in(merged):
+                conflict["contradicted_in"] = list(refuted)
+            if conflict["status"] == "lost" and isinstance(conflict.get("ratio"), int | float):
+                conflict["confidence_before"] = merged.confidence
+                update["confidence"] = merged.confidence * float(conflict["ratio"])
+            qualifiers[CONFLICT] = conflict
+        return merged.model_copy(update=update)
 
     @staticmethod
     def _strength(fact: Fact) -> tuple[float, datetime]:
@@ -222,6 +536,8 @@ class SignatureCorroborator:
         out: dict[str, Any] = {}
         forms: dict[str, list[str]] = {}
         for key in dict.fromkeys(k for f in members for k in f.qualifiers):
+            if key in (NEAR_DUPLICATES, CONFLICT):
+                continue
             if key == SOURCE_FORM:
                 for fact in members:
                     for field, spellings in source_forms(fact.qualifiers.get(key)).items():
@@ -379,6 +695,9 @@ class SignatureCorroborator:
                 "over": sorted({_claim(facts[k]) for k in beaten}),
                 "reason": self._explain(fact, mine, facts[j], standing[j]),
             }
+        if refuted := contradicted_in(fact):
+            # The contest's record keeps the texts that contradict the claim.
+            conflict["contradicted_in"] = list(refuted)
         update["qualifiers"] = {**fact.qualifiers, CONFLICT: conflict}
         return fact.model_copy(update=update)
 
@@ -392,9 +711,40 @@ class SignatureCorroborator:
         )
 
 
+def _documents(fact: Fact | None) -> set[str]:
+    """Every document a fact cites, in its evidence or its support list."""
+    if fact is None:
+        return set()
+    return {e.doc_id for e in fact.evidence} | {d for s in fact.supported_by for d in s.doc_ids}
+
+
+def _shared(facts: list[Fact]) -> list[Fact]:
+    """Each derived fact with its parent's evidence and support list, when its parent is here."""
+    stated = {f.signature: f for f in facts if DERIVED not in f.qualifiers}
+    out: list[Fact] = []
+    for fact in facts:
+        of = derived_from(fact)
+        parent = stated.get(of) if of is not None else None
+        if parent is None or parent.evidence == fact.evidence:
+            out.append(fact)
+            continue
+        qualifiers = {k: v for k, v in fact.qualifiers.items() if k != NEAR_DUPLICATES}
+        if NEAR_DUPLICATES in parent.qualifiers:
+            qualifiers[NEAR_DUPLICATES] = parent.qualifiers[NEAR_DUPLICATES]
+        update = {
+            "evidence": parent.evidence,
+            "support": parent.support,
+            "supported_by": parent.supported_by,
+            "qualifiers": qualifiers,
+        }
+        out.append(fact.model_copy(update=update))
+    return out
+
+
 __all__ = [
     "DEFAULT_INTERVALS",
     "SignatureCorroborator",
     "independent_sources",
     "source_of",
+    "support_of",
 ]

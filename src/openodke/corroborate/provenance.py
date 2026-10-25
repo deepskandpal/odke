@@ -10,10 +10,13 @@ like that?" queries a key rather than reading code.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING, Any
 
-from openodke.types import Fact
+from openodke.types import Fact, GroundingVerdict
+
+if TYPE_CHECKING:
+    from openodke.ontology import Ontology
 
 # On Fact.qualifiers: {field: (original spelling, ...)} for every value the
 # normaliser rewrote. Union-merged by the corroborator, so all spellings survive.
@@ -24,12 +27,63 @@ SOURCE_FORM = "odke.source_form"
 NAME_KEY = "odke.name_key"
 
 # On Fact.qualifiers: the corroborator's decision about a contested value —
-# {"status": "won" | "lost" | "tied", "reason": <a sentence>, ...}.
+# {"status": "won" | "lost" | "tied", "reason": <a sentence>, ...}. A claim some
+# texts contradict while another supports it also records them here, under
+# "contradicted_in" (status "contradicted" when nothing was contested): they are
+# not its sources (release audit 2).
 CONFLICT = "odke.conflict"
 
 # On Fact.qualifiers: the scorer's inputs, so a score can be read back and
 # measured against labels, and re-scoring starts from the extractor's number.
 SCORE = "odke.score"
+
+# On Fact.qualifiers: a fact no source stated in this direction, added because
+# the ontology declares an inverse or a symmetric predicate (DECISIONS #28) —
+# {"rule": "inverse" | "symmetric", "of": <the stated fact's signature>}.
+DERIVED = "odke.derived"
+
+# On Fact.qualifiers: one widen-and-retry attempt by the grounder (#102) —
+# {"from": [start, end], "to": [start, end], "verdict": <the retry's answer>}.
+# The evidence span is the wider one only when that answer was "supported".
+WIDEN = "odke.widen"
+
+# On Fact.qualifiers: why the free checks refused a fact before any model was
+# asked about it — {"check": "predicate" | "domain" | "range", "reason": <a sentence>}.
+CHECK = "odke.check"
+
+# On Fact.qualifiers: the corroborator's groups of evidence documents that are
+# near-duplicates of one another (#154) — ((doc_id, ...), ...), each sorted.
+# Every document's evidence stays on the fact; each group counts as one source.
+NEAR_DUPLICATES = "odke.near_duplicates"
+
+# On Fact.qualifiers: the `Ontology.fingerprint` of the ontology the pipeline
+# checked the fact under, stamped on every fact the gate lets through (#163).
+# A fact checked again is stamped again, so it names the last ontology that
+# checked it. None is stamped when the ontology has no types and no predicates.
+ONTOLOGY = "odke.ontology"
+
+# On Fact.qualifiers: the `OntologySnippet.fingerprint` of the schema slice the
+# model extractor was shown for the fact's subject type (#163). Absent where
+# no slice was shown: a pattern, a triples row, a fact from elsewhere.
+SCHEMA_SLICE = "odke.schema_slice"
+
+
+# On Fact.qualifiers: a fact the gate would have refused and wrote instead,
+# because the judge that refused it is below its calibration bar or has no card
+# (DECISIONS #54) — {"reason": <the refusal>, "why": <why it was kept>}. For a
+# person to review: nothing is dropped on such a judge's word.
+REVIEW = "odke.review"
+
+# On Fact.qualifiers: {"window": [start, end]}, the gap a re-extracted fact came back
+# from (#183). `openodke.reextract` names it too.
+REEXTRACT = "odke.reextract"
+
+# The stamps a store keeps as JSON text, because Neo4j holds no map and no nested
+# list. Every reader of a store decodes these back to the values they were, and one
+# list serves them all, so no reader reads a stamp as text and counts it apart.
+JSON_STAMPS = frozenset(
+    {SOURCE_FORM, CONFLICT, SCORE, DERIVED, NEAR_DUPLICATES, WIDEN, CHECK, REVIEW, REEXTRACT}
+)
 
 
 def source_forms(value: Any) -> dict[str, tuple[str, ...]]:
@@ -39,12 +93,87 @@ def source_forms(value: Any) -> dict[str, tuple[str, ...]]:
     return {str(k): tuple(v) if isinstance(v, list | tuple) else (v,) for k, v in value.items()}
 
 
+def near_duplicates(value: Any) -> tuple[tuple[str, ...], ...]:
+    """`qualifiers["odke.near_duplicates"]` read back — tuples in memory, lists after JSON."""
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(tuple(str(d) for d in group) for group in value if isinstance(group, list | tuple))
+
+
+def checked_by(fact: Fact) -> str | None:
+    """The fingerprint of the ontology that last checked `fact`; None for one never stamped."""
+    found = fact.qualifiers.get(ONTOLOGY)
+    return found if isinstance(found, str) else None
+
+
+def checked_under(facts: Iterable[Fact], ontology: Ontology | str) -> list[Fact]:
+    """The facts `ontology`, or the fingerprint given, last checked: what a reader filters by.
+
+    `odke ontology diff --store` lists these for the old ontology: the facts a
+    breaking change may no longer fit, to validate again.
+    """
+    wanted = ontology if isinstance(ontology, str) else ontology.fingerprint
+    return [fact for fact in facts if checked_by(fact) == wanted]
+
+
+def stamp_review(fact: Fact, reason: str | None, why: str | None) -> Fact:
+    """`fact` marked for review with `why` it was written anyway; unmarked when `why` is None.
+
+    The pipeline unmarks a fact a later run grounds as supported, so it is not
+    still waiting for a person.
+    """
+    if why is None:
+        if REVIEW not in fact.qualifiers:
+            return fact
+        rest = {k: v for k, v in fact.qualifiers.items() if k != REVIEW}
+        return fact.model_copy(update={"qualifiers": rest})
+    mark = {"reason": reason or "", "why": why}
+    if fact.qualifiers.get(REVIEW) == mark:
+        return fact
+    return fact.model_copy(update={"qualifiers": {**fact.qualifiers, REVIEW: mark}})
+
+
+def stamp_checked(fact: Fact, fingerprint: str | None) -> Fact:
+    """`fact` stamped with the ontology that checked it; as it was when nothing did."""
+    if fingerprint is None or fact.qualifiers.get(ONTOLOGY) == fingerprint:
+        return fact
+    return fact.model_copy(update={"qualifiers": {**fact.qualifiers, ONTOLOGY: fingerprint}})
+
+
+def contradicted_in(fact: Fact) -> tuple[str, ...]:
+    """The documents recorded as contradicting a claim that another source supports."""
+    conflict = fact.qualifiers.get(CONFLICT)
+    found = conflict.get("contradicted_in") if isinstance(conflict, Mapping) else None
+    return tuple(sorted({str(d) for d in found})) if isinstance(found, list | tuple) else ()
+
+
+def contradiction(docs: Iterable[str], *, supported: bool = True) -> dict[str, Any]:
+    """The conflict record of a claim that `docs` contradict (release audit 2).
+
+    Beside a text that supports the claim, they are not counted as its support;
+    otherwise the record says which of the claim's texts they are, so a later
+    merge with support leaves out only those.
+    """
+    listed = sorted(set(docs))
+    text = "the text " if len(listed) == 1 else "the texts "
+    verb = "contradicts" if len(listed) == 1 else "contradict"
+    said = f"{text}{', '.join(listed)} {verb} the claim"
+    reason = (
+        f"Not counted as support: {said}, which another source supports."
+        if supported
+        else f"{said[0].upper()}{said[1:]}."
+    )
+    return {"status": "contradicted", "contradicted_in": listed, "reason": reason}
+
+
 def unstamped(fact: Fact) -> Fact:
     """The fact as extraction left it, with the conflict and score stamps removed.
 
     Both stamps are functions of the batch they were computed in. A stage run
     again over its own output has to start from the extractor's confidence, or
-    every pass would compound the previous pass's penalty.
+    every pass would compound the previous pass's penalty. The texts recorded
+    as contradicting a supported claim are not of the batch, so they stay, as
+    the conflict record `contradiction` makes.
     """
     score, conflict = fact.qualifiers.get(SCORE), fact.qualifiers.get(CONFLICT)
     if score is None and conflict is None:
@@ -57,7 +186,28 @@ def unstamped(fact: Fact) -> Fact:
     ):
         confidence = float(conflict["confidence_before"])
     qualifiers = {k: v for k, v in fact.qualifiers.items() if k not in (SCORE, CONFLICT)}
+    if refuted := contradicted_in(fact):
+        supported = fact.verdict is GroundingVerdict.SUPPORTED
+        qualifiers[CONFLICT] = contradiction(refuted, supported=supported)
     return fact.model_copy(update={"confidence": confidence, "qualifiers": qualifiers})
 
 
-__all__ = ["CONFLICT", "NAME_KEY", "SCORE", "SOURCE_FORM", "source_forms", "unstamped"]
+__all__ = [
+    "CHECK",
+    "CONFLICT",
+    "DERIVED",
+    "NAME_KEY",
+    "NEAR_DUPLICATES",
+    "ONTOLOGY",
+    "REVIEW",
+    "SCHEMA_SLICE",
+    "SCORE",
+    "SOURCE_FORM",
+    "checked_by",
+    "checked_under",
+    "near_duplicates",
+    "source_forms",
+    "stamp_checked",
+    "stamp_review",
+    "unstamped",
+]

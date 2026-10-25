@@ -1,0 +1,24 @@
+{
+  "store": {
+    "documents": 40,
+    "entities": 494
+  },
+  "batch": {
+    "documents": 40,
+    "entities": 440
+  },
+  "same_node_by_key": 126,
+  "owed_a_link": 9,
+  "linked_of_owed": 1,
+  "recall": 0.1111111111111111,
+  "links": {
+    "similar (rules)": {
+      "links": 2,
+      "right": 1,
+      "wrong": 0,
+      "uncheckable": 1,
+      "precision": 1.0
+    }
+  },
+  "judge": {}
+}

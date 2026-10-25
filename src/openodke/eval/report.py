@@ -134,7 +134,7 @@ def accuracy(confusion: Mapping[str, Mapping[str, int]]) -> Metric:
 def cohen_kappa(confusion: Mapping[str, Mapping[str, int]]) -> Metric:
     """Agreement beyond what the two sides' class frequencies give by chance.
 
-    Accuracy alone flatters a validator that accepts everything on a slice
+    Accuracy alone flatters a gate that accepts everything on a slice
     that is mostly acceptable; kappa is zero for it.
     """
     total = sum(sum(row.values()) for row in confusion.values())
@@ -178,18 +178,60 @@ def join_by_id(
     no label; the notes count both, so a report never scores fewer rows than
     it was given without saying how many it left out. `noun` names a row in
     the notes: a fact, or a chunk.
+
+    Facts read back from Neo4j share their relationship's id, one row per
+    piece of evidence (`openodke.interop.read_neo4j`), so where predictions
+    share an id a label joins the one that cites its document (release audit
+    19). Two that share an id and a document are refused: neither is the
+    label's.
     """
-    by_id = {p.id: p for p in predictions}
-    pairs = [(row, by_id[key(row)]) for row in labels if key(row) in by_id]
+    by_id: dict[str, list[_Prediction]] = {}
+    for prediction in predictions:
+        by_id.setdefault(prediction.id, []).append(prediction)
+    pairs = []
+    for row in labels:
+        found = _pick(by_id.get(key(row), []), row, key(row), noun)
+        if found is not None:
+            pairs.append((row, found))
     notes = []
     if len(pairs) < len(labels):
         notes.append(
             f"{len(labels) - len(pairs)} labelled {noun}(s) had no prediction and were not scored"
         )
     known = {key(row) for row in labels}
-    if stray := sum(1 for k in by_id if k not in known):
+    if stray := sum(len(found) for k, found in by_id.items() if k not in known):
         notes.append(f"{stray} prediction(s) matched no labelled {noun} and were ignored")
     return pairs, notes
+
+
+def _documents(row: object) -> frozenset[str]:
+    """The documents a label or a prediction names: its `doc_id`, and its fact's evidence."""
+    evidence = getattr(row, "evidence", None)
+    if evidence is None:
+        evidence = getattr(getattr(row, "fact", None), "evidence", ())
+    found = {doc for e in evidence or () if isinstance(doc := getattr(e, "doc_id", None), str)}
+    if isinstance(doc := getattr(row, "doc_id", None), str):
+        found.add(doc)
+    return frozenset(found)
+
+
+def _pick(found: Sequence[_Prediction], row: object, key: str, noun: str) -> _Prediction | None:
+    """The one of `found`, which share an id, that is `row`'s: the one citing its document."""
+    if len(found) <= 1:
+        return found[0] if found else None
+    named = _documents(row)
+    if not named:
+        raise ValueError(
+            f"{len(found)} predictions share the {noun} id {key!r}, and its label names no "
+            "document to tell them apart"
+        )
+    mine = [p for p in found if _documents(p) & named]
+    if len(mine) > 1:
+        raise ValueError(
+            f"{len(mine)} predictions share the {noun} id {key!r} and its document "
+            f"({', '.join(sorted(named))}): a label joins one prediction, on its id and document"
+        )
+    return mine[0] if mine else None
 
 
 # --------------------------------------------------------------------------- #

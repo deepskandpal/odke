@@ -147,7 +147,7 @@ def test_per_class_gives_a_never_predicted_class_its_row() -> None:
     assert macro_f1(breakdown) == pytest.approx((2 / 3 + 0.5 + 0.0) / 3)
 
 
-def test_kappa_is_zero_for_a_validator_that_always_says_the_majority() -> None:
+def test_kappa_is_zero_for_a_gate_that_always_says_the_majority() -> None:
     confusion = {"accept": {"accept": 9, "refuse": 0}, "refuse": {"accept": 1, "refuse": 0}}
     assert accuracy(confusion) == 0.9
     assert cohen_kappa(confusion) == 0.0

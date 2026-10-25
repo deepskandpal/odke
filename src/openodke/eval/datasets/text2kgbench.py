@@ -1,5 +1,8 @@
 """Text2KGBench (Mihindukulasooriya et al., ISWC 2023): ontology-guided extraction from sentences.
 
+Provisional (DECISIONS #48): a benchmark adapter, as `openodke.eval.datasets`
+says. It may change in a minor release, with a CHANGELOG line.
+
 Given an ontology and a sentence, extract the facts the sentence states, using
 only the ontology's relations. Two sources: Wikidata-TekGen (10 ontologies,
 13,474 sentences) and DBpedia-WebNLG (19 ontologies, 4,860 sentences).
@@ -32,6 +35,8 @@ from pathlib import Path
 from typing import Any
 
 from openodke.eval.ablation import AblationRun, ablate
+from openodke.eval.bootstrap import Range
+from openodke.eval.cost import CallRecord
 from openodke.eval.datasets import _common
 from openodke.eval.datasets._common import (
     LITERALS,
@@ -47,6 +52,16 @@ from openodke.eval.datasets._common import (
     write_documents,
     write_json,
     write_jsonl,
+)
+from openodke.eval.eval_report import (
+    Conformance,
+    Counts,
+    Dataset,
+    EvalReport,
+    Hallucination,
+    Row,
+    performance,
+    spend,
 )
 from openodke.eval.report import Metric, StageReport
 
@@ -285,48 +300,145 @@ def score(
 
     `hallucination=False` skips the two that need NLTK.
     """
+    return aggregate(sentences(gold, predicted, ontology, hallucination=hallucination))
+
+
+def sentences(
+    gold: Sequence[Mapping[str, Any]],
+    predicted: Mapping[str, Sequence[Triple]],
+    ontology: Mapping[str, Any],
+    *,
+    hallucination: bool = True,
+) -> list[dict[str, Any]]:
+    """Each test sentence's own numbers, before they are averaged.
+
+    `aggregate` averages them into `score`; the eval report resamples them for
+    its ranges. Beside the benchmark's per-sentence metrics, each carries its
+    hits, over- and under-extraction on the normalised triples it scored, and
+    the predicted triples it left unscored because the sentence's gold never
+    uses their relation.
+    """
     relations = {r["label"].replace(" ", "_") for r in ontology["relations"]}
     concepts = " ".join(c["label"] for c in ontology["concepts"])
     stems = _Stems() if hallucination else None
-    totals = dict.fromkeys(
-        ("precision", "recall", "f1", "onto_conf", "rel_halluc", "sub_halluc", "obj_halluc"), 0.0
-    )
-    hallucinated = 0
+    out = []
     for row in gold:
         gold_triples = [(t["sub"], t["rel"], t["obj"]) for t in row["triples"]]
         system = [(s, r.replace(" ", "_"), o) for s, r, o in predicted.get(row["id"], ())]
         gold_relations = {t[1].replace(" ", "_") for t in gold_triples}
         filtered = [t for t in system if t[1] in gold_relations]
-        p, r, f = _prf({_key(t) for t in gold_triples}, {_key(t) for t in filtered})
-        totals["precision"] += p
-        totals["recall"] += r
-        totals["f1"] += f
-        if system:
-            conformant = sum(1 for t in system if t[1] in relations)
-            totals["onto_conf"] += conformant / len(system)
-            totals["rel_halluc"] += 1 - conformant / len(system)
+        expected, found = {_key(t) for t in gold_triples}, {_key(t) for t in filtered}
+        p, r, f = _prf(expected, found)
+        conformant = sum(1 for t in system if t[1] in relations)
+        unit: dict[str, Any] = {
+            "id": row["id"],
+            "precision": p,
+            "recall": r,
+            "f1": f,
+            "onto_conf": conformant / len(system) if system else 1.0,
+            "rel_halluc": 1 - conformant / len(system) if system else 0.0,
+            "sub_halluc": None,
+            "obj_halluc": None,
+            "triples": len(predicted.get(row["id"], ())),
+            "hallucinated": 0,
+            "conformant": conformant,
+            "hits": len(expected & found),
+            "over": len(found - expected),
+            "under": len(expected - found),
+            "unscored": len({_key(t) for t in system} - found),
+        }
+        if stems is not None:
+            unit["sub_halluc"] = unit["obj_halluc"] = 0.0
+            if system:
+                context = stems.clean(row["sent"] + concepts)
+                subj = [stems.clean(t[0]) not in context for t in system]
+                obj = [stems.clean(t[2]) not in context for t in system]
+                unit["sub_halluc"] = sum(subj) / len(system)
+                unit["obj_halluc"] = sum(obj) / len(system)
+                unit["hallucinated"] = sum(
+                    1
+                    for t, s, o in zip(system, subj, obj, strict=True)
+                    if s or o or t[1] not in relations
+                )
         else:
-            totals["onto_conf"] += 1.0
-        if stems is not None and system:
-            context = stems.clean(row["sent"] + concepts)
-            subj = [stems.clean(t[0]) not in context for t in system]
-            obj = [stems.clean(t[2]) not in context for t in system]
-            totals["sub_halluc"] += sum(subj) / len(system)
-            totals["obj_halluc"] += sum(obj) / len(system)
-            hallucinated += sum(
-                1
-                for t, s, o in zip(system, subj, obj, strict=True)
-                if s or o or t[1] not in relations
-            )
-        elif stems is None:
-            hallucinated += sum(1 for t in system if t[1] not in relations)
-    n = len(gold) or 1
-    out: dict[str, Metric] = {k: v / n for k, v in totals.items()}
-    if stems is None:
-        out["sub_halluc"] = out["obj_halluc"] = None
-    out["triples"] = sum(len(predicted.get(row["id"], ())) for row in gold)
-    out["hallucinated_triples"] = hallucinated
+            unit["hallucinated"] = sum(1 for t in system if t[1] not in relations)
+        out.append(unit)
     return out
+
+
+def aggregate(units: Sequence[Mapping[str, Any]]) -> dict[str, Metric]:
+    """The benchmark's metrics from `sentences`: each averaged over the sentences.
+
+    The two hallucination shares that need NLTK are `None` when it was not used.
+    """
+    n = len(units) or 1
+    out: dict[str, Metric] = {
+        k: sum((u[k] for u in units), 0.0) / n
+        for k in ("precision", "recall", "f1", "onto_conf", "rel_halluc")
+    }
+    for k in ("sub_halluc", "obj_halluc"):
+        out[k] = None if any(u[k] is None for u in units) else sum((u[k] for u in units), 0.0) / n
+    out["triples"] = sum(u["triples"] for u in units)
+    out["hallucinated_triples"] = sum(u["hallucinated"] for u in units)
+    return out
+
+
+def row(
+    name: str,
+    units: Sequence[Mapping[str, Any]],
+    metrics: Mapping[str, Metric],
+    ranges: Mapping[str, Range],
+    calls: Sequence[CallRecord] | None,
+) -> Row:
+    """One configuration's eval report row, from the same `sentences` its metrics came from."""
+    hits, over, under = (sum(u[k] for u in units) for k in ("hits", "over", "under"))
+    triples = sum(u["triples"] for u in units)
+    stemmed = metrics["sub_halluc"] is not None
+    hallucinated = sum(u["hallucinated"] for u in units)
+    return Row(
+        name=name,
+        performance=performance(metrics, ranges, "macro"),
+        counts=Counts(
+            hits=hits,
+            over_extraction=over,
+            under_extraction=under,
+            predicted=hits + over,
+            gold=hits + under,
+            unscored=sum(u["unscored"] for u in units),
+            documents=len(units),
+        ),
+        conformance=Conformance(
+            rate=_share(metrics["onto_conf"]),
+            conformant=sum(u["conformant"] for u in units),
+            facts=triples,
+            checks=("predicate",),
+            average="macro",
+        ),
+        hallucination=Hallucination(
+            definition=HALLUCINATION if stemmed else HALLUCINATION_UNSTEMMED,
+            hallucinated=hallucinated,
+            facts=triples,
+            rate=hallucinated / triples if triples else None,
+            subject=_share(metrics["sub_halluc"]),
+            relation=_share(metrics["rel_halluc"]),
+            object=_share(metrics["obj_halluc"]),
+        ),
+        **spend(name, calls),
+    )
+
+
+HALLUCINATION = (
+    "Text2KGBench: the subject or object, stemmed, is not in the stemmed sentence plus "
+    "the ontology's concept labels, or the relation is not in the ontology"
+)
+HALLUCINATION_UNSTEMMED = (
+    "Text2KGBench, without NLTK: the relation is not in the ontology; subjects and objects "
+    "were not checked"
+)
+
+
+def _share(value: Metric) -> float | None:
+    return None if value is None else float(value)
 
 
 # --------------------------------------------------------------------------- #
@@ -342,6 +454,11 @@ def run(prepared: str | Path, *, hallucination: bool = True) -> StageReport:
     reports beside ours: grounding cut hallucinated extractions by 35%, and
     corroboration took precision from 91% to 98.8% (§4, p. 6).
     """
+    return evaluate(prepared, hallucination=hallucination).stages[0]
+
+
+def evaluate(prepared: str | Path, *, hallucination: bool = True) -> EvalReport:
+    """`run`, as the eval report: each row with its ranges over the sentences."""
     from openodke.run.config import load_config
 
     if hallucination:
@@ -351,7 +468,9 @@ def run(prepared: str | Path, *, hallucination: bool = True) -> StageReport:
     meta = json.loads((folder / "dataset.json").read_text(encoding="utf-8"))
     gold = read_jsonl(folder / "gold.jsonl")
     ablation = ablate(load_config(folder / "odke.json"))
-    return score_run(ablation, gold, meta, hallucination=hallucination, save_to=folder)
+    return report_run(
+        ablation, gold, meta, hallucination=hallucination, save_to=folder, path=folder
+    )
 
 
 def score_run(
@@ -363,16 +482,50 @@ def score_run(
     save_to: Path | None = None,
 ) -> StageReport:
     """Score an `AblationRun` already made — `run` without the model calls."""
-    return _common.score_run(
+    return report_run(ablation, gold, meta, hallucination=hallucination, save_to=save_to).stages[0]
+
+
+def report_run(
+    ablation: AblationRun,
+    gold: Sequence[Mapping[str, Any]],
+    meta: Mapping[str, Any],
+    *,
+    hallucination: bool = True,
+    save_to: Path | None = None,
+    path: str | Path | None = None,
+) -> EvalReport:
+    """`score_run`, as the eval report. `path` names the prepared set in its dataset."""
+    return _common.report_run(
         ablation,
         gold,
-        meta,
-        stage=f"{NAME}:{meta['ontology_id']}",
-        score=lambda predicted: score(
-            gold, predicted, meta["ontology"], hallucination=hallucination
-        ),
+        scoring(gold, meta, hallucination=hallucination, path=path),
         notes=_notes,
         save_to=save_to,
+    )
+
+
+def scoring(
+    gold: Sequence[Mapping[str, Any]],
+    meta: Mapping[str, Any],
+    *,
+    hallucination: bool = True,
+    path: str | Path | None = None,
+) -> _common.Scoring:
+    """How a prepared set scores facts from any source: `sentences`, `aggregate`, `row`."""
+    ontology = meta["ontology"]
+    return _common.Scoring(
+        stage=f"{NAME}:{meta['ontology_id']}",
+        meta=meta,
+        units=lambda predicted: sentences(gold, predicted, ontology, hallucination=hallucination),
+        aggregate=aggregate,
+        row=row,
+        dataset=Dataset(
+            name=NAME,
+            path=None if path is None else str(path),
+            documents=len(gold),
+            labels=sum(len(r["triples"]) for r in gold),
+            details={"source": meta.get("source"), "ontology_id": meta["ontology_id"]},
+        ),
     )
 
 
@@ -401,11 +554,17 @@ __all__ = [
     "BASE_URL",
     "NAME",
     "SOURCES",
+    "aggregate",
+    "evaluate",
     "fetch",
     "files",
     "prepare",
+    "report_run",
+    "row",
     "run",
     "score",
     "score_run",
+    "scoring",
+    "sentences",
     "to_ontology",
 ]

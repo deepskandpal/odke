@@ -24,8 +24,9 @@ flipped polarity is never a near miss: a denial is the opposite claim.
 from __future__ import annotations
 
 import math
+from collections import Counter
 from collections.abc import Iterable, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from openodke.eval.formats import GoldFact, cite
 from openodke.eval.report import Metric, StageReport, macro_f1, prf
@@ -71,7 +72,7 @@ def run_extract(
 ) -> list[Fact]:
     """Extract from every document in-process, each fact citing its document.
 
-    No router, grounder or validator: this measures the extractor alone, which
+    No router, grounder or gate: this measures the extractor alone, which
     is the baseline every later stage is an ablation against.
     """
     chunker = chunker or PassThroughChunker()
@@ -104,10 +105,11 @@ def match_extraction(gold: Sequence[GoldFact], predictions: Iterable[Fact]) -> l
     a fact corroboration merged across documents claims every one of them
     states it (`per_document`). One citing none is matched, after every
     document has been, against the gold facts still unmatched anywhere; one
-    citing only unlabelled documents is not scored. Within a scope, pairings
-    go exact match first, then same subject, then same claim about another
-    subject, each in file order, so the result does not depend on how a dict
-    happened to iterate.
+    citing only unlabelled documents is not scored. A triple stated twice in
+    one scope is one prediction there: a repeat is no second claim, and the
+    benchmark scorers drop it too. Within a scope, pairings go exact match
+    first, then same subject, then same claim about another subject, each in
+    file order, so the result does not depend on how a dict happened to iterate.
     """
     docs = list(dict.fromkeys(g.doc_id for g in gold))
     gold_by_doc: dict[str, list[Fact]] = {d: [] for d in docs}
@@ -115,8 +117,13 @@ def match_extraction(gold: Sequence[GoldFact], predictions: Iterable[Fact]) -> l
         gold_by_doc[g.doc_id].append(g.fact)
     cited: dict[str, list[Fact]] = {d: [] for d in docs}
     uncited: list[Fact] = []
+    stated: set[tuple[str | None, tuple[Any, ...]]] = set()
     for fact in per_document(predictions):
         cites = [e.doc_id for e in fact.evidence]
+        scope = (cites[0] if cites else None, _exact(fact))
+        if scope in stated:
+            continue
+        stated.add(scope)
         if not cites:
             uncited.append(fact)
         elif (home := next((d for d in cites if d in gold_by_doc), None)) is not None:
@@ -168,6 +175,12 @@ def evaluate_extraction(gold: Sequence[GoldFact], predictions: Iterable[Fact]) -
         notes.append(
             f"{unscored} prediction(s) cite only documents with no gold facts and were not scored"
         )
+    stated = Counter((g.doc_id, _exact(g.fact)) for g in gold)
+    if repeated := sum(n - 1 for n in stated.values() if n > 1):
+        notes.append(
+            f"{repeated} gold fact(s) repeat a triple their document already lists: a "
+            "prediction is counted once per document, so each repeat counts as missed"
+        )
     metrics: dict[str, Metric] = {
         "precision": overall["precision"],
         "recall": overall["recall"],
@@ -179,6 +192,46 @@ def evaluate_extraction(gold: Sequence[GoldFact], predictions: Iterable[Fact]) -
     return StageReport(
         stage="extract", n=len(gold), metrics=metrics, breakdown=breakdown, notes=tuple(notes)
     )
+
+
+class DocumentCounts(NamedTuple):
+    """Extraction scored per labelled document: what a report resamples and `--items` writes.
+
+    `by_doc` is `(tp, fp, fn)` for each labelled document, in label order; a
+    wrong value or entity is one false positive and one false negative in the
+    document it was matched in. `uncited` counts spurious predictions that cite
+    no document, which are in no document's counts; `unscored`, predictions
+    citing only documents nobody labelled, which are in no number at all.
+    """
+
+    by_doc: dict[str, tuple[int, int, int]]
+    uncited: int
+    unscored: int
+
+
+def document_counts(gold: Sequence[GoldFact], predictions: Iterable[Fact]) -> DocumentCounts:
+    """`evaluate_extraction`'s outcomes counted per labelled document.
+
+    The documents' counts plus `uncited` false positives are
+    `evaluate_extraction`'s totals, to the fact.
+    """
+    split = per_document(predictions)
+    labelled = {g.doc_id for g in gold}
+    unscored = sum(
+        1 for p in split if p.evidence and not any(e.doc_id in labelled for e in p.evidence)
+    )
+    counts = {doc: [0, 0, 0] for doc in dict.fromkeys(g.doc_id for g in gold)}
+    uncited = 0
+    for outcome in match_extraction(gold, split):
+        if outcome.doc_id not in counts:
+            uncited += 1  # spurious, and citing no document: matched in none
+            continue
+        row = counts[outcome.doc_id]
+        row[0] += outcome.kind == "correct"
+        row[1] += outcome.kind not in ("correct", "missing")
+        row[2] += outcome.kind not in ("correct", "spurious")
+    by_doc = {doc: (tp, fp, fn) for doc, (tp, fp, fn) in counts.items()}
+    return DocumentCounts(by_doc=by_doc, uncited=uncited, unscored=unscored)
 
 
 # --------------------------------------------------------------------------- #
@@ -266,7 +319,9 @@ def _row(c: dict[str, int]) -> dict[str, Metric]:
 
 __all__ = [
     "ERRORS",
+    "DocumentCounts",
     "Outcome",
+    "document_counts",
     "evaluate_extraction",
     "match_extraction",
     "normalise_value",

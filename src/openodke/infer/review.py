@@ -1,5 +1,9 @@
 """An inferred ontology written out for a person to review, and written back once frozen.
 
+Provisional (DECISIONS #48): ontology inference is parked (DECISIONS #24), and
+most of it is undocumented, so it may change in a minor release when it is
+picked up again, with a CHANGELOG line.
+
 The review is the step that makes inference safe (DECISIONS #8), so the file is
 built for it. YAML, when PyYAML is installed (`openodke[yaml]`), opens with a header
 saying the schema is inferred and what to do about it, and every type and
@@ -174,7 +178,11 @@ def summary(inference: Inference) -> str:
         known = [c.cost_usd for c in inference.calls if c.cost_usd is not None]
         cost = f"${sum(known):.4f}" if len(known) == len(inference.calls) else "cost unknown"
         tokens = sum(c.prompt_tokens + c.completion_tokens for c in inference.calls)
-        lines.append(f"model calls: {len(inference.calls)}, {tokens} tokens, {cost}")
+        sent = ", ".join(dict.fromkeys(c.prompt for c in inference.calls if c.prompt))
+        lines.append(
+            f"model calls: {len(inference.calls)}, {tokens} tokens, {cost}"
+            + (f"; prompts {sent}" if sent else "")
+        )
     return "\n".join(lines)
 
 

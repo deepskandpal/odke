@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "openodke run report",
+  "description": "What one Validator job did: a ValidationReport as JSON, which KnowledgeGraph.stats['validation'] holds. schema_version is major.minor: a minor version adds fields, a major one changes them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "dry_run",
+    "documents",
+    "facts_in",
+    "unmatched",
+    "verdicts",
+    "checked",
+    "refused",
+    "refused_by",
+    "merged",
+    "restated",
+    "retracted",
+    "linked",
+    "links",
+    "store",
+    "judge",
+    "batch",
+    "derived",
+    "facts_out",
+    "edges",
+    "properties",
+    "entities",
+    "calls",
+    "cached",
+    "tokens",
+    "cost_usd",
+    "prompts",
+    "coverage",
+    "stopped",
+    "failed",
+    "batches",
+    "tenant",
+    "writes"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^1\\.[0-9]+$"},
+    "dry_run": {"type": "boolean"},
+    "documents": {"$ref": "#/$defs/count"},
+    "facts_in": {"$ref": "#/$defs/count"},
+    "unmatched": {"$ref": "#/$defs/count"},
+    "verdicts": {"$ref": "#/$defs/counts"},
+    "checked": {"$ref": "#/$defs/counts"},
+    "refused": {"$ref": "#/$defs/count"},
+    "refused_by": {"$ref": "#/$defs/counts"},
+    "merged": {"$ref": "#/$defs/count"},
+    "restated": {"$ref": "#/$defs/count"},
+    "retracted": {"anyOf": [{"$ref": "#/$defs/counts"}, {"type": "null"}]},
+    "linked": {"$ref": "#/$defs/count"},
+    "links": {"$ref": "#/$defs/counts"},
+    "store": {"anyOf": [{"$ref": "#/$defs/counts"}, {"type": "null"}]},
+    "judge": {"anyOf": [{"$ref": "#/$defs/counts"}, {"type": "null"}]},
+    "batch": {"anyOf": [{"$ref": "#/$defs/counts"}, {"type": "null"}]},
+    "derived": {"$ref": "#/$defs/count"},
+    "facts_out": {"$ref": "#/$defs/count"},
+    "edges": {"$ref": "#/$defs/count"},
+    "properties": {"$ref": "#/$defs/count"},
+    "entities": {"$ref": "#/$defs/count"},
+    "calls": {"$ref": "#/$defs/count"},
+    "cached": {"$ref": "#/$defs/count"},
+    "tokens": {"$ref": "#/$defs/count"},
+    "cost_usd": {"type": ["number", "null"]},
+    "prompts": {"type": "array", "items": {"type": "string"}},
+    "coverage": {"type": ["object", "null"]},
+    "stopped": {"type": ["object", "null"]},
+    "failed": {"type": "object", "additionalProperties": {"type": "string"}},
+    "batches": {"type": ["integer", "null"], "minimum": 0},
+    "tenant": {"type": ["string", "null"]},
+    "writes": {
+      "anyOf": [
+        {"type": "object", "additionalProperties": {"type": "object"}},
+        {"type": "null"}
+      ]
+    },
+    "marked": {
+      "description": "Added in 1.1, so not required: facts the gate wrote marked for review (qualifiers odke.review) instead of refusing, by the verdict that would have refused them, because their grounder is below its calibration bar (DECISIONS #54).",
+      "$ref": "#/$defs/counts"
+    },
+    "calibration": {
+      "description": "Added in 1.1, so not required: each model judge's calibration card line, or UNCALIBRATED, and what its word did in this job (DECISIONS #54).",
+      "type": "array",
+      "items": {"$ref": "#/$defs/card_status"}
+    }
+  },
+  "$defs": {
+    "count": {"type": "integer", "minimum": 0},
+    "counts": {"type": "object", "additionalProperties": {"type": "integer"}},
+    "card_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["judge", "prompt", "model", "claim_format", "card", "meets_bar", "line", "action", "why"],
+      "properties": {
+        "judge": {"type": "string"},
+        "prompt": {"type": "string"},
+        "model": {"type": ["string", "null"]},
+        "claim_format": {"type": ["string", "null"]},
+        "card": {"type": ["string", "null"]},
+        "meets_bar": {"type": ["boolean", "null"]},
+        "line": {"type": "string"},
+        "action": {"type": ["string", "null"], "enum": ["drop", "mark", "link", "review", null]},
+        "why": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

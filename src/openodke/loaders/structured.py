@@ -17,7 +17,7 @@ import csv
 import io
 import json
 import os
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -82,7 +82,12 @@ class JsonLoader:
 
 
 class JsonlLoader:
-    """JSON Lines: one document per non-blank line, which it remembers in `metadata["line"]`."""
+    """JSON Lines: one document per non-blank line, which it remembers in `metadata["line"]`.
+
+    `load` is an iterator, and a file is read a line at a time as its
+    documents are asked for, so a file of any size streams (#158). A line that
+    is not JSON is an error naming it, raised when the iterator reaches it.
+    """
 
     def __init__(
         self, *, tier: SourceTier = SourceTier.UNVERIFIED, encoding: str = "utf-8-sig"
@@ -90,23 +95,31 @@ class JsonlLoader:
         self.tier = tier
         self.encoding = encoding
 
-    def load(self, source: Source) -> list[Document]:
+    def load(self, source: Source) -> Iterator[Document]:
+        if isinstance(source, str | os.PathLike):
+            path = Path(source)
+            uri: str | None = path.resolve().as_uri()
+            # newline="" splits on \r, \n and \r\n, as `iter_lines` does, and keeps them.
+            with path.open(encoding=self.encoding, newline="") as fh:
+                yield from self._documents(enumerate(fh, 1), uri)
+            return
         text, uri = read_text(source, self.encoding)
-        docs: list[Document] = []
-        for number, (start, end) in enumerate(iter_lines(text), 1):
-            line = text[start:end]
+        lines = ((n, text[start:end]) for n, (start, end) in enumerate(iter_lines(text), 1))
+        yield from self._documents(lines, uri)
+
+    def _documents(self, lines: Iterable[tuple[int, str]], uri: str | None) -> Iterator[Document]:
+        row = 0
+        for number, line in lines:
             if not line.strip():
                 continue
             try:
                 item = json.loads(line)
             except json.JSONDecodeError as exc:
                 raise ValueError(f"{uri or '<bytes>'} line {number}: {exc.msg}") from exc
-            docs.append(
-                record_document(
-                    _as_record(item), uri=uri, tier=self.tier, row_index=len(docs), line=number
-                )
+            yield record_document(
+                _as_record(item), uri=uri, tier=self.tier, row_index=row, line=number
             )
-        return docs
+            row += 1
 
 
 class CsvLoader:
