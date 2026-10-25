@@ -264,7 +264,7 @@ manifest ([DECISIONS #40](decisions.md#40)):
 
 | Field | Holds |
 |---|---|
-| `manifest_version` | `1` |
+| `manifest_version` | `1`; its JSON Schema is `openodke/manifest.schema.json` ([Stability](stability.md#formats)) |
 | `command`, `dry_run` | `run`, `validate` or `ground`; a dry run writes none |
 | `config`, `config_hash` | the config resolved with every default (for `validate` and `ground`, their options; for the Validator, its stages), and its SHA-256; a chunker, router or inferrer left out and its `passthrough` named hash alike, as do the scorer left out and `evidence` named; any other stage's `passthrough` is a run of its own |
 | `config_file`, `base_dir` | the config's file and directory |

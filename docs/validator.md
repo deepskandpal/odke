@@ -182,7 +182,7 @@ merged = out.
 
 The graph's `stats` carry the report under `"validation"`, beside each stage's
 counts under `"stages"`, so a JSONL sink's `manifest.json` keeps it. Its JSON
-is versioned by `schema_version` (`"1.0"`), with
+is versioned by `schema_version` (`"1.1"`), with
 `openodke/validation_report.schema.json` as its schema
 ([Stability](stability.md#formats)). `report.manifest` is the job's
 [run manifest](run.md#the-run-manifest), kept out of the JSON and of equality.

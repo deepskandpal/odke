@@ -67,6 +67,8 @@ if TYPE_CHECKING:
 # The format of the run's own fields; a reader checks it before trusting them.
 FORMAT = 1
 FILE = "manifest.json"
+# The manifest's JSON Schema, shipped beside this module (DECISIONS #48).
+SCHEMA_PATH = Path(__file__).with_name("manifest.schema.json")
 
 # What a `JsonlSink` writes into `manifest.json`. A run adds its own fields
 # beside these and never replaces them: the sink's counts are the files'.
@@ -547,6 +549,7 @@ __all__ = [
     "FILE",
     "FORMAT",
     "REDACTED",
+    "SCHEMA_PATH",
     "SINK_KEYS",
     "STORE_KEYS",
     "FactsIn",

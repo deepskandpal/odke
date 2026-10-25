@@ -45,8 +45,10 @@ is a typo ([DECISIONS #52](decisions.md#52)).
 |---|---|---|---|
 | [Triples input](inputs.md) | `schema_version`, on each row, optional | 1.0 | `openodke/interop/triples.schema.json` |
 | [Run report](validator.md#the-report), `ValidationReport` | `schema_version` | 1.1 | `openodke/validation_report.schema.json` |
-| [Eval report](evaluation.md) | `schema_version` | 1.3 | `openodke/eval/eval_report.schema.json` |
-| [Run manifest](run.md#the-run-manifest) | `manifest_version` | 1 | |
+| [Eval report](evaluation.md) | `schema_version` | 1.4 | `openodke/eval/eval_report.schema.json` |
+| [Run manifest](run.md#the-run-manifest) | `manifest_version` | 1 | `openodke/manifest.schema.json` |
+| [`odke run`'s stats](run.md#what-a-run-reports) | `schema_version` | 1.0 | |
+| [`odke ground`'s summary](grounding.md), `GroundSummary` | `schema_version` | 1.0 | |
 
 ## Deprecated
 
