@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -40,6 +39,7 @@ from openodke.chunking import sentences
 from openodke.corroborate import MemoryLookup, NativeResolver
 from openodke.eval.datasets import trex
 from openodke.eval.datasets._common import read_jsonl
+from openodke.eval.stats import wilson
 from openodke.types import Document, GroundingVerdict
 
 REFUSED = {GroundingVerdict.NOT_FOUND, GroundingVerdict.CONTRADICTED}
@@ -189,18 +189,8 @@ def _pct(value: Any) -> str:
     return "—" if value is None else f"{100 * value:.1f}"
 
 
-def wilson(hits: int, n: int, z: float = 1.96) -> tuple[float, float] | None:
-    """The 95% Wilson interval of `hits` in `n`; None with nothing to count."""
-    if not n:
-        return None
-    p = hits / n
-    centre = (p + z * z / (2 * n)) / (1 + z * z / n)
-    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
-    return centre - half, centre + half
-
-
 def _share(hits: int, n: int) -> str:
-    """`85.3 [69.9, 93.6]`: a share of edges with its Wilson interval."""
+    """`85.3 [69.9, 93.6]`: a share of edges with its 95% Wilson interval (the package's)."""
     interval = wilson(hits, n)
     if interval is None:
         return "—"
