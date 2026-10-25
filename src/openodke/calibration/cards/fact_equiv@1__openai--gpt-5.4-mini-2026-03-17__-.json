@@ -1,0 +1,84 @@
+{
+  "card_version": "1.0",
+  "judge": "fact_equiv",
+  "prompt": "fact_equiv@1",
+  "prompts": {
+    "fact_equiv@1": "94ad0c37551aaeaefb59640bcf8b9e7e546f35ade2f7ade3017e65951eef70e7",
+    "fact_equiv.user@1": "da5dc49f2913af345d78cd1f801e2879b97b73ad8c814a9d96f4ee8020a7efcc"
+  },
+  "model": "openai/gpt-5.4-mini-2026-03-17",
+  "claim_format": null,
+  "vote": "single",
+  "date": "2026-10-25",
+  "openodke": "0.2.1",
+  "labels": {
+    "name": "F",
+    "version": "sheets 01-02 (labelled 17 Oct 2026)",
+    "sha256": "4d4c2497c9d9a8351db74c5a05d4a6de00eaebdd7f8b4c2ded1382b898e0c142",
+    "split": "gate",
+    "n": 62
+  },
+  "cost_per_1000": 0.2709375,
+  "grounding": null,
+  "pairs": null,
+  "equivalence": {
+    "kappa": {
+      "value": 0.6729191090269637,
+      "low": 0.4585068337067749,
+      "high": 0.8530805687203791,
+      "n": 62
+    },
+    "unsure": {
+      "k": 4,
+      "n": 62,
+      "value": 0.06451612903225806,
+      "low": 0.02537290552044079,
+      "high": 0.15447515727752875
+    },
+    "order_disagreement": {
+      "k": 4,
+      "n": 62,
+      "value": 0.06451612903225806,
+      "low": 0.02537290552044079,
+      "high": 0.15447515727752875
+    },
+    "judge_same": {
+      "k": 19,
+      "n": 62,
+      "value": 0.3064516129032258,
+      "low": 0.2058158658563416,
+      "high": 0.4296721620538671
+    },
+    "person_same": {
+      "k": 22,
+      "n": 62,
+      "value": 0.3548387096774194,
+      "low": 0.24742732851049898,
+      "high": 0.47918869242215756
+    },
+    "confusion": {
+      "same": {
+        "same": 16,
+        "different": 4,
+        "unsure": 2
+      },
+      "different": {
+        "same": 3,
+        "different": 35,
+        "unsure": 2
+      }
+    },
+    "lenient_minus_strict": null
+  },
+  "bar": {
+    "metric": "kappa_same",
+    "threshold": 0.6,
+    "value": 0.6729191090269637,
+    "met": true,
+    "note": null
+  },
+  "self_agreement": null,
+  "notes": [
+    "6 pair(s) the person left unsure were asked and are not scored"
+  ]
+}

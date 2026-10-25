@@ -645,6 +645,7 @@ def _judge_all(
                     claim_format=grounder.claim_line,
                     labels=labels_of("G", G_VERSION, split, scored),
                     cost_per_1000=meters[variant].per_1000(model),
+                    notes=tuple(args.notes.get(model, ())),
                 )
                 card = grounding_card(scored, made, planted=planted)
                 folder = "cards" if split == "gate" else "cards-dev"
@@ -704,6 +705,7 @@ def _judge_all(
                     n=len(r),
                 ),
                 cost_per_1000=meter.per_1000(model),
+                notes=tuple(args.notes.get(model, ())),
             )
             card = pair_card(
                 judged_pairs, made, audited=int(noise["audited"]), label_noise=noise["noise"]
@@ -760,6 +762,7 @@ def _judge_all(
                 cost_per_1000=meter.per_1000(model),
                 notes=(
                     f"{len(unsure)} pair(s) the person left unsure were asked and are not scored",
+                    *args.notes.get(model, ()),
                 ),
             )
             card = equivalence_card(scored, made)
@@ -1012,10 +1015,41 @@ def _short(model: str) -> str:
     return f"`{model}`"
 
 
-def render_tables(cards: Sequence[Card], found: Mapping[str, Any]) -> str:
-    """The Judge calibration section: one table per judge, then the contest."""
+def render_tables(cards: Sequence[Card], found: Mapping[str, Any], level: int = 2) -> str:
+    """The Judge calibration section: one table per judge, then the contest.
+
+    `level` is the section's heading level: 2 on the Benchmarks page, 3 where
+    it sits inside another section.
+    """
+    h, sub = "#" * level, "#" * (level + 1)
     models = list(found.get("models", ()))
     order = {m: i for i, m in enumerate(models)}
+
+    not_run = found.get("not_run", {})
+
+    def absent(judge: str, have: Sequence[Card], width: int) -> list[str]:
+        """A row for each model the run asked nothing of this judge, and why."""
+        shown = {c.model for c in have}
+        rows = []
+        for model in models:
+            why = not_run.get(model, {}).get(judge)
+            if model not in shown and why:
+                rows.append(f"| {_short(model)} | – | not run: {why} |" + " |" * (width - 3))
+        return rows
+
+    reasoned = sorted(
+        {c.model for c in cards if any("reasoning on" in n for n in c.notes)},
+        key=lambda m: order.get(m, len(order)),
+    )
+    reasoning = (
+        "Answered with reasoning on, the model's default: "
+        + ", ".join(_short(m) for m in reasoned)
+        + ". Reasoning counts against the 256-token max_tokens every judge here has, so "
+        "an answer can stop before its verdict (an abstention), and its cost includes the "
+        "reasoning: not like for like with a model that answers without it."
+        if reasoned
+        else ""
+    )
 
     def pick(judge: str, prompt: str, claim_format: str | None) -> list[Card]:
         chosen = [
@@ -1033,7 +1067,7 @@ def render_tables(cards: Sequence[Card], found: Mapping[str, Any]) -> str:
     lines = [
         TABLES_BEGIN,
         "",
-        "## Judge calibration",
+        f"{h} Judge calibration",
         "",
         f"Each model judge, measured on {date} against the maintainer's hand labels: label sets "
         "G (grounding), R (entity pairs) and F (fact pairs), public data only "
@@ -1042,7 +1076,7 @@ def render_tables(cards: Sequence[Card], found: Mapping[str, Any]) -> str:
         "package ships (`src/openodke/calibration/cards/`) and `bench/calibration/results.json` "
         "by `bench/calibrate.py --tables`, and a test holds them to both.",
         "",
-        "### The grounder, `ground.span@1`, claim inline",
+        f"{sub} The grounder, `ground.span@1`, claim inline",
         "",
         "Label set G's gate split: the maintainer's hand labels on facts three extractors "
         "wrote, and 100 planted false facts for the catch rate. Keep is `supported`; refuse is "
@@ -1072,14 +1106,16 @@ def render_tables(cards: Sequence[Card], found: Mapping[str, Any]) -> str:
             f"{'yes' if c.bar.met else 'no'} | {_cell(g.flips)} | {_cell(g.planted)} | "
             f"{_cell(g.false_refusals)} | {agrees} | {split} | {_money(c.cost_per_1000)} |"
         )
+    lines += absent("ground", pick("ground", "ground.span@1", "inline"), 11)
     lines += [
         "",
+        *([reasoning, ""] if reasoning else []),
         "Not measured: the maintainer's agreement with themselves, the bar's other half "
         "(within 0.1 of it), so each bar here is κ ≥ 0.6 alone. Adjudication agrees: on G's "
         'gate facts the dataset\'s gold lacks, how often "supported in 2 of 3 runs" matches '
         'the maintainer\'s "supported". Cost is measured token use at list price.',
         "",
-        "### The pair judge, `pair@1`, both orders",
+        f"{sub} The pair judge, `pair@1`, both orders",
         "",
         "Label set R's gate split: Re-DocRED's own mention clusters, with the maintainer's "
         '100-pair audit replacing a dataset label where it decided one. "Same" counts only '
@@ -1097,6 +1133,7 @@ def render_tables(cards: Sequence[Card], found: Mapping[str, Any]) -> str:
             f"{'yes' if c.bar.met else 'no'} | {_cell(pr.recall_same)} | {_cell(pr.unsure)} | "
             f"{_cell(pr.order_disagreement)} | {_money(c.cost_per_1000)} |"
         )
+    lines += absent("pair", pick("pair", "pair@1", None), 8)
     noise = next((c.pairs.label_noise for c in pick("pair", "pair@1", None) if c.pairs), None)
     lines += [
         "",
@@ -1108,7 +1145,7 @@ def render_tables(cards: Sequence[Card], found: Mapping[str, Any]) -> str:
             else ""
         ),
         "",
-        "### The fact-equivalence judge, `fact_equiv@1`, both orders",
+        f"{sub} The fact-equivalence judge, `fact_equiv@1`, both orders",
         "",
         "Label set F's gate split: the pairs the maintainer decided same or different (the "
         'unsure ones are asked and not scored). "Same" counts only when both orders say same.',
@@ -1126,11 +1163,12 @@ def render_tables(cards: Sequence[Card], found: Mapping[str, Any]) -> str:
             f"{_cell(e.order_disagreement)} | {_cell(e.judge_same)} / {_cell(e.person_same)} | "
             f"{_money(c.cost_per_1000)} |"
         )
+    lines += absent("fact_equiv", pick("fact_equiv", "fact_equiv@1", None), 8)
     lines += [
         "",
         "Not measured: the maintainer's agreement with themselves.",
         "",
-        "### The contest, and model against model",
+        f"{sub} The contest, and model against model",
         "",
         "On G's gate split, run 1: an item passes when the judge's keep or refuse matches the "
         "maintainer's, compared item by item with the Evaluator's own comparison "
@@ -1148,10 +1186,26 @@ def render_tables(cards: Sequence[Card], found: Mapping[str, Any]) -> str:
     for model in models:
         for variant, v in found.get("contest", {}).get(model, {}).items():
             lines.append(_contest_row(_short(model), f"{names.get(variant, variant)} vs inline", v))
+    prompts = {"span-inline": "`ground.span@1` inline", **names}
     for name, v in found.get("head_to_head", {}).items():
-        if not name.endswith(": span-inline"):
-            continue
-        lines.append(_contest_row(f"`{v['b']}`", f"`{v['a']}`, `ground.span@1` inline", v))
+        variant = name.rpartition(": ")[2]
+        lines.append(_contest_row(f"`{v['b']}`", f"`{v['a']}`, {prompts.get(variant, variant)}", v))
+    sp = found.get("self_preference")
+    if sp:
+        (a, a_found), (b, b_found) = list(sp["fail_recall"].items())[:2]
+        exact = sp.get("mcnemar", {})
+        lines += [
+            "",
+            f"Self-preference: on the {sp['n']} gate facts the maintainer did not mark supported, "
+            f"all extracted by Claude models, `ground.span@1` on `{a}` refused "
+            f"{a_found['k']} ({a_found['value']:.2f}) and on `{b}` {b_found['k']} "
+            f"({b_found['value']:.2f}); paired, McNemar exact p = {exact.get('p_value', 1):.3g}"
+            + (
+                ", so the gap is inconclusive on this set."
+                if exact.get("p_value", 1) >= 0.05
+                else "."
+            ),
+        ]
     lines += ["", TABLES_END]
     return "\n".join(lines)
 
@@ -1260,6 +1314,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--only", action="append", default=[], help="MODEL=v1,v2: the variants that model runs"
     )
     parser.add_argument(
+        "--note", action="append", default=[], help="MODEL=TEXT: a note on every card of that model"
+    )
+    parser.add_argument(
+        "--not-run",
+        action="append",
+        default=[],
+        help="MODEL=JUDGE:WHY: a judge left out for a model, and why, for the tables",
+    )
+    parser.add_argument(
         "--judges-for", action="append", default=[], help="MODEL=j1,j2: the judges that model runs"
     )
     parser.add_argument(
@@ -1302,6 +1365,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         for m, vs in _pairs(args.only, "--only").items()
     }
     args.scale = {m: float(v) for m, v in _pairs(args.scale, "--scale").items()}
+    args.notes = defaultdict(list)
+    for given in args.note:
+        model, sep, text = given.partition("=")
+        if not sep:
+            raise SystemExit(f"--note takes MODEL=TEXT, got {given!r}")
+        args.notes[model].append(text)
     args.judges_for = {
         m: {j.strip() for j in js.split(",") if j.strip()}
         for m, js in _pairs(args.judges_for, "--judges-for").items()
@@ -1379,10 +1448,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         encoding="utf-8",
     )
     if args.aggregates is not None:
+        found = aggregates(results, extra)
+        not_run: dict[str, dict[str, str]] = defaultdict(dict)
+        for given in args.not_run:
+            model, _, rest = given.partition("=")
+            judge, _, why = rest.partition(":")
+            not_run[model][judge] = why or "not run"
+        found["not_run"] = dict(not_run)
         args.aggregates.parent.mkdir(parents=True, exist_ok=True)
         args.aggregates.write_text(
-            json.dumps(aggregates(results, extra), indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
+            json.dumps(found, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
     print(f"\nwrote {args.out / 'results.md'}")
     return 3 if stopped else 0
