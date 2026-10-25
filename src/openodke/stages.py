@@ -62,14 +62,22 @@ DDL: TypeAlias = Sequence[str]
 
 @runtime_checkable
 class Initiator(Protocol):
-    """Decides what needs extracting. Optional; default is 'all of it'."""
+    """Decides what needs extracting. Optional; default is 'all of it'.
+
+    Provisional (DECISIONS #48): nothing implements it yet, so its shape may
+    change in a minor release (#9).
+    """
 
     def targets(self) -> Iterable[str]: ...
 
 
 @runtime_checkable
 class Retriever(Protocol):
-    """Turns targets into documents. Optional; default is the caller's list."""
+    """Turns targets into documents. Optional; default is the caller's list.
+
+    Provisional (DECISIONS #48): nothing implements it yet, and `Pipeline`
+    keeps one without calling it, so its shape may change in a minor release (#9).
+    """
 
     def retrieve(self, targets: Iterable[str]) -> Iterable[Document]: ...
 
@@ -106,6 +114,9 @@ class Router(Protocol):
     Takes a `Chunk`, not a document: a document is a chunk *source*, and
     document-level routing is a chunker configured not to split. The verdict's
     `label` is the caller's word; the package ships no taxonomy.
+
+    Provisional (DECISIONS #48): only pass-throughs implement it
+    (`PassThroughRouter`, `Delegated`), so its shape may change in a minor release.
     """
 
     def route(self, chunk: Chunk) -> RouteVerdict: ...

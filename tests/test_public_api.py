@@ -68,6 +68,14 @@ PROVISIONAL = {
     "openodke.reextract": "the re-extract hook: off by default, with one extractor behind it",
 }
 
+# Public names held outside the promise in a frozen module, by where each is defined:
+# the stage Protocols nothing real implements yet (release audit call C, DECISIONS #9).
+PROVISIONAL_NAMES = {
+    "openodke.stages.Initiator": "nothing implements it yet",
+    "openodke.stages.Retriever": "nothing implements it yet; Pipeline keeps one, uncalled",
+    "openodke.stages.Router": "only pass-throughs implement it",
+}
+
 # Old names a module still serves, each the new object, with a warning:
 # (module, old name, what the warning says to use).
 OLD_NAMES = [
@@ -359,6 +367,22 @@ def test_a_name_that_warns_is_an_old_name_on_the_list() -> None:
                     getattr(module, exported)
                 except DeprecationWarning:
                     assert (name, exported) in listed, f"{name}.{exported} warns but is not listed"
+
+
+def test_provisional_names_are_exported_and_say_so() -> None:
+    exported = {
+        f"{obj.__module__}.{obj.__qualname__}"
+        for name in public_modules()
+        for obj in (
+            getattr(importlib.import_module(name), n) for n in importlib.import_module(name).__all__
+        )
+        if hasattr(obj, "__qualname__")
+    }
+    for path in PROVISIONAL_NAMES:
+        assert path in exported, f"{path} is listed as provisional but no public module exports it"
+        module, _, attr = path.rpartition(".")
+        doc = getattr(importlib.import_module(module), attr).__doc__ or ""
+        assert "Provisional (DECISIONS #48)" in doc, f"{path}'s docstring does not say so"
 
 
 def test_provisional_modules_are_public_and_say_so() -> None:
