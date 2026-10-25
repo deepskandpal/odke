@@ -858,11 +858,13 @@ def per_thousand(
     A type's cost per character on the documents run, times the type's mean
     length in the slice: a ratio estimate, so a sample of short documents is
     not read as a cheap type. The range resamples the documents run, each type
-    apart (2,000 draws); `corpus` weighs the types by `shares`.
+    apart (2,000 draws); `corpus` weighs the types by `shares`. A run a budget
+    stopped, or one whose document failed, cost what it did not finish, and is
+    left out (`failed_rows` says which; rule R1).
     """
     groups: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
     for row in rows:
-        if row.get("run") and not row.get("stopped"):
+        if row.get("run") and not row.get("stopped") and not row.get("failed"):
             groups[row["source_type"]].append(row)
 
     def value(by_type: Mapping[str, Sequence[Mapping[str, Any]]]) -> dict[str, float]:
@@ -1108,7 +1110,19 @@ def cost_table(rows: Sequence[Mapping[str, Any]], about: Mapping[str, Any]) -> s
             f"| {t} | {share} | {row['documents']} | {row['facts_per_document']} |"
             f" {row['usd_per_1000']:.2f} | {low:.2f}–{high:.2f} |"
         )
+    left = failed_rows(rows)
+    if left:
+        lines += ["", f"Left out, stopped or failed: {', '.join(left)}."]
     return "\n".join(lines)
+
+
+def failed_rows(rows: Sequence[Mapping[str, Any]]) -> list[str]:
+    """The documents run that `per_thousand` leaves out: a budget stopped them, or they failed."""
+    return [
+        str(row["id"])
+        for row in rows
+        if row.get("run") and (row.get("stopped") or row.get("failed"))
+    ]
 
 
 def cache_table(results: Mapping[str, Mapping[str, Any]]) -> str:

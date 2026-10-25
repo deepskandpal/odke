@@ -2549,8 +2549,10 @@ def bench_run(
     Extraction and grounding are each called once; + grounding and + corroboration
     replay them, so the bill is one run's, not three. Each row's precision,
     recall and F1 carry a 95% range over the documents, and the versioned eval
-    report is written beside the predictions.
+    report is written beside the predictions. A run in which a document failed
+    is not scored: it exits 1, naming what failed, and writes no report.
     """
+    from openodke.eval.harness import PipelineError
     from openodke.llm.base import ProviderError
 
     module = _dataset(dataset)
@@ -2560,7 +2562,8 @@ def bench_run(
         report.write(target)
     except (ValueError, OSError, ImportError) as exc:
         _fail(exc, 2)
-    except ProviderError as exc:
+    except (ProviderError, PipelineError) as exc:
+        # A run in which a document failed is not scored (rule R1): exit 1, no report.
         _fail(exc, 1)
     if as_json:
         typer.echo(report.stages[0].model_dump_json(indent=2))

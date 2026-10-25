@@ -35,7 +35,10 @@ into everything stored.
 - *both*: both documents state the winning value, so provenance cannot say
   which one it came from, and the case is read by hand against the gold answer;
 - *no conflict found*: fewer than two distinct values reached the contest, so
-  the order was never asked.
+  the order was never asked;
+- *failed*: a document's extraction failed, or a grounding call did, so what
+  reached the contest is not what the documents say. It is no result: counted
+  apart, and `run` exits 1 (a bad key is not "no conflict found"; rule R1).
 
 `run` also contests the same claims again with a 30-day half-life, where
 freshness can outweigh a tier, at no cost. It writes `results.json`; `table`
@@ -365,6 +368,25 @@ def outcome(facts: Sequence[Fact], older: str, newer: str) -> dict[str, Any]:
     }
 
 
+def failed(stats: Mapping[str, Any], grounder: Any, documents: int) -> str | None:
+    """Why a case's run is no result, or None: a document left out, or a grounding call lost.
+
+    A document whose extraction failed is left out of the run (`stats["failed"]`), and
+    a grounding call that failed leaves its claim unchecked; either way the contest
+    would rank what the documents never said, so the case is not scored (rule R1).
+    """
+    from openodke._batch import failed_summary
+    from openodke.eval._failures import calls_failed
+
+    lost = stats.get("failed")
+    if isinstance(lost, Mapping) and lost:
+        return failed_summary({str(k): str(v) for k, v in lost.items()}, of=documents)
+    calls = calls_failed(grounder)
+    if calls:
+        return f"{calls} grounding call{'' if calls == 1 else 's'} failed or came back unreadable"
+    return None
+
+
 def recontest(facts: Sequence[Fact], ontology: Ontology, half_life_days: float) -> list[Fact]:
     """The same claims contested again under another freshness half-life; no model."""
     return SignatureCorroborator(ontology, half_life_days=half_life_days).corroborate(facts)
@@ -448,6 +470,9 @@ def run_case(
     records = list(meter.records) if meter is not None else []
     ranked = [fact for fact, _ in gate.seen]
     decided = outcome(ranked, older, newer)
+    failure = failed(graph.stats, stages.get("grounder"), len(docs))
+    if failure is not None:
+        decided = {"outcome": "failed", "reason": failure, "claims": decided["claims"]}
     kept = sorted(
         {_side(f, older, newer) for f, action in gate.seen if action != "refuse"}
         & {"older", "newer", "both"}
@@ -464,6 +489,8 @@ def run_case(
         if fact.predicate == PREDICATE
     ]
     short = outcome(recontest(ranked, built.ontology, SHORT_HALF_LIFE), older, newer)
+    if failure is not None:
+        short = decided
     return {
         "question_id": qid,
         "question": case["question"],
@@ -611,6 +638,13 @@ def main() -> None:
             args.root, args.out, models=models, budget_usd=args.budget_usd, limit=args.limit
         )
         print(f"{found['counts']}; spent ${found['spent_usd']:.4f}")
+        lost = found["counts"].get("failed", 0)
+        if lost:
+            # A failure never becomes a number (rule R1): with the cache on, a rerun asks
+            # only the calls that failed.
+            raise SystemExit(
+                f"{lost} of {len(found['cases'])} cases failed, and are no result; run again"
+            )
     else:
         results = json.loads((args.out / "results.json").read_text(encoding="utf-8"))
         print(table(results), end="")

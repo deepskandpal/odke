@@ -15,6 +15,8 @@ validates them (`odke.json`) and what the extraction cost (`extraction.json`):
   `predictions/extraction-alone.jsonl`, which keeps labels and no types, so
   each subject takes its predicate's first domain type.
 - `lgt`, `neo4j` and `langextract`: `competitors/<system>/facts.jsonl` (`competitors.py`).
+  A run that lost a document (`failed_documents` in its `usage.json`) is left
+  out, and said so: its failed documents would score as empty answers.
 - `pattern`: `PatternExtractor`, run here over the set's documents, free.
 
 The run config is the set's own, so the grounder is the set's (`--paper`: the
@@ -272,6 +274,16 @@ def sources(
             usage = json.loads((saved / "usage.json").read_text(encoding="utf-8"))
             if usage.get("documents", documents) < documents:  # a --limit run
                 print(f"{folder}: {system} ran on {usage['documents']} documents; left out")
+                continue
+            lost = int(usage.get("failed_documents") or 0)
+            if lost:
+                # A document whose extraction failed would score as an empty answer, which
+                # is not the system's score: the set is left out, as tables.py leaves it
+                # (release audit finding 12, rule R1).
+                print(
+                    f"{folder}: {system} lost {lost} of {documents} documents to a failed "
+                    "extraction; left out"
+                )
                 continue
             cost = spend(
                 usage.get("model") or model,

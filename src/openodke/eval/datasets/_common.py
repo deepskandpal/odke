@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from openodke.coverage import summary as coverage_summary
-from openodke.eval.ablation import AblationRun
+from openodke.eval.ablation import AblationRun, _scorable
 from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED, Range, bootstrap
 from openodke.eval.cost import CallRecord, StageCost
 from openodke.eval.diagnosis import View
@@ -355,7 +355,12 @@ def report_run(
     `notes` takes the three rows' metrics — extracted, after the gate, after
     corroboration — and writes the dataset's lines beside the paper's numbers;
     the grounder's verdicts and the run's own notes follow them.
+
+    A run in which a document failed, or a budget stopped, is not scored: a
+    `PipelineError` names what failed, since its rows would count the failure
+    as misses (rule R1), as in the ablation.
     """
+    _scorable(ablation)
     scored = score_configurations(
         ablation.configurations(),
         ablation.documents,
