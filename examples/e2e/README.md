@@ -71,12 +71,14 @@ Line by line:
   register's `2014-03-10` one claim, with `support: 2`. The register (curated)
   and a note (community) disagree on Halden Robotics Ltd's head office; Leeds
   won, and Sheffield is kept at reduced confidence with the reason attached.
-- **validator.** The default gate refuses `contradicted` and keeps
-  `not_found` — refusing `not_found` here would throw away most of the register.
+- **gate.** The default gate refuses `contradicted` on the grounder's word and
+  keeps `not_found` (refusing `not_found` here would throw away most of the
+  register). The grounder's calibration card is below its bar, so the one
+  `contradicted` fact is written marked for review, not dropped (DECISIONS #54).
 - **coverage.** What extraction left behind, counted with no model: no sentence
   naming two known entities is left uncited, and the model was shown every
   predicate. Real prose is rarely this clean.
-- **graph.** 25 facts on 7 entities, and 4 links between entities: one
+- **graph.** 26 facts on 7 entities, and 4 links between entities: one
   `DIFFERENT`, three `SIMILAR`. Nothing was merged away.
 
 The output is in `out/`: `facts.jsonl` has every fact with its evidence,
