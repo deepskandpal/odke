@@ -1148,25 +1148,7 @@ def _name(spec: Any) -> str:
 
 
 __all__ = [
-    "ADAPTERS",
-    "DESCRIPTION",
     "FORMATS",
-    "TIMEOUT",
-    "Checked",
-    "Corpus",
-    "Evaluation",
-    "Output",
     "PipelineError",
-    "as_facts",
-    "check",
-    "evaluate",
     "evaluate_pipeline",
-    "labelled",
-    "load_callable",
-    "load_documents",
-    "prepared",
-    "read_output",
-    "run_callable",
-    "run_command",
-    "score",
 ]

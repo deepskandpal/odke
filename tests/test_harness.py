@@ -54,8 +54,8 @@ def _xfails() -> tuple[list[tuple[str, ast.Call]], list[str]]:
 
 
 def test_a_rule_waits_only_on_a_strict_xfail_that_names_its_fix() -> None:
+    """Fix PR 5 of the 1.0 audit removed the last marker; a later one is held to this too."""
     marks, bare = _xfails()
-    assert marks, "no rule is waiting on a fix: drop this test with the last marker"
     assert not bare, f"xfail markers with no strict=True and no reason: {bare}"
     loose = []
     for where, call in marks:

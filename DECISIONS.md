@@ -1697,6 +1697,44 @@ every Neo4j write statement ends in `RETURN count(*)`; and the gate's name
 it is. That is the point: an export is a promise, so it should take a line in
 a diff to make one. The old names stay, warning, for the whole of 1.x.
 
+**Amended 24 Oct 2026 (release audit calls B and C):** the review above counted
+names; the pin holds import paths, and at the audit it froze 1,162 of them,
+which reached 1,168 frozen and 216 provisional by fix PR 5. Before rc1, 112
+paths left `__all__`, and the frozen ones are 1,009 (272 provisional):
+
+- **Call B, the machinery is private.** `__all__` keeps what a caller calls,
+  reads or writes; how `odke run`, `odke validate` and `odke eval pipeline`
+  build, stream, record and read a store is not. Out: the Neo4j sink's Cypher
+  and row plumbing (16 names), the manifest's recorder and hashing helpers (12;
+  `RunManifest`, its parts, `read_manifest`, `canonical`, `digest` and the
+  schema stay), the stream's internals (6; `shape`, `streams`, `write` stay),
+  the pipeline harness's steps (18; `evaluate_pipeline`, `PipelineError` and
+  `FORMATS` stay), the runner's helpers (4) and the 12 names new in
+  `run.build` and `run.execute`. A name in a 0.2.1 `__all__` stays wherever it
+  is, as the 14 in `run.build` and `run.execute` do, and as the sink's 0.2.1
+  names do: removing one is a deprecation, not a trim.
+- **The prompt texts are the registry's.** Which version a stage sends is
+  provisional, so `ground.llm.PAPER_PROMPT` (new in 1.0) leaves `__all__`, and
+  `ground.llm.SYSTEM_PROMPT` (0.2.1) warns until 2.0.0, naming
+  `openodke.prompts.get("ground.span").text`.
+- **`openodke.infer` is provisional**, all nine modules: it is parked, and most
+  of it was never documented, so it may change when it is picked up again. This
+  reverses "parked, and so do not move" above for inference; the reference
+  extractors stay frozen. `openodke.calibration`, provisional already, exports
+  the 11 names its docs use; the rest stay importable from it.
+- **Call C, the eight questions.** (1) The gate's counts are under
+  `stages.gate`, and under `stages.validator` until 2.0.0. (2) The eval APIs
+  named for the gate have gate spellings: `odke eval gate`, `evaluate_gate`,
+  `GateLabel`, `GateVerdict`; the old ones warn until 2.0.0, and the stage's
+  labels, report and items keep the value `validate`, a format's. (3)
+  `evaluate_pipeline` is the Evaluator's one entry point; `harness.evaluate`
+  is private. (4) `Initiator`, `Retriever` and `Router` are provisional names
+  in a frozen module, listed in the guard test by where each is defined. (5)
+  is call B. (6) The run manifest ships `manifest.schema.json`. (7) `odke
+  run`'s stats and `GroundSummary` carry `schema_version`, 1.0. (8) No name
+  that warns is in an `__all__`, so `from openodke import *` never warns. The
+  tolerant readers (call F) are #52.
+
 ### 50. Six rules are tests over the whole codebase, and every pull request carries its evidence
 
 Two audits two days apart found forty major findings, and they fall into a

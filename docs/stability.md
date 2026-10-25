@@ -18,7 +18,8 @@ accident.
 ## Provisional
 
 Public and documented, but may change in a minor release, with a CHANGELOG
-line. Each module says so at the top of its docstring.
+line. Each module, or each name in a frozen module, says so at the top of its
+docstring.
 
 | Module | Why |
 |---|---|
@@ -27,6 +28,9 @@ line. Each module says so at the top of its docstring.
 | `openodke.eval.datasets` | The benchmark adapters follow the datasets' own releases |
 | `openodke.interop.langchain`, `.langextract`, `.graphrag` | They read other libraries' objects, which change with those libraries |
 | `openodke.reextract` | The re-extract hook is off by default, with one extractor behind it |
+| `openodke.calibration` | Calibration cards: the format and the bars settle with the first cards ([DECISIONS #54](decisions.md#54)) |
+| `openodke.infer` | Ontology inference is parked (DECISIONS #24): most of it is undocumented, and it moves when it is picked up again |
+| `Initiator`, `Retriever` and `Router`, in `openodke.stages` | Stage Protocols nothing real implements yet ([DECISIONS #9](decisions.md#9)): the first two have no implementation, `Pipeline` keeps a retriever without calling it, and routers are pass-throughs |
 
 The OpenTelemetry spans' names and attributes are provisional too, and so is
 which version of a [registered prompt](models.md#prompts) a stage sends. The

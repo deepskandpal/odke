@@ -36,7 +36,8 @@ def test_the_move_into_the_registry_changed_no_byte() -> None:
 
 
 def test_the_old_constants_are_the_registered_texts() -> None:
-    assert get("ground.span", 1).text == ground_llm.SYSTEM_PROMPT
+    with pytest.warns(DeprecationWarning, match="SYSTEM_PROMPT is deprecated"):
+        assert get("ground.span", 1).text == ground_llm.SYSTEM_PROMPT
     assert get("ground.paper", 1).text == ground_llm.PAPER_PROMPT
     assert get("extract", 1).text == extract_llm._INSTRUCTIONS
     assert get("extract.repair", 1).text == extract_llm._REPAIR
