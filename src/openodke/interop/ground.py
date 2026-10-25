@@ -65,9 +65,14 @@ class FailureShape(Frozen):
     examples: tuple[str, ...] = ()
 
 
+# The version of the summary `odke ground` writes (DECISIONS #48): a minor adds fields.
+SUMMARY_VERSION = "1.0"
+
+
 class GroundSummary(Frozen):
     """What one `ground_graph` call found, as `odke ground` prints it and writes it."""
 
+    schema_version: str = SUMMARY_VERSION
     dry_run: bool
     rows: int
     facts: int
@@ -338,6 +343,7 @@ __all__ = [
     "EXAMPLES",
     "FACTS_FILE",
     "SUMMARY_FILE",
+    "SUMMARY_VERSION",
     "TOO_NARROW",
     "UNSUPPORTED",
     "FailureShape",

@@ -28,6 +28,7 @@ from openodke.llm import ModelRoles, ModelSpec
 from openodke.loaders import DocxLoader, HtmlLoader, PdfLoader
 from openodke.run import ConfigError, StageSpec, build, execute, load_config, parse_config
 from openodke.run.build import NodeLinkFile, build_stage
+from openodke.run.execute import STATS_VERSION
 from openodke.sinks import neo4j as neo4j_module
 from openodke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink
 from openodke.sinks.networkx import NetworkXSink
@@ -329,10 +330,14 @@ def test_the_gate_s_old_key_warns_and_runs_the_same(project: Path) -> None:
     assert old.stages.gate == StageSpec(use="verdict")
     renamed, current = execute(old), execute(parse_config(_config(), base_dir=project))
     assert [f.signature for f in renamed.graph.facts] == [f.signature for f in current.graph.facts]
-    # The report keeps the gate's counts under their 0.2 key, whichever spelling ran.
+    # The gate's counts are under `stages.gate`, and under their 0.2 key until 2.0.0,
+    # whichever spelling ran (release audit call C); the report prints them once.
     counts = {"accepted": 6, "refused": {}, "marked": {"contradicted": 1}}
-    assert renamed.stats["stages"]["validator"] == current.stats["stages"]["validator"] == counts
-    assert "gate" not in current.stats["stages"]
+    for ran in (renamed, current):
+        assert ran.stats["stages"]["gate"] == ran.stats["stages"]["validator"] == counts
+        assert ran.stats["schema_version"] == STATS_VERSION
+    shown = [line.split()[0] for line in current.render().splitlines() if line.strip()]
+    assert shown.count("gate") == 1 and "validator" not in shown
 
 
 def test_the_command_prints_the_old_key_s_warning(project: Path) -> None:

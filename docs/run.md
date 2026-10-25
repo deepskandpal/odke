@@ -225,7 +225,7 @@ documents     8 (8 chunks; 0 skipped, 0 deferred, 0 empty)
 extractor     paths (paths llm+pattern, chunks 8, pattern_facts 20, llm_facts 18, merged 2, model_calls 3), rejections (quote not in the passage 1), prompts extract@1
 grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, supported 20, contradicted 1, not_found 15, prompts ground.span@1, claim_format inline, span (facts 36, located 36)
 corroborator  store (read 26), conflicts (lost 2, won 2)
-validator     accepted 26, marked (contradicted 1)
+gate          accepted 26, marked (contradicted 1)
 refused       0
 marked        1 written for review, not refused
 coverage      0 of 5 sentences naming two known entities uncovered, 0 entities in no fact, 0 relations never offered, 0 unused
@@ -239,12 +239,13 @@ manifest      …/examples/e2e/out/manifest.json
 
 | Key in `stats` | Holds |
 |---|---|
+| `schema_version` | the stats' format version, `"1.0"` ([Stability](stability.md#formats)) |
 | `documents`, `chunks`, `skipped`, `deferred`, `empty_extractions`, `derived`, `refused` | the [pipeline's counts](concepts.md#the-order-the-stages-run-in) |
 | `marked` | facts the gate wrote marked for review instead of refusing, below the grounder's [calibration bar](calibration.md#below-the-bar-nothing-is-dropped-on-a-judges-word); absent when none |
 | `calibration` | each model judge's card line, or UNCALIBRATED, with what its word did ([Calibration cards](calibration.md)) |
 | `candidates` | the facts that reached resolution |
 | `graph` | `facts`, `edges`, `properties`, `entities`, and `links` by kind |
-| `stages.<name>` | each stage's `stats`, such as the [grounder's](grounding.md#the-second-model-llmgrounder), the gate's (as `validator`), the [resolver's](resolution-and-corroboration.md#resolve) `store`, `judge` and `batch`, and the corroborator's `conflicts` |
+| `stages.<name>` | each stage's `stats`, such as the [grounder's](grounding.md#the-second-model-llmgrounder), the gate's (as `gate`, and as `validator`, its 0.2 key, until 2.0.0), the [resolver's](resolution-and-corroboration.md#resolve) `store`, `judge` and `batch`, and the corroborator's `conflicts` |
 | `cost` | with `meter: true`: calls, tokens, USD and latency, per role, and `cached_calls` |
 | `cache` | with `models.cache`: `directory`, `hits`, `misses`, `failed` |
 | `spent`, `budget` | `calls`, tokens and `usd` (`None` if any call went unpriced); the limits set |
@@ -470,7 +471,7 @@ result = execute(load_config("examples/e2e/odke.yaml"), dry_run=True)
 
 print(result.stats["graph"])
 # {'facts': 25, 'edges': 8, 'properties': 17, 'entities': 7, 'links': {'different': 1, 'similar': 3}}
-print(result.stats["stages"]["validator"])
+print(result.stats["stages"]["gate"])
 # {'accepted': 25, 'refused': {'contradicted': 1}}
 assert result.dry_run and result.written[0].startswith("jsonl → ")
 assert result.render().startswith("odke run — dry run, nothing written")

@@ -1164,11 +1164,13 @@ def _stats(
     }
     reported = {"extractor": source, **stages}
     stats["stages"] = {
-        # The gate's counts keep the run report's key (DECISIONS #26).
-        ("validator" if name == "gate" else name): jsonable(own)
+        name: jsonable(own)
         for name, stage in reported.items()
         if isinstance(own := getattr(stage, "stats", None), Mapping)
     }
+    if "gate" in stats["stages"]:
+        # And under its 0.2 key until 2.0.0 (DECISIONS #26, #48; release audit call C).
+        stats["stages"]["validator"] = dict(stats["stages"]["gate"])
     stats["validation"] = report.model_dump(mode="json")
     return stats
 
