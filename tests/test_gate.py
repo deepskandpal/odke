@@ -148,12 +148,20 @@ def test_every_old_name_is_the_new_class_and_warns(module: str, old: str, new: t
         assert getattr(found, old) is new
 
 
-def test_the_old_names_stay_in_all_beside_the_new_ones() -> None:
+def test_the_old_names_work_and_are_out_of_all_so_a_star_import_never_warns() -> None:
+    """Release audit call C, question 8: an old name warns where it is used, not on `*`."""
     import openodke
-    from openodke import stages
+    from openodke import pipeline, stages, validators
 
-    assert {"Gate", "VerdictGate", "Validator", "VerdictValidator"} <= set(openodke.__all__)
-    assert {"Gate", "PassThroughGate", "Validator", "PassThroughValidator"} <= set(stages.__all__)
+    assert {"Gate", "VerdictGate", "Validator"} <= set(openodke.__all__)
+    assert "VerdictValidator" not in openodke.__all__
+    assert {"Gate", "PassThroughGate"} <= set(stages.__all__)
+    assert not {"Validator", "PassThroughValidator"} & {*stages.__all__, *pipeline.__all__}
+    assert validators.__all__ == []
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        for module in ("openodke", "openodke.stages", "openodke.pipeline", "openodke.validators"):
+            exec(f"from {module} import *", {})
 
 
 def test_an_old_import_warns_at_the_line_that_wrote_it() -> None:

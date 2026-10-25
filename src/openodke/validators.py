@@ -20,4 +20,5 @@ __getattr__ = module_getattr(
     __name__, {"VerdictValidator": Renamed(VerdictGate, "openodke.gate.VerdictGate")}
 )
 
-__all__ = ["VerdictValidator"]
+# Nothing new is here: the old name is served, warning, until 2.0.0 (release audit call C).
+__all__: list[str] = []

@@ -971,11 +971,11 @@ def test_a_fact_with_nothing_left_to_write_leaves_no_empty_relationship() -> Non
 
 def test_another_writers_review_mark_survives_as_it_would_one_job_after_the_other() -> None:
     """Review of #51: the re-merge kept only this job's gate stamps, and dropped C's mark."""
-    from openodke.types import ValidationVerdict
+    from openodke.types import GateVerdict
 
     class Marks(PassThroughGate):
-        def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
-            return ValidationVerdict(action="accept", reason="judge refused", review="below bar")
+        def validate(self, fact: Fact, ontology: Ontology) -> GateVerdict:
+            return GateVerdict(action="accept", reason="judge refused", review="below bar")
 
     def marked(store: Versioned, doc: str) -> None:
         sink = Neo4jSink(driver=store, ontology=WORKS)

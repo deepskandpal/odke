@@ -16,13 +16,13 @@ from openodke import (
     DoubleStageWarning,
     Entity,
     Fact,
+    GateVerdict,
     GroundingVerdict,
     KnowledgeGraph,
     Ontology,
     Pipeline,
     PlatformProfile,
     RouteVerdict,
-    ValidationVerdict,
 )
 from openodke.sinks import JsonlSink
 from openodke.stages import DDL, EntityIndex, EntityLink, PassThroughGate
@@ -67,10 +67,10 @@ class _StampingGrounder:
 class _RefusingGate:
     """The gate: what the grounder contradicted does not reach the sink."""
 
-    def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
+    def validate(self, fact: Fact, ontology: Ontology) -> GateVerdict:
         if fact.verdict is GroundingVerdict.CONTRADICTED:
-            return ValidationVerdict(action="refuse", reason="contradicted by its own span")
-        return ValidationVerdict(action="accept")
+            return GateVerdict(action="refuse", reason="contradicted by its own span")
+        return GateVerdict(action="accept")
 
 
 class _LineChunker:

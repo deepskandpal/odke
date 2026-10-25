@@ -66,6 +66,13 @@ one. `odke run` prints a deprecated config key's warning itself.
 | `Built.pipeline(validator=...)`, `StagesConfig.validator` | `gate` |
 | `validator:` under `stages` in a run config | `gate:` |
 | `openodke.sinks.neo4j.cardinality_scope(predicate)` | `predicate.scope_keys` |
+| `openodke.ValidationVerdict`, `openodke.types.ValidationVerdict` | `openodke.GateVerdict` |
+| `openodke.eval.ValidationLabel`, `openodke.eval.formats.ValidationLabel` | `openodke.eval.GateLabel` |
+| `openodke.eval.evaluate_validation`, `openodke.eval.validation.evaluate_validation` | `openodke.eval.evaluate_gate` |
+| `odke eval validate` | `odke eval gate`; its labels, report and items keep the stage's name, `validate` |
+| `openodke.ground.llm.SYSTEM_PROMPT` | `openodke.prompts.get("ground.span").text` |
+
+None of these is in an `__all__`, so `from openodke import *` never warns.
 
 `openodke.Validator` named the gate in 0.2 and is the Validator, the whole
 layer, from 1.0 ([DECISIONS #26](decisions.md#26)).

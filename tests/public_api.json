@@ -410,6 +410,7 @@
       "Fact",
       "FactLookup",
       "Gate",
+      "GateVerdict",
       "Grounder",
       "GroundingVerdict",
       "HybridExtractor",
@@ -448,11 +449,9 @@
       "Support",
       "Validated",
       "ValidationReport",
-      "ValidationVerdict",
       "Validator",
       "ValueNormalizer",
       "VerdictGate",
-      "VerdictValidator",
       "__version__"
     ],
     "openodke.calibration": [
@@ -721,6 +720,7 @@
       "FactJudge",
       "FactPair",
       "FactPairLabel",
+      "GateLabel",
       "GoldFact",
       "GroundingLabel",
       "ItemRow",
@@ -737,7 +737,6 @@
       "RoutePrediction",
       "StageCost",
       "StageReport",
-      "ValidationLabel",
       "ValidationPrediction",
       "adjudicate",
       "as_triples",
@@ -753,12 +752,12 @@
       "dump_jsonl",
       "evaluate_calibration",
       "evaluate_extraction",
+      "evaluate_gate",
       "evaluate_grounding",
       "evaluate_pipeline",
       "evaluate_resolution",
       "evaluate_routing",
       "evaluate_spans",
-      "evaluate_validation",
       "grounding_ablation",
       "item_rows",
       "jsonl_counts",
@@ -1023,6 +1022,7 @@
       "Decision",
       "FactPair",
       "FactPairLabel",
+      "GateLabel",
       "GoldFact",
       "GroundingLabel",
       "LABEL_FORMATS",
@@ -1033,7 +1033,6 @@
       "RefusalLabel",
       "RouteLabel",
       "RoutePrediction",
-      "ValidationLabel",
       "ValidationPrediction",
       "cite",
       "describe",
@@ -1208,7 +1207,7 @@
     ],
     "openodke.eval.validation": [
       "ACTIONS",
-      "evaluate_validation",
+      "evaluate_gate",
       "run_validate"
     ],
     "openodke.extract": [
@@ -1447,6 +1446,7 @@
       "GroundSummary",
       "GroundedGraph",
       "SUMMARY_FILE",
+      "SUMMARY_VERSION",
       "TOO_NARROW",
       "UNSUPPORTED",
       "ground_graph",
@@ -1682,6 +1682,7 @@
       "REDACTED",
       "Recorder",
       "RunManifest",
+      "SCHEMA_PATH",
       "SINK_KEYS",
       "STORE_KEYS",
       "Served",
@@ -1770,8 +1771,7 @@
       "Retriever",
       "Router",
       "Scorer",
-      "Sink",
-      "Validator"
+      "Sink"
     ],
     "openodke.prompts": [
       "LOCK",
@@ -1862,6 +1862,7 @@
     ],
     "openodke.run.execute": [
       "RunResult",
+      "STATS_VERSION",
       "collect_stats",
       "execute",
       "finish",
@@ -1975,7 +1976,6 @@
       "PassThroughResolver",
       "PassThroughRouter",
       "PassThroughScorer",
-      "PassThroughValidator",
       "PlatformProfile",
       "Resolver",
       "Retractable",
@@ -1984,8 +1984,7 @@
       "Scorer",
       "Sink",
       "Source",
-      "StoreLookup",
-      "Validator"
+      "StoreLookup"
     ],
     "openodke.stream": [
       "COUNTED",
@@ -2012,6 +2011,7 @@
       "EntityLink",
       "Evidence",
       "Fact",
+      "GateVerdict",
       "GroundingVerdict",
       "KnowledgeGraph",
       "LinkKind",
@@ -2021,8 +2021,7 @@
       "SourceTier",
       "Span",
       "SpanOrigin",
-      "Support",
-      "ValidationVerdict"
+      "Support"
     ],
     "openodke.validator": [
       "REPORT_SCHEMA_PATH",
@@ -2033,9 +2032,7 @@
       "stores_of",
       "validated_counts"
     ],
-    "openodke.validators": [
-      "VerdictValidator"
-    ]
+    "openodke.validators": []
   },
   "signatures": {
     "openodke.calibration.card.Band": "(*, name, low, high, n, kappa, fail_recall, false_refusals)",
@@ -2340,6 +2337,7 @@
     "openodke.eval.formats.CalibrationLabel": "(*, fact, true)",
     "openodke.eval.formats.FactPair": "(*, id, relation, description=, first, second, passage)",
     "openodke.eval.formats.FactPairLabel": "(*, id, relation, description=, first, second, passage, same)",
+    "openodke.eval.formats.GateLabel": "(*, fact, action)",
     "openodke.eval.formats.GoldFact": "(*, doc_id, fact)",
     "openodke.eval.formats.GroundingLabel": "(*, text, fact, verdict, doc_id=)",
     "openodke.eval.formats.GroundingLabel.as_document": "()",
@@ -2350,7 +2348,6 @@
     "openodke.eval.formats.RouteLabel": "(*, id, text, action, label=)",
     "openodke.eval.formats.RouteLabel.as_chunk": "()",
     "openodke.eval.formats.RoutePrediction": "(*, id, action, label=)",
-    "openodke.eval.formats.ValidationLabel": "(*, fact, action)",
     "openodke.eval.formats.ValidationPrediction": "(*, id, action, reason=)",
     "openodke.eval.formats.cite": "(fact, doc_id)",
     "openodke.eval.formats.describe": "(stage)",
@@ -2456,7 +2453,7 @@
     "openodke.eval.track.record_run": "(path, run, fixes, *, report=, config=)",
     "openodke.eval.track.run_id": "(rows)",
     "openodke.eval.track.summary": "(lines, path)",
-    "openodke.eval.validation.evaluate_validation": "(labels, predictions)",
+    "openodke.eval.validation.evaluate_gate": "(labels, predictions)",
     "openodke.eval.validation.run_validate": "(validator, labels, ontology)",
     "openodke.extract._common.entity_key": "(type_name, name)",
     "openodke.extract._common.fold": "(label)",
@@ -2578,7 +2575,7 @@
     "openodke.interop.graphrag.from_graphrag": "(graph, *, document=, config=, name_property=)",
     "openodke.interop.graphrag.read_graphrag": "(driver, *, database=, config=, name_property=, entity_label=)",
     "openodke.interop.ground.FailureShape": "(*, count=, ids=, examples=)",
-    "openodke.interop.ground.GroundSummary": "(*, dry_run, rows, facts, unmatched_rows=, verdicts=, refused=, no_span=, located=, calls=, cached=, tokens=, cost_usd=, prompts=, unsupported=, too_narrow=, spans, stopped=, failed=)",
+    "openodke.interop.ground.GroundSummary": "(*, schema_version=, dry_run, rows, facts, unmatched_rows=, verdicts=, refused=, no_span=, located=, calls=, cached=, tokens=, cost_usd=, prompts=, unsupported=, too_narrow=, spans, stopped=, failed=)",
     "openodke.interop.ground.GroundSummary.render": "()",
     "openodke.interop.ground.GroundedGraph": "(facts, summary)",
     "openodke.interop.ground.GroundedGraph.write": "(directory)",
@@ -3072,6 +3069,7 @@
     "openodke.types.EntityLink": "(*, source_key, target_key, kind, score=, evidence=, reason=, created_at=)",
     "openodke.types.Evidence": "(*, doc_id, span=, mention=, span_origin=, uri=, tier=, retrieved_at=)",
     "openodke.types.Fact": "(*, id=, subject, predicate, object_entity=, object_value=, polarity=, qualifiers=, identity_keys=, valid_from=, valid_to=, evidence=, extractor=, confidence=, verdict=, support=, supported_by=, retired_at=)",
+    "openodke.types.GateVerdict": "(*, action, reason=, review=)",
     "openodke.types.KnowledgeGraph": "(*, entities=, facts=, links=, ontology_name=, created_at=, stats=)",
     "openodke.types.Resolution": "(*, method, score=, linker=)",
     "openodke.types.RouteVerdict": "(*, action, label=, scope=, reason=)",
@@ -3079,7 +3077,6 @@
     "openodke.types.Span.is_faithful": "(doc)",
     "openodke.types.Span.resolve": "(doc)",
     "openodke.types.Support": "(*, source, doc_ids=, tier=, retrieved_at=)",
-    "openodke.types.ValidationVerdict": "(*, action, reason=, review=)",
     "openodke.validator.Validated": "(graph, report)",
     "openodke.validator.ValidationReport": "(*, schema_version=, dry_run=, documents=, facts_in=, unmatched=, verdicts=, checked=, refused=, refused_by=, merged=, restated=, retracted=, linked=, links=, store=, judge=, batch=, derived=, facts_out=, edges=, properties=, entities=, calls=, cached=, tokens=, cost_usd=, prompts=, coverage=, stopped=, failed=, batches=, tenant=, writes=, marked=, calibration=, manifest=)",
     "openodke.validator.ValidationReport.render": "(*, writes=)",

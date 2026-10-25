@@ -14,6 +14,7 @@ from openodke import (
     Entity,
     Evidence,
     Fact,
+    GateVerdict,
     Grounder,
     GroundingVerdict,
     KnowledgeGraph,
@@ -21,7 +22,6 @@ from openodke import (
     Pipeline,
     Polarity,
     Span,
-    ValidationVerdict,
 )
 from openodke.ground import (
     LLMGrounder,
@@ -469,10 +469,10 @@ class _AdaExtractor:
 
 
 class _GateOnVerdict:
-    def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
+    def validate(self, fact: Fact, ontology: Ontology) -> GateVerdict:
         if fact.verdict is GroundingVerdict.CONTRADICTED:
-            return ValidationVerdict(action="refuse", reason="contradicted by its own span")
-        return ValidationVerdict(action="accept")
+            return GateVerdict(action="refuse", reason="contradicted by its own span")
+        return GateVerdict(action="accept")
 
 
 class _Collect:
