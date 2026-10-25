@@ -12,6 +12,7 @@ answer on good rows and bad ones.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,8 @@ from openodke import Ontology, Validator
 from openodke.interop.triples import SCHEMA_PATH, SCHEMA_VERSION, TripleRow, read_triples
 from openodke.llm.testing import RecordedClient
 from openodke.loaders import DirectoryLoader
+from openodke.manifest import FORMAT, FactsIn, Inputs, ModelUse, RunManifest, read_manifest
+from openodke.manifest import SCHEMA_PATH as MANIFEST_SCHEMA
 from openodke.sinks import JsonlSink
 from openodke.validator import REPORT_SCHEMA_PATH, REPORT_VERSION, ValidationReport
 
@@ -163,3 +166,48 @@ def test_a_job_s_report_fits_the_schema_in_the_report_and_in_the_graph(tmp_path:
     check.validate(dry.model_dump(mode="json"))
     data["refused"], data["surprise"] = -1, 0
     assert not check.is_valid(data)
+
+
+# --------------------------------------------------------------------------- #
+# The run manifest
+# --------------------------------------------------------------------------- #
+
+
+def test_the_manifest_schema_ships_beside_the_reader_and_names_its_version() -> None:
+    """Call C, question 6: the manifest's format ships its schema, as the others do."""
+    assert MANIFEST_SCHEMA.parent.name == "openodke" and MANIFEST_SCHEMA.is_file()
+    assert _schema(MANIFEST_SCHEMA)["properties"]["manifest_version"] == {"const": FORMAT}
+
+
+def test_the_manifest_schema_names_every_field_of_the_manifest_and_its_parts() -> None:
+    schema = _schema(MANIFEST_SCHEMA)
+    parts = {"model_use": ModelUse, "facts_in": FactsIn, "inputs": Inputs}
+    for properties, required, model in [
+        (schema["properties"], schema["required"], RunManifest),
+        *(
+            (schema["$defs"][k]["properties"], schema["$defs"][k]["required"], m)
+            for k, m in parts.items()
+        ),
+    ]:
+        fields = model.model_fields
+        assert set(properties) == set(fields), model.__name__
+        must = {name for name, f in fields.items() if f.is_required()}
+        # A manifest names its version: the reader refuses one that does not.
+        assert set(required) == must | ({"manifest_version"} if model is RunManifest else set())
+    # The reader keeps what it knows (DECISIONS #52): a sink's keys share the file.
+    assert "additionalProperties" not in schema
+
+
+def test_a_runs_manifest_fits_the_schema_with_the_sinks_keys_beside_it(tmp_path: Path) -> None:
+    from openodke.run import execute, load_config
+
+    check = _validator(MANIFEST_SCHEMA)
+    project = tmp_path / "triples"
+    shutil.copytree(TRIPLES, project, ignore=shutil.ignore_patterns("out"))
+    result = execute(load_config(project / "odke.yaml"))
+    written = json.loads((project / "out" / "manifest.json").read_text(encoding="utf-8"))
+    assert result.manifest is not None and "entities" in written  # the sink's own keys
+    check.validate(written)
+    assert read_manifest(project / "out") == result.manifest
+    written["command"] = "replay"
+    assert not check.is_valid(written)
