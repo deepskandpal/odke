@@ -38,10 +38,10 @@ from openodke.types import (
     EntityLink,
     Fact,
     Frozen,
+    GateVerdict,
     KnowledgeGraph,
     Resolution,
     RouteVerdict,
-    ValidationVerdict,
 )
 
 # What a loader reads: a path, a URL, bytes, a row iterator. The loader decides.
@@ -232,7 +232,7 @@ class Gate(Protocol):
     0.2 name, `validate`, so a gate written against 0.2 still satisfies this.
     """
 
-    def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict: ...
+    def validate(self, fact: Fact, ontology: Ontology) -> GateVerdict: ...
 
 
 class PlatformProfile(Frozen):
@@ -362,8 +362,8 @@ class PassThroughScorer:
 class PassThroughGate:
     """Accepts everything. The store's own constraints are still the second half."""
 
-    def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
-        return ValidationVerdict(action="accept")
+    def validate(self, fact: Fact, ontology: Ontology) -> GateVerdict:
+        return GateVerdict(action="accept")
 
 
 class PassThroughConstrainer:
@@ -440,8 +440,8 @@ class Delegated:
     def score(self, fact: Fact) -> Fact:
         return fact
 
-    def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
-        return ValidationVerdict(action="accept", reason=self._reason)
+    def validate(self, fact: Fact, ontology: Ontology) -> GateVerdict:
+        return GateVerdict(action="accept", reason=self._reason)
 
     def write(self, kg: KnowledgeGraph) -> None:
         return None
@@ -506,7 +506,6 @@ __all__ = [
     "PassThroughResolver",
     "PassThroughRouter",
     "PassThroughScorer",
-    "PassThroughValidator",
     "PlatformProfile",
     "Resolver",
     "Retractable",
@@ -516,5 +515,4 @@ __all__ = [
     "Sink",
     "Source",
     "StoreLookup",
-    "Validator",
 ]

@@ -14,10 +14,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from openodke._renamed import Renamed, module_getattr
 
 
 def _utcnow() -> datetime:
@@ -214,7 +216,7 @@ class GroundingVerdict(StrEnum):
     NOT_FOUND = "not_found"
 
 
-class ValidationVerdict(Frozen):
+class GateVerdict(Frozen):
     """What the gate concluded, checking a fact against the ontology.
 
     `accept` is written. `refuse` is not, and `reason` says why. `conflict` is
@@ -432,6 +434,15 @@ class KnowledgeGraph(Frozen):
 
 # `Frozen` is the base every model here shares, and stays out: it is not a
 # promise (DECISIONS #48).
+if TYPE_CHECKING:
+    # What a type checker sees; at run time the 0.2 name comes from `__getattr__`.
+    ValidationVerdict = GateVerdict
+
+# The gate's verdict, under its 0.2 name, until 2.0.0 (release audit call C).
+__getattr__ = module_getattr(
+    __name__, {"ValidationVerdict": Renamed(GateVerdict, "openodke.types.GateVerdict")}
+)
+
 __all__ = [
     "Chunk",
     "Document",
@@ -449,5 +460,5 @@ __all__ = [
     "Span",
     "SpanOrigin",
     "Support",
-    "ValidationVerdict",
+    "GateVerdict",
 ]

@@ -59,6 +59,7 @@ from openodke.types import (
     EntityLink,
     Evidence,
     Fact,
+    GateVerdict,
     GroundingVerdict,
     KnowledgeGraph,
     LinkKind,
@@ -69,7 +70,6 @@ from openodke.types import (
     Span,
     SpanOrigin,
     Support,
-    ValidationVerdict,
 )
 from openodke.validator import Validated, ValidationReport, Validator
 
@@ -80,12 +80,18 @@ __version__ = importlib.metadata.version("openodke")
 if TYPE_CHECKING:
     # What a type checker sees; at run time the 0.2 name comes from `__getattr__`.
     VerdictValidator = VerdictGate
+    ValidationVerdict = GateVerdict
 
 # The gate's 0.2 name (DECISIONS #26). `openodke.Validator` named the gate too,
 # until 1.0.0 gave the name to the whole layer (#129); `stages.Validator` still
 # names the gate, with a warning.
 __getattr__ = module_getattr(
-    __name__, {"VerdictValidator": Renamed(VerdictGate, "openodke.VerdictGate")}
+    __name__,
+    {
+        "VerdictValidator": Renamed(VerdictGate, "openodke.VerdictGate"),
+        # The gate's verdict, under its 0.2 name, until 2.0.0 (release audit call C).
+        "ValidationVerdict": Renamed(GateVerdict, "openodke.GateVerdict"),
+    },
 )
 
 __all__ = [
@@ -143,11 +149,10 @@ __all__ = [
     "StoreLookup",
     "Support",
     "ValidationReport",
-    "ValidationVerdict",
+    "GateVerdict",
     "Validated",
     "Validator",
     "ValueNormalizer",
     "VerdictGate",
-    "VerdictValidator",
     "__version__",
 ]

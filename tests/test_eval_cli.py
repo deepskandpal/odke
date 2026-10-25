@@ -60,11 +60,26 @@ def support(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("stage", ["route", "extract", "ground", "resolve", "score", "validate"])
+@pytest.mark.parametrize("stage", ["route", "extract", "ground", "resolve", "score", "gate"])
 def test_every_stage_scores_its_fixture_from_the_shell(stage: str) -> None:
-    result = runner.invoke(app, _files(stage))
+    files = _files("validate" if stage == "gate" else stage)
+    files[1] = stage
+    result = runner.invoke(app, files)
     assert result.exit_code == 0, result.output
-    assert result.output.startswith(f"{stage}  (n=")
+    # The gate's report keeps its stage's name, a format's value (DECISIONS #48).
+    assert result.output.startswith(f"{'validate' if stage == 'gate' else stage}  (n=")
+
+
+def test_the_gate_s_old_stage_name_warns_and_scores_the_same() -> None:
+    """`odke eval validate` is the 0.2 spelling of `odke eval gate` (release audit call C)."""
+    new, old = (
+        runner.invoke(app, _files("validate")[:1] + ["gate"] + _files("validate")[2:]),
+        (runner.invoke(app, _files("validate"))),
+    )
+    assert new.exit_code == old.exit_code == 0, old.output
+    warning = "warning: odke eval validate is deprecated: use odke eval gate. The old name is "
+    assert old.output.startswith(warning) and warning not in new.output
+    assert old.output.endswith(new.output)
 
 
 def test_the_route_report_leads_with_what_matters() -> None:

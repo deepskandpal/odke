@@ -24,19 +24,19 @@ from openodke import (
     EntityLink,
     Fact,
     Gate,
+    GateVerdict,
     KnowledgeGraph,
     LinkKind,
     Ontology,
     Predicate,
-    ValidationVerdict,
 )
-from openodke.eval import ValidationLabel, ValidationPrediction, load_jsonl
+from openodke.eval import GateLabel, ValidationPrediction, load_jsonl
 from openodke.eval.sinks import assert_idempotent, check_idempotency, jsonl_counts
-from openodke.eval.validation import evaluate_validation, run_validate
+from openodke.eval.validation import evaluate_gate, run_validate
 from openodke.sinks import JsonlSink
 
 FIXTURES = Path(__file__).parent / "fixtures" / "eval"
-LABELS = load_jsonl(FIXTURES / "validate.labels.jsonl", ValidationLabel)
+LABELS = load_jsonl(FIXTURES / "validate.labels.jsonl", GateLabel)
 PREDICTIONS = load_jsonl(FIXTURES / "validate.predictions.jsonl", ValidationPrediction)
 
 
@@ -46,14 +46,14 @@ PREDICTIONS = load_jsonl(FIXTURES / "validate.predictions.jsonl", ValidationPred
 
 
 def test_agreement_and_kappa_by_hand() -> None:
-    report = evaluate_validation(LABELS, PREDICTIONS)
+    report = evaluate_gate(LABELS, PREDICTIONS)
     assert report.stage == "validate" and report.n == 6
     assert report.metrics["agreement"] == pytest.approx(4 / 6)
     assert report.metrics["kappa"] == pytest.approx(5 / 11)
 
 
 def test_per_action_and_the_costly_disagreements() -> None:
-    report = evaluate_validation(LABELS, PREDICTIONS)
+    report = evaluate_gate(LABELS, PREDICTIONS)
     b = report.breakdown
     # accept: tp v1 v3, fp v5, fn v2. refuse: tp v4, fp v2, fn v5. conflict: tp v6.
     assert b["accept"]["precision"] == pytest.approx(2 / 3)
@@ -69,7 +69,7 @@ def test_per_action_and_the_costly_disagreements() -> None:
 
 
 def test_unjoined_rows_are_dropped_and_said_so() -> None:
-    report = evaluate_validation(
+    report = evaluate_gate(
         LABELS, [*PREDICTIONS[:5], ValidationPrediction(id="x", action="accept")]
     )
     assert report.n == 5
@@ -80,13 +80,13 @@ def test_unjoined_rows_are_dropped_and_said_so() -> None:
 class _DomainGate:
     """Refuses an unknown predicate or a subject outside its domain. Blind to conflicts."""
 
-    def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
+    def validate(self, fact: Fact, ontology: Ontology) -> GateVerdict:
         predicate = ontology.predicates.get(fact.predicate)
         if predicate is None:
-            return ValidationVerdict(action="refuse", reason=f"no predicate {fact.predicate}")
+            return GateVerdict(action="refuse", reason=f"no predicate {fact.predicate}")
         if predicate.domain and fact.subject.type not in predicate.domain:
-            return ValidationVerdict(action="refuse", reason="outside domain")
-        return ValidationVerdict(action="accept")
+            return GateVerdict(action="refuse", reason="outside domain")
+        return GateVerdict(action="accept")
 
 
 ONTOLOGY = Ontology(
@@ -100,7 +100,7 @@ ONTOLOGY = Ontology(
 def test_run_validate_scores_a_gate_in_process() -> None:
     gate = _DomainGate()
     assert isinstance(gate, Gate)
-    report = evaluate_validation(LABELS, run_validate(gate, LABELS, ONTOLOGY))
+    report = evaluate_gate(LABELS, run_validate(gate, LABELS, ONTOLOGY))
     # Right on v1-v5; v6 is a conflict it cannot see and accepts.
     assert report.metrics["agreement"] == pytest.approx(5 / 6)
     assert report.metrics["conflicts_missed"] == 1
@@ -111,7 +111,7 @@ def test_a_delegated_gate_is_scored_the_same_way() -> None:
     """A platform that prunes accepts everything here; the evaluator says what that costs."""
     predictions = run_validate(Delegated(to="shacl-store"), LABELS, ONTOLOGY)
     assert predictions[0].reason == "delegated to shacl-store"
-    report = evaluate_validation(LABELS, predictions)
+    report = evaluate_gate(LABELS, predictions)
     assert report.metrics["agreement"] == pytest.approx(3 / 6)
     # Accept-everything agrees with the majority class and nothing more.
     assert report.metrics["kappa"] == 0.0

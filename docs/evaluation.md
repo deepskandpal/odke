@@ -251,7 +251,7 @@ print(best.id, round(best.recall.expected, 3), best.recall.basis)
 | ground | `GroundingLabel(text, fact, verdict, doc_id)` | `Fact` (optional) | `evaluate_grounding`, `grounding_ablation`, `run_ground` | accuracy, `false_support`, `lost_support` |
 | resolve | `PairLabel(a, b, same)` | `LinkRow(a, b, kind)` or `EntityLink` | `evaluate_resolution`, `links_from_clusters` | pairwise P/R/F1, B-cubed |
 | score | `CalibrationLabel(fact, true)` | `Fact` (optional) | `evaluate_calibration`, `run_score` | Brier, reliability curve, ECE |
-| validate | `ValidationLabel(fact, action)` | `ValidationPrediction(id, action, reason)` | `evaluate_validation`, `run_validate` | agreement, kappa |
+| gate | `GateLabel(fact, action)` | `ValidationPrediction(id, action, reason)` | `evaluate_gate`, `run_validate` | agreement, kappa |
 | spans | none | a run's `facts.jsonl` | `evaluate_spans` | span width per verdict |
 | sink | none | none | `check_idempotency`, `assert_idempotent`, `jsonl_counts` | counts unchanged across writes |
 | cost | none | none | `CostMeter`, `CostReport`, `compare_costs` | calls, tokens, USD, latency |
@@ -744,7 +744,7 @@ odke eval resolve --labels pairs.jsonl --predictions links.jsonl --json
 odke eval route --labels route.jsonl --run mypackage.routers:MarketingRouter
 odke eval extract --labels gold.jsonl --run mypackage.extract:MyExtractor \
     --documents documents.jsonl --ontology schema.json
-odke eval validate --labels verdicts.jsonl --run mypackage.gate:MyGate --ontology schema.json
+odke eval gate --labels verdicts.jsonl --run mypackage.gate:MyGate --ontology schema.json
 odke eval ablation --config examples/e2e/odke.yaml --labels examples/e2e/gold.jsonl
 odke eval spans --facts out/                        # no labels: width by verdict
 odke eval extract --labels gold.jsonl --predictions facts.jsonl --items b.items.jsonl

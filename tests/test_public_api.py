@@ -77,6 +77,13 @@ OLD_NAMES = [
     ("openodke.stages", "PassThroughValidator", "openodke.stages.PassThroughGate"),
     ("openodke.pipeline", "Validator", "openodke.stages.Gate"),
     ("openodke.pipeline", "PassThroughValidator", "openodke.stages.PassThroughGate"),
+    # The eval APIs named for the gate (release audit call C).
+    ("openodke", "ValidationVerdict", "openodke.GateVerdict"),
+    ("openodke.types", "ValidationVerdict", "openodke.types.GateVerdict"),
+    ("openodke.eval", "ValidationLabel", "openodke.eval.GateLabel"),
+    ("openodke.eval", "evaluate_validation", "openodke.eval.evaluate_gate"),
+    ("openodke.eval.formats", "ValidationLabel", "openodke.eval.formats.GateLabel"),
+    ("openodke.eval.validation", "evaluate_validation", "openodke.eval.validation.evaluate_gate"),
 ]
 
 

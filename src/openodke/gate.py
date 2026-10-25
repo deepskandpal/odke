@@ -26,7 +26,7 @@ from typing import Any, Literal
 
 from openodke.ground.checks import schema_problem
 from openodke.ontology import Ontology
-from openodke.types import Fact, GroundingVerdict, ValidationVerdict
+from openodke.types import Fact, GateVerdict, GroundingVerdict
 
 OnRefusal = Literal["drop", "mark"]
 
@@ -119,12 +119,12 @@ class VerdictGate:
             return frozenset({GroundingVerdict.CONTRADICTED, GroundingVerdict.NOT_FOUND})
         return frozenset({GroundingVerdict.CONTRADICTED})
 
-    def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
+    def validate(self, fact: Fact, ontology: Ontology) -> GateVerdict:
         problem = schema_problem(fact, ontology) if self.schema else None
         if problem is not None:
             check, reason = problem
             self._refused[check] = self._refused.get(check, 0) + 1
-            return ValidationVerdict(action="refuse", reason=f"schema: {reason}")
+            return GateVerdict(action="refuse", reason=f"schema: {reason}")
         if fact.verdict in self._refusable():
             key = fact.verdict.value
             action, why = self.policy
@@ -132,13 +132,11 @@ class VerdictGate:
                 self._marked[key] = self._marked.get(key, 0) + 1
                 self._accepted += 1
                 review = f"{self._judge}: {why}" if self._judge and self.on_refusal is None else why
-                return ValidationVerdict(
-                    action="accept", reason=_REASONS[fact.verdict], review=review
-                )
+                return GateVerdict(action="accept", reason=_REASONS[fact.verdict], review=review)
             self._refused[key] = self._refused.get(key, 0) + 1
-            return ValidationVerdict(action="refuse", reason=_REASONS[fact.verdict])
+            return GateVerdict(action="refuse", reason=_REASONS[fact.verdict])
         self._accepted += 1
-        return ValidationVerdict(action="accept")
+        return GateVerdict(action="accept")
 
     def _refusable(self) -> frozenset[GroundingVerdict]:
         """The verdicts a refusal on the grounder's word applies to, dropped or marked."""
@@ -172,8 +170,8 @@ class Kept:
         self.gate = gate
         self.refused: list[tuple[Fact, str]] = []
 
-    def validate(self, fact: Fact, ontology: Ontology) -> ValidationVerdict:
-        verdict: ValidationVerdict = self.gate.validate(fact, ontology)
+    def validate(self, fact: Fact, ontology: Ontology) -> GateVerdict:
+        verdict: GateVerdict = self.gate.validate(fact, ontology)
         if verdict.action == "refuse":
             self.refused.append((fact, verdict.reason or ""))
         return verdict

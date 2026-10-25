@@ -71,7 +71,7 @@ The grounder stamps a `GroundingVerdict` on each fact and never drops one
 | `contradicted` | The text says otherwise |
 | `not_found` | The text does not settle it, or the cited span does not resolve |
 
-The gate decides what is written. Its `ValidationVerdict` is `accept` or
+The gate decides what is written. Its `GateVerdict` is `accept` or
 `conflict`, both written, or `refuse`, dropped and counted. `VerdictGate`
 refuses `contradicted`, and `not_found` too with `refuse_not_found=True`
 ([Grounding](grounding.md)).
@@ -257,7 +257,7 @@ its input unchanged unless the table says otherwise.
 | 7 | `Resolver.resolve(facts, index) -> (facts, links)` | `PassThroughResolver`: keys as given |
 | 8 | `Corroborator.corroborate(facts) -> Iterable[Fact]` | `PassThroughCorroborator`: `support` 1 |
 | 9 | `Scorer.score(fact) -> Fact` | `PassThroughScorer` |
-| 10 | `Gate.validate(fact, ontology) -> ValidationVerdict` | `PassThroughGate`: `accept` |
+| 10 | `Gate.validate(fact, ontology) -> GateVerdict` | `PassThroughGate`: `accept` |
 | 11 | `Sink.write(kg) -> None` | None: `sinks=()` writes nowhere |
 | 12 | `Constrainer.constrain(ontology) -> DDL` | `PassThroughConstrainer`: no statements |
 | 13 | `Inferrer.infer(corpus) -> Ontology` | `PassThroughInferrer`: an empty `Ontology()` |

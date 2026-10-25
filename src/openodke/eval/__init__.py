@@ -63,6 +63,9 @@ a run's refusals as sheets for a person, read back as the refusal precision
 with its Wilson interval (`read_refusals`, `report_refusals`).
 """
 
+from typing import TYPE_CHECKING
+
+from openodke._renamed import Renamed, module_getattr
 from openodke.eval.ablation import per_document, report_ablation, run_ablation
 from openodke.eval.adjudication import adjudicate
 from openodke.eval.calibration import evaluate_calibration, run_score
@@ -84,6 +87,7 @@ from openodke.eval.formats import (
     CalibrationLabel,
     FactPair,
     FactPairLabel,
+    GateLabel,
     GoldFact,
     GroundingLabel,
     LinkRow,
@@ -92,7 +96,6 @@ from openodke.eval.formats import (
     RefusalLabel,
     RouteLabel,
     RoutePrediction,
-    ValidationLabel,
     ValidationPrediction,
     describe,
     dump_jsonl,
@@ -116,7 +119,21 @@ from openodke.eval.stats import (
     mcnemar,
     paired_bootstrap,
 )
-from openodke.eval.validation import evaluate_validation, run_validate
+from openodke.eval.validation import evaluate_gate, run_validate
+
+if TYPE_CHECKING:
+    # What a type checker sees; at run time the 0.2 names come from `__getattr__`.
+    ValidationLabel = GateLabel
+    evaluate_validation = evaluate_gate
+
+# The gate's label and evaluator, under their 0.2 names, until 2.0.0 (release audit call C).
+__getattr__ = module_getattr(
+    __name__,
+    {
+        "ValidationLabel": Renamed(GateLabel, "openodke.eval.GateLabel"),
+        "evaluate_validation": Renamed(evaluate_gate, "openodke.eval.evaluate_gate"),
+    },
+)
 
 __all__ = [
     "LABEL_FORMATS",
@@ -144,7 +161,7 @@ __all__ = [
     "RoutePrediction",
     "StageCost",
     "StageReport",
-    "ValidationLabel",
+    "GateLabel",
     "ValidationPrediction",
     "adjudicate",
     "as_triples",
@@ -165,7 +182,7 @@ __all__ = [
     "evaluate_resolution",
     "evaluate_routing",
     "evaluate_spans",
-    "evaluate_validation",
+    "evaluate_gate",
     "grounding_ablation",
     "item_rows",
     "jsonl_counts",

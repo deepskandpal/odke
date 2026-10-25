@@ -26,13 +26,13 @@ from openodke.eval.fixes import fixes
 from openodke.eval.formats import (
     LABEL_FORMATS,
     CalibrationLabel,
+    GateLabel,
     GoldFact,
     GroundingLabel,
     LinkRow,
     PairLabel,
     RouteLabel,
     RoutePrediction,
-    ValidationLabel,
     ValidationPrediction,
     load_jsonl,
 )
@@ -40,7 +40,7 @@ from openodke.eval.grounding import evaluate_grounding, run_ground
 from openodke.eval.report import StageReport
 from openodke.eval.resolution import evaluate_resolution
 from openodke.eval.routing import evaluate_routing, run_route
-from openodke.eval.validation import evaluate_validation, run_validate
+from openodke.eval.validation import evaluate_gate, run_validate
 from openodke.ontology import Ontology
 from openodke.types import Document, Fact
 
@@ -202,7 +202,7 @@ def _inputs(
             return score_rows, run_score(component, score_rows)
         return score_rows, _optional(predictions)
 
-    validate_rows = load_jsonl(labels, ValidationLabel)
+    validate_rows = load_jsonl(labels, GateLabel)
     if component is not None:
         if ontology is None:
             raise ValueError("--run with validate needs --ontology")
@@ -216,7 +216,7 @@ SCORERS: dict[str, Callable[[Any, Any], StageReport]] = {
     "ground": evaluate_grounding,
     "resolve": evaluate_resolution,
     "score": evaluate_calibration,
-    "validate": evaluate_validation,
+    "validate": evaluate_gate,
 }
 
 

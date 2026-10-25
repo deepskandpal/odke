@@ -28,10 +28,11 @@ from __future__ import annotations
 import inspect
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from pydantic import BaseModel, Field, model_validator
 
+from openodke._renamed import Renamed, module_getattr
 from openodke.types import Chunk, Document, Evidence, Fact, Frozen, GroundingVerdict, LinkKind
 
 Action = Literal["extract", "skip", "defer"]
@@ -280,7 +281,7 @@ class CalibrationLabel(Frozen):
 # --------------------------------------------------------------------------- #
 
 
-class ValidationLabel(Frozen):
+class GateLabel(Frozen):
     """One fact, and what the gate should decide about it.
 
     A row is one fact and the action a person takes against the ontology:
@@ -350,7 +351,7 @@ LABEL_FORMATS: dict[str, type[BaseModel]] = {
     "ground": GroundingLabel,
     "resolve": PairLabel,
     "score": CalibrationLabel,
-    "validate": ValidationLabel,
+    "validate": GateLabel,
 }
 PREDICTION_FORMATS: dict[str, type[BaseModel]] = {
     "route": RoutePrediction,
@@ -382,6 +383,15 @@ def describe(stage: str) -> str:
     return "\n\n".join(parts)
 
 
+if TYPE_CHECKING:
+    # What a type checker sees; at run time the 0.2 name comes from `__getattr__`.
+    ValidationLabel = GateLabel
+
+# The gate's label, under its 0.2 name, until 2.0.0 (release audit call C).
+__getattr__ = module_getattr(
+    __name__, {"ValidationLabel": Renamed(GateLabel, "openodke.eval.formats.GateLabel")}
+)
+
 __all__ = [
     "LABEL_FORMATS",
     "PREDICTION_FORMATS",
@@ -398,7 +408,7 @@ __all__ = [
     "RefusalLabel",
     "RouteLabel",
     "RoutePrediction",
-    "ValidationLabel",
+    "GateLabel",
     "ValidationPrediction",
     "cite",
     "describe",

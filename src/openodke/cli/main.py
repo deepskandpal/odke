@@ -1415,7 +1415,8 @@ def _current_user() -> str:
 def eval_stage(
     stage: str = typer.Argument(
         ...,
-        help="route, extract, ground, resolve, score, validate, ablation (with --config), "
+        help="route, extract, ground, resolve, score, gate (validate, its 0.2 name, until 2.0.0), "
+        "ablation (with --config), "
         "spans (with --facts, and no labels at all), compare (two runs' --items files), "
         "pipeline (your own, run with --cmd, --run or --predictions), precision (--facts "
         "a judge graded, corrected by --labels on a random sample; no gold), pool (two "
@@ -1444,7 +1445,7 @@ def eval_stage(
     ontology: Path | None = typer.Option(
         None,
         "--ontology",
-        help="Ontology JSON: for --run with extract or validate, and extract's conformance.",
+        help="Ontology JSON: for --run with extract or gate, and extract's conformance.",
     ),
     documents: Path | None = typer.Option(
         None,
@@ -1473,7 +1474,7 @@ def eval_stage(
         None,
         "--items",
         help="Also write each labelled item's outcome here, as JSONL, for `compare`: "
-        "extract, ground, validate, route, and pipeline's last row.",
+        "extract, ground, gate, route, and pipeline's last row.",
     ),
     metric: str | None = typer.Option(
         None,
@@ -1655,6 +1656,18 @@ def eval_stage(
     from openodke.eval.runner import _loaded, _named, report_inputs
     from openodke.llm.base import ProviderError
 
+    if stage == "validate":
+        # The gate's stage under its 0.2 name, until 2.0.0 (release audit call C). Python
+        # hides a library's DeprecationWarning, so it is said where a person will see it.
+        typer.echo(
+            "warning: odke eval validate is deprecated: use odke eval gate. The old name is "
+            "removed in 2.0.0 (DECISIONS #48).",
+            err=True,
+        )
+    elif stage == "gate":
+        # One stage, two spellings: its labels, report and items keep the name `validate`,
+        # a format's value (DECISIONS #48).
+        stage = "validate"
     inputs = (labels, predictions, run, ontology, documents, config, facts, items)
     compare_flags = [
         flag
