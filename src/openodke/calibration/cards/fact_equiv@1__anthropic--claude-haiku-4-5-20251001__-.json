@@ -1,0 +1,84 @@
+{
+  "card_version": "1.0",
+  "judge": "fact_equiv",
+  "prompt": "fact_equiv@1",
+  "prompts": {
+    "fact_equiv@1": "94ad0c37551aaeaefb59640bcf8b9e7e546f35ade2f7ade3017e65951eef70e7",
+    "fact_equiv.user@1": "da5dc49f2913af345d78cd1f801e2879b97b73ad8c814a9d96f4ee8020a7efcc"
+  },
+  "model": "anthropic/claude-haiku-4-5-20251001",
+  "claim_format": null,
+  "vote": "single",
+  "date": "2026-10-25",
+  "openodke": "0.2.1",
+  "labels": {
+    "name": "F",
+    "version": "sheets 01-02 (labelled 17 Oct 2026)",
+    "sha256": "4d4c2497c9d9a8351db74c5a05d4a6de00eaebdd7f8b4c2ded1382b898e0c142",
+    "split": "gate",
+    "n": 62
+  },
+  "cost_per_1000": 0.48033499999999996,
+  "grounding": null,
+  "pairs": null,
+  "equivalence": {
+    "kappa": {
+      "value": 0.7122969837587008,
+      "low": 0.5117917732680891,
+      "high": 0.8878166465621231,
+      "n": 62
+    },
+    "unsure": {
+      "k": 5,
+      "n": 62,
+      "value": 0.08064516129032258,
+      "low": 0.03493834698599273,
+      "high": 0.17528571348612612
+    },
+    "order_disagreement": {
+      "k": 5,
+      "n": 62,
+      "value": 0.08064516129032258,
+      "low": 0.03493834698599273,
+      "high": 0.17528571348612612
+    },
+    "judge_same": {
+      "k": 20,
+      "n": 62,
+      "value": 0.3225806451612903,
+      "low": 0.21954490651283895,
+      "high": 0.44631911907151905
+    },
+    "person_same": {
+      "k": 22,
+      "n": 62,
+      "value": 0.3548387096774194,
+      "low": 0.24742732851049898,
+      "high": 0.47918869242215756
+    },
+    "confusion": {
+      "same": {
+        "same": 17,
+        "different": 4,
+        "unsure": 1
+      },
+      "different": {
+        "same": 3,
+        "different": 33,
+        "unsure": 4
+      }
+    },
+    "lenient_minus_strict": null
+  },
+  "bar": {
+    "metric": "kappa_same",
+    "threshold": 0.6,
+    "value": 0.7122969837587008,
+    "met": true,
+    "note": null
+  },
+  "self_agreement": null,
+  "notes": [
+    "6 pair(s) the person left unsure were asked and are not scored"
+  ]
+}

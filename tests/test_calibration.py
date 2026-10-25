@@ -343,9 +343,10 @@ MEETS = BELOW.model_copy(update={"meets_bar": True})
 NONE = BELOW.model_copy(update={"card": None, "meets_bar": None})
 
 
-def test_the_switch_reads_act_until_the_first_cards_are_measured() -> None:
-    assert policy.DEFAULT_POLICY == "act"
-    assert resolve(NONE) == (True, "the default policy is 'act'")
+def test_the_switch_reads_each_judge_s_card() -> None:
+    assert policy.DEFAULT_POLICY == "card"
+    assert resolve(NONE) == (False, "it has no card, DECISIONS #54")
+    assert resolve(NONE, "act") == (True, "the default policy is 'act'")
 
 
 @pytest.mark.parametrize(
@@ -482,3 +483,18 @@ def test_an_eval_report_names_the_claim_format_its_grounder_ran(tmp_path: Path) 
     assert entry.claim_format == "labelled" and entry.line.startswith(
         f"ground.span@1 on {HAIKU} (labelled): {UNCALIBRATED}"
     )
+
+
+def test_every_shipped_card_names_a_registered_prompt_as_it_is() -> None:
+    """A card whose prompt text changed describes a judge nobody can run (DECISIONS #27)."""
+    from openodke.prompts import get
+
+    shipped = Path(__file__).parent.parent / "src" / "openodke" / "calibration" / "cards"
+    found = [load_card(path) for path in sorted(shipped.glob("*.json"))]
+    assert found, "the package ships its measured cards"
+    for card in found:
+        assert card.prompt in card.prompts and card.vote == "single", card.id
+        for key, digest in card.prompts.items():
+            assert get(key).sha256 == digest, f"{card.id}: {key} changed since it was measured"
+        assert card.labels.split == "gate" and card.self_agreement is None
+        assert card.model.count("/") == 1, card.model

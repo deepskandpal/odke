@@ -217,3 +217,39 @@ def test_a_run_writes_cards_items_and_the_table(tmp_path: Path) -> None:
     assert job["calls"] == 789 and job["cached"] == 0 and job["usd"] > 0
     # Asked through the cache, a recorded answer is never served as the live model's.
     assert not list((tmp_path / "cache").glob("[0-9a-f][0-9a-f]"))
+
+
+# --------------------------------------------------------------------------- #
+# The published tables are the shipped cards
+# --------------------------------------------------------------------------- #
+
+DOCS = Path(__file__).parent.parent / "docs"
+
+
+@pytest.mark.parametrize(("page", "level"), [("benchmarks.md", 2), ("calibration.md", 3)])
+def test_the_judge_calibration_tables_are_the_shipped_cards(page: str, level: int) -> None:
+    text = (DOCS / page).read_text(encoding="utf-8")
+    start = text.index(calibrate.TABLES_BEGIN)
+    end = text.index(calibrate.TABLES_END) + len(calibrate.TABLES_END)
+    found = json.loads(calibrate.AGGREGATES.read_text(encoding="utf-8"))
+    rendered = calibrate.render_tables(calibrate.shipped_cards(), found, level)
+    assert text[start:end] == rendered, (
+        f"docs/{page}'s Judge calibration section is not the shipped cards: regenerate it "
+        "with `python bench/calibrate.py --tables`"
+    )
+
+
+def test_the_aggregates_hold_no_per_item_answer() -> None:
+    found = json.loads(calibrate.AGGREGATES.read_text(encoding="utf-8"))
+    assert set(found) == {
+        "adjudication",
+        "contest",
+        "date",
+        "failed",
+        "head_to_head",
+        "models",
+        "not_run",
+        "self_preference",
+    }
+    text = calibrate.AGGREGATES.read_text(encoding="utf-8")
+    assert not any(prefix in text for prefix in ('"G-0', '"R-0', '"F-0'))  # no item ids
