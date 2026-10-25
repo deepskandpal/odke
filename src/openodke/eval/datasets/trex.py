@@ -472,7 +472,10 @@ def prepare(
         relations=len(relation),
         max_tokens=max_tokens,
     )
-    config["stages"]["resolver"] = {"use": "native", **({"judge": True} if judge else {})}
+    # The judge links on its word, as the gate refuses on the grounder's (`on_refusal:
+    # drop`): the published numbers measure what each decides, not a review queue (#54).
+    judged = {"judge": {"on_decision": "link"}} if judge else {}
+    config["stages"]["resolver"] = {"use": "native", **judged}
     write_json(target / "odke.json", config)
     return target
 
