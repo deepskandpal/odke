@@ -252,6 +252,27 @@ def test_a_written_report_reads_back_and_another_major_version_is_refused(
         read_report(path)
 
 
+def test_a_later_minors_report_is_read_for_what_this_version_knows(tmp_path: Path) -> None:
+    """Call F (DECISIONS #52): new fields of a later 1.x, at any level, are left out."""
+    report = extract_report()
+    data = json.loads(report.write(tmp_path / "report.json").read_text())
+    major, _, minor = SCHEMA_VERSION.partition(".")
+    newer = f"{major}.{int(minor) + 1}"
+    data |= {"schema_version": newer, "added_later": {"x": 1}}
+    data["rows"][0]["added_later"] = [1, 2]
+    data["rows"][0]["counts"]["added_later"] = 3
+    path = tmp_path / "newer.json"
+    path.write_text(json.dumps(data))
+    read = read_report(path)
+    assert read.schema_version == newer
+    assert read.model_copy(update={"schema_version": SCHEMA_VERSION}) == report
+    # In a report of this version, a field it does not know is refused: a typo.
+    data["schema_version"] = SCHEMA_VERSION
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="added_later"):
+        read_report(path)
+
+
 def test_a_report_that_does_not_fit_is_never_written(tmp_path: Path) -> None:
     bad = extract_report().model_copy(update={"schema_version": "one"})
     with pytest.raises(ValueError, match="does not match its schema"):

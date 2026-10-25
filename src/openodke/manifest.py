@@ -51,11 +51,12 @@ import threading
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from openodke._files import write_whole
+from openodke._formats import known
 from openodke._text import REDACTED, without_password
 from openodke.llm.base import Completion, LLMClient, Message, ModelSpec
 from openodke.types import Document, Fact, Frozen, KnowledgeGraph
@@ -300,34 +301,12 @@ def read_manifest(path: str | Path) -> RunManifest:
     if version != FORMAT:
         raise ValueError(f"{source}: manifest_version {version!r}; this openodke reads {FORMAT}")
     # The fields this version knows, at every level: the sink's beside them are left too.
-    return RunManifest.model_validate(_known(RunManifest, data))
-
-
-def _known(model: type[BaseModel], data: Any) -> Any:
-    """`data` with only the fields `model` knows, in it and in every model it holds.
-
-    A minor release may add an optional field anywhere (DECISIONS #48), and a
-    manifest written by another openodke only warns (#40). So the reader keeps
-    what it knows and leaves the rest, rather than refusing a newer manifest
-    (release audit finding 18). The recorded `config` is a plain mapping, kept
-    whole: `from_manifest` reads it as a config, and refuses an option this
-    version does not know, since it cannot run it.
-    """
-    if not isinstance(data, Mapping):
-        return data
-    fields = model.model_fields
-    return {name: _within(fields[name].annotation, data[name]) for name in fields if name in data}
-
-
-def _within(annotation: Any, value: Any) -> Any:
-    """`value` as `annotation` holds it: a model, a mapping of models, or a model or None."""
-    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-        return _known(annotation, value)
-    args = get_args(annotation)
-    if get_origin(annotation) is dict and len(args) == 2 and isinstance(value, Mapping):
-        return {key: _within(args[1], item) for key, item in value.items()}
-    models = [arg for arg in args if isinstance(arg, type) and issubclass(arg, BaseModel)]
-    return _within(models[0], value) if len(models) == 1 else value
+    # A minor release may add an optional field anywhere (DECISIONS #48), and a manifest
+    # another openodke wrote only warns (#40), so a newer manifest is read, not refused
+    # (release audit finding 18, DECISIONS #52). The recorded `config` is a plain
+    # mapping, kept whole: `from_manifest` reads it as a config, and refuses an option
+    # this version does not know, since it cannot run it.
+    return RunManifest.model_validate(known(RunManifest, data))
 
 
 # --------------------------------------------------------------------------- #

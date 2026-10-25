@@ -36,7 +36,10 @@ keys themselves are never edited or removed.
 
 Each format a reader outside Python depends on names its version, and its JSON
 Schema ships in the package. A minor version adds optional fields; a reader
-refuses another major version by name.
+refuses another major version by name. A reader reads a later minor for the
+fields it knows, at every level, and leaves the rest; in a document of its own
+version or an older one, a field it does not know is refused, since there it
+is a typo ([DECISIONS #52](decisions.md#52)).
 
 | Format | Version field | Now | Schema |
 |---|---|---|---|

@@ -40,6 +40,7 @@ from urllib.parse import unquote, urlparse
 
 from pydantic import Field, ValidationError, field_validator, model_validator
 
+from openodke._formats import known, newer_minor
 from openodke.extract._common import entity_key
 from openodke.ground.span import Counts
 from openodke.ontology import Ontology, Predicate
@@ -97,6 +98,19 @@ class TripleRow(Frozen):
     extractor: str | None = None
     # Give one to join the row's fact to labels or to another run.
     id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _a_newer_minor_keeps_what_this_one_knows(cls, data: Any) -> Any:
+        """A row of a later minor may hold fields this version does not know: they are left.
+
+        A minor adds optional fields only, so the rest of the row means what it
+        meant (DECISIONS #52). In a row of this version or an older one, a field
+        this version does not know is refused: it is a typo, or from nowhere.
+        """
+        if isinstance(data, Mapping) and newer_minor(data.get("schema_version"), SCHEMA_VERSION):
+            return known(cls, data)
+        return data
 
     @field_validator("schema_version")
     @classmethod
