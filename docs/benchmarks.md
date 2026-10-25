@@ -82,7 +82,8 @@ states its selection and scoring.
 
 ## Every extractor, with and without the layer
 
-Five extractors on the three datasets, each run three ways:
+Five extractors on Text2KGBench and Re-DocRED, and three on T-REx, each run
+three ways:
 
 | Row | What runs after the extractor |
 |---|---|
@@ -110,6 +111,13 @@ document, True or False. No other provider's models were run.
   Re-DocRED documents and on 60 Text2KGBench sentences (`ont_1` to `ont_3`), so
   its Text2KGBench rows are on other sentences. It returned no triple for 3 of
   the 50 Re-DocRED documents.
+- **A failed run is left out, and said so.** neo4j-graphrag's extraction
+  failed on one Text2KGBench sentence ("LLM response has improper format"), so
+  its rows leave that set, `ont_9_nature`, out: 180 sentences. Until the 1.0
+  release audit (finding 12) the failure was scored as an empty answer: raw
+  46.0 / 42.0 / 42.7 (P / R / F1) on 381 triples, ΔF1 −1.4, now 46.4 / 41.7 /
+  42.6 on 349, ΔF1 −1.6. Re-made from the saved runs and cached answers, no
+  other row moved.
 - **Input.** Every extractor gets the same whole documents, schema and model
   ([bench/README.md](https://github.com/deepskandpal/odke/blob/main/bench/README.md#the-comparison)).
 - **Settings.** The gate refuses what the grounder did not affirm and what the
@@ -141,8 +149,8 @@ Every fact here has one source, so + resolution and corroboration equals
 |  | + grounding, + resolution and corroboration | 324 | 324 | 45.8 [39.1, 52.0] | 40.1 [34.0, 46.3] | 41.5 [35.4, 47.7] | -0.8 [-2.5, +0.5] | -0.8 [-2.5, +0.2] |
 | LLMGraphTransformer | raw | 431 | 431 | 50.1 [43.8, 56.4] | 47.2 [41.0, 53.1] | 47.3 [41.3, 53.2] | – | – |
 |  | + grounding, + resolution and corroboration | 396 | 396 | 47.9 [41.5, 54.4] | 44.1 [38.0, 50.3] | 44.6 [38.5, 50.7] | -2.2 [-4.8, -0.2] | -2.8 [-5.2, -0.9] |
-| neo4j-graphrag | raw | 381 | 381 | 46.0 [39.5, 52.4] | 42.0 [36.0, 48.1] | 42.7 [36.7, 48.6] | – | – |
-|  | + grounding, + resolution and corroboration | 354 | 354 | 45.4 [38.9, 51.8] | 40.2 [34.1, 46.3] | 41.2 [35.1, 47.3] | -0.6 [-2.3, +0.7] | -1.4 [-3.1, -0.2] |
+| neo4j-graphrag (180 of 200 sentences) | raw | 349 | 349 | 46.4 [39.7, 53.0] | 41.7 [35.1, 48.0] | 42.6 [36.1, 49.0] | – | – |
+|  | + grounding, + resolution and corroboration | 322 | 322 | 45.7 [38.9, 52.3] | 39.6 [33.1, 45.8] | 41.0 [34.7, 47.2] | -0.7 [-2.4, +0.7] | -1.6 [-3.3, -0.2] |
 | LangExtract (60 of 200 sentences) | raw | 183 | 183 | 50.9 [39.4, 63.0] | 39.4 [30.0, 49.2] | 42.4 [32.9, 52.3] | – | – |
 |  | + grounding, + resolution and corroboration | 172 | 172 | 50.3 [38.8, 62.4] | 37.7 [28.5, 47.3] | 41.0 [31.5, 50.8] | -0.7 [-4.8, +2.5] | -1.4 [-4.3, +0.4] |
 | PatternExtractor | every row | 0 | 0 | – | 0.0 | 0.0 | – | – |
@@ -186,7 +194,7 @@ Text2KGBench triple whose relation the sentence's gold never uses.
 |---|---|---|---|---|---|---|---|---|---|
 | Text2KGBench | openodke | 99 | 126 | 7 | 1 | 3 | 3 | 1% | 2% |
 | Text2KGBench | LLMGraphTransformer | 136 | 146 | 35 | 15 | 12 | 8 | 11% | 8% |
-| Text2KGBench | neo4j-graphrag | 115 | 134 | 27 | 11 | 9 | 7 | 10% | 7% |
+| Text2KGBench | neo4j-graphrag (180 of 200 sentences) | 107 | 125 | 27 | 11 | 9 | 7 | 10% | 7% |
 | Text2KGBench | LangExtract (60 of 200 sentences) | 60 | 52 | 11 | 6 | 2 | 3 | 10% | 4% |
 | Re-DocRED | openodke | 119 | 252 | 17 | 16 | 1 | 0 | 13% | 0% |
 | Re-DocRED | LLMGraphTransformer | 342 | 439 | 85 | 67 | 18 | 0 | 20% | 4% |
@@ -201,7 +209,7 @@ Text2KGBench triple whose relation the sentence's gold never uses.
 |---|---|---|---|---|---|
 | Text2KGBench | openodke | $5.42 | $0.57 | 1,655 | 11% |
 | Text2KGBench | LLMGraphTransformer | $8.23 | $0.74 | 2,155 | 9% |
-| Text2KGBench | neo4j-graphrag | $7.46 | $0.66 | 1,905 | 9% |
+| Text2KGBench | neo4j-graphrag (180 of 200 sentences) | $7.39 | $0.67 | 1,939 | 9% |
 | Text2KGBench | LangExtract (60 of 200 sentences) | $2.84 | $1.06 | 3,050 | 37% |
 | Text2KGBench | PatternExtractor | $0.00 | $0.00 | 0 | – |
 | Re-DocRED | openodke | $26.05 | $4.23 | 7,420 | 16% |
@@ -221,7 +229,7 @@ Text2KGBench triple whose relation the sentence's gold never uses.
   ones. F1 moved by 0.3 or less, every F1 interval across zero.
 - **It costs one Haiku question per triple**: 16% to 37% of extraction's cost
   on documents, and 75% after LangExtract, whose extraction is the cheapest.
-- **On single sentences it lowers precision**: by 0.6 to 2.2 points on
+- **On single sentences it lowers precision**: by 0.7 to 2.2 points on
   Text2KGBench, and F1 by 0.8 to 2.8. Both of LLMGraphTransformer's intervals,
   and neo4j-graphrag's F1 interval, lie below zero. The gold there reads more
   into a sentence than it states: "a song written by Ian Tyson" is gold for
@@ -295,6 +303,10 @@ By the support the corroborator counted:
 | LLMGraphTransformer | 1 | 981 | 25.8 [23.2, 28.6] |
 | LLMGraphTransformer | 2 | 75 | 60.0 [48.7, 70.3] |
 | LLMGraphTransformer | 3+ | 20 | 80.0 [58.4, 91.9] |
+
+The intervals are the package's Wilson (`openodke.eval.stats.wilson`, exact
+z). Until the 1.0 release audit (S29) `bench/trex.py` carried a copy with
+z = 1.96, and openodke's 3+ row read [43.8, 100.0].
 
 - An edge two abstracts state is right about twice as often as one stated
   once, for both extractors, and the intervals do not overlap.
