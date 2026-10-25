@@ -14,7 +14,7 @@ corroborates, gates and writes any extractor's facts. The Evaluator
 your labels, and says where it loses facts and whether the Validator helps.
 
 1.0.0rc1 is its release candidate. It holds the fixes of the 1.0 release audit
-(11 Oct 2026; #225, #227, #228, #230, #231, #PR5), the first calibration
+(11 Oct 2026; #225, #227, #228, #230, #231, #233), the first calibration
 cards and the default that follows them (#226, #232, DECISIONS #54), and the
 API trimmed before the freeze (DECISIONS #48).
 
@@ -62,7 +62,7 @@ API trimmed before the freeze (DECISIONS #48).
   `UnreadableReply` (a `ProviderError`), so its document is left out and named
   in `stats["failed"]`; it was a "malformed reply" rejection and an empty
   extraction, which an ablation scored as misses. The raw text is still in
-  `malformed` (#PR5, rule R1).
+  `malformed` (#233, rule R1).
 - Private, outside semver: `openodke.cli.main`'s functions,
   `extract._common.best_type` and `run.build.Context._replays` changed shape.
 
@@ -82,10 +82,10 @@ Changed during the 1.0 cycle, never released (DECISIONS #48):
   pipeline harness's steps and the runner's helpers (`evaluate_pipeline` is
   the Evaluator's one entry point), the 12 names new in `run.build` and
   `run.execute`, `ground.llm.PAPER_PROMPT`, and all but 11 of
-  `openodke.calibration`'s. Every name in a 0.2.1 `__all__` stays (#PR5,
+  `openodke.calibration`'s. Every name in a 0.2.1 `__all__` stays (#233,
   release audit call B, DECISIONS #48).
 - `openodke.infer` is provisional, and so are `Initiator`, `Retriever` and
-  `Router` (#PR5, calls B and C).
+  `Router` (#233, calls B and C).
 - A run manifest's `config_hash` is of the config with a left-out scorer
   filled as `odke run` fills it, and a named chunker, router or inferrer
   pass-through left out, so such configs hash differently than under earlier
@@ -106,7 +106,7 @@ Changed during the 1.0 cycle, never released (DECISIONS #48):
   document failed; `--adjudicate` and `--lenient` exit 1 when every model call
   behind them failed (#231, rule R1).
 - `odke bench run` exits 1, and writes no report, when a document failed or a
-  budget stopped the run (#PR5, rule R1).
+  budget stopped the run (#233, rule R1).
 - The eval report is schema 1.4: the `linked_other` recall bucket and the
   `failed` counts (#231). The run report is 1.1 and the eval report was 1.3
   for a while: `marked`, `calibration` and `run.claim_formats` (#226).
@@ -129,14 +129,14 @@ replacement, and is removed in 2.0.0 (#171, #217, DECISIONS #48).
 | `Built.pipeline(validator=...)`, `StagesConfig.validator` | `Built.pipeline(gate=...)`, `StagesConfig.gate` |
 | `validator:` under `stages` in a run config | `gate:` |
 | `openodke.sinks.neo4j.cardinality_scope(predicate)` | `predicate.scope_keys` (#125) |
-| `openodke.ValidationVerdict`, `openodke.types.ValidationVerdict` | `openodke.GateVerdict` (#PR5) |
-| `openodke.eval.ValidationLabel`, `openodke.eval.formats.ValidationLabel` | `openodke.eval.GateLabel` (#PR5) |
-| `openodke.eval.evaluate_validation`, `openodke.eval.validation.evaluate_validation` | `openodke.eval.evaluate_gate` (#PR5) |
-| `odke eval validate` (also on stderr) | `odke eval gate`; the stage's labels, report and items keep the name `validate` (#PR5) |
-| `openodke.ground.llm.SYSTEM_PROMPT` | `openodke.prompts.get("ground.span").text` (#PR5) |
+| `openodke.ValidationVerdict`, `openodke.types.ValidationVerdict` | `openodke.GateVerdict` (#233) |
+| `openodke.eval.ValidationLabel`, `openodke.eval.formats.ValidationLabel` | `openodke.eval.GateLabel` (#233) |
+| `openodke.eval.evaluate_validation`, `openodke.eval.validation.evaluate_validation` | `openodke.eval.evaluate_gate` (#233) |
+| `odke eval validate` (also on stderr) | `odke eval gate`; the stage's labels, report and items keep the name `validate` (#233) |
+| `openodke.ground.llm.SYSTEM_PROMPT` | `openodke.prompts.get("ground.span").text` (#233) |
 
 No deprecated name is in an `__all__`, so `from openodke import *` imports none
-of them and warns about none; import one by name (#PR5, release audit call C).
+of them and warns about none; import one by name (#233, release audit call C).
 
 ### Added
 
@@ -370,19 +370,19 @@ of them and warns about none; import one by name (#PR5, release audit call C).
 - The recall bucket `linked_other` ("pair linked by another true relation")
   and the fix `every-relation` (#231, release audit 11).
 - Gate spellings of the eval APIs: `odke eval gate`, `openodke.eval.evaluate_gate`,
-  `openodke.eval.GateLabel` and `openodke.GateVerdict` (#PR5, release audit
+  `openodke.eval.GateLabel` and `openodke.GateVerdict` (#233, release audit
   call C).
 - `odke run`'s and the Validator's stats put the gate's counts under
-  `stages.gate`, and keep them under `stages.validator` until 2.0.0 (#PR5).
+  `stages.gate`, and keep them under `stages.validator` until 2.0.0 (#233).
 - `odke run`'s stats and `GroundSummary` name their format version,
   `schema_version` 1.0 (`run.execute.STATS_VERSION`,
-  `interop.ground.SUMMARY_VERSION`) (#PR5).
+  `interop.ground.SUMMARY_VERSION`) (#233).
 - The run manifest ships its JSON Schema, `openodke/manifest.schema.json`
-  (`manifest.SCHEMA_PATH`) (#PR5).
+  (`manifest.SCHEMA_PATH`) (#233).
 - The triples input and the eval report read a document of a later minor of
   their major for the fields this version knows, at every level; in a document
   of their own version or an older one, an unknown field is still refused
-  (#PR5, DECISIONS #52).
+  (#233, DECISIONS #52).
 - `tests/rules/`: six rules as tests over the whole codebase, with `AGENTS.md`
   as the map, `HUMAN.md` as the escalation list, and terminal recordings and
   an evidence bundle for every pull request (`scripts/record.py`,
@@ -390,11 +390,11 @@ of them and warns about none; import one by name (#PR5, release audit call C).
 
 ### Changed
 
-- The version is 1.0.0rc1, "Development Status :: 4 - Beta" (#PR5, release
+- The version is 1.0.0rc1, "Development Status :: 4 - Beta" (#233, release
   audit S30).
 - The source archive holds the package and its notices alone (`src`,
   `LICENSE`, `NOTICE`, `README.md`, `CHANGELOG.md`): 0.2.1's held the label
-  sets, CC BY-SA text, under an Apache-2.0 licence expression (#PR5, release
+  sets, CC BY-SA text, under an Apache-2.0 licence expression (#233, release
   audit 17).
 - Every Neo4j fact relationship carries `odke.version`, a token each write
   renews (#228, DECISIONS #51).
@@ -407,14 +407,14 @@ of them and warns about none; import one by name (#PR5, release audit call C).
   passthrough`, so `odke eval pipeline --bench --validator` runs what `odke
   bench run` runs (#231, release audit 16); their gate says
   `on_refusal: drop` (#232), and a T-REx set's pair judge
-  `on_decision: link` (#PR5), so the published numbers measure what each
+  `on_decision: link` (#233), so the published numbers measure what each
   judge decides.
 - The bench's Wilson intervals are the package's, with the exact z: one
   published figure moves, the T-REx support table's 3+ row, [43.8, 100.0] to
-  [43.9, 100.0] (#PR5, release audit S29).
+  [43.9, 100.0] (#233, release audit S29).
 - `bench/layer.py` leaves out a competitor's set whose extraction lost a
   document, and says so: neo4j-graphrag's Text2KGBench rows are on 180 of 200
-  sentences (#PR5, release audit 12).
+  sentences (#233, release audit 12).
 - The public-API pin also holds every public callable's parameter names and
   kinds and every model's fields (#230, release audit S23); CI re-makes
   `bench/trex.py`'s published T-REx tables and runs `bench/test_competitors.py`
@@ -518,10 +518,10 @@ of them and warns about none; import one by name (#PR5, release audit call C).
 - `bench/conflicts.py`: a case whose document or grounding call failed is a
   `failed` outcome, counted apart, and the run exits 1; a refused key read as
   "no conflict found". `bench/volume.py` leaves a failed document out of the
-  cost per 1,000 (#PR5, release audit 12).
+  cost per 1,000 (#233, release audit 12).
 - The docs home page and the README status match the benchmarks, the
-  calibration cards and 1.0 (#PR5, S27); `run.md`, `benchmarks.md` and
-  `evaluation.md` match the code (#PR5, S28).
+  calibration cards and 1.0 (#233, S27); `run.md`, `benchmarks.md` and
+  `evaluation.md` match the code (#233, S28).
 
 ## [0.2.1] — 2026-09-26
 
