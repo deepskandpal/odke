@@ -78,7 +78,7 @@ from functools import partial
 from pathlib import Path
 from typing import IO, Any
 
-from openodke.eval.ablation import AblationRun, ablate
+from openodke.eval.ablation import AblationRun, _scorable, ablate
 from openodke.eval.bootstrap import Range
 from openodke.eval.cost import CallRecord
 from openodke.eval.datasets import _common
@@ -877,7 +877,11 @@ def report_run(
     save_to: Path | None = None,
     path: str | Path | None = None,
 ) -> EvalReport:
-    """`score_run`, as the eval report. The graph's numbers go in its notes and in `save_to`."""
+    """`score_run`, as the eval report. The graph's numbers go in its notes and in `save_to`.
+
+    A run in which a document failed is not scored, and writes nothing (rule R1).
+    """
+    _scorable(ablation)
     labels: Mapping[str, str] = meta["relation_labels"]
     read = Gold(gold, labels.values())
     graph = corroboration(read, ablation.gated, ablation.corroborated, labels)

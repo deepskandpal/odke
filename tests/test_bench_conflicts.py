@@ -231,6 +231,24 @@ def test_the_table_shows_each_case() -> None:
     assert lines[3] == "| qst_0412 | | | not run | | |"
 
 
+def test_a_case_whose_document_or_grounding_call_failed_is_no_result() -> None:
+    """A lost document, or a claim a failed call left unchecked, is `failed` (rule R1)."""
+
+    class Grounder:
+        def __init__(self, failed: int) -> None:
+            self.stats = {"calls": 2, "failed": failed}
+
+    lost = {"failed": {"d1": "extract: ProviderError: 401"}}
+    assert conflicts.failed(lost, Grounder(0), 2) == (
+        "1 of 2 documents left out: d1 (extract: ProviderError: 401)"
+    )
+    assert conflicts.failed({}, Grounder(1), 2) == (
+        "1 grounding call failed or came back unreadable"
+    )
+    assert conflicts.failed({}, Grounder(0), 2) is None
+    assert conflicts.failed({}, None, 2) is None
+
+
 def test_every_path_names_a_source_with_a_tier() -> None:
     assert len(conflicts.PATHS) == 39
     assert {path.split("/", 1)[0] for path in conflicts.PATHS.values()} <= set(conflicts.TIERS)

@@ -36,18 +36,6 @@ from openodke.llm import Completion, Message, ModelSpec, ProviderError
 
 runner = CliRunner()
 
-RELEASE_12 = pytest.mark.xfail(strict=True, reason="release audit finding 12; fixed in fix PR 5")
-
-
-def _found_here(what: str, pr: int) -> pytest.MarkDecorator:
-    """A failure this rule found that no audit listed: the maintainer places it."""
-    return pytest.mark.xfail(
-        strict=True,
-        reason=f"found by R1 in PR 0, not in the release audit: {what}; proposed for fix PR "
-        f"{pr}, the maintainer's call",
-    )
-
-
 # A 401 is not weather: nothing retries it, so a test spends no time in backoff.
 FAILURE = "401 unauthorized: rule R1 makes every model call fail"
 
@@ -104,7 +92,6 @@ def _no_score(command: str, result: Any, written: Path | None = None) -> None:
 # --------------------------------------------------------------------------- #
 
 
-@_found_here("`odke bench run` publishes zeros when every call failed", 5)
 def test_odke_bench_run(every_model_call_fails: Any, tmp_path: Path) -> None:
     from openodke.eval.datasets import text2kgbench
     from test_datasets import _t2k_raw
@@ -151,7 +138,6 @@ def test_odke_eval_pipeline_judged(
 # --------------------------------------------------------------------------- #
 
 
-@RELEASE_12
 def test_a_conflict_case_whose_every_call_failed_is_no_outcome(
     every_model_call_fails: Any, tmp_path: Path
 ) -> None:
@@ -205,7 +191,6 @@ def _failed_competitor(tmp_path: Path) -> Path:
     return folder
 
 
-@RELEASE_12
 def test_layer_never_scores_a_run_that_lost_documents(tmp_path: Path) -> None:
     from test_bench_layer import layer
 
@@ -219,7 +204,6 @@ def test_layer_never_scores_a_run_that_lost_documents(tmp_path: Path) -> None:
     )
 
 
-@RELEASE_12
 def test_volume_leaves_a_failed_document_out_of_the_cost() -> None:
     from test_bench_volume import volume
 
