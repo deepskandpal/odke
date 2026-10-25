@@ -38,6 +38,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Literal
 
+from openodke._renamed import Renamed, module_getattr
 from openodke.ground.locate import SpanLocator
 from openodke.ground.retry import RetryPolicy, call_with_retry
 from openodke.ground.span import Counts, SpanGrounder, located
@@ -59,6 +60,9 @@ from openodke.types import Document, Entity, Fact, GroundingVerdict, Polarity
 if TYPE_CHECKING:
     from openodke.calibration import CardStatus
 
+    # What a type checker sees; at run time the 0.2 name comes from `__getattr__`.
+    SYSTEM_PROMPT: str
+
 log = logging.getLogger("openodke.ground")
 
 # The three answers the model may give. UNCHECKED is what a fact has before it
@@ -79,8 +83,8 @@ _STATEMENT_FRAME = get_prompt("ground.statement.user")
 # The prompt ids `LLMGrounder(prompt=...)` takes, any registered version of each.
 # `ground.paper` is the paper's binary prompt, chosen by `verdicts="binary"`.
 PROMPTS = ("ground.span", "ground.onyx", "ground.statement", "ground.paper")
-# The texts under their old names, for anything that imports them.
-SYSTEM_PROMPT = _SPAN.text
+# The paper's text, for anything that imports it; outside the API, since which
+# version a stage sends is provisional (release audit call B).
 PAPER_PROMPT = _PAPER.text
 
 GROUNDING_SCHEMA: dict[str, Any] = {
@@ -803,12 +807,17 @@ class LLMGrounder:
         return out
 
 
+# The default prompt's text under its 0.2 name, until 2.0.0: which version a stage
+# sends is provisional, so the text is read from the registry (release audit call B).
+__getattr__ = module_getattr(
+    __name__,
+    {"SYSTEM_PROMPT": Renamed(_SPAN.text, 'openodke.prompts.get("ground.span").text')},
+)
+
 __all__ = [
     "BINARY_SCHEMA",
     "GROUNDING_SCHEMA",
-    "PAPER_PROMPT",
     "PROMPTS",
-    "SYSTEM_PROMPT",
     "VERDICTS",
     "LLMGrounder",
     "build_messages",

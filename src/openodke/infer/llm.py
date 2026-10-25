@@ -1,5 +1,9 @@
 """The model proposer: names, merges and ranks what the deterministic proposers found.
 
+Provisional (DECISIONS #48): ontology inference is parked (DECISIONS #24), and
+most of it is undocumented, so it may change in a minor release when it is
+picked up again, with a CHANGELOG line.
+
 The model is shown the candidates — each with its support and the tool that
 found it — and a stratified prefix of the sample, and asked for a small
 ontology back as structured output. Its job is naming, not discovery: every

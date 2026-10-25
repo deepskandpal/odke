@@ -33,13 +33,17 @@ from openodke.ground import (
     parse_verdict,
     render_claim,
 )
-from openodke.ground.llm import GROUNDING_SCHEMA, SYSTEM_PROMPT
+from openodke.ground.llm import GROUNDING_SCHEMA
 from openodke.llm import Completion, ModelRoles, RecordedClient, ScriptedClient
+from openodke.prompts import get as _registered
 
 FIXTURE = Path(__file__).parent / "fixtures" / "llm" / "grounding.json"
 
 DOC = Document(id="d1", text="Ada Lovelace wrote the first algorithm. It ran on paper.")
 ADA = Entity(key="p1", type="Person", label="Ada Lovelace")
+
+# The default grounding prompt's text, as the registry holds it.
+SPAN_PROMPT = _registered("ground.span").text
 
 
 def _fact(*evidence: Evidence, **overrides: object) -> Fact:
@@ -294,7 +298,7 @@ def test_render_claim_shows_identity_qualifiers_and_hides_reconcilable_ones() ->
 def test_the_prompt_is_the_claim_and_the_cited_passage_and_nothing_more() -> None:
     """Not the document: the question is whether *this span* supports the claim."""
     system, user = build_messages(WROTE, WROTE_IT.span.resolve(CORPUS))  # type: ignore[union-attr]
-    assert system.role == "system" and system.content == SYSTEM_PROMPT
+    assert system.role == "system" and system.content == SPAN_PROMPT
     assert user.content == (
         'Claim: Ada Lovelace (Person) — wrote — "the first algorithm".\n\n'
         "Passage:\nAda Lovelace wrote the first algorithm in 1843."
@@ -302,7 +306,7 @@ def test_the_prompt_is_the_claim_and_the_cited_passage_and_nothing_more() -> Non
     assert "born in London" not in user.content
     # The cost story: this is sent once per fact and must stay a fraction of an
     # extraction prompt, which carries an ontology snippet and a whole chunk.
-    assert len(SYSTEM_PROMPT) < 600
+    assert len(SPAN_PROMPT) < 600
 
 
 @pytest.mark.parametrize(
@@ -411,7 +415,7 @@ def test_the_labelled_claim_names_its_parts_and_drops_the_types() -> None:
     """Opt-in: the same claim, written the way the model is told to read it."""
     passage = WROTE_IT.span.resolve(CORPUS)  # type: ignore[union-attr]
     system, user = build_messages(WROTE, passage, claim_format="labelled")
-    assert system.content == SYSTEM_PROMPT
+    assert system.content == SPAN_PROMPT
     assert user.content == (
         'Claim (subject | relation | object): Ada Lovelace | wrote | "the first algorithm"\n\n'
         "Passage:\nAda Lovelace wrote the first algorithm in 1843."

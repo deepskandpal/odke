@@ -11,7 +11,6 @@ from openodke.ground.llm import (
     BINARY_SCHEMA,
     GROUNDING_SCHEMA,
     PAPER_PROMPT,
-    SYSTEM_PROMPT,
     build_messages,
     render_triple,
 )
@@ -43,7 +42,7 @@ def test_render_triple_has_the_papers_shape() -> None:
 
 def test_the_default_is_unchanged_span_and_three_way() -> None:
     system, user = build_messages(WROTE, QUOTE)
-    assert system.content == SYSTEM_PROMPT
+    assert system.content == get_prompt("ground.span").text
     assert user.content.startswith("Claim: ")
     client = ScriptedClient([{"verdict": "supported"}])
     grounded = LLMGrounder(client=client).ground(WROTE, DOC)

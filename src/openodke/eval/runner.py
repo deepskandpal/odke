@@ -317,12 +317,8 @@ def _ontology(path: str | Path) -> Ontology:
 
 
 __all__ = [
-    "SCORERS",
     "STAGES",
     "evaluate_files",
-    "load_inputs",
     "load_stage",
     "report_files",
-    "report_inputs",
-    "score",
 ]

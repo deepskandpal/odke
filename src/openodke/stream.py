@@ -259,12 +259,6 @@ def _summed(held: Mapping[str, Any], new: Mapping[str, Any]) -> dict[str, Any]:
 
 
 __all__ = [
-    "COUNTED",
-    "KEPT",
-    "PER_CALL",
-    "Totals",
-    "by_text",
-    "micro_batches",
     "shape",
     "streams",
     "write",

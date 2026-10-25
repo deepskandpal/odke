@@ -131,6 +131,9 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 # typer's entire API is "call in the argument default". B008 is a true positive
 # for most code and a false one for every typer command ever written.
 "src/openodke/cli/*.py" = ["B008"]
+# The calibration package imports its submodules' names for openodke's own use, and
+# exports only the few its docs name (release audit call B): the rest stay importable.
+"src/openodke/calibration/__init__.py" = ["F401"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

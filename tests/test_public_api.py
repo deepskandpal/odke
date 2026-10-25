@@ -66,6 +66,21 @@ PROVISIONAL = {
     "openodke.interop.langchain": "reads LangChain's objects, which change with it",
     "openodke.interop.langextract": "reads LangExtract's objects, which change with it",
     "openodke.reextract": "the re-extract hook: off by default, with one extractor behind it",
+    # Ontology inference is parked (DECISIONS #24) and mostly undocumented (release audit call B).
+    **{
+        f"openodke.infer{sub}": "ontology inference, parked: it moves when it is picked up again"
+        for sub in (
+            "",
+            ".build",
+            ".candidates",
+            ".llm",
+            ".merge",
+            ".names",
+            ".propose",
+            ".review",
+            ".sample",
+        )
+    },
 }
 
 # Public names held outside the promise in a frozen module, by where each is defined:
@@ -449,6 +464,12 @@ def _stages_config_validator(tmp_path: Path) -> None:
     _config(tmp_path, gate="verdict").stages.validator  # noqa: B018
 
 
+def _system_prompt(tmp_path: Path) -> None:
+    from openodke.ground import llm
+
+    llm.SYSTEM_PROMPT  # noqa: B018
+
+
 def _cardinality_scope(tmp_path: Path) -> None:
     from openodke import Predicate
     from openodke.sinks.neo4j import cardinality_scope
@@ -468,6 +489,13 @@ OLD_SPELLINGS: list[tuple[str, str, Callable[[Path], None]]] = [
         "openodke.sinks.neo4j.cardinality_scope(predicate)",
         "predicate.scope_keys",
         _cardinality_scope,
+    ),
+    # Which prompt version a stage sends is provisional, so its text is the
+    # registry's, not a frozen constant (release audit call B).
+    (
+        "openodke.ground.llm.SYSTEM_PROMPT",
+        'openodke.prompts.get("ground.span").text',
+        _system_prompt,
     ),
 ]
 
