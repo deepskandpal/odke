@@ -1415,8 +1415,7 @@ def _current_user() -> str:
 def eval_stage(
     stage: str = typer.Argument(
         ...,
-        help="route, extract, ground, resolve, score, gate (validate, its 0.2 name, until 2.0.0), "
-        "ablation (with --config), "
+        help="route, extract, ground, resolve, score, gate (once validate), ablation (--config), "
         "spans (with --facts, and no labels at all), compare (two runs' --items files), "
         "pipeline (your own, run with --cmd, --run or --predictions), precision (--facts "
         "a judge graded, corrected by --labels on a random sample; no gold), pool (two "
