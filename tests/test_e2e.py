@@ -63,7 +63,7 @@ def test_the_example_runs_end_to_end_on_recorded_responses(example: Path) -> Non
     stats = json.loads((out / "manifest.json").read_text())["stats"]
 
     # Eight documents: three register rows, two staff rows, a factsheet, two notes.
-    assert (stats["documents"], stats["chunks"], stats["refused"]) == (8, 8, 1)
+    assert (stats["documents"], stats["chunks"], stats["refused"]) == (8, 8, 0)
     stages = stats["stages"]
     assert stages["extractor"]["rejections"] == {"quote not in the passage": 1}
     paths = stages["extractor"]["paths"]
@@ -72,12 +72,15 @@ def test_the_example_runs_end_to_end_on_recorded_responses(example: Path) -> Non
     grounder = stages["grounder"]
     assert (grounder["calls"], grounder["failed"], grounder["unparseable"]) == (36, 0, 0)
     assert (grounder["supported"], grounder["not_found"], grounder["contradicted"]) == (20, 15, 1)
-    assert stages["validator"]["refused"] == {"contradicted": 1}
-    assert stages["corroborator"]["conflicts"] == {"lost": 1, "won": 2}
+    # The grounder has no calibration card, so the one fact it contradicted is
+    # written marked for review instead of refused (DECISIONS #54).
+    assert stages["validator"]["refused"] == {}
+    assert stages["validator"]["marked"] == {"contradicted": 1} and stats["marked"] == 1
+    assert stages["corroborator"]["conflicts"] == {"lost": 2, "won": 2}
     assert stats["graph"] == {
-        "facts": 25,
+        "facts": 26,
         "edges": 8,
-        "properties": 17,
+        "properties": 18,
         "entities": 7,
         "links": {"different": 1, "similar": 3},
     }
@@ -85,8 +88,11 @@ def test_the_example_runs_end_to_end_on_recorded_responses(example: Path) -> Non
     facts = _lines(out / "facts.jsonl")
     assert all(f["evidence"] for f in facts), "every written fact cites a document"
     by_claim = {(f["subject"]["key"], f["predicate"], f["object_value"]): f for f in facts}
-    # The model's invented head office for the GmbH was contradicted by its own span.
-    assert ("Company:halden robotics gmbh", "headquarters", "Leeds") not in by_claim
+    # The model's invented head office for the GmbH was contradicted by its own span:
+    # written, marked for review, and outvoted by the register's Munich.
+    invented = by_claim[("Company:halden robotics gmbh", "headquarters", "Leeds")]
+    assert invented["verdict"] == "contradicted" and "odke.review" in invented["qualifiers"]
+    assert invented["qualifiers"]["odke.conflict"]["status"] == "lost"
     # "10 March 2014" in the note and "2014-03-10" in the register are one claim.
     founded = by_claim[("Company:halden robotics ltd", "founded", "2014-03-10")]
     assert founded["support"] == 2

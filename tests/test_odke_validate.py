@@ -288,7 +288,8 @@ def test_input_that_cannot_be_read_exits_2(here: Path, args: list[str], message:
 def test_o_keeps_what_the_gate_refused_and_why(here: Path) -> None:
     """Nothing reads what a gate throws away unless it is kept: -o writes refused.jsonl."""
     config = yaml.safe_load((here / "triples" / "odke.yaml").read_text(encoding="utf-8"))
-    config["stages"]["gate"] = {"use": "verdict", "refuse_not_found": True}
+    # Strict on purpose: it refuses not_found too, and refuses rather than marks (#54).
+    config["stages"]["gate"] = {"use": "verdict", "refuse_not_found": True, "on_refusal": "drop"}
     del config["stages"]["sink"]
     (here / "triples" / "strict.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
     result = _validate("--config", "triples/strict.yaml", "-o", "out")

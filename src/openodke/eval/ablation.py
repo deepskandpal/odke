@@ -454,6 +454,17 @@ def _gate_view(
         f"of the {len(labels)} extracted facts, {true} are true: the gate kept "
         f"{off['on']['tp']} of them and {off['on']['fp']} of the {false} false ones"
     )
+    policy = getattr(gate, "policy", None)
+    if not drop and isinstance(policy, tuple) and policy[0] == "mark":
+        # It marks rather than refuses (DECISIONS #54): say what a refusal would have done.
+        contradicted = frozenset({GroundingVerdict.CONTRADICTED})
+        refusing = grounding_ablation(labels, grounded, drop=contradicted).breakdown["on"]
+        notes.append(
+            f"the gate marks what the grounder refuses for review instead of dropping it "
+            f"({policy[1]}); refusing contradicted would keep {refusing['tp']} of {true} true "
+            f"facts and {refusing['fp']} of {false} false ones "
+            f"(precision {_fmt(refusing['precision'])})"
+        )
     if GroundingVerdict.NOT_FOUND not in drop:
         strict = grounding_ablation(labels, grounded, drop=DROPPED).breakdown["on"]
         notes.append(

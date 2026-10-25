@@ -94,7 +94,7 @@ def test_odke_run_logs_json_and_its_job_counts_are_its_reports(example: Path) ->
         "review": 0,
     }
     assert counts == {
-        "facts_in": 36, "facts_out": 25, "refused": 1, "merged": 10, "linked": 4, "review": 0
+        "facts_in": 36, "facts_out": 26, "refused": 0, "merged": 10, "linked": 4, "review": 0
     }  # fmt: skip
     # The numbers the report prints are the same ones.
     assert f"refused       {counts['refused']}" in result.stdout
@@ -108,7 +108,7 @@ def test_odke_run_logs_json_and_its_job_counts_are_its_reports(example: Path) ->
     ]  # fmt: skip
     by_stage = {e["stage"]: e for e in events if e["event"] == "stage"}
     assert by_stage["extract"]["counts"]["facts"] == stats["candidates"]
-    assert by_stage["gate"]["counts"] == {"accepted": 25, "refused": 1}
+    assert by_stage["gate"]["counts"] == {"accepted": 26, "refused": 0}
     assert all(e["latency_s"] >= 0 for e in by_stage.values())
     # Each stage's calls are its own, and they add up to the job's.
     calls = [e for e in events if e["event"] == "model.call"]

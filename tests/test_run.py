@@ -174,14 +174,18 @@ def test_a_config_runs_end_to_end_into_jsonl_with_every_stage_counted(project: P
 
     facts = _lines(project / "out" / "facts.jsonl")
     # Six candidates: four from the note, two from the CSV row. The 1908 quote is
-    # not in the passage and never became a fact; the 1907 one was contradicted
-    # by its own span and refused at the gate.
-    assert len(facts) == 5
-    assert {f["verdict"] for f in facts} == {"supported", "not_found"}
-    assert "1907" not in {f["object_value"] for f in facts}
+    # not in the passage and never became a fact. The 1907 one was contradicted
+    # by its own span; the grounder has no calibration card, so the gate writes
+    # it marked for review instead of refusing it (DECISIONS #54).
+    assert len(facts) == 6
+    assert {f["verdict"] for f in facts} == {"supported", "not_found", "contradicted"}
+    (marked,) = [f for f in facts if f["object_value"] == "1907"]
+    assert marked["qualifiers"]["odke.review"]["reason"].startswith(
+        "grounding verdict contradicted"
+    )
 
     stats = json.loads((project / "out" / "manifest.json").read_text())["stats"]
-    assert (stats["documents"], stats["chunks"], stats["refused"]) == (2, 2, 1)
+    assert (stats["documents"], stats["chunks"], stats["refused"], stats["marked"]) == (2, 2, 0, 1)
     # Both chunks yielded facts, and the report says so rather than staying quiet (#78).
     assert stats["empty_extractions"] == 0
     assert "0 skipped, 0 deferred, 0 empty" in result.output
@@ -198,18 +202,24 @@ def test_a_config_runs_end_to_end_into_jsonl_with_every_stage_counted(project: P
         ["ground.span@1"],
     )
     assert "prompts ground.span@1" in result.output
-    assert stages["validator"] == {"accepted": 5, "refused": {"contradicted": 1}}
-    # 1906 and 1907 contested a single-valued birth date and tied; the loser's
-    # twin was refused, so one stamped fact reached the graph.
-    assert stages["corroborator"]["conflicts"] == {"tied": 1}
-    assert stats["graph"] == {"facts": 5, "edges": 1, "properties": 4, "entities": 3, "links": {}}
+    assert stages["validator"] == {"accepted": 6, "refused": {}, "marked": {"contradicted": 1}}
+    # 1906 and 1907 contested a single-valued birth date and tied; the contradicted
+    # 1907 is written marked for review (DECISIONS #54), so both reach the graph.
+    assert stages["corroborator"]["conflicts"] == {"tied": 2}
+    assert stats["graph"] == {"facts": 6, "edges": 1, "properties": 5, "entities": 3, "links": {}}
     cost = stats["cost"]["metrics"]
     assert cost["calls"] == 7
     # The grounding replies carry no price, so the total is unknown, not a partial sum.
     assert cost["cost_usd"] is None and cost["priced_usd"] == pytest.approx(0.002)
 
     assert "wrote         jsonl →" in result.output
-    assert "refused       1" in result.output
+    assert "refused       0" in result.output
+    assert "marked        1 written for review, not refused" in result.output
+    assert (
+        "calibration   ground.span@1 on anthropic/claude-sonnet-5 (inline): "
+        "UNCALIBRATED (no card); refusals marked for review, not dropped (it has no card, "
+        "DECISIONS #54)"
+    ) in result.output
 
 
 def test_document_ids_are_source_paths_so_labels_and_queries_can_name_them(project: Path) -> None:
@@ -224,7 +234,7 @@ def test_a_dry_run_extracts_and_grounds_but_writes_nothing(project: Path) -> Non
     assert not (project / "out").exists()
     assert result.output.startswith("odke run — dry run, nothing written")
     assert "would write   jsonl →" in result.output
-    assert "facts.jsonl 5" in result.output
+    assert "facts.jsonl 6" in result.output
     assert "facts that would be written:" in result.output
     assert "Grace Hopper —employer→ US Navy  [supported" in result.output
 
@@ -320,7 +330,7 @@ def test_the_gate_s_old_key_warns_and_runs_the_same(project: Path) -> None:
     renamed, current = execute(old), execute(parse_config(_config(), base_dir=project))
     assert [f.signature for f in renamed.graph.facts] == [f.signature for f in current.graph.facts]
     # The report keeps the gate's counts under their 0.2 key, whichever spelling ran.
-    counts = {"accepted": 5, "refused": {"contradicted": 1}}
+    counts = {"accepted": 6, "refused": {}, "marked": {"contradicted": 1}}
     assert renamed.stats["stages"]["validator"] == current.stats["stages"]["validator"] == counts
     assert "gate" not in current.stats["stages"]
 
@@ -898,7 +908,7 @@ def test_the_example_runs_end_to_end_into_rdf(example: Path) -> None:
     result = runner.invoke(app, ["run", str(config)])
     assert result.exit_code == 0, result.output
     assert "wrote         rdf → " in result.output
-    assert "graph         25 facts" in result.output
+    assert "graph         26 facts" in result.output
 
     graph = rdflib.Graph().parse(example / "out" / "graph.ttl", format="turtle")
     sink = RdfSink(example / "out" / "graph.ttl")
@@ -908,10 +918,20 @@ def test_the_example_runs_end_to_end_into_rdf(example: Path) -> None:
 
     # One reified statement per fact the gate let through, each with its evidence.
     statements = set(graph.subjects(RDF.type, odke.Fact))
-    assert len(statements) == 25
+    assert len(statements) == 26
     assert all(graph.value(s, odke.evidence) is not None for s in statements)
-    # The head office the model invented for the GmbH was refused, so no triple says it.
+    # The head office the model invented for the GmbH was contradicted by its span.
+    # The grounder has no calibration card, so it is written, marked for review
+    # (DECISIONS #54), not dropped; it lost the single-valued head office to Munich,
+    # so no direct triple says it, and its statement carries the mark.
     assert (gmbh, ont.headquarters, rdflib.Literal("Leeds")) not in graph
+    (invented,) = [
+        s
+        for s in graph.subjects(RDF.subject, gmbh)
+        if graph.value(s, RDF.object) == rdflib.Literal("Leeds")
+    ]
+    review = rdflib.URIRef(f"{sink.schema}qualifier/odke.review")
+    assert graph.value(invented, review) is not None
     # Two companies with one name are two resources, and the link says why.
     assert (gmbh, odke.different_from, ltd) in graph or (ltd, odke.different_from, gmbh) in graph
     (link,) = graph.subjects(odke.kind, rdflib.Literal("different"))
@@ -933,7 +953,7 @@ def test_the_example_runs_end_to_end_into_networkx(example: Path) -> None:
     nodes = Counter(attrs["kind"] for _, attrs in graph.nodes(data=True))
     assert nodes["entity"] == 7
     facts = [attrs for _, _, attrs in graph.edges(data=True) if attrs["kind"] == "fact"]
-    assert len(facts) == 25
+    assert len(facts) == 26  # the contradicted head office written, marked (#54)
     assert all(isinstance(f["extracted_at"], str) for f in facts)  # dates as ISO text
     links = {
         (u, v, key)
@@ -954,7 +974,7 @@ def test_model_overrides_the_config_and_says_so(project: Path) -> None:
     result = runner.invoke(app, ["run", str(path), "--model", "openai/gpt-5.5"])
     assert result.exit_code == 0, result.output
     assert "models: every role on openai/gpt-5.5" in result.output
-    assert len(_lines(project / "out" / "facts.jsonl")) == 5
+    assert len(_lines(project / "out" / "facts.jsonl")) == 6
 
     roles = load_config(path).with_model("openai/gpt-5.5").models.roles()
     assert {roles.extract.model, roles.ground.model, roles.infer.model} == {"openai/gpt-5.5"}

@@ -295,8 +295,10 @@ def run_config(
     gate = stages.pop("validator", None) or stages.pop("gate", None) or {"use": "verdict"}
     gate = {"use": gate} if isinstance(gate, str) else dict(gate)
     # The Validator's default gate refuses what the ontology has no room for;
-    # the set's gate predates it.
-    stages["gate"] = gate | {"schema": True}
+    # the set's gate predates it. And the layer's numbers are the gate refusing on
+    # the grounder's word, as they were run before DECISIONS #54 made a grounder
+    # below its calibration bar mark instead: said here, for sets prepared before.
+    stages["gate"] = {"on_refusal": "drop"} | gate | {"schema": True}
     stages["extractor"] = {"use": "triples", "path": str(triples.resolve()), "extractor": system}
     # A prepared set names its normaliser and resolver as pass-throughs, so that
     # `odke bench run` and the harness run one pipeline (release audit 16). The

@@ -60,6 +60,15 @@ ROWS: list[dict[str, Any]] = [
     {"doc": "b", "subject": "Halden Robotic", "subject_type": "Company", "predicate": "opened_in",
      "object": "Lyon"},
 ]  # fmt: skip
+
+
+# The gate these counting tests run with: one that refuses, as at the grounder's
+# calibration bar. Below it the default marks instead (DECISIONS #54,
+# `test_calibration_policy`).
+def _drops() -> VerdictGate:
+    return VerdictGate(schema=True, on_refusal="drop")
+
+
 RECORDED = [
     {"match": "— 2012.", "response": {"verdict": "contradicted"}},
     {"match": "Claim:", "response": {"verdict": "supported"}},
@@ -105,7 +114,7 @@ def test_a_grounder_kept_between_jobs_reports_each_jobs_free_checks_alone() -> N
 
 def test_the_report_counts_what_each_stage_did() -> None:
     client = RecordedClient(RECORDED)
-    kg, report = Validator(PLACES, client=client).validate(ROWS, [A, B])
+    kg, report = Validator(PLACES, client=client, gate=_drops()).validate(ROWS, [A, B])
 
     assert report.facts_in == 5
     assert report.verdicts == {"supported": 3, "contradicted": 1, "not_found": 0, "unchecked": 1}
@@ -142,14 +151,14 @@ def test_a_dry_run_calls_no_model_and_writes_nothing() -> None:
 def test_a_neo4j_sink_writes_through_its_driver() -> None:
     # A store never bootstrapped has no signature index to merge through: refused (#53).
     sink = Neo4jSink(driver=FakeDriver(), ontology=PLACES)
-    validator = Validator(PLACES, client=RecordedClient(RECORDED), sinks=[sink])
+    validator = Validator(PLACES, client=RecordedClient(RECORDED), sinks=[sink], gate=_drops())
     with pytest.raises(ValueError, match=r"no index for \w+\.signature.*bootstrap: true"):
         validator.validate(ROWS, [A, B])
     assert sink._driver.writes == []
 
     driver = FakeDriver.bootstrapped(*PLACES.predicates)
     sink = Neo4jSink(driver=driver, ontology=PLACES)
-    validator = Validator(PLACES, client=RecordedClient(RECORDED), sinks=[sink])
+    validator = Validator(PLACES, client=RecordedClient(RECORDED), sinks=[sink], gate=_drops())
     # A predicate the ontology does not declare gets no index: not read, and said.
     with pytest.warns(UserWarning, match=r"no index for opened_in\.signature"):
         kg, _ = validator.validate(ROWS, [A, B])
@@ -163,7 +172,9 @@ def test_a_neo4j_sink_writes_through_its_driver() -> None:
 def test_facts_are_taken_as_they_are() -> None:
     texts = {"a": A, "b": B}
     facts = [to_fact(TripleRow.model_validate(row), texts[row["doc"]], PLACES) for row in ROWS]
-    kg, report = Validator(PLACES, client=RecordedClient(RECORDED)).validate(facts, [A, B])
+    kg, report = Validator(PLACES, client=RecordedClient(RECORDED), gate=_drops()).validate(
+        facts, [A, B]
+    )
     assert report.facts_in == 5 and report.facts_out == 3
     lost = to_fact(
         TripleRow.model_validate({**ROWS[0], "doc": "gone"}), Document(id="gone", text="x")
@@ -192,7 +203,7 @@ def test_a_stage_given_replaces_its_default_and_a_grounder_still_follows_the_che
 
 
 def test_a_validator_kept_between_calls_reports_each_call_alone() -> None:
-    gate = VerdictGate(schema=True)
+    gate = _drops()
     validator = Validator(PLACES, client=RecordedClient(RECORDED), gate=gate)
     first = validator.validate(ROWS, [A, B]).report
     second = validator.validate(ROWS, [A, B]).report

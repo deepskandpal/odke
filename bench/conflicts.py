@@ -430,7 +430,8 @@ def run_case(
                 "grounder": {"use": "llm", "context": "document", "verdicts": "binary"},
                 "corroborator": "signature",
                 "scorer": "evidence",
-                "gate": {"use": "verdict", "refuse_not_found": True},
+                # Its published cases ran with the gate refusing (DECISIONS #54).
+                "gate": {"use": "verdict", "refuse_not_found": True, "on_refusal": "drop"},
             },
             "models": {**models, "meter": True, "budget": {"usd": budget}},
         },

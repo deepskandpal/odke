@@ -409,7 +409,7 @@ def test_a_rerun_from_the_cache_needs_neither_a_recording_nor_a_provider(
     assert again.exit_code == 0, again.output
     assert "7 model calls (7 from the cache)" in again.output
     assert (project / "c").is_dir()
-    assert len((project / "out" / "facts.jsonl").read_text(encoding="utf-8").splitlines()) == 5
+    assert len((project / "out" / "facts.jsonl").read_text(encoding="utf-8").splitlines()) == 6
 
 
 def test_a_cache_directory_that_cannot_be_one_is_a_config_error(project: Path) -> None:

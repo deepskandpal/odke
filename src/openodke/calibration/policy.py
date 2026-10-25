@@ -23,9 +23,10 @@ the measured cards and moved again in one line:
 - `"act"`: every judge acts, whatever its card says (openodke before #54);
 - `"hold"`: no judge acts on its own word.
 
-It reads `"act"` until the first cards are measured (#134, #135), so nothing
-changes for a run before there is a card to read; it is set from them then.
-The reports print every judge's card line, or UNCALIBRATED, either way.
+It reads `"card"` since the first cards were measured (#134, #135, 25 Oct
+2026). Every judge they cover is below its bar but the fact-equivalence
+judge, which drops nothing anyway, so a default run marks and reviews. The
+reports print every judge's card line, or UNCALIBRATED, either way.
 """
 
 from __future__ import annotations
@@ -35,8 +36,8 @@ from typing import Literal, NamedTuple
 from openodke.calibration.lookup import CardStatus
 
 Policy = Literal["card", "act", "hold"]
-# The one switch (DECISIONS #54): "act" until the first cards are measured.
-DEFAULT_POLICY: Policy = "act"
+# The one switch (DECISIONS #54): from each judge's card.
+DEFAULT_POLICY: Policy = "card"
 
 
 class Resolved(NamedTuple):

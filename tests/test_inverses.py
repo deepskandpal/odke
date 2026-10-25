@@ -209,7 +209,8 @@ def test_the_pipeline_adds_partners_when_the_ontology_declares_them() -> None:
 def test_a_refused_fact_gets_no_partner_in_the_graph() -> None:
     """The partner inherits the verdict, so the gate refuses both or neither (DECISIONS #20)."""
     docs = [Document(id="d1", text=TEXT)]
-    kg = Pipeline(ONTOLOGY, _Stated(), grounder=_Contradicts(), gate=VerdictGate()).run(docs)
+    gate = VerdictGate(on_refusal="drop")  # a refusal made, as at the grounder's bar
+    kg = Pipeline(ONTOLOGY, _Stated(), grounder=_Contradicts(), gate=gate).run(docs)
     assert {(s, p) for s, p, _, _ in _claims(kg)} == {("ada", "spouse"), ("william", "spouse")}
     assert (kg.stats["derived"], kg.stats["refused"]) == (2, 2)
 

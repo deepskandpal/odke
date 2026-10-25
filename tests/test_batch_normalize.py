@@ -263,7 +263,7 @@ def _answers(decision: str) -> RecordedClient:
 
 def test_the_judge_is_asked_only_in_the_band_and_its_same_merges_the_batch() -> None:
     client = _answers("same")
-    judge = PairJudge(client=client, max_workers=1)
+    judge = PairJudge(client=client, max_workers=1, on_decision="link")
     judge.documents[BIO_DOC.id] = BIO_DOC
     resolver = NativeResolver(judge=judge, normalize_batch=True)
     facts, links = resolver.resolve(BIO_FACTS, {})
@@ -283,7 +283,7 @@ def test_the_judge_is_asked_only_in_the_band_and_its_same_merges_the_batch() -> 
 
 
 def test_the_judges_different_keeps_a_pair_apart_through_any_chain() -> None:
-    judge = PairJudge(client=_answers("different"), max_workers=1)
+    judge = PairJudge(client=_answers("different"), max_workers=1, on_decision="link")
     judge.documents[BIO_DOC.id] = BIO_DOC
     facts, links = NativeResolver(judge=judge, normalize_batch=True).resolve(BIO_FACTS, {})
     assert _keys(facts) == ["p:ada", "p:lovelace", "p:ada", "p:charles"]
@@ -291,7 +291,7 @@ def test_the_judges_different_keeps_a_pair_apart_through_any_chain() -> None:
 
 
 def test_without_normalizing_the_judges_same_is_a_link_as_before() -> None:
-    judge = PairJudge(client=_answers("same"), max_workers=1)
+    judge = PairJudge(client=_answers("same"), max_workers=1, on_decision="link")
     judge.documents[BIO_DOC.id] = BIO_DOC
     resolver = NativeResolver(judge=judge, normalize_batch=False)
     facts, links = resolver.resolve(BIO_FACTS, {})

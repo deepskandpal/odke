@@ -93,8 +93,8 @@ def test_every_run_writes_its_manifest_beside_the_fields_older_readers_know(
     document = _read(example / "out" / "manifest.json")
     # What the JSONL sink wrote before 1.0 is still there, and means what it meant.
     assert set(SINK_KEYS) <= set(document)
-    assert (document["ontology"], document["facts"]) == ("companies", 25)
-    assert document["stats"]["graph"]["facts"] == 25
+    assert (document["ontology"], document["facts"]) == ("companies", 26)
+    assert document["stats"]["graph"]["facts"] == 26
 
     manifest = read_manifest(example / "out")
     config = load_config(example / "odke.yaml")
@@ -129,7 +129,7 @@ def test_every_run_writes_its_manifest_beside_the_fields_older_readers_know(
     assert manifest.inputs.facts is None
     assert (manifest.cache, manifest.budget) == (None, None)
     assert manifest.started_at <= manifest.ended_at
-    assert manifest.counts["facts"] == document["facts"] and manifest.counts["refused"] == 1
+    assert manifest.counts["facts"] == document["facts"] and manifest.counts["refused"] == 0
     assert manifest.spent["calls"] == document["stats"]["spent"]["calls"]
     assert (manifest.stopped, manifest.failed) == (None, {})
 
@@ -144,7 +144,7 @@ def test_a_run_with_no_jsonl_sink_writes_it_beside_its_config_and_where_named(
     assert result.exit_code == 0, result.output
     beside = _read(example / "nosink.manifest.json")
     # The graph's fields too, as a JSONL sink would have written them.
-    assert (beside["command"], beside["facts"], beside["config_file"]) == ("run", 25, "nosink.yaml")
+    assert (beside["command"], beside["facts"], beside["config_file"]) == ("run", 26, "nosink.yaml")
 
     config["stages"]["sink"] = {"use": "jsonl", "directory": "out"}
     config["manifest"] = "runs/last.json"
@@ -152,7 +152,7 @@ def test_a_run_with_no_jsonl_sink_writes_it_beside_its_config_and_where_named(
     assert _run(str(example / "named.yaml")).exit_code == 0
     named, into = _read(example / "runs" / "last.json"), _read(example / "out" / "manifest.json")
     assert named["config_hash"] == into["config_hash"] != beside["config_hash"]
-    assert named["facts"] == into["facts"] == 25
+    assert named["facts"] == into["facts"] == 26
 
 
 def test_a_dry_run_has_a_manifest_and_writes_none(example: Path) -> None:

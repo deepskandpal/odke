@@ -32,7 +32,7 @@ from openodke.stream import KEPT, Totals, by_text, micro_batches, shape, streams
 from openodke.types import EntityLink, LinkKind
 from test_manifest import _facts, _timeless
 from test_observe import _events, _one
-from test_validator import PLACES, RECORDED, ROWS, A, B
+from test_validator import PLACES, RECORDED, ROWS, A, B, _drops
 
 ADA = Entity(key="p:ada", type="Person", label="Ada")
 ACME = Entity(key="c:acme", type="Company", label="Acme")
@@ -220,12 +220,14 @@ def test_micro_batches_merge_through_the_store_into_the_facts_one_batch_makes(
         JsonlSink(tmp_path / "whole", merge=True),
         JsonlSink(tmp_path / "s", merge=True),
     )
-    Validator(PLACES, client=RecordedClient(RECORDED), sinks=[whole]).validate(ROWS, [A, B])
+    Validator(PLACES, client=RecordedClient(RECORDED), sinks=[whole], gate=_drops()).validate(
+        ROWS, [A, B]
+    )
     # Release audit S10: it works, and says once what it costs at volume.
     with pytest.warns(UserWarning, match="grows with the square") as caught:
-        kg, report = Validator(PLACES, client=RecordedClient(RECORDED), sinks=[streamed]).validate(
-            ROWS, [A, B], batch_size=1
-        )
+        kg, report = Validator(
+            PLACES, client=RecordedClient(RECORDED), sinks=[streamed], gate=_drops()
+        ).validate(ROWS, [A, B], batch_size=1)
     assert sum("grows with the square" in str(w.message) for w in caught) == 1
     assert _held(tmp_path / "s") == _held(tmp_path / "whole")
     assert max(_held(tmp_path / "s").values()) == 2
@@ -247,7 +249,7 @@ def test_a_streamed_job_appends_each_micro_batch_and_the_manifest_holds_the_run(
     rows.write_text("".join(json.dumps(row) + "\n" for row in ROWS), encoding="utf-8")
     c = Document(id="c", text="A text no row cites.")
     kg, report = Validator(
-        PLACES, client=RecordedClient(RECORDED), sinks=[JsonlSink(out)]
+        PLACES, client=RecordedClient(RECORDED), sinks=[JsonlSink(out)], gate=_drops()
     ).validate(rows, [A, B, c], batch_size=1)
     # Without a store to merge with, the claim both texts state is a line in each.
     lines = (out / "facts.jsonl").read_text(encoding="utf-8").splitlines()
