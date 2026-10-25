@@ -63,10 +63,13 @@ from openodke.types import Document, Fact, KnowledgeGraph
 # How many facts a dry run prints before saying how many more there were.
 SAMPLE = 20
 
-# The gate's counts keep their 0.2 key, `stages.validator`: the stats are a
-# format a JSONL manifest and other tools read, and renaming a key there waits
-# for the report's schema version (DECISIONS #26).
-_REPORTED_AS = {"gate": "validator"}
+# The version of `odke run`'s stats, the format a JSONL manifest and other tools read
+# (DECISIONS #48): a minor adds keys, a major changes them.
+STATS_VERSION = "1.0"
+
+# The gate's counts are under `stages.gate`, and under their 0.2 key,
+# `stages.validator`, too, until 2.0.0 (DECISIONS #26, #48; release audit call C).
+_ALSO_AS = {"gate": "validator"}
 
 
 class _StandIn:
@@ -478,8 +481,14 @@ def collect_stats(
     With `totals`, a streamed run's: the pipeline's counts and the shape are
     the run's so far, and `batches` says how many micro-batches made them. A
     stage's own counts are its own, which run on across micro-batches.
+
+    The stats name their version, `schema_version` (`STATS_VERSION`). The gate's
+    counts are under `stages.gate`, and under `stages.validator` too until 2.0.0.
     """
-    stats: dict[str, Any] = dict(kg.stats) if totals is None else totals.stats()
+    stats: dict[str, Any] = {
+        "schema_version": STATS_VERSION,
+        **(dict(kg.stats) if totals is None else totals.stats()),
+    }
     stats["graph"] = shape(kg) if totals is None else totals.graph()
     if totals is not None:
         stats["batches"] = totals.batches
@@ -500,7 +509,9 @@ def collect_stats(
                 if (summed := totals.resolver(key)) is not None:
                     report[key] = jsonable(summed)
         if report:
-            stages[_REPORTED_AS.get(name, name)] = report
+            stages[name] = report
+            if name in _ALSO_AS:
+                stages[_ALSO_AS[name]] = dict(report)
     stats["stages"] = stages
     # Each model judge's card line, or UNCALIBRATED, and what its word did (#54).
     judged = standing(built.stages)
@@ -629,7 +640,10 @@ def render(result: RunResult) -> str:
             f"{stats.get('empty_extractions', 0)} empty){streamed}",
         )
     )
-    for name, report in stats.get("stages", {}).items():
+    stages = stats.get("stages", {})
+    for name, report in stages.items():
+        if name in _ALSO_AS.values() and any(new in stages for new in _ALSO_AS):
+            continue  # the gate's counts again, under their old key
         lines.append(_row(name, _summary(report)))
     if stats.get("derived"):
         lines.append(_row("derived", f"{stats['derived']} inverse and symmetric partners"))
@@ -750,6 +764,7 @@ def _fact_line(fact: Fact) -> str:
 
 
 __all__ = [
+    "STATS_VERSION",
     "RunResult",
     "collect_stats",
     "execute",

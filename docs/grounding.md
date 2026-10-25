@@ -43,7 +43,8 @@ for its claim**: the span does not name both ends, so the fact may be true
 ([Evidence](concepts.md#spans-evidence-and-trust)); `--paper` counts none.
 
 It writes the facts with their verdicts (`facts.jsonl`, for `odke eval spans`),
-the summary (`summary.json`) and the [run manifest](run.md#the-run-manifest).
+the summary (`summary.json`, versioned by `schema_version`, `"1.0"`) and the
+[run manifest](run.md#the-run-manifest).
 
 | Option | |
 |---|---|

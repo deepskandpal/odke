@@ -36,7 +36,7 @@ documents     8 (8 chunks; 0 skipped, 0 deferred, 0 empty)
 extractor     paths (paths llm+pattern, chunks 8, pattern_facts 20, llm_facts 18, merged 2, model_calls 3), rejections (quote not in the passage 1), prompts extract@1
 grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, supported 20, contradicted 1, not_found 15, prompts ground.span@1, claim_format inline, span (facts 36, located 36)
 corroborator  store (read 26), conflicts (lost 2, won 2)
-validator     accepted 26, marked (contradicted 1)
+gate          accepted 26, marked (contradicted 1)
 refused       0
 marked        1 written for review, not refused
 coverage      0 of 5 sentences naming two known entities uncovered, 0 entities in no fact, 0 relations never offered, 0 unused
