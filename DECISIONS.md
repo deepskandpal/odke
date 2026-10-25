@@ -1809,6 +1809,40 @@ driver proves both races; CI's live Neo4j job runs two threads that meet
 between their read and their write. A JSONL directory still has one writer at
 a time.
 
+### 52. A reader keeps what it knows of a newer minor, and refuses what its own version never had
+
+DECISIONS #48 lets a minor release add an optional field to a format, and #40
+says a run another openodke wrote only warns. A reader that refuses every field
+it does not know breaks both: 1.0 could never read what 1.1 writes, and once 1.0
+has shipped it cannot be made to (release audit finding 18 for the manifest,
+and the maintainer's call F for the triples input and the eval report).
+
+**A later minor's fields are left, at every level.** A triples row or an eval
+report that names a later `1.x` than the reader is read for the fields the
+reader knows, in it and in every object it holds, and the rest is left out
+(`openodke._formats.known`). A minor adds optional fields only, so what is left
+means what it meant. Another major is refused by name, as before.
+
+**In a document of the reader's own version, or an older one, an unknown field
+is still refused.** There it is a typo (`objet`, `qualifers`) or a field from
+nowhere, and a reader that dropped it would lose data without a word. A triples
+row that names no version is read as the reader's own, so a hand-written row
+keeps the check.
+
+**The run manifest's version is one number**, so there is no later minor to
+tell apart: its reader keeps what it knows of any manifest, as fix PR 2 made it
+(the sink's own keys share its file). The recorded config inside it is still
+read as a config, which refuses an option this version cannot run.
+
+**The JSON Schemas describe their version exactly.** Each shipped schema holds a
+document of its own version to its fields; a reader in Python is what reads a
+later minor. A reader built on the schema alone checks a later minor against
+that minor's schema.
+
+*Cost:* a field a later minor adds is invisible to an older reader, which is
+the point; a writer that puts a new field in a document without raising its
+minor gets it refused by readers of that version.
+
 ### 53. A store never bootstrapped refuses the merge, and names the bootstrap
 
 The store merge reads through each predicate's signature index (#35), and a

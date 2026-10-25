@@ -51,7 +51,9 @@ predicate, verdict or bin), `confusion` and `notes`. `render()` is what
 `EvalReport`: one JSON document, versioned by `schema_version`
 ([Stability](stability.md#formats)). Its schema,
 `openodke/eval/eval_report.schema.json`, lists every field; `check_report(data)`
-lists every mismatch, and each report is checked when written and read.
+lists every mismatch, and each report is checked when written and read. A
+report from a later minor is read for the fields this version knows
+([DECISIONS #52](decisions.md#52)).
 
 | Key | What it holds |
 |---|---|

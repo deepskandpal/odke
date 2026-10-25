@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "openodke triples row",
-  "description": "One triple per JSON Lines row, next to the text it came from. schema_version is major.minor: a minor version adds optional fields, a major one changes them. Left out, a row is read as the reader's version.",
+  "description": "One triple per JSON Lines row, next to the text it came from. schema_version is major.minor: a minor version adds optional fields, a major one changes them. Left out, a row is read as the reader's version. This schema describes 1.0 exactly; a 1.0 reader reads a later 1.x row for the fields it knows (DECISIONS #52).",
   "type": "object",
   "additionalProperties": false,
   "required": ["doc", "subject", "predicate", "object"],

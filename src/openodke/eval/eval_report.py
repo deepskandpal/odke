@@ -70,6 +70,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
+from openodke._formats import known, newer_minor
 from openodke.calibration.lookup import CardStatus
 from openodke.eval.bootstrap import LEVEL, RESAMPLES, SEED, Range, bootstrap
 from openodke.eval.compare import Comparison
@@ -732,12 +733,17 @@ def read_report(path: str | Path) -> EvalReport:
     """A report written by `EvalReport.write`, checked against the schema.
 
     A report from another major version is refused by name, not by whichever
-    field moved first.
+    field moved first. One from a later minor is read for the fields this
+    version knows, at every level: a minor adds optional fields only
+    (DECISIONS #52). In a report of this version or an older one, a field this
+    version does not know is refused.
     """
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     version = data.get("schema_version") if isinstance(data, dict) else None
     if not isinstance(version, str) or version.split(".")[0] != SCHEMA_VERSION.split(".")[0]:
         raise ValueError(f"{path}: schema_version {version!r}; this package reads {SCHEMA_VERSION}")
+    if newer_minor(version, SCHEMA_VERSION):
+        data = known(EvalReport, data)
     problems = check_report(data)
     if problems:
         raise ValueError(f"{path}: " + "; ".join(problems[:5]))

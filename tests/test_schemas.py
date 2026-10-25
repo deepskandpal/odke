@@ -75,6 +75,22 @@ def test_a_row_names_its_version_or_is_read_as_this_one(tmp_path: Path) -> None:
         TripleRow.model_validate({**ROW, "schema_version": "1"})
 
 
+def test_a_later_minors_row_is_read_for_what_this_version_knows(tmp_path: Path) -> None:
+    """Call F (DECISIONS #52): a later 1.x row's new fields are left; this version's are not."""
+    newer = {**ROW, "schema_version": "1.9", "added_in_1_9": {"x": 1}}
+    row = TripleRow.model_validate(newer)
+    assert row == TripleRow.model_validate({**ROW, "schema_version": "1.9"})
+    path = tmp_path / "triples.jsonl"
+    path.write_text(json.dumps(newer) + "\n", encoding="utf-8")
+    assert [r.subject for r in read_triples(path)] == ["Halden Robotics"]
+    for version in ({}, {"schema_version": SCHEMA_VERSION}):
+        with pytest.raises(ValidationError, match="added_in_1_9"):
+            TripleRow.model_validate({**ROW, **version, "added_in_1_9": 1})
+    # Another major is still refused by name, whatever it holds.
+    with pytest.raises(ValidationError, match="this openodke reads 1.0"):
+        TripleRow.model_validate({**newer, "schema_version": "2.1"})
+
+
 BAD_ROWS = [
     {**ROW, "objet": "Lyon"},
     {k: v for k, v in ROW.items() if k != "doc"},

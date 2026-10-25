@@ -25,7 +25,7 @@ output.
 | `confidence` | no | 0 to 1. Unset: the stage's `confidence` |
 | `extractor` | no | Unset: the stage's `extractor` |
 | `id` | no | The fact's id, to join it to labels or another run |
-| `schema_version` | no | The format version the row was written to, such as `"1.0"`. Unset: the reader's own. Another major version is refused |
+| `schema_version` | no | The format version the row was written to, such as `"1.0"`. Unset: the reader's own. Another major version is refused; a later minor is read for the fields this version knows ([DECISIONS #52](decisions.md#52)) |
 
 Any other field, or a row that cannot be read, is an error naming its line. The
 JSON Schema ships as `openodke/interop/triples.schema.json` (`SCHEMA_PATH` in
