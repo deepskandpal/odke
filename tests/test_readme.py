@@ -26,7 +26,9 @@ def test_the_python_quickstart_runs_offline_in_twenty_lines(
     exec(compile(code, "README.md:quickstart", "exec", dont_inherit=True), namespace)
     manifest = json.loads(Path("out/manifest.json").read_text(encoding="utf-8"))
     assert manifest["facts"] > 0
-    assert manifest["stats"]["refused"] == 1
+    # The grounder contradicts one fact; with no card it is below any bar, so the
+    # gate writes it marked for review (DECISIONS #54).
+    assert (manifest["stats"]["refused"], manifest["stats"]["marked"]) == (0, 1)
 
 
 def test_the_shell_quickstart_is_the_example_config_and_install_is_from_github() -> None:

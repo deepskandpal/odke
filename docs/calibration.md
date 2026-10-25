@@ -64,7 +64,7 @@ its bar, the numbers beside it, the labels it was measured on, and what its
 answers did in this run, and why. With no card:
 
 ```text
-calibration   ground.span@1 on anthropic/claude-haiku-4-5-20251001 (inline): UNCALIBRATED (no card); refusals dropped (the default policy is 'act')
+calibration   ground.span@1 on ollama/qwen2.5:3b (inline): UNCALIBRATED (no card); refusals marked for review, not dropped (it has no card, DECISIONS #54)
 ```
 
 `odke validate`, `odke run` and every eval report print one line per model

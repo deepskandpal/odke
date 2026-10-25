@@ -223,20 +223,25 @@ The report prints `KnowledgeGraph.stats` (here, `examples/e2e/`):
 odke run
 documents     8 (8 chunks; 0 skipped, 0 deferred, 0 empty)
 extractor     paths (paths llm+pattern, chunks 8, pattern_facts 20, llm_facts 18, merged 2, model_calls 3), rejections (quote not in the passage 1), prompts extract@1
-grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, supported 20, contradicted 1, not_found 15, prompts ground.span@1, span (facts 36, located 36)
-corroborator  conflicts (lost 1, won 2)
-validator     accepted 25, refused (contradicted 1)
-refused       1
+grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, supported 20, contradicted 1, not_found 15, prompts ground.span@1, claim_format inline, span (facts 36, located 36)
+corroborator  store (read 26), conflicts (lost 2, won 2)
+validator     accepted 26, marked (contradicted 1)
+refused       0
+marked        1 written for review, not refused
 coverage      0 of 5 sentences naming two known entities uncovered, 0 entities in no fact, 0 relations never offered, 0 unused
-graph         25 facts (8 edges, 17 properties), 7 entities, 4 links (different 1, similar 3)
+graph         26 facts (8 edges, 18 properties), 7 entities, 4 links (different 1, similar 3)
 cost          39 model calls, 4980 tokens, USD unknown
-wrote         jsonl → …/examples/e2e/out: entities.jsonl 7, facts.jsonl 25, links.jsonl 4, manifest.json
+calibration   ground.span@1 on anthropic/claude-haiku-4-5-20251001 (inline): κ 0.12 [-0.09, 0.38] (n 104), below its bar (κ ≥ 0.6); fail-recall 0.20, false refusals 0.09, planted caught 0.80 (label set G gate, n 104, 2026-10-25); refusals marked for review, not dropped (its card is below the bar, DECISIONS #54)
+wrote         jsonl → …/examples/e2e/out: entities.jsonl 7, facts.jsonl 26, links.jsonl 4, manifest.json
+writes        0:JsonlSink: entities 7 written; facts 26 written; links 4 written
 manifest      …/examples/e2e/out/manifest.json
 ```
 
 | Key in `stats` | Holds |
 |---|---|
 | `documents`, `chunks`, `skipped`, `deferred`, `empty_extractions`, `derived`, `refused` | the [pipeline's counts](concepts.md#the-order-the-stages-run-in) |
+| `marked` | facts the gate wrote marked for review instead of refusing, below the grounder's [calibration bar](calibration.md#below-the-bar-nothing-is-dropped-on-a-judges-word); absent when none |
+| `calibration` | each model judge's card line, or UNCALIBRATED, with what its word did ([Calibration cards](calibration.md)) |
 | `candidates` | the facts that reached resolution |
 | `graph` | `facts`, `edges`, `properties`, `entities`, and `links` by kind |
 | `stages.<name>` | each stage's `stats`, such as the [grounder's](grounding.md#the-second-model-llmgrounder), the gate's (as `validator`), the [resolver's](resolution-and-corroboration.md#resolve) `store`, `judge` and `batch`, and the corroborator's `conflicts` |
@@ -295,7 +300,7 @@ print(manifest.models["ground"])
 # model='anthropic/claude-haiku-4-5-20251001' served=('anthropic/claude-haiku-4-5-20251001',)
 assert list(manifest.prompts) == ["extract@1", "ground.span@1"]
 assert manifest.config_hash == digest(manifest.config)
-assert manifest.counts["facts"] == 25 and len(manifest.inputs.documents) == 8
+assert manifest.counts["facts"] == 26 and len(manifest.inputs.documents) == 8
 ```
 
 `read_manifest(path)` reads one back; `from_manifest(path)` gives the

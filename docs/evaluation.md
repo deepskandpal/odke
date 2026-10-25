@@ -499,7 +499,9 @@ Each stage runs once, later rows replaying earlier facts, and nothing is
 written. Rows are `evaluate_extraction` per document, by the
 [ids `odke run` gives](run.md#inputs); a fact merged across documents scores in
 each. The notes say what the gate kept and what refusing `not_found` would
-change. A run in which a document failed (an extraction that raised, a
+change; a gate that marks rather than refuses, below its grounder's
+calibration bar ([DECISIONS #54](decisions.md#54)), keeps every fact in the
+"+ grounding" row, and the notes say what refusing would have done. A run in which a document failed (an extraction that raised, a
 grounding call that failed and left its facts unchecked) is not scored: it
 exits 1 naming each document, since its rows would count the failure as
 misses. `pipeline --validator` does the same for the Validator's run; with
@@ -522,13 +524,14 @@ ablation = run_ablation(
     load_config("examples/e2e/odke.yaml"), load_jsonl("examples/e2e/gold.jsonl", GoldFact)
 )
 rows = ablation.breakdown
-assert [rows[name]["precision"] for name in rows] == [8 / 9, 32 / 35, 34 / 35]
+assert [rows[name]["precision"] for name in rows] == [8 / 9, 8 / 9, 17 / 18]
 assert [rows[name]["model_calls"] for name in rows] == [3, 39, 39]
-for note in ablation.notes[:4]:
+for note in ablation.notes[:5]:
     print(note)
-# grounding moved precision from 0.889 to 0.914; recall 0.889 → 0.889
-# normalising, resolving and corroborating moved precision from 0.914 to 0.971; recall 0.889 → 0.944
-# of the 36 extracted facts, 32 are true: the gate kept 32 of them and 3 of the 4 false ones
+# grounding did not move precision on these labels (0.889); recall 0.889 → 0.889
+# normalising, resolving and corroborating moved precision from 0.889 to 0.944; recall 0.889 → 0.944
+# of the 36 extracted facts, 32 are true: the gate kept 32 of them and 4 of the 4 false ones
+# the gate marks what the grounder refuses for review instead of dropping it (its card is below the bar, DECISIONS #54); refusing contradicted would keep 32 of 32 true facts and 3 of 4 false ones (precision 0.914)
 # refusing not_found as well would keep 19 of 32 true facts and 1 of 4 false ones (precision 0.950)
 ```
 

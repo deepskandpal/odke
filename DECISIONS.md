@@ -1844,7 +1844,8 @@ notebook that wrote into an empty store without one now stops and says so.
 A judge's answer is a measurement, and its calibration card says how far it
 agrees with a person (#135, roadmap §9.4). The grounder's refusals were audited
 before any card existed: 7 in 10 of the facts it refused in the published
-comparison were true, stated by their text (#118, refusal precision 0.295).
+comparison were true, stated by their text (#118, refusal precision 0.295
+[0.212, 0.393] as one sample; 0.330 [0.244, 0.430] weighted by stratum).
 A gate that drops on such a judge's word loses true facts silently, and the
 loss shows nowhere but in an audit. So what a judge's answer does follows its
 card.
@@ -1879,10 +1880,9 @@ refusals are marked until you say `on_refusal="drop"` or give it a card
 
 **One switch.** `openodke.calibration.policy.DEFAULT_POLICY` is `"card"` (the
 default from each judge's card), `"act"` (every judge acts, as before this
-entry) or `"hold"` (no judge acts on its own word). It reads `"act"` until the
-first cards are measured (the calibration runs of #134 and #135), so no run
-changes before there is a card to read; it is set from them, in one line, and
-can be moved again the same way.
+entry) or `"hold"` (no judge acts on its own word). It read `"act"` until the
+first cards were measured, so no run changed before there was a card to read;
+it reads `"card"` since, and can be moved again in one line.
 
 **Every report says so.** The run report (schema 1.1: `marked`,
 `calibration`), `odke run`'s and the eval report's `calibration` section print
@@ -1895,3 +1895,19 @@ no silent loss. A query that wants only what the grounder kept filters on
 `odke.review`. And a card expires with its prompt version, its dated model id or
 its label set (§9.4), so a default can change with any of the three; the report
 line shows when it has.
+
+**Amended 25 Oct 2026 (calibration, #134, #135):** the first cards are
+measured, on the maintainer's hand labels, and ship with the package; the
+switch reads `"card"`. Every grounder card is below its bar (κ on keep against
+refuse ≥ 0.6, self-agreement unmeasured): `ground.span@1` on Claude Haiku 4.5,
+the default, is κ 0.12 [−0.09, 0.38] on label set G's gate split (104 facts),
+and no model or prompt reaches 0.6 (the best is κ 0.43). No challenger beat
+`ground.span@1` by more than the detection limit, so it stays the default
+grounder prompt. Every pair-judge card is below its bar (the best lower bound
+of the precision of "same" is 0.80 against 0.9). Every fact-equivalence card
+meets its bar (κ 0.67 to 0.75). So a default run marks the facts its grounder
+refuses, a pair judge left to its default sends its pairs to review, and the
+lenient score stands beside the strict one, as it always did. The benchmark
+configs say `on_refusal: drop`, so their published numbers are still the gate
+refusing. The cards and the tables: [Calibration cards](docs/calibration.md),
+and the Benchmarks page's "Judge calibration".

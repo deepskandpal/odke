@@ -56,10 +56,10 @@ kg = Pipeline(
     ontology,
     HybridExtractor(LLMExtractor(client=extract), documents=docs),
     grounder=LLMGrounder(client=ground),  # a second model checks every cited span
-    gate=VerdictGate(),  # refuses a fact its own span contradicts
+    gate=VerdictGate(),  # marks what its span contradicts, below the grounder's bar
     sinks=[JsonlSink("out")],
 ).run(docs)
-print(len(kg.facts), "facts,", kg.stats["refused"], "refused")
+print(len(kg.facts), "facts,", kg.stats.get("marked", 0), "marked for review")
 ```
 
 [`examples/e2e/`](examples/e2e/README.md) goes on into Neo4j and ends with the
@@ -74,14 +74,17 @@ labelled facts:
 | Configuration | Precision | Recall | Model calls |
 |---|---|---|---|
 | extraction alone | 0.889 | 0.889 | 3 |
-| + grounding | 0.914 | 0.889 | 39 |
-| + corroboration | 0.971 | 0.944 | 39 |
+| + grounding | 0.889 | 0.889 | 39 |
+| + corroboration | 0.944 | 0.944 | 39 |
 
 **This is a demonstration on hand-authored recorded responses, not a benchmark.**
 The responses and the labels were written for the example, so the table shows
-what the harness reports, not how well any model does. On that fixture,
-grounding caught one of four wrong candidates, and normalisation did more for
-precision than grounding. The paper's 98.8% is neither reproduced nor claimed.
+what the harness reports, not how well any model does. On that fixture the
+grounder caught one of four wrong candidates, and the gate marked it for review
+rather than dropping it: the default grounder is
+[below its calibration bar](https://openodke.dev/calibration/), so nothing is
+dropped on its word (refusing it would have given 0.914). Normalisation did the
+rest. The paper's 98.8% is neither reproduced nor claimed.
 [What the example shows, and does not](examples/e2e/README.md#5-the-ablation-on-this-example).
 
 On public data, [five extractors run with and without the layer](https://openodke.dev/benchmarks/#every-extractor-with-and-without-the-layer),
