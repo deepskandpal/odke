@@ -16,16 +16,20 @@ Every fact carries the document, the character span, the source tier and the
 grounding verdict, so *why is this edge in my graph?* is a query, not an
 investigation.
 
-> **Status: 0.2.1 on [PyPI](https://pypi.org/project/openodke/); 0.3.0 in
-> progress.** The direction changed in October 2026
-> ([DECISIONS #24](DECISIONS.md)). In the first public benchmark, openodke's
-> grounder removed 13–19% of the wrong triples three different extractors wrote
-> from documents, while openodke's own extractor trailed LangChain's on recall.
+> **Status: 1.0.0rc1, a release candidate; 0.2.1 is the last full release on
+> [PyPI](https://pypi.org/project/openodke/).** 1.0 is the verification layer
+> ([DECISIONS #24](DECISIONS.md)): the Validator runs on any extractor's triples
+> (`odke validate`, with adapters for LangChain, LangExtract, neo4j-graphrag and a
+> graph already in Neo4j), inside openodke's own pipeline (`odke run`), and on a
+> graph openodke did not build (`odke ground`); the Evaluator (`odke eval`,
+> `odke bench`) measures it.
 >
-> What ships today runs the layer in two places: inside openodke's own pipeline
-> (`odke run`), and over other libraries' triples through the scripts in
-> [`bench/`](bench/README.md). The adapters and the `odke ground` command, which
-> make it one step on any graph, are 0.3.0 work. See [ROADMAP.md](ROADMAP.md).
+> On public documents the grounder removed 9–20% of the wrong triples each
+> extractor wrote, for 16–37% of extraction's cost; on single sentences it cost
+> precision ([Benchmarks](https://openodke.dev/benchmarks/)). No grounder has met
+> its [calibration bar](https://openodke.dev/calibration/) yet, so by default
+> what it would refuse is marked for review, not dropped. See
+> [ROADMAP.md](ROADMAP.md).
 
 ## Quickstart
 
@@ -184,20 +188,18 @@ Python 3.11–3.14.
 ## `odke run`
 
 One file names the inputs, the ontology, the models, which implementation fills
-each stage, and the sink:
+each stage, and the sink. Here the extractor is any other system's triples, read
+from a file, checked against the texts they cite and written to Neo4j:
 
 ```yaml
 ontology: ontology.json
 inputs:
-  - path: corpus/register.csv
-    loader: {use: csv, tier: curated}
-  - corpus/notes
+  - path: texts                     # the texts the triples' `doc` names
+    loader: {use: directory}
 models:
-  extract: anthropic/claude-sonnet-5
   ground: anthropic/claude-haiku-4-5-20251001
 stages:
-  chunker: {use: sentence, max_words: 120}
-  extractor: hybrid
+  extractor: {use: triples, path: triples.jsonl, extractor: my-extractor}
   grounder: llm
   normalizer: value
   corroborator: signature
@@ -206,6 +208,9 @@ stages:
   constrainer: neo4j
 bootstrap: true
 ```
+
+`extractor: llm` (or `hybrid`, patterns first) extracts with openodke's own
+reference extractor instead, on the `extract` model.
 
 ```bash
 odke run config.yaml --dry-run     # load, extract and ground; print what would be written

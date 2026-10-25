@@ -17,13 +17,12 @@ replaced.
 
 ## Evaluate
 
-`odke eval` scores each stage against labels you supply. `odke bench` runs
-Text2KGBench and Re-DocRED three ways: extraction alone, with grounding, and
-with corroboration.
+This half is the Evaluator. `odke eval` scores each stage, or your whole
+pipeline, against labels you supply, and says where it loses facts and what to
+change. `odke bench` runs Text2KGBench, Re-DocRED and T-REx three ways:
+extraction alone, with grounding, and with corroboration.
 
 [Evaluation](evaluation.md) · [Benchmarks](benchmarks.md)
-
-At 1.0 this half becomes the Evaluator.
 
 ## In short
 
@@ -34,13 +33,17 @@ At 1.0 this half becomes the Evaluator.
    optional.
 3. **Evidence on every fact.** Each fact keeps its document, span, source tier
    and grounding verdict.
-4. **Measured.** On Text2KGBench and Re-DocRED, with the same model and schema
-   for every system: on documents, grounding removed 13–19% of every system's
-   wrong triples, at a tenth to a fifth of what extraction cost. On single
-   sentences it removed more facts the gold called right than wrong.
-   Corroboration has not been measured at all, because every fact in both
-   datasets has one source ([DECISIONS #24](decisions.md#24),
-   [Benchmarks](benchmarks.md)).
+4. **Measured.** With the same model and schema for every system, on the
+   documents of Re-DocRED and T-REx, grounding removed 9–20% of each system's
+   wrong triples and 0–8% of its right ones, raising precision by 1.0 to 4.3
+   points with F1 unchanged, for 16–37% of what extraction cost (75% after
+   LangExtract, the cheapest extractor). On Text2KGBench's single sentences it
+   lowered precision by 0.7 to 2.2 points. On T-REx, where a fact can have
+   several sources, an edge two or more abstracts state is right about twice
+   as often as one stated once ([Benchmarks](benchmarks.md)). These grounder
+   numbers are uncalibrated, and no grounder has met its calibration bar yet,
+   so by default the gate marks what the grounder would refuse rather than
+   dropping it ([Calibration cards](calibration.md)).
 5. **Runs offline.** `pip install openodke` on Python 3.11–3.14. The base
    install needs no key, and neither does the quickstart.
 

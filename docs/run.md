@@ -74,7 +74,7 @@ path relative to the config, plus `#L<line>` (CSV, TSV, JSONL) or `#<row>`
 
 | Key | What it is |
 |---|---|
-| `extract`, `ground`, `infer` | A model string or a `ModelSpec` (`model`, `temperature`, `max_tokens`, `timeout`, `base_url`, `api_key_env`, `extra`); left out, the [role's default](models.md#roles-and-defaults). Unset, `temperature` is left out of the request |
+| `extract`, `ground`, `infer` | A model string or a `ModelSpec` (`model`, `temperature`, `max_tokens`, `timeout`, `base_url`, `api_key_env`, `extra`, and `repeat`, a draw's index that keys a repeated question apart in the [cache](models.md#the-response-cache)); left out, the [role's default](models.md#roles-and-defaults). Unset, `temperature` is left out of the request |
 | `replay` | A role's recorded responses: a cassette (`ReplayClient`) or match entries (`RecordedClient`) |
 | `meter` | `true` puts calls, tokens, USD and latency per stage in the stats |
 | `cache` | A directory of [model answers](models.md#the-response-cache); `--cache` overrides it |
