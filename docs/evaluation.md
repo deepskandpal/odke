@@ -142,17 +142,18 @@ odke eval pipeline --bench runs/cmp/redocred --predictions snippet25.jsonl \
 
 ```text
 where it loses facts  (pipeline: 1,574 misses)
-                              misses  share
-  relation never offered      363     23.1%
-  refused by the Validator    —       —
-  wrong relation              82      5.2%
-  inverse direction           0       0.0%
-  surface form (unconfirmed)  41      2.6%
-  same triple, scored apart   6       0.4%
-  cross-sentence              680     43.2%
-  output saturation           219     13.9%
-  entity never extracted      144     9.1%
-  both seen but not linked    39      2.5%
+                                        misses  share
+  relation never offered                363     23.1%
+  refused by the Validator              —       —
+  wrong relation                        4       0.3%
+  inverse direction                     0       0.0%
+  surface form (unconfirmed)            7       0.4%
+  same triple, scored apart             6       0.4%
+  cross-sentence                        717     45.6%
+  output saturation                     260     16.5%
+  pair linked by another true relation  29      1.8%
+  entity never extracted                149     9.5%
+  both seen but not linked              39      2.5%
 
   e.g. relation never offered: test_0001: Orlov · educated at · St Petersburg University (not offered for Person)
 ```
@@ -183,9 +184,9 @@ miss found; `reference` is the gain at another system's rate
 ```text
 what should change  (pipeline: ranked by expected recall gain; gains overlap)
      fix                    expected  ceiling  reference  knob
-  1  wider-context          +6.4      +38.9    +3.7       stages.chunker
+  1  wider-context          +6.8      +41.0    +3.8       stages.chunker
   2  offer-relations        +2.6      +20.8    +7.3       stages.extractor.snippet_limit
-  3  smaller-chunks         +1.5      +12.5    +1.9       stages.chunker; models.extract.max_tokens
+  3  smaller-chunks         +1.8      +14.9    +2.4       stages.chunker; models.extract.max_tokens
 
   2. Offer every relation the subject's type can take: raise the snippet limit, or name the types. 363 misses × 12.4% (its recall on the relations it was offered: 172 of 1,383) / 1,747 gold
      - Misc · producer: 35
