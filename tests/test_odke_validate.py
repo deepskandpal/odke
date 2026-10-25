@@ -309,7 +309,13 @@ def test_o_keeps_what_the_gate_refused_and_why(here: Path) -> None:
 def test_the_documented_example_prints_what_the_page_shows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """docs/validator.md's `odke validate` example, run from a clone, as the page shows it."""
+    """docs/validator.md's `odke validate` example, run from a clone, as the page shows it.
+
+    With the cards the package ships, as a reader's run reads them.
+    """
+    from openodke.calibration import lookup
+
+    monkeypatch.setattr(lookup, "CARDS_DIR", REPO / "src" / "openodke" / "calibration" / "cards")
     page = (REPO / "docs" / "validator.md").read_text(encoding="utf-8")
     command = page.split("```bash\n", 1)[1].split("```", 1)[0]
     shown = page.split("```text\n", 1)[1].split("```", 1)[0]

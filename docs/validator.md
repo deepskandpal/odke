@@ -28,7 +28,7 @@ derived       0 inverse and symmetric partners
 out           5 facts (4 edges, 1 property), 5 entities
 cost          4 model calls, 657 tokens, USD unknown (ground.span@1)
 coverage      0 of 1 sentences naming two known entities uncovered, 0 entities in no fact, relations offered: unknown, 0 unused
-calibration   ground.span@1 on anthropic/claude-haiku-4-5-20251001 (inline): UNCALIBRATED (no card); refusals dropped (the default policy is 'act')
+calibration   ground.span@1 on anthropic/claude-haiku-4-5-20251001 (inline): κ 0.12 [-0.09, 0.38] (n 104), below its bar (κ ≥ 0.6); fail-recall 0.20, false refusals 0.09, planted caught 0.80 (label set G gate, n 104, 2026-10-25); refusals marked for review, not dropped (its card is below the bar, DECISIONS #54)
 wrote         jsonl → out: entities.jsonl 5, facts.jsonl 5, links.jsonl 0, manifest.json, refused.jsonl 0
 writes        0:JsonlSink: entities 5 written; facts 5 written; links none
 manifest      out/manifest.json
@@ -42,9 +42,10 @@ reason, which [`odke eval refusals`](evaluation.md#what-the-grounder-refused)
 samples for a person to judge.
 
 The `calibration` line is the grounder's [calibration card](calibration.md), or
-UNCALIBRATED where there is none, and what its refusals did in this job. Below
-its bar, a refusal on the grounder's word can be written marked for review
-instead of dropped (`on_refusal`, [DECISIONS #54](calibration.md#below-the-bar-nothing-is-dropped-on-a-judges-word)).
+UNCALIBRATED where there is none, and what its refusals did in this job. The
+default grounder's card is below its bar, so a fact it contradicts is written
+marked for review (`qualifiers["odke.review"]`, counted under `marked`) instead
+of refused; `on_refusal="drop"` refuses it ([DECISIONS #54](calibration.md#below-the-bar-nothing-is-dropped-on-a-judges-word)).
 
 | Flag | |
 |---|---|

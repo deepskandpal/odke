@@ -19,6 +19,22 @@ around it.
       be approved by hand. An agent writes down exactly what to click or run,
       here, and stops.
 
+- [ ] **The default grounder model (`DEFAULT_GROUND`, #134).** The cards are in
+      (`docs/calibration.md`, "The results"). Haiku 5.5 against Haiku 4.5 on
+      `ground.span@1` is inconclusive (−6.7 points, detection limit 10.4), and
+      its card is muddied by its default reasoning: 208 of its 1,578 answers
+      to `ground.span@1` ran out of the grounder's 256-token `max_tokens`
+      before the verdict and count as abstentions. Re-measuring it with a
+      larger `max_tokens`, or with reasoning off, is a configuration choice for
+      the maintainer, as is changing the default.
+- [ ] **Sonnet 5.5's pair-judge card (#135).** Not run: its measured cost would
+      have taken the Anthropic ledger past the $16 stop line. About $1.7.
+- [ ] **What the e2e example shows (#54).** With the default grounder below its
+      bar, the example and the README's "Does it work?" table now show the gate
+      marking, not refusing: + grounding precision 0.889 (was 0.914). If the
+      demonstration should show a refusal, set `gate: {use: verdict,
+      on_refusal: drop}` in `examples/e2e/odke.yaml` and regenerate the tables.
+
 ## Standing rules
 
 - **Merging is the maintainer's.** A pull request stops at "ready to merge",

@@ -337,8 +337,8 @@ noise (`bench/locator.py` states the rule and measures it).
 
 | Verdict | Default | `refuse_not_found=True` |
 |---|---|---|
-| `contradicted` | refused | refused |
-| `not_found` | accepted | refused |
+| `contradicted` | refused, or marked below the bar | refused, or marked below the bar |
+| `not_found` | accepted | refused, or marked below the bar |
 | `supported`, `unchecked` | accepted | accepted |
 
 `schema=True`, the Validator's default, also refuses an undeclared predicate
@@ -347,10 +347,12 @@ facts, by reason. Whether to refuse `not_found` on your corpus is a
 measurement: [`odke eval ablation`](evaluation.md#ablation).
 
 A refusal on a grounding verdict is the grounder's word, and below its
-calibration bar the gate can **mark** instead of dropping: the fact is written
-with `qualifiers["odke.review"]` saying why (`on_refusal="mark"`, or `"drop"`;
-left out, the grounder's [calibration card](calibration.md#below-the-bar-nothing-is-dropped-on-a-judges-word)
-decides, [DECISIONS #54](decisions.md#54)). A schema refusal is always made.
+calibration bar the gate **marks** instead of dropping: the fact is written
+with `qualifiers["odke.review"]` saying why. `on_refusal="drop"` or `"mark"`
+chooses; left out, the grounder's [calibration card](calibration.md#below-the-bar-nothing-is-dropped-on-a-judges-word)
+decides ([DECISIONS #54](decisions.md#54)), and every card measured so far is
+below its bar. A schema refusal is always made. The example below drops, to
+show a refusal.
 
 ```python
 from openodke import Ontology, Pipeline, VerdictGate
@@ -377,7 +379,7 @@ pipeline = Pipeline(
         ModelRoles.single("ollama/qwen2.5:3b"),
         client=ScriptedClient([{"verdict": "supported"}]),
     ),
-    gate=VerdictGate(refuse_not_found=True),
+    gate=VerdictGate(refuse_not_found=True, on_refusal="drop"),
 )
 kg = pipeline.run([doc])
 

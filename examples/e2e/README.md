@@ -33,15 +33,19 @@ odke run examples/e2e/odke.yaml
 ```text
 odke run
 documents     8 (8 chunks; 0 skipped, 0 deferred, 0 empty)
-extractor     paths (paths llm+pattern, chunks 8, pattern_facts 20, llm_facts 18, merged 2, model_calls 3), rejections (quote not in the passage 1)
-grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, supported 20, contradicted 1, not_found 15, span (facts 36, located 36)
-corroborator  conflicts (lost 1, won 2)
-validator     accepted 25, refused (contradicted 1)
-refused       1
+extractor     paths (paths llm+pattern, chunks 8, pattern_facts 20, llm_facts 18, merged 2, model_calls 3), rejections (quote not in the passage 1), prompts extract@1
+grounder      facts 36, calls 36, prompt_tokens 4764, completion_tokens 216, supported 20, contradicted 1, not_found 15, prompts ground.span@1, claim_format inline, span (facts 36, located 36)
+corroborator  store (read 26), conflicts (lost 2, won 2)
+validator     accepted 26, marked (contradicted 1)
+refused       0
+marked        1 written for review, not refused
 coverage      0 of 5 sentences naming two known entities uncovered, 0 entities in no fact, 0 relations never offered, 0 unused
-graph         25 facts (8 edges, 17 properties), 7 entities, 4 links (different 1, similar 3)
+graph         26 facts (8 edges, 18 properties), 7 entities, 4 links (different 1, similar 3)
 cost          39 model calls, 4980 tokens, USD unknown
-wrote         jsonl → …/examples/e2e/out: entities.jsonl 7, facts.jsonl 25, links.jsonl 4, manifest.json
+calibration   ground.span@1 on anthropic/claude-haiku-4-5-20251001 (inline): κ 0.12 [-0.09, 0.38] (n 104), below its bar (κ ≥ 0.6); fail-recall 0.20, false refusals 0.09, planted caught 0.80 (label set G gate, n 104, 2026-10-25); refusals marked for review, not dropped (its card is below the bar, DECISIONS #54)
+wrote         jsonl → …/examples/e2e/out: entities.jsonl 7, facts.jsonl 26, links.jsonl 4, manifest.json
+writes        0:JsonlSink: entities 7 written; facts 26 written; links 4 written
+manifest      …/examples/e2e/out/manifest.json
 ```
 
 Line by line:
@@ -133,7 +137,9 @@ ORDER BY predicate, object
 Eight rows. Each relationship carries its evidence as parallel lists — document
 ids, character offsets, tiers — so `starts[i]` and `ends[i]` are where in
 document `i` the fact was read. A fact two sources agree on lists both. The
-GmbH's invented head office is not among the rows: the gate refused it.
+GmbH's invented head office is not among the rows: its span contradicts it,
+and the register's Munich outvotes it, so it is written marked for review
+(`odke.review`) and not as the company's head office.
 
 ### Why is this value here?
 
@@ -242,24 +248,27 @@ odke eval ablation --config examples/e2e/odke.yaml --labels examples/e2e/gold.js
 | Configuration | Precision | Recall | F1 | TP | FP | FN | Facts written | Model calls |
 |---|---|---|---|---|---|---|---|---|
 | extraction alone | 0.889 | 0.889 | 0.889 | 32 | 4 | 4 | 36 | 3 |
-| + grounding (gate refuses `contradicted`) | 0.914 | 0.889 | 0.901 | 32 | 3 | 4 | 35 | 39 |
-| + corroboration (normalise, resolve, corroborate, score) | 0.971 | 0.944 | 0.958 | 34 | 1 | 2 | 25 | 39 |
+| + grounding (the gate marks `contradicted` for review) | 0.889 | 0.889 | 0.889 | 32 | 4 | 4 | 36 | 39 |
+| + corroboration (normalise, resolve, corroborate, score) | 0.944 | 0.944 | 0.944 | 34 | 2 | 2 | 26 | 39 |
 
 Cost is unknown for all three: the recorded responses carry no price.
 
 What it says about this fixture:
 
-- **Grounding moved precision from 0.889 to 0.914, and not recall.** Of the four
-  wrong candidates it caught one, the head office the model invented for the
-  GmbH. The second invented fact — Maya Okafor working for the GmbH — came back
+- **Grounding caught one of the four wrong candidates, and the gate marked it
+  rather than refusing it.** The grounder contradicted the head office the model
+  invented for the GmbH; its calibration card (Haiku 4.5, `ground.span@1`) is
+  below its bar, so the gate writes the fact marked for review
+  ([DECISIONS #54](../../DECISIONS.md)) and precision does not move. Refusing it
+  (`on_refusal: drop`) would have moved precision from 0.889 to 0.914. The
+  second invented fact, Maya Okafor working for the GmbH, came back
   `not_found`, which the default gate keeps.
 - **Refusing `not_found` too would have been worse here.** It would keep 19 of
   the 32 true extracted facts and 1 of the 4 false ones (precision 0.950): a
   register cell is grounded against itself, which cannot say whose value it is,
   so a careful grounder answers `not_found` for most structured facts.
-- **Most of the gain came after grounding, from normalisation.** Two dates the
+- **All the gain came after grounding, from normalisation.** Two dates the
   model copied as written ("10 March 2014", "1 June 2019") became the ISO dates
-  the labels use. Corroboration merged the 36 candidates into 26 facts, and the
-  gate refused one of those; a merged fact is scored once in each document it
-  cites, so merging alone moves neither number. Resolution proposed links and
-  re-keyed nothing.
+  the labels use. Corroboration merged the 36 candidates into 26 facts, all
+  written; a merged fact is scored once in each document it cites, so merging
+  alone moves neither number. Resolution proposed links and re-keyed nothing.
