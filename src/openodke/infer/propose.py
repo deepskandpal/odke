@@ -1,5 +1,9 @@
 """The deterministic proposers: what a corpus says about its own schema, for free.
 
+Provisional (DECISIONS #48): ontology inference is parked (DECISIONS #24), and
+most of it is undocumented, so it may change in a minor release when it is
+picked up again, with a CHANGELOG line.
+
 The design decision behind M5 is that a model should name and rank a schema,
 not discover one (`_odke-design` §6, 2026-09-04). Three routes find candidates
 first, each exact about what it saw and each citing the characters it saw it in:

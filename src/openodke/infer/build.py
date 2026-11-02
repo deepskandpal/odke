@@ -1,5 +1,9 @@
 """From merged candidates to a reviewable ontology, and the whole bootstrap composed.
 
+Provisional (DECISIONS #48): ontology inference is parked (DECISIONS #24), and
+most of it is undocumented, so it may change in a minor release when it is
+picked up again, with a CHANGELOG line.
+
 `infer_ontology` is #31–#34 in order: sample the corpus, run the deterministic
 proposers, let the model name what they found (unless told not to), merge
 near-duplicates, then build. Building is where the ontology is kept small,

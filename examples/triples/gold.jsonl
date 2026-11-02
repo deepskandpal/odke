@@ -1,0 +1,4 @@
+{"doc_id": "halden.txt", "fact": {"subject": {"key": "Company:halden robotics", "type": "Company"}, "predicate": "founder", "object_entity": {"key": "Person:mara quist", "type": "Person"}}}
+{"doc_id": "halden.txt", "fact": {"subject": {"key": "Company:halden robotics", "type": "Company"}, "predicate": "office_in", "object_entity": {"key": "City:lyon", "type": "City"}}}
+{"doc_id": "halden.txt", "fact": {"subject": {"key": "Company:halden robotics", "type": "Company"}, "predicate": "chief_executive", "object_entity": {"key": "Person:tomas ferrand", "type": "Person"}}}
+{"doc_id": "halden.txt", "fact": {"subject": {"key": "Company:halden robotics", "type": "Company"}, "predicate": "founded", "object_value": 2014}}

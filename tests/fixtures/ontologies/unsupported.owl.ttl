@@ -19,8 +19,7 @@
 
 :employer a owl:ObjectProperty ;
     rdfs:domain :Person ;
-    rdfs:range :Company ;
-    owl:inverseOf :employs .
+    rdfs:range :Company .
 
 :employs a owl:ObjectProperty , owl:InverseFunctionalProperty ;
     rdfs:domain :Company ;

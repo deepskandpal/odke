@@ -29,6 +29,11 @@ on:
         type: choice
         options: [testpypi, pypi]
 
+# The same 7-day cooldown as pyproject's [tool.uv], for every uv call here,
+# including build environments and `--no-project` runs that skip the project.
+env:
+  UV_EXCLUDE_NEWER: "7 days"
+
 jobs:
   verify:
     name: verify (python ${{ matrix.python }})

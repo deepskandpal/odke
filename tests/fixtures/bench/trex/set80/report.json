@@ -1,0 +1,325 @@
+{
+  "schema_version": "1.1",
+  "title": "trex",
+  "n": 80,
+  "run": {
+    "openodke": "0.2.1",
+    "models": {
+      "extract": "claude-sonnet-5-5",
+      "ground": "claude-haiku-4-5-20251001"
+    },
+    "prompts": [
+      "extract@1",
+      "extract.repair@1",
+      "ground.paper@1",
+      "pair@1",
+      "pair.user@1"
+    ],
+    "dataset": {
+      "name": "trex",
+      "path": "runs/trex/set80",
+      "documents": 80,
+      "labels": 635,
+      "details": {
+        "gold_facts_1": 435,
+        "gold_facts_2": 37,
+        "gold_facts_3+": 41
+      }
+    }
+  },
+  "bootstrap": {
+    "unit": "document",
+    "units": 80,
+    "resamples": 2000,
+    "seed": 0,
+    "level": 0.95,
+    "method": "percentile"
+  },
+  "rows": [
+    {
+      "name": "extraction alone",
+      "performance": {
+        "precision": {
+          "value": 0.3872255489021956,
+          "low": 0.3259798112510841,
+          "high": 0.44467541473782796
+        },
+        "recall": {
+          "value": 0.30551181102362207,
+          "low": 0.2612422666133153,
+          "high": 0.35052319201224125
+        },
+        "f1": {
+          "value": 0.3415492957746479,
+          "low": 0.29389961899732164,
+          "high": 0.3832677501793762
+        },
+        "average": "micro"
+      },
+      "counts": {
+        "hits": 194,
+        "over_extraction": 307,
+        "under_extraction": 441,
+        "predicted": 501,
+        "gold": 635,
+        "uncited": 0,
+        "unscored": 0,
+        "documents": 80
+      },
+      "conformance": {
+        "rate": 1.0,
+        "conformant": 501,
+        "facts": 501,
+        "checks": [
+          "predicate"
+        ],
+        "average": "micro"
+      },
+      "hallucination": {
+        "definition": "T-REx, openodke's scoring: the subject or object, case and punctuation ignored, is nowhere in the abstract, or the relation is not one of the set's",
+        "hallucinated": 13,
+        "facts": 501,
+        "rate": 0.02594810379241517,
+        "subject": null,
+        "relation": null,
+        "object": null
+      },
+      "cost": {
+        "calls": 86,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "usd": 0.0,
+        "priced_usd": 0.0,
+        "unpriced_calls": 0
+      },
+      "latency": {
+        "calls": 86,
+        "seconds": 1.1346569643355906,
+        "per_call": 0.013193685631809194
+      }
+    },
+    {
+      "name": "+ grounding",
+      "performance": {
+        "precision": {
+          "value": 0.40086206896551724,
+          "low": 0.3364449555606436,
+          "high": 0.46123644272976005
+        },
+        "recall": {
+          "value": 0.2929133858267717,
+          "low": 0.24659173723870706,
+          "high": 0.3379115079977997
+        },
+        "f1": {
+          "value": 0.33848953594176523,
+          "low": 0.2896114974246332,
+          "high": 0.3812563004312872
+        },
+        "average": "micro"
+      },
+      "counts": {
+        "hits": 186,
+        "over_extraction": 278,
+        "under_extraction": 449,
+        "predicted": 464,
+        "gold": 635,
+        "uncited": 0,
+        "unscored": 0,
+        "documents": 80
+      },
+      "conformance": {
+        "rate": 1.0,
+        "conformant": 464,
+        "facts": 464,
+        "checks": [
+          "predicate"
+        ],
+        "average": "micro"
+      },
+      "hallucination": {
+        "definition": "T-REx, openodke's scoring: the subject or object, case and punctuation ignored, is nowhere in the abstract, or the relation is not one of the set's",
+        "hallucinated": 12,
+        "facts": 464,
+        "rate": 0.02586206896551724,
+        "subject": null,
+        "relation": null,
+        "object": null
+      },
+      "cost": {
+        "calls": 587,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "usd": 0.0,
+        "priced_usd": 0.0,
+        "unpriced_calls": 0
+      },
+      "latency": {
+        "calls": 587,
+        "seconds": 2.9176329909823835,
+        "per_call": 0.004970413953973396
+      }
+    },
+    {
+      "name": "+ corroboration",
+      "performance": {
+        "precision": {
+          "value": 0.4,
+          "low": 0.33555555555555555,
+          "high": 0.46032138151703367
+        },
+        "recall": {
+          "value": 0.2929133858267717,
+          "low": 0.24659173723870706,
+          "high": 0.3379115079977997
+        },
+        "f1": {
+          "value": 0.3381818181818182,
+          "low": 0.2889975785961824,
+          "high": 0.38104459197334345
+        },
+        "average": "micro"
+      },
+      "counts": {
+        "hits": 186,
+        "over_extraction": 279,
+        "under_extraction": 449,
+        "predicted": 465,
+        "gold": 635,
+        "uncited": 0,
+        "unscored": 0,
+        "documents": 80
+      },
+      "conformance": {
+        "rate": 1.0,
+        "conformant": 465,
+        "facts": 465,
+        "checks": [
+          "predicate"
+        ],
+        "average": "micro"
+      },
+      "hallucination": {
+        "definition": "T-REx, openodke's scoring: the subject or object, case and punctuation ignored, is nowhere in the abstract, or the relation is not one of the set's",
+        "hallucinated": 12,
+        "facts": 465,
+        "rate": 0.025806451612903226,
+        "subject": null,
+        "relation": null,
+        "object": null
+      },
+      "cost": {
+        "calls": 653,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "usd": 0.0,
+        "priced_usd": 0.0,
+        "unpriced_calls": 0
+      },
+      "latency": {
+        "calls": 653,
+        "seconds": 3.152604122646153,
+        "per_call": 0.004827877676334078
+      }
+    }
+  ],
+  "stages": [
+    {
+      "stage": "trex",
+      "n": 80,
+      "metrics": {
+        "precision_extraction": 0.3872255489021956,
+        "recall_extraction": 0.30551181102362207,
+        "f1_extraction": 0.3415492957746479,
+        "precision_grounding": 0.40086206896551724,
+        "recall_grounding": 0.2929133858267717,
+        "f1_grounding": 0.33848953594176523,
+        "precision_corroboration": 0.4,
+        "recall_corroboration": 0.2929133858267717,
+        "f1_corroboration": 0.3381818181818182
+      },
+      "breakdown": {
+        "extraction alone": {
+          "precision": 0.3872255489021956,
+          "recall": 0.30551181102362207,
+          "f1": 0.3415492957746479,
+          "precision_factual": 0.4810379241516966,
+          "checkable": 0.7624750499001997,
+          "onto_conf": 1.0,
+          "triples": 501,
+          "gold_triples": 635,
+          "hallucinated_triples": 13,
+          "recall_1": 0.335632183908046,
+          "recall_2": 0.33783783783783783,
+          "recall_3+": 0.18253968253968253,
+          "facts": 501,
+          "model_calls": 86,
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "cost_usd": 0.0
+        },
+        "+ grounding": {
+          "precision": 0.40086206896551724,
+          "recall": 0.2929133858267717,
+          "f1": 0.33848953594176523,
+          "precision_factual": 0.4956896551724138,
+          "checkable": 0.7564655172413793,
+          "onto_conf": 1.0,
+          "triples": 464,
+          "gold_triples": 635,
+          "hallucinated_triples": 12,
+          "recall_1": 0.3218390804597701,
+          "recall_2": 0.32432432432432434,
+          "recall_3+": 0.1746031746031746,
+          "facts": 464,
+          "model_calls": 587,
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "cost_usd": 0.0
+        },
+        "+ corroboration": {
+          "precision": 0.4,
+          "recall": 0.2929133858267717,
+          "f1": 0.3381818181818182,
+          "precision_factual": 0.4967741935483871,
+          "checkable": 0.7569892473118279,
+          "onto_conf": 1.0,
+          "triples": 465,
+          "gold_triples": 635,
+          "hallucinated_triples": 12,
+          "recall_1": 0.3218390804597701,
+          "recall_2": 0.32432432432432434,
+          "recall_3+": 0.1746031746031746,
+          "facts": 428,
+          "model_calls": 653,
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "cost_usd": 0.0
+        }
+      },
+      "confusion": {},
+      "notes": [
+        "gold facts by sources in the set: 1: 435, 2: 37, 3+: 41",
+        "factual precision: 48.1% extracted, 49.6% after the gate (a known Wikidata fact; ODKE+ reports 91% raw, 98.8% ranked)",
+        "recall by sources after the gate: 1: 32.2%, 2: 32.4%, 3+: 17.5%",
+        "graph, corroboration off: 427 edges, factual precision 46.4%, recall by sources 1: 32.4%, 2: 45.9%, 3+: 43.9%",
+        "graph, corroboration on: 427 edges, factual precision 46.4%, recall by sources 1: 32.4%, 2: 45.9%, 3+: 43.9%",
+        "graph, corroboration on two or more: 34 edges, factual precision 85.3%, recall by sources 1: 2.8%, 2: 29.7%, 3+: 12.2%",
+        "gold facts on the graph given two or more sources (under any name): 1: 12 (13) of 141, 2: 11 (11) of 17, 3+: 5 (5) of 18",
+        "resolver links similar (rules): 5, right 2, wrong 0, not checkable 3",
+        "resolver links similar (judge): 5, right 2, wrong 1, not checkable 2",
+        "resolver links different (judge): 27, right 12, wrong 3, not checkable 12",
+        "grounder verdicts on the candidates: supported 464, not_found 37, contradicted 0, unchecked 0",
+        "coverage of the candidates: 123 of 329 sentences naming two known entities uncovered, 188 entities in no fact, 0 relations never offered, 17 unused"
+      ]
+    }
+  ],
+  "notes": [],
+  "diagnosis": [],
+  "fixes": [],
+  "comparison": null,
+  "calibration": [],
+  "judged_precision": null,
+  "adjudication": null,
+  "pooled_recall": null
+}

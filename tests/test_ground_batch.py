@@ -204,6 +204,44 @@ def test_backoff_grows_caps_and_jitters_below_the_cap() -> None:
         assert 0.0 <= jittered.delay(retry) <= policy.delay(retry)
 
 
+def test_the_default_policy_outlasts_a_few_seconds_of_rate_limiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 429 with no `Retry-After` for 4 s is weather the default waits out (release audit 8).
+
+    Six tries from 1 s wait at most 1 + 2 + 4 + 8 + 16 = 31 s, and, drawn with full jitter,
+    outlast 4 s nearly always; the old four tries from 0.5 s gave up within 3.5 s every time.
+    """
+    import random
+
+    from openodke.ground import retry
+
+    ceiling = RetryPolicy().model_copy(update={"jitter": False})
+    assert [ceiling.delay(r) for r in range(1, ceiling.attempts)] == [1, 2, 4, 8, 16]
+
+    monkeypatch.setattr(retry, "random", random.Random(8))
+    outlasted = 0
+    for _ in range(200):
+        clock = [0.0]
+
+        def rate_limited(clock: list[float] = clock) -> str:
+            if clock[0] < 4:
+                raise _http(429)
+            return "answered"
+
+        def sleep(seconds: float, clock: list[float] = clock) -> None:
+            clock[0] += seconds
+
+        try:
+            call_with_retry(rate_limited, RetryPolicy(), sleep=sleep)
+        except ProviderError:
+            continue
+        outlasted += 1
+    assert outlasted >= 195
+    # A server that says how long to wait is still believed.
+    assert RetryPolicy(jitter=False).delay(1, _http(429, **{"Retry-After": "3"})) == 3
+
+
 def test_a_servers_retry_after_wins_and_is_capped() -> None:
     assert retry_after(_http(429, **{"Retry-After": "3"})) == 3.0
     assert RetryPolicy(max_delay=30, jitter=False).delay(1, _http(429, **{"Retry-After": "3"})) == 3
@@ -443,7 +481,7 @@ def test_the_pipeline_hands_a_batching_grounder_each_document_once() -> None:
 
 
 def test_the_pipeline_refuses_a_batch_that_drops_facts() -> None:
-    """A grounder stamps, it never drops; the validator is the gate (DECISIONS #20)."""
+    """A grounder stamps, it never drops; the gate decides what is written (DECISIONS #20)."""
     pipeline = Pipeline(
         Ontology(),
         _NumberedExtractor(),

@@ -12,6 +12,7 @@ from openodke import (
     Entity,
     Extractor,
     Fact,
+    Gate,
     Grounder,
     GroundingVerdict,
     Inferrer,
@@ -25,7 +26,6 @@ from openodke import (
     Router,
     Scorer,
     Sink,
-    Validator,
     stages,
 )
 
@@ -43,7 +43,7 @@ THIRTEEN = (
     Resolver,
     Corroborator,
     Scorer,
-    Validator,
+    Gate,
     Sink,
     Constrainer,
     Inferrer,
@@ -59,7 +59,7 @@ DEFAULTS = {
     Resolver: stages.PassThroughResolver,
     Corroborator: stages.PassThroughCorroborator,
     Scorer: stages.PassThroughScorer,
-    Validator: stages.PassThroughValidator,
+    Gate: stages.PassThroughGate,
     Constrainer: stages.PassThroughConstrainer,
     Inferrer: stages.PassThroughInferrer,
 }
@@ -106,8 +106,8 @@ def test_the_batch_defaults_return_the_facts_untouched() -> None:
     assert all(f.support == 1 for f in facts)
 
 
-def test_the_validator_default_accepts_everything() -> None:
-    assert stages.PassThroughValidator().validate(FACT, ONTOLOGY).action == "accept"
+def test_the_gate_default_accepts_everything() -> None:
+    assert stages.PassThroughGate().validate(FACT, ONTOLOGY).action == "accept"
 
 
 def test_the_constrainer_default_emits_no_ddl() -> None:

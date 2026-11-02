@@ -22,11 +22,15 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from openodke import Entity, Evidence, Fact, Span
+from openodke import Document, Entity, Evidence, Fact, Span
 from openodke.cli.main import app
-from openodke.eval import StageReport, load_jsonl, per_document, run_ablation
+from openodke.eval import StageReport, load_jsonl, per_document, report_ablation, run_ablation
+from openodke.eval.ablation import CONFIGURATIONS, AblationRun
+from openodke.eval.cost import CallRecord
 from openodke.eval.formats import GoldFact
+from openodke.ontology import Ontology
 from openodke.run import load_config, parse_config
+from test_eval_report import expected_cells, rendered_rows
 
 runner = CliRunner()
 
@@ -43,13 +47,15 @@ def test_the_example_s_three_configurations(example: Path) -> None:
     counts = {
         name: (r["tp"], r["fp"], r["fn"], r["facts"], r["model_calls"]) for name, r in rows.items()
     }
+    # The grounder has no calibration card, so the gate marks the fact it contradicts
+    # for review instead of refusing it (DECISIONS #54): + grounding drops nothing.
     assert counts == {
         "extraction alone": (32, 4, 4, 36, 3),
-        "+ grounding": (32, 3, 4, 35, 39),
-        "+ corroboration": (34, 1, 2, 25, 39),
+        "+ grounding": (32, 4, 4, 36, 39),
+        "+ corroboration": (34, 2, 2, 26, 39),
     }
     assert rows["extraction alone"]["precision"] == pytest.approx(32 / 36)
-    assert rows["+ grounding"]["precision"] == pytest.approx(32 / 35)
+    assert rows["+ grounding"]["precision"] == pytest.approx(32 / 36)
     assert rows["+ corroboration"]["recall"] == pytest.approx(34 / 36)
     # Recorded responses carry no price: unknown, never 0.0.
     assert rows["+ grounding"]["cost_usd"] is None
@@ -71,18 +77,27 @@ def test_the_example_readme_prints_the_table_the_command_computes(example: Path)
 
 def test_the_notes_say_what_moved_and_what_the_gate_traded(example: Path) -> None:
     notes = _report(example).notes
-    assert notes[0] == "grounding moved precision from 0.889 to 0.914; recall 0.889 → 0.889"
+    assert (
+        notes[0] == "grounding did not move precision on these labels (0.889); recall 0.889 → 0.889"
+    )
     assert notes[1].startswith(
-        "normalising, resolving and corroborating moved precision from 0.914 to 0.971"
+        "normalising, resolving and corroborating moved precision from 0.889 to 0.944"
     )
     assert (
-        "of the 36 extracted facts, 32 are true: the gate kept 32 of them and 3 of the 4 false ones"
+        "of the 36 extracted facts, 32 are true: the gate kept 32 of them and 4 of the 4 false ones"
         in notes
+    )
+    assert (
+        "the gate marks what the grounder refuses for review instead of dropping it (it has no "
+        "card, DECISIONS #54); refusing contradicted would keep 32 of 32 true facts and 3 of 4 "
+        "false ones (precision 0.914)" in notes
     )
     assert (
         "refusing not_found as well would keep 19 of 32 true facts and 1 of 4 false ones "
         "(precision 0.950)" in notes
     )
+    # What extraction left behind, measured on the candidates with no model (#130).
+    assert any(note.startswith("coverage of the candidates: ") for note in notes)
 
 
 def test_grounding_that_moves_nothing_is_reported_as_such(example: Path) -> None:
@@ -118,7 +133,7 @@ def test_the_command_prints_the_table_and_writes_nothing(example: Path) -> None:
     as_json = runner.invoke(app, [*args, "--json"])
     assert StageReport.model_validate_json(as_json.output).metrics[
         "precision_grounding"
-    ] == pytest.approx(32 / 35)
+    ] == pytest.approx(32 / 36)
 
 
 @pytest.mark.parametrize(
@@ -174,3 +189,117 @@ def test_a_merged_fact_is_scored_once_in_each_document_it_cites() -> None:
     split = per_document([merged, single])
     assert [[e.doc_id for e in f.evidence] for f in split] == [["a", "a"], ["b"], ["a"]]
     assert {f.id for f in split} == {merged.id, single.id}
+
+
+# --------------------------------------------------------------------------- #
+# The eval report (#139)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_eval_report_rows_are_the_ablation_s_rows_with_ranges(example: Path) -> None:
+    gold = load_jsonl(example / "gold.jsonl", GoldFact)
+    report = report_ablation(load_config(example / "odke.yaml"), gold, labels="gold.jsonl")
+    (stage,) = report.stages
+    assert stage == run_ablation(load_config(example / "odke.yaml"), gold)
+    assert [row.name for row in report.rows] == list(stage.breakdown)
+    for row in report.rows:
+        line = stage.breakdown[row.name]
+        assert row.performance.precision.value == line["precision"]
+        assert row.performance.recall.value == line["recall"]
+        assert row.performance.f1.value == line["f1"]
+        counts = (row.counts.hits, row.counts.over_extraction, row.counts.under_extraction)
+        assert counts == (line["tp"], line["fp"], line["fn"])
+        assert row.cost is not None and row.cost.calls == line["model_calls"]
+        # Recorded responses carry no price: unknown, never 0.0.
+        assert row.cost.usd is None
+        assert row.conformance is not None and row.conformance.rate == 1.0
+    assert report.bootstrap is not None and report.bootstrap.units == 8
+    assert report.run.prompts == ("extract@1", "ground.span@1")
+    assert set(report.run.models) == {"extract", "ground"}
+    assert report.run.dataset is not None
+    assert (report.run.dataset.name, report.run.dataset.labels) == ("gold.jsonl", 36)
+
+
+def test_the_ablation_renders_its_rows_once_and_keeps_its_notes(example: Path) -> None:
+    gold = load_jsonl(example / "gold.jsonl", GoldFact)
+    report = report_ablation(load_config(example / "odke.yaml"), gold)
+    text = report.render()
+    assert text.startswith("ablation  (n=36)\n")
+    printed = rendered_rows(text, [row.name for row in report.rows])
+    for row in report.rows:
+        assert printed[row.name] == expected_cells(row), row.name
+    # The stage's own table is the rows again: printed once, its notes kept.
+    assert text.count("+ corroboration") == 1
+    assert all(note in text for note in report.stages[0].notes)
+    assert "prompts  extract@1, ground.span@1" in text
+
+
+def test_the_last_row_carries_the_calls_a_pair_judge_made() -> None:
+    def call(stage: str) -> CallRecord:
+        return CallRecord(stage=stage, model="m", prompt_tokens=1, completion_tokens=1)
+
+    run = AblationRun(
+        documents=[],
+        ontology=Ontology(),
+        candidates=[],
+        grounded=[],
+        gated=[],
+        corroborated=[],
+        extraction_calls=[call("extract")],
+        all_calls=[call("extract"), call("ground")],
+        gate=None,
+        final_calls=[call("extract"), call("ground"), call("judge")],
+    )
+    calls = {name: len(c) for name, _, c in run.configurations()}
+    assert calls == {CONFIGURATIONS[0]: 1, CONFIGURATIONS[1]: 2, CONFIGURATIONS[2]: 3}
+
+
+def test_a_run_in_which_a_document_failed_is_not_scored() -> None:
+    """Rule R1: a document left out of a run would score as misses in every row."""
+    from openodke.eval.ablation import AblationRun, score_ablation
+    from openodke.eval.harness import PipelineError
+
+    run = AblationRun(
+        documents=[Document(id="a", text="t"), Document(id="b", text="t")],
+        ontology=Ontology(),
+        candidates=[],
+        grounded=[],
+        gated=[],
+        corroborated=[],
+        extraction_calls=[],
+        all_calls=[],
+        gate=None,
+        failed={"b": "extract: ProviderError: 503 overloaded"},
+    )
+    with pytest.raises(
+        PipelineError, match=r"1 of 2 documents left out: b \(extract: ProviderError"
+    ):
+        score_ablation(run, [])
+
+
+def test_a_run_a_budget_stopped_is_not_scored() -> None:
+    """A budget stop leaves what it reached unasked, and the pipeline carries on (#32)."""
+    from openodke.eval.ablation import AblationRun, score_ablation
+    from openodke.eval.harness import PipelineError
+
+    run = AblationRun(
+        documents=[Document(id="a", text="t")],
+        ontology=Ontology(),
+        candidates=[],
+        grounded=[],
+        gated=[],
+        corroborated=[],
+        extraction_calls=[],
+        all_calls=[],
+        gate=None,
+        stopped={
+            "limit": "usd",
+            "budget": {"usd": 1.0},
+            "spent": {"calls": 40, "priced_usd": 1.0},
+            "stage": "ground",
+            "unextracted": 0,
+            "unchecked": 12,
+        },
+    )
+    with pytest.raises(PipelineError, match="a budget stopped the ablation's run"):
+        score_ablation(run, [])

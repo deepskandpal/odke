@@ -17,6 +17,11 @@ would be built to find.
 What this cannot say: these are the grounder's own verdicts, not labels. The
 gap is a diagnostic of the citations, not a score of the facts, and a corpus
 whose widths do not separate has been told nothing alarming.
+
+Only citations are split. A span openodke located for a fact that cited
+nothing (`SpanOrigin.LOCATED`, the span locator) is one or two sentences by
+construction, so its width says nothing about the extractor; it is counted
+apart, per verdict, with its own median (DECISIONS #25).
 """
 
 from __future__ import annotations
@@ -46,7 +51,8 @@ Needs no labelled data — the only evaluator here that does not. It reads a
 run's facts and reports span width split by the grounder's verdict: count,
 median, quartiles, min and max, plus the share of facts citing no span of their
 own (a fact grounded against its whole text, because its extractor cited
-nothing, is one of those).
+nothing, is one of those). Spans openodke located for such facts are counted
+apart from citations, in the `located` column, and not in the widths.
 Where the not_found widths sit below the supported ones, the not_found rate is
 a proxy for citation quality with no gold set: a citation too narrow to carry
 its claim is grounded away, and the grounder reports that error for free.
@@ -71,6 +77,12 @@ def span_width(fact: Fact) -> int | None:
     return evidence.span.end - evidence.span.start
 
 
+def _located(fact: Fact) -> bool:
+    """Whether the span `span_width` measures was located by openodke rather than cited."""
+    evidence = next((e for e in fact.evidence if e.span is not None), None)
+    return evidence is not None and evidence.span_origin is SpanOrigin.LOCATED
+
+
 def load_facts(path: str | Path) -> list[Fact]:
     """A run's facts: a JSONL file of `Fact` rows, or the directory a `JsonlSink` wrote."""
     source = Path(path)
@@ -78,28 +90,35 @@ def load_facts(path: str | Path) -> list[Fact]:
 
 
 def evaluate_spans(facts: Iterable[Fact] | KnowledgeGraph) -> StageReport:
-    """Width distribution per verdict, and the gap between `not_found` and `supported`."""
+    """Citation width per verdict, the gap between `not_found` and `supported`,
+    and the spans openodke located, counted apart."""
     rows = list(facts.facts if isinstance(facts, KnowledgeGraph) else facts)
     widths: dict[GroundingVerdict, list[int]] = {verdict: [] for verdict in VERDICTS}
+    located: dict[GroundingVerdict, list[int]] = {verdict: [] for verdict in VERDICTS}
     missing = dict.fromkeys(VERDICTS, 0)
     for fact in rows:
         width = span_width(fact)
         if width is None:
             missing[fact.verdict] += 1
         else:
-            widths[fact.verdict].append(width)
-    counts = {verdict: len(widths[verdict]) + missing[verdict] for verdict in VERDICTS}
+            (located if _located(fact) else widths)[fact.verdict].append(width)
+    counts = {
+        verdict: len(widths[verdict]) + len(located[verdict]) + missing[verdict]
+        for verdict in VERDICTS
+    }
 
     breakdown: dict[str, dict[str, Metric]] = {
         verdict.value: {
             "n": counts[verdict],
             "no_span": missing[verdict],
+            "located": len(located[verdict]),
             **_distribution(widths[verdict]),
         }
         for verdict in VERDICTS
     }
     supported, not_found = widths[GroundingVerdict.SUPPORTED], widths[GroundingVerdict.NOT_FOUND]
     everything = [w for row in widths.values() for w in row]
+    placed = [w for row in located.values() for w in row]
     no_span = sum(missing.values())
     # The denominator for the proxy is what a grounder actually ruled on.
     checked = sum(counts[v] for v in VERDICTS if v is not GroundingVerdict.UNCHECKED)
@@ -109,6 +128,9 @@ def evaluate_spans(facts: Iterable[Fact] | KnowledgeGraph) -> StageReport:
         "no_span": no_span,
         "no_span_rate": ratio(no_span, len(rows)),
         "median_width": median(everything) if everything else None,
+        # Spans openodke found for facts that cited nothing: not citations.
+        "located": len(placed),
+        "located_median": median(placed) if placed else None,
         # The proxy, over the facts a grounder ruled on: where the widths
         # separate, this is the rate at which citations threw true facts away.
         "not_found_rate": ratio(counts[GroundingVerdict.NOT_FOUND], checked),
@@ -121,7 +143,9 @@ def evaluate_spans(facts: Iterable[Fact] | KnowledgeGraph) -> StageReport:
         n=len(rows),
         metrics=metrics,
         breakdown=breakdown,
-        notes=_notes(not_found, supported, no_span=no_span, n=len(rows), checked=checked),
+        notes=_notes(
+            not_found, supported, no_span=no_span, located=len(placed), n=len(rows), checked=checked
+        ),
     )
 
 
@@ -159,7 +183,13 @@ def _separate(not_found: Sequence[int], supported: Sequence[int]) -> bool:
 
 
 def _notes(
-    not_found: Sequence[int], supported: Sequence[int], *, no_span: int, n: int, checked: int
+    not_found: Sequence[int],
+    supported: Sequence[int],
+    *,
+    no_span: int,
+    located: int,
+    n: int,
+    checked: int,
 ) -> tuple[str, ...]:
     if not n:
         first = "no facts: the run wrote nothing to measure"
@@ -179,6 +209,11 @@ def _notes(
     notes = [first]
     if no_span:
         notes.append(f"{no_span} of {n} fact(s) cite no span of their own and have no width")
+    if located:
+        notes.append(
+            f"{located} of {n} fact(s) cited nothing and have a span openodke located; "
+            "their widths are not citations and are left out of the split"
+        )
     notes.append(
         "no labels were used: these are the grounder's own verdicts, so the gap is a "
         "diagnostic of the citations and not a score of the facts"

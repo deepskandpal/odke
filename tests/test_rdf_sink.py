@@ -194,6 +194,18 @@ def test_provenance_is_queryable_down_to_a_document_and_a_character_range(
     assert retrieved == datetime(2026, 9, 1, tzinfo=UTC)
 
 
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_a_context_span_is_told_from_a_citation(tmp_path: Path, fmt: str) -> None:
+    """Ada's employer is cited; her name came from a bare triple, so its span is the whole text."""
+    g = _loaded(tmp_path, fmt)
+    assert _select(
+        g,
+        """SELECT ?doc ?origin WHERE {
+             ?st a odke:Fact ; rdf:subject ent:p%3Aada ; odke:evidence ?ev .
+             ?ev odke:doc_id ?doc ; odke:span_origin ?origin }""",
+    ) == {("d1", "cited"), ("d2", "cited"), ("d5", "context")}
+
+
 def test_forgetting_a_source_is_a_query(tmp_path: Path) -> None:
     g = _loaded(tmp_path, "turtle")
     graph = _graph()
@@ -392,3 +404,28 @@ def test_a_missing_rdflib_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> No
     with pytest.raises(ImportError, match=r"openodke\[rdf\]"):
         module.RdfSink("g.ttl")
     assert "openodke[rdf]" in EXTRA_HINT
+
+
+def test_a_tenant_goes_into_every_iri_and_is_named(tmp_path: Path) -> None:
+    """Found by R2 in PR 0: two tenants' files shared every IRI, so a store merged them."""
+    kg = _graph()
+    acme = RdfSink(tmp_path / "a.ttl").scoped("acme").graph(kg)
+    globex = RdfSink(tmp_path / "g.ttl", tenant="globex").graph(kg)
+    plain = RdfSink(tmp_path / "p.ttl").graph(kg)
+
+    def iris(graph: Graph) -> set[str]:
+        return {str(t) for triple in graph for t in triple if isinstance(t, URIRef)}
+
+    resources = {i for i in iris(acme) if "/entity/" in i or "/fact/" in i or "/link/" in i}
+    assert resources and not resources & iris(globex) and not resources & iris(plain)
+    assert f"{DEFAULT_BASE}entity/acme%2Fp%3Aada" in iris(acme)
+    for fact in kg.facts:
+        assert f"{DEFAULT_BASE}fact/{signature_of(fact, 'acme')}" in iris(acme)
+    tenant = URIRef(f"{VOCAB}tenant")
+    assert set(acme.objects(None, tenant)) == {Literal("acme")}
+    assert not set(plain.objects(None, tenant))
+    # The key is the one the tenant gave.
+    keys = {str(o) for o in acme.objects(None, URIRef(f"{VOCAB}key"))}
+    assert "p:ada" in keys
+    with pytest.raises(ValueError, match="writes tenant 'globex', not 'acme'"):
+        RdfSink(tmp_path / "g.ttl", tenant="globex").scoped("acme")

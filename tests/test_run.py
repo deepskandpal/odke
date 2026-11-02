@@ -8,6 +8,7 @@ extraction, match entries for grounding — through the config's own
 from __future__ import annotations
 
 import json
+import re
 import sys
 import types
 from collections import Counter
@@ -19,7 +20,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from openodke import Chunk, Ontology, RouteVerdict, Sink
+from openodke import Chunk, Entity, Ontology, RouteVerdict, Sink
 from openodke.cli.main import app
 from openodke.corroborate import SCORE
 from openodke.ground import RetryPolicy
@@ -27,11 +28,13 @@ from openodke.llm import ModelRoles, ModelSpec
 from openodke.loaders import DocxLoader, HtmlLoader, PdfLoader
 from openodke.run import ConfigError, StageSpec, build, execute, load_config, parse_config
 from openodke.run.build import NodeLinkFile, build_stage
+from openodke.run.execute import STATS_VERSION
 from openodke.sinks import neo4j as neo4j_module
 from openodke.sinks.bulk import CypherFileSink, Neo4jAdminCsvSink
 from openodke.sinks.networkx import NetworkXSink
 from openodke.sinks.rdf import RdfSink
-from test_neo4j_sink import FakeDriver
+from openodke.stages import PassThroughGate
+from test_neo4j_sink import FakeDriver, signature_indexes
 
 runner = CliRunner()
 SUPPORT = "odke_run_support"
@@ -124,7 +127,7 @@ def _config(**overrides: Any) -> dict[str, Any]:
             "normalizer": {"use": "value", "person_types": ["Person"]},
             "corroborator": "signature",
             "scorer": "evidence",
-            "validator": "verdict",
+            "gate": "verdict",
             "sink": {"use": "jsonl", "directory": "out"},
         },
     }
@@ -172,14 +175,18 @@ def test_a_config_runs_end_to_end_into_jsonl_with_every_stage_counted(project: P
 
     facts = _lines(project / "out" / "facts.jsonl")
     # Six candidates: four from the note, two from the CSV row. The 1908 quote is
-    # not in the passage and never became a fact; the 1907 one was contradicted
-    # by its own span and refused at the gate.
-    assert len(facts) == 5
-    assert {f["verdict"] for f in facts} == {"supported", "not_found"}
-    assert "1907" not in {f["object_value"] for f in facts}
+    # not in the passage and never became a fact. The 1907 one was contradicted
+    # by its own span; the grounder has no calibration card, so the gate writes
+    # it marked for review instead of refusing it (DECISIONS #54).
+    assert len(facts) == 6
+    assert {f["verdict"] for f in facts} == {"supported", "not_found", "contradicted"}
+    (marked,) = [f for f in facts if f["object_value"] == "1907"]
+    assert marked["qualifiers"]["odke.review"]["reason"].startswith(
+        "grounding verdict contradicted"
+    )
 
     stats = json.loads((project / "out" / "manifest.json").read_text())["stats"]
-    assert (stats["documents"], stats["chunks"], stats["refused"]) == (2, 2, 1)
+    assert (stats["documents"], stats["chunks"], stats["refused"], stats["marked"]) == (2, 2, 0, 1)
     # Both chunks yielded facts, and the report says so rather than staying quiet (#78).
     assert stats["empty_extractions"] == 0
     assert "0 skipped, 0 deferred, 0 empty" in result.output
@@ -190,18 +197,30 @@ def test_a_config_runs_end_to_end_into_jsonl_with_every_stage_counted(project: P
     grounder = stages["grounder"]
     assert (grounder["supported"], grounder["contradicted"], grounder["not_found"]) == (4, 1, 1)
     assert (grounder["calls"], grounder["failed"]) == (6, 0)
-    assert stages["validator"] == {"accepted": 5, "refused": {"contradicted": 1}}
-    # 1906 and 1907 contested a single-valued birth date and tied; the loser's
-    # twin was refused, so one stamped fact reached the graph.
-    assert stages["corroborator"]["conflicts"] == {"tied": 1}
-    assert stats["graph"] == {"facts": 5, "edges": 1, "properties": 4, "entities": 3, "links": {}}
+    # Which registered prompts the run sent, by key (DECISIONS #27).
+    assert (stages["extractor"]["prompts"], grounder["prompts"]) == (
+        ["extract@1"],
+        ["ground.span@1"],
+    )
+    assert "prompts ground.span@1" in result.output
+    assert stages["validator"] == {"accepted": 6, "refused": {}, "marked": {"contradicted": 1}}
+    # 1906 and 1907 contested a single-valued birth date and tied; the contradicted
+    # 1907 is written marked for review (DECISIONS #54), so both reach the graph.
+    assert stages["corroborator"]["conflicts"] == {"tied": 2}
+    assert stats["graph"] == {"facts": 6, "edges": 1, "properties": 5, "entities": 3, "links": {}}
     cost = stats["cost"]["metrics"]
     assert cost["calls"] == 7
     # The grounding replies carry no price, so the total is unknown, not a partial sum.
     assert cost["cost_usd"] is None and cost["priced_usd"] == pytest.approx(0.002)
 
     assert "wrote         jsonl →" in result.output
-    assert "refused       1" in result.output
+    assert "refused       0" in result.output
+    assert "marked        1 written for review, not refused" in result.output
+    assert (
+        "calibration   ground.span@1 on anthropic/claude-sonnet-5 (inline): "
+        "UNCALIBRATED (no card); refusals marked for review, not dropped (it has no card, "
+        "DECISIONS #54)"
+    ) in result.output
 
 
 def test_document_ids_are_source_paths_so_labels_and_queries_can_name_them(project: Path) -> None:
@@ -216,7 +235,7 @@ def test_a_dry_run_extracts_and_grounds_but_writes_nothing(project: Path) -> Non
     assert not (project / "out").exists()
     assert result.output.startswith("odke run — dry run, nothing written")
     assert "would write   jsonl →" in result.output
-    assert "facts.jsonl 5" in result.output
+    assert "facts.jsonl 6" in result.output
     assert "facts that would be written:" in result.output
     assert "Grace Hopper —employer→ US Navy  [supported" in result.output
 
@@ -261,9 +280,9 @@ def test_a_config_that_names_no_scorer_still_scores_from_the_grounding_verdict(
 
     `odke run` writes a graph somebody is about to filter, so it scores whether
     or not the config says to. The gate is off here to keep the contradicted
-    fact, which the default validator refuses.
+    fact, which the default gate refuses.
     """
-    config = _config(stages__validator="passthrough")
+    config = _config(stages__gate="passthrough")
     del config["stages"]["scorer"]
     facts = {
         (f.predicate, f.object_value): f
@@ -296,6 +315,52 @@ def test_models_accept_a_bare_model_string() -> None:
     )
 
 
+def _with_old_gate_key() -> dict[str, Any]:
+    config = _config()
+    config["stages"]["validator"] = config["stages"].pop("gate")
+    return config
+
+
+def test_the_gate_s_old_key_warns_and_runs_the_same(project: Path) -> None:
+    """`validator:` is the 0.2 name of `gate:` (DECISIONS #26): the same run, and a warning."""
+    with pytest.warns(
+        DeprecationWarning, match=r"stages\.validator is deprecated: use stages\.gate"
+    ):
+        old = parse_config(_with_old_gate_key(), base_dir=project)
+    assert old.stages.gate == StageSpec(use="verdict")
+    renamed, current = execute(old), execute(parse_config(_config(), base_dir=project))
+    assert [f.signature for f in renamed.graph.facts] == [f.signature for f in current.graph.facts]
+    # The gate's counts are under `stages.gate`, and under their 0.2 key until 2.0.0,
+    # whichever spelling ran (release audit call C); the report prints them once.
+    counts = {"accepted": 6, "refused": {}, "marked": {"contradicted": 1}}
+    for ran in (renamed, current):
+        assert ran.stats["stages"]["gate"] == ran.stats["stages"]["validator"] == counts
+        assert ran.stats["schema_version"] == STATS_VERSION
+    shown = [line.split()[0] for line in current.render().splitlines() if line.strip()]
+    assert shown.count("gate") == 1 and "validator" not in shown
+
+
+def test_the_command_prints_the_old_key_s_warning(project: Path) -> None:
+    """Python hides a library's DeprecationWarning; a config's reader still has to see it."""
+    result = runner.invoke(app, ["run", "--dry-run", str(_write(project, _with_old_gate_key()))])
+    assert result.exit_code == 0, result.output
+    assert "warning: stages.validator is deprecated: use stages.gate" in result.stderr
+
+
+def test_the_gate_and_its_old_key_together_are_refused() -> None:
+    config = _config()
+    config["stages"]["validator"] = "passthrough"
+    with pytest.raises(ConfigError, match="`validator` is the old name of `gate`"):
+        parse_config(config)
+
+
+def test_built_pipeline_takes_the_gate_s_old_name_with_a_warning(project: Path) -> None:
+    built = build(parse_config(_config(), base_dir=project))
+    with pytest.warns(DeprecationWarning, match=r"Built\.pipeline\(validator=\.\.\.\)"):
+        pipeline = built.pipeline(validator=PassThroughGate())
+    assert isinstance(pipeline.gate, PassThroughGate)
+
+
 # --------------------------------------------------------------------------- #
 # Neo4j, through a recording driver
 # --------------------------------------------------------------------------- #
@@ -311,9 +376,10 @@ def _neo4j_sink(**options: Any) -> dict[str, Any]:
 
 
 def test_bootstrap_applies_the_constraints_before_the_first_write(
-    project: Path, monkeypatch: pytest.MonkeyPatch
+    project: Path, people: Ontology, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    driver = FakeDriver()
+    # Bootstrapped: the indexes the DDL makes, as `SHOW INDEXES` then lists them.
+    driver = FakeDriver.bootstrapped(*people.predicates)
     monkeypatch.setattr(neo4j_module, "_connect", lambda uri, auth: driver)
     monkeypatch.setenv("ODKE_TEST_SECRET", "not-a-real-password")
     config = _config(bootstrap=True)
@@ -324,8 +390,12 @@ def test_bootstrap_applies_the_constraints_before_the_first_write(
 
     modes = [mode for mode, _, _ in driver.calls]
     first_write = modes.index("write")
-    assert modes[:first_write] and set(modes[:first_write]) == {"auto"}
-    assert all("IF NOT EXISTS" in cypher for mode, cypher, _ in driver.calls if mode == "auto")
+    # Before the first write: the DDL, the indexes the store merge reads through (#153),
+    # and that read.
+    assert modes[:first_write] and set(modes[:first_write]) == {"auto", "read"}
+    assert modes.index("read") > modes.index("auto")
+    auto = [cypher for mode, cypher, _ in driver.calls if mode == "auto"]
+    assert all("IF NOT EXISTS" in cypher or cypher.startswith("SHOW INDEXES") for cypher in auto)
     assert "applied" in result.output and "CREATE CONSTRAINT odke_key_Person" in result.output
     assert driver.closed
 
@@ -348,6 +418,15 @@ def test_a_dry_run_prints_the_ddl_and_the_statements_without_connecting(
     assert "MERGE (n:`Person` {key: row.key})" in result.output
 
 
+def test_a_dry_run_never_prints_a_password_in_the_neo4j_uri(project: Path) -> None:
+    config = _config()
+    config["stages"]["sink"] = _neo4j_sink(uri="bolt://neo4j:Hunter2Secret@example.invalid:7687")
+    result = runner.invoke(app, ["run", str(_write(project, config)), "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "neo4j → bolt://neo4j:<redacted>@example.invalid:7687:" in result.output
+    assert "Hunter2Secret" not in result.output
+
+
 def test_a_missing_password_variable_is_named(
     project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -357,6 +436,137 @@ def test_a_missing_password_variable_is_named(
     result = runner.invoke(app, ["run", str(_write(project, config))])
     assert result.exit_code == 2
     assert "ODKE_TEST_SECRET is not set" in result.output
+
+
+# --------------------------------------------------------------------------- #
+# store_lookup
+# --------------------------------------------------------------------------- #
+
+# What `SHOW INDEXES` answers once the people ontology is bootstrapped.
+INDEXES = [
+    {"name": f"odke_{what}_{label}", "type": kind, "labelsOrTypes": [label], "properties": props}
+    for label in ("Company", "Person")
+    for what, kind, props in (
+        ("key", "RANGE", ["key"]),
+        ("external_id", "RANGE", ["external_id"]),
+        ("names", "FULLTEXT", ["label", "aliases"]),
+    )
+]
+
+
+def test_store_lookup_reads_the_neo4j_sinks_store_before_it_writes(
+    project: Path, people: Ontology, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hopper = {"key": "p:hopper", "label": "Grace Hopper", "aliases": []}
+
+    class Store(FakeDriver):
+        """Every name asked about finds her; the resolver decides which one she is."""
+
+        def answer(self, cypher: str) -> list[dict[str, Any]]:
+            if "fulltext" not in cypher:
+                return super().answer(cypher)
+            # The statement being answered is the last one recorded.
+            return [{"block": row["block"], "node": hopper} for row in self.calls[-1][2]["rows"]]
+
+    driver = Store({"SHOW INDEXES": INDEXES + signature_indexes(*people.predicates)})
+    connected: list[str] = []
+
+    def connect(uri: str, auth: Any) -> Any:
+        connected.append(uri)
+        return driver
+
+    monkeypatch.setattr(neo4j_module, "_connect", connect)
+    monkeypatch.setenv("ODKE_TEST_SECRET", "not-a-real-password")
+    config = _config(store_lookup={"use": "neo4j", "limit": 7})
+    # The run's tenant is the lookup's: a run looks up the tenant it writes (#159).
+    config["tenant"] = "t1"
+    config["stages"]["sink"] = _neo4j_sink()
+    result = execute(parse_config(config, base_dir=project))
+
+    # One connection, the sink's; the store is read before the first write.
+    assert connected == ["bolt://example.invalid:7687"]
+    modes = [mode for mode, _, _ in driver.calls]
+    assert modes[0] == "auto" and "read" in modes and "write" in modes
+    assert max(i for i, m in enumerate(modes) if m == "read") < modes.index("write")
+    reads = [(cypher, params) for mode, cypher, params in driver.calls if mode == "read"]
+    # The lookup filters on the tenant; the store merge reads by the tenant's signatures.
+    looked = [params for cypher, params in reads if "row.signature" not in cypher]
+    merged = [params for cypher, params in reads if "row.signature" in cypher]
+    assert looked and all(params["tenant"] == "t1" for params in looked)
+    assert merged and all("tenant" not in params for params in merged)
+    assert any(params.get("limit") == 7 for _, params in reads)
+    # No resolver named: store_lookup brings the native one, and it found the person.
+    links = [(link.source_key, link.target_key, link.kind.value) for link in result.graph.links]
+    assert any(target == "p:hopper" and kind == "similar" for _, target, kind in links)
+    store = result.stats["stages"]["resolver"]["store"]
+    assert store["looked_up"] >= 1 and store["similar"] >= 1
+    assert driver.closed
+
+
+def test_a_dry_run_opens_no_store_and_says_so(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(uri: str, auth: Any) -> Any:
+        raise AssertionError("a dry run must not connect")
+
+    monkeypatch.setattr(neo4j_module, "_connect", refuse)
+    config = _config(store_lookup="neo4j")
+    config["stages"]["sink"] = _neo4j_sink()
+    result = runner.invoke(app, ["run", str(_write(project, config)), "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "store_lookup: a dry run opens no store" in result.output
+
+
+@pytest.mark.parametrize(
+    ("store_lookup", "stages", "message"),
+    [
+        ("neo4j", {}, "store_lookup: neo4j reads the store the run's neo4j sink writes to"),
+        ("neo", {"sink": _neo4j_sink()}, "did you mean 'neo4j'?"),
+        ({"use": "neo4j", "password": "x"}, {"sink": _neo4j_sink()}, "store_lookup.password"),
+        ({"use": "neo4j", "tenant_id": "x"}, {"sink": _neo4j_sink()}, "store_lookup.tenant_id"),
+        ({"use": "neo4j", "tenant": "t2"}, {"sink": _neo4j_sink()}, "store_lookup.tenant: the run"),
+        ("neo4j", {"sink": _neo4j_sink(), "resolver": "passthrough"}, "takes no lookup"),
+    ],
+)
+def test_a_store_lookup_that_cannot_run_is_refused_before_anything_runs(
+    project: Path, store_lookup: Any, stages: dict[str, Any], message: str
+) -> None:
+    config = _config(store_lookup=store_lookup)
+    config["stages"].update(stages)
+    if not stages:
+        del config["stages"]["sink"]
+    with pytest.raises(ConfigError, match=re.escape(message)):
+        build(parse_config(config, base_dir=project))
+
+
+class _OneStoredPerson:
+    """A store of one, as a lookup of your own: `{use: module:Name, ...}`."""
+
+    def __init__(self, key: str) -> None:
+        self.stored = Entity(key=key, type="Person", label="Grace Hopper")
+        self.asked: list[str] = []
+
+    def candidates(self, entities: Any) -> dict[str, list[Entity]]:
+        self.asked.extend(e.key for e in entities)
+        return {e.key: [self.stored] for e in entities}
+
+
+def test_a_store_lookup_of_your_own_is_named_by_import_path(
+    project: Path, support: types.ModuleType
+) -> None:
+    support.OneStoredPerson = _OneStoredPerson  # type: ignore[attr-defined]
+    config = _config(store_lookup={"use": f"{SUPPORT}:OneStoredPerson", "key": "p:grace"})
+    config["stages"]["resolver"] = {"use": "native", "threshold": 0.95}
+    built = build(parse_config(config, base_dir=project))
+    assert built.stages["resolver"].threshold == 0.95
+    result = execute(parse_config(config, base_dir=project))
+    links = {(link.target_key, link.kind.value) for link in result.graph.links}
+    assert ("p:grace", "similar") in links
+
+    # A router is not a lookup, and the config says so before anything runs.
+    config["store_lookup"] = {"use": f"{SUPPORT}:SkipPrefix", "prefix": "#"}
+    with pytest.raises(ConfigError, match="SkipPrefix is not a StoreLookup"):
+        build(parse_config(config, base_dir=project))
 
 
 # --------------------------------------------------------------------------- #
@@ -524,7 +734,7 @@ def test_the_commented_reference_config_is_a_valid_config() -> None:
     """examples/run.yaml documents every key; if it stops parsing, it documents nothing."""
     reference = Path(__file__).parent.parent / "examples" / "run.yaml"
     config = load_config(reference)
-    assert config.stages.extractor.use == "hybrid"
+    assert config.stages.extractor.use == "triples"
     assert config.base_dir == reference.parent.resolve()
 
 
@@ -703,7 +913,7 @@ def test_the_example_runs_end_to_end_into_rdf(example: Path) -> None:
     result = runner.invoke(app, ["run", str(config)])
     assert result.exit_code == 0, result.output
     assert "wrote         rdf → " in result.output
-    assert "graph         25 facts" in result.output
+    assert "graph         26 facts" in result.output
 
     graph = rdflib.Graph().parse(example / "out" / "graph.ttl", format="turtle")
     sink = RdfSink(example / "out" / "graph.ttl")
@@ -713,10 +923,20 @@ def test_the_example_runs_end_to_end_into_rdf(example: Path) -> None:
 
     # One reified statement per fact the gate let through, each with its evidence.
     statements = set(graph.subjects(RDF.type, odke.Fact))
-    assert len(statements) == 25
+    assert len(statements) == 26
     assert all(graph.value(s, odke.evidence) is not None for s in statements)
-    # The head office the model invented for the GmbH was refused, so no triple says it.
+    # The head office the model invented for the GmbH was contradicted by its span.
+    # The grounder has no calibration card, so it is written, marked for review
+    # (DECISIONS #54), not dropped; it lost the single-valued head office to Munich,
+    # so no direct triple says it, and its statement carries the mark.
     assert (gmbh, ont.headquarters, rdflib.Literal("Leeds")) not in graph
+    (invented,) = [
+        s
+        for s in graph.subjects(RDF.subject, gmbh)
+        if graph.value(s, RDF.object) == rdflib.Literal("Leeds")
+    ]
+    review = rdflib.URIRef(f"{sink.schema}qualifier/odke.review")
+    assert graph.value(invented, review) is not None
     # Two companies with one name are two resources, and the link says why.
     assert (gmbh, odke.different_from, ltd) in graph or (ltd, odke.different_from, gmbh) in graph
     (link,) = graph.subjects(odke.kind, rdflib.Literal("different"))
@@ -738,7 +958,7 @@ def test_the_example_runs_end_to_end_into_networkx(example: Path) -> None:
     nodes = Counter(attrs["kind"] for _, attrs in graph.nodes(data=True))
     assert nodes["entity"] == 7
     facts = [attrs for _, _, attrs in graph.edges(data=True) if attrs["kind"] == "fact"]
-    assert len(facts) == 25
+    assert len(facts) == 26  # the contradicted head office written, marked (#54)
     assert all(isinstance(f["extracted_at"], str) for f in facts)  # dates as ISO text
     links = {
         (u, v, key)
@@ -759,7 +979,7 @@ def test_model_overrides_the_config_and_says_so(project: Path) -> None:
     result = runner.invoke(app, ["run", str(path), "--model", "openai/gpt-5.5"])
     assert result.exit_code == 0, result.output
     assert "models: every role on openai/gpt-5.5" in result.output
-    assert len(_lines(project / "out" / "facts.jsonl")) == 5
+    assert len(_lines(project / "out" / "facts.jsonl")) == 6
 
     roles = load_config(path).with_model("openai/gpt-5.5").models.roles()
     assert {roles.extract.model, roles.ground.model, roles.infer.model} == {"openai/gpt-5.5"}

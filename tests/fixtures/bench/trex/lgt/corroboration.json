@@ -1,0 +1,176 @@
+{
+  "graph": {
+    "off": {
+      "edges": 1078,
+      "factual": 315,
+      "precision_factual": 0.2922077922077922,
+      "in_gold": 247,
+      "precision_gold": 0.22912801484230055,
+      "recall": {
+        "1": {
+          "found": 193,
+          "gold": 435,
+          "recall": 0.4436781609195402
+        },
+        "2": {
+          "found": 22,
+          "gold": 37,
+          "recall": 0.5945945945945946
+        },
+        "3+": {
+          "found": 25,
+          "gold": 41,
+          "recall": 0.6097560975609756
+        }
+      }
+    },
+    "on": {
+      "edges": 1076,
+      "factual": 314,
+      "precision_factual": 0.29182156133828996,
+      "in_gold": 246,
+      "precision_gold": 0.22862453531598512,
+      "recall": {
+        "1": {
+          "found": 193,
+          "gold": 435,
+          "recall": 0.4436781609195402
+        },
+        "2": {
+          "found": 22,
+          "gold": 37,
+          "recall": 0.5945945945945946
+        },
+        "3+": {
+          "found": 25,
+          "gold": 41,
+          "recall": 0.6097560975609756
+        }
+      }
+    },
+    "on_two_or_more": {
+      "edges": 95,
+      "factual": 61,
+      "precision_factual": 0.6421052631578947,
+      "in_gold": 54,
+      "precision_gold": 0.5684210526315789,
+      "recall": {
+        "1": {
+          "found": 24,
+          "gold": 435,
+          "recall": 0.05517241379310345
+        },
+        "2": {
+          "found": 14,
+          "gold": 37,
+          "recall": 0.3783783783783784
+        },
+        "3+": {
+          "found": 16,
+          "gold": 41,
+          "recall": 0.3902439024390244
+        }
+      }
+    },
+    "by_support": {
+      "1": {
+        "edges": 981,
+        "factual": 253,
+        "precision_factual": 0.2579001019367992,
+        "in_gold": 192,
+        "precision_gold": 0.19571865443425077,
+        "recall": {
+          "1": {
+            "found": 169,
+            "gold": 435,
+            "recall": 0.38850574712643676
+          },
+          "2": {
+            "found": 9,
+            "gold": 37,
+            "recall": 0.24324324324324326
+          },
+          "3+": {
+            "found": 9,
+            "gold": 41,
+            "recall": 0.21951219512195122
+          }
+        }
+      },
+      "2": {
+        "edges": 75,
+        "factual": 45,
+        "precision_factual": 0.6,
+        "in_gold": 39,
+        "precision_gold": 0.52,
+        "recall": {
+          "1": {
+            "found": 17,
+            "gold": 435,
+            "recall": 0.03908045977011494
+          },
+          "2": {
+            "found": 11,
+            "gold": 37,
+            "recall": 0.2972972972972973
+          },
+          "3+": {
+            "found": 11,
+            "gold": 41,
+            "recall": 0.2682926829268293
+          }
+        }
+      },
+      "3+": {
+        "edges": 20,
+        "factual": 16,
+        "precision_factual": 0.8,
+        "in_gold": 15,
+        "precision_gold": 0.75,
+        "recall": {
+          "1": {
+            "found": 7,
+            "gold": 435,
+            "recall": 0.016091954022988506
+          },
+          "2": {
+            "found": 3,
+            "gold": 37,
+            "recall": 0.08108108108108109
+          },
+          "3+": {
+            "found": 5,
+            "gold": 41,
+            "recall": 0.12195121951219512
+          }
+        }
+      }
+    },
+    "counted": {
+      "1": {
+        "found": 193,
+        "two_or_more": 24,
+        "two_or_more_pooled": 27
+      },
+      "2": {
+        "found": 22,
+        "two_or_more": 14,
+        "two_or_more_pooled": 14
+      },
+      "3+": {
+        "found": 25,
+        "two_or_more": 16,
+        "two_or_more_pooled": 18
+      }
+    }
+  },
+  "links": {
+    "similar (rules)": {
+      "links": 7,
+      "right": 2,
+      "wrong": 1,
+      "uncheckable": 4,
+      "precision": 0.6666666666666666
+    }
+  }
+}

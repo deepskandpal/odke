@@ -1,5 +1,9 @@
 """What a proposer hands on: a candidate type or predicate, and the receipts for it.
 
+Provisional (DECISIONS #48): ontology inference is parked (DECISIONS #24), and
+most of it is undocumented, so it may change in a minor release when it is
+picked up again, with a CHANGELOG line.
+
 A schema nobody can audit is a schema nobody should run. So a candidate is never
 just a name: it carries the spans that produced it — document id and character
 offsets, checked against the document like every other span in this package

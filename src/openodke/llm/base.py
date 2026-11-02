@@ -53,6 +53,11 @@ class ModelSpec(BaseModel):
     # Anything provider-specific that has no business in this model: reasoning
     # effort, safety settings, an Azure api_version, a Bedrock region.
     extra: dict[str, Any] = Field(default_factory=dict)
+    # Which draw of one request this is, 0 for the first, and never sent to a
+    # provider. A caller that asks the same question again on purpose, as gold
+    # adjudication grounds a fact three times (#145), numbers the draws, so
+    # anything that keys a request, a response cache say, keeps them apart.
+    repeat: int = Field(default=0, ge=0)
 
     @property
     def provider(self) -> str:
@@ -75,6 +80,9 @@ class Completion(BaseModel):
     # which is honest, where 0.0 would be a lie.
     cost_usd: float | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
+    # Answered from a response cache (`openodke.llm.cache`): no call was made, so
+    # the tokens are 0 and the cost is 0.0, which here is a measurement.
+    cached: bool = False
 
 
 @runtime_checkable

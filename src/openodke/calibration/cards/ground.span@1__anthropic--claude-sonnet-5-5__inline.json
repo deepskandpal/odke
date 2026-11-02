@@ -1,0 +1,192 @@
+{
+  "card_version": "1.0",
+  "judge": "ground",
+  "prompt": "ground.span@1",
+  "prompts": {
+    "ground.span@1": "dbc23eec8779777579cedc48e047c29073a180de167e9a4df68913b277c700f9"
+  },
+  "model": "anthropic/claude-sonnet-5-5",
+  "claim_format": "inline",
+  "vote": "single",
+  "date": "2026-10-25",
+  "openodke": "0.2.1",
+  "labels": {
+    "name": "G",
+    "version": "sheets 01-04 (labelled 20-24 Oct 2026)",
+    "sha256": "019b8a053889274f839d5d3eacff125a6621faae0db8bbd8fc474c4f2f41d45d",
+    "split": "gate",
+    "n": 104
+  },
+  "cost_per_1000": 1.8952243346007605,
+  "grounding": {
+    "kappa": {
+      "value": 0.40321817321344083,
+      "low": 0.09445359692476621,
+      "high": 0.6548042704626336,
+      "n": 97
+    },
+    "kappa_three_way": {
+      "value": 0.37448180561952993,
+      "low": 0.11344086021505347,
+      "high": 0.6088159898362808,
+      "n": 97
+    },
+    "confusion": {
+      "supported": {
+        "supported": 78,
+        "contradicted": 1,
+        "not_found": 5,
+        "unchecked": 5
+      },
+      "contradicted": {
+        "supported": 2,
+        "contradicted": 1,
+        "not_found": 1,
+        "unchecked": 0
+      },
+      "not_found": {
+        "supported": 5,
+        "contradicted": 0,
+        "not_found": 4,
+        "unchecked": 2
+      }
+    },
+    "fail_recall": {
+      "k": 6,
+      "n": 15,
+      "value": 0.4,
+      "low": 0.19824496141341583,
+      "high": 0.6425316987937539
+    },
+    "false_refusals": {
+      "k": 6,
+      "n": 89,
+      "value": 0.06741573033707865,
+      "low": 0.031261385052923314,
+      "high": 0.13936776082563224
+    },
+    "planted": {
+      "k": 75,
+      "n": 100,
+      "value": 0.75,
+      "low": 0.656955364519384,
+      "high": 0.8245478863771232
+    },
+    "abstain": {
+      "k": 7,
+      "n": 104,
+      "value": 0.0673076923076923,
+      "low": 0.03298368902967008,
+      "high": 0.1324578676387979
+    },
+    "flips": {
+      "k": 5,
+      "n": 104,
+      "value": 0.04807692307692308,
+      "low": 0.020708042325852227,
+      "high": 0.10764202797232544
+    },
+    "flips_keep_refuse": {
+      "k": 3,
+      "n": 104,
+      "value": 0.028846153846153848,
+      "low": 0.009858182902777003,
+      "high": 0.08140040102511034
+    },
+    "runs": 3,
+    "vote": "single",
+    "by_length": [
+      {
+        "name": "sentence",
+        "low": 0,
+        "high": 40,
+        "n": 48,
+        "kappa": {
+          "value": 0.3260073260073258,
+          "low": -0.0887573964497043,
+          "high": 0.6916890080428952,
+          "n": 46
+        },
+        "fail_recall": {
+          "k": 3,
+          "n": 9,
+          "value": 0.3333333333333333,
+          "low": 0.120583818386911,
+          "high": 0.6457978644196037
+        },
+        "false_refusals": {
+          "k": 4,
+          "n": 39,
+          "value": 0.10256410256410256,
+          "low": 0.04061331344668381,
+          "high": 0.23578854462856524
+        }
+      },
+      {
+        "name": "paragraph",
+        "low": 41,
+        "high": 150,
+        "n": 23,
+        "kappa": {
+          "value": 0.7741935483870965,
+          "low": 0.0,
+          "high": 1.0,
+          "n": 21
+        },
+        "fail_recall": {
+          "k": 2,
+          "n": 3,
+          "value": 0.6666666666666666,
+          "low": 0.20765960080204782,
+          "high": 0.9385080552796038
+        },
+        "false_refusals": {
+          "k": 0,
+          "n": 20,
+          "value": 0.0,
+          "low": 0.0,
+          "high": 0.1611251580528193
+        }
+      },
+      {
+        "name": "document",
+        "low": 151,
+        "high": null,
+        "n": 33,
+        "kappa": {
+          "value": 0.2592592592592592,
+          "low": -0.12903225806451588,
+          "high": 0.7826086956521738,
+          "n": 30
+        },
+        "fail_recall": {
+          "k": 1,
+          "n": 3,
+          "value": 0.3333333333333333,
+          "low": 0.06149194472039629,
+          "high": 0.7923403991979523
+        },
+        "false_refusals": {
+          "k": 2,
+          "n": 30,
+          "value": 0.06666666666666667,
+          "low": 0.01847702379127039,
+          "high": 0.21323458362616918
+        }
+      }
+    ]
+  },
+  "pairs": null,
+  "equivalence": null,
+  "bar": {
+    "metric": "kappa_keep_refuse",
+    "threshold": 0.6,
+    "value": 0.40321817321344083,
+    "met": false,
+    "note": "judged on κ alone: the bar's other half, within 0.1 of the labeller's agreement with themselves, was not checked, because self-agreement has not been measured"
+  },
+  "self_agreement": null,
+  "notes": [
+    "Answered with reasoning on, the model's default. Reasoning counts against max_tokens (256 for every judge here), so an answer can stop before its verdict and count as an abstention, and the cost includes it: not like for like with a model that answers without reasoning."
+  ]
+}

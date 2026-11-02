@@ -13,6 +13,16 @@ base-install guarantee, the build, and a smoke test of the built wheel in a clea
 environment. CI runs this same script on four interpreters — there is no second
 list of steps to drift out of sync with this one.
 
+The documentation site is built from `docs/` and `mkdocs.yml`:
+
+```bash
+uv run --group docs mkdocs serve           # the site, at http://127.0.0.1:8000
+uv run --group docs mkdocs build --strict  # what the docs workflow runs
+```
+
+Its tooling is the `docs` dependency group, which never reaches a user's
+install. The `docs` extra is a different thing: the PDF and Word readers.
+
 ## Every change is a pull request
 
 `main` is protected. Nothing is pushed to it directly, and a pull request can

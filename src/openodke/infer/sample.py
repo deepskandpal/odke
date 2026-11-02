@@ -1,5 +1,9 @@
 """The slice of a corpus an ontology is inferred from.
 
+Provisional (DECISIONS #48): ontology inference is parked (DECISIONS #24), and
+most of it is undocumented, so it may change in a minor release when it is
+picked up again, with a CHANGELOG line.
+
 Inferring from everything is slow and no better than inferring from a good
 sample. A good sample here means three things.
 

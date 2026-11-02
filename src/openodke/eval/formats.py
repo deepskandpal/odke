@@ -28,10 +28,11 @@ from __future__ import annotations
 import inspect
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
+from openodke._renamed import Renamed, module_getattr
 from openodke.types import Chunk, Document, Evidence, Fact, Frozen, GroundingVerdict, LinkKind
 
 Action = Literal["extract", "skip", "defer"]
@@ -115,7 +116,9 @@ class GroundingLabel(Frozen):
     defaults to the first evidence's `doc_id`, then to the fact's id.
 
     Predictions are `Fact` rows whose `verdict` a grounder set, joined on
-    `Fact.id`; without them the label row's own fact is scored as it stands.
+    `Fact.id`, and on the document where predictions share an id (facts read
+    back from Neo4j do); without them the label row's own fact is scored as it
+    stands.
     Correct means the predicted verdict equals yours. `unchecked` is never
     correct — it is what a grounder that did not decide leaves behind.
     """
@@ -132,6 +135,48 @@ class GroundingLabel(Frozen):
     def as_document(self) -> Document:
         cited = next((e.doc_id for e in self.fact.evidence), None)
         return Document(id=self.doc_id or cited or self.fact.id, text=self.text)
+
+
+class Refusal(Frozen):
+    """One fact a grounder refused, as `odke eval refusals` puts it to a person (#113).
+
+    `claim` is the fact as the grounder read it; `text` the passage it read,
+    and `bold`, where in it the claim's names are, or the cited span. `verdict`
+    and `reason` say why it was refused. `gold` is whether the run's gold lists
+    the fact, and None with no gold. `predicate`, `extractor` and `dataset` are
+    what a sample is stratified on, and `source` the output it came from.
+    `stratum_size` is how many refusals its stratum (dataset, extractor and
+    verdict) held when the sample was drawn: the refusal precision weights the
+    stratum by it. A row made by hand has none.
+    """
+
+    id: str
+    claim: str
+    text: str
+    bold: tuple[int, int] | None = None
+    verdict: str
+    reason: str
+    gold: bool | None = None
+    predicate: str
+    extractor: str | None = None
+    dataset: str | None = None
+    doc_id: str | None = None
+    source: str | None = None
+    stratum_size: int | None = Field(default=None, ge=1)
+
+
+class RefusalLabel(Refusal):
+    """A `Refusal` and what a person made of it.
+
+    `refusal_correct`: the text does not state the fact, so refusing it was
+    right. `refusal_wrong`: the text states it, and a true fact was lost.
+    `gold_wrong`: the gold lists the fact and the text does not state it, so
+    the refusal was right and the gold is not. `unsure`: the text does not
+    settle it. Refusal precision is the right refusals, correct and gold wrong,
+    over every judgement but unsure.
+    """
+
+    judgement: Literal["refusal_correct", "refusal_wrong", "gold_wrong", "unsure"]
 
 
 # --------------------------------------------------------------------------- #
@@ -156,6 +201,35 @@ class PairLabel(Frozen):
 
     a: str
     b: str
+    same: bool
+
+
+class FactPair(Frozen):
+    """Two facts from one passage: do they state the same fact? (#143)
+
+    What the fact-equivalence judge reads, and a fact sheet shows: the
+    relation and its description, `first` and `second` as the grounder
+    renders a claim, and the passage. Neither side says which fact is gold;
+    whoever made the row keeps that apart. Give it an `id`, because labels
+    join on it.
+    """
+
+    id: str
+    relation: str
+    description: str | None = None
+    first: Fact
+    second: Fact
+    passage: str
+
+
+class FactPairLabel(FactPair):
+    """A `FactPair` and whether its two facts state the same fact, as a person read them.
+
+    `same` is true when the two share subject, relation and object in meaning,
+    in one direction, with any quantity, date or number at one value. A pair
+    the person could not settle is never one: it is kept apart.
+    """
+
     same: bool
 
 
@@ -207,8 +281,8 @@ class CalibrationLabel(Frozen):
 # --------------------------------------------------------------------------- #
 
 
-class ValidationLabel(Frozen):
-    """One fact, and what a validator should decide about it.
+class GateLabel(Frozen):
+    """One fact, and what the gate should decide about it.
 
     A row is one fact and the action a person takes against the ontology:
     `accept` (write it), `refuse` (do not) or `conflict` (write it and flag
@@ -223,7 +297,7 @@ class ValidationLabel(Frozen):
 
 
 class ValidationPrediction(Frozen):
-    """What a validator said about the fact with this `id`."""
+    """What the gate said about the fact with this `id`."""
 
     id: str
     action: Decision
@@ -277,7 +351,7 @@ LABEL_FORMATS: dict[str, type[BaseModel]] = {
     "ground": GroundingLabel,
     "resolve": PairLabel,
     "score": CalibrationLabel,
-    "validate": ValidationLabel,
+    "validate": GateLabel,
 }
 PREDICTION_FORMATS: dict[str, type[BaseModel]] = {
     "route": RoutePrediction,
@@ -309,19 +383,32 @@ def describe(stage: str) -> str:
     return "\n\n".join(parts)
 
 
+if TYPE_CHECKING:
+    # What a type checker sees; at run time the 0.2 name comes from `__getattr__`.
+    ValidationLabel = GateLabel
+
+# The gate's label, under its 0.2 name, until 2.0.0 (release audit call C).
+__getattr__ = module_getattr(
+    __name__, {"ValidationLabel": Renamed(GateLabel, "openodke.eval.formats.GateLabel")}
+)
+
 __all__ = [
     "LABEL_FORMATS",
     "PREDICTION_FORMATS",
     "Action",
     "CalibrationLabel",
     "Decision",
+    "FactPair",
+    "FactPairLabel",
     "GoldFact",
     "GroundingLabel",
     "LinkRow",
     "PairLabel",
+    "Refusal",
+    "RefusalLabel",
     "RouteLabel",
     "RoutePrediction",
-    "ValidationLabel",
+    "GateLabel",
     "ValidationPrediction",
     "cite",
     "describe",

@@ -25,10 +25,13 @@ from openodke import (
 from openodke.corroborate import (
     CONFLICT,
     SOURCE_FORM,
+    EvidenceScorer,
     SignatureCorroborator,
     ValueNormalizer,
     independent_sources,
 )
+from openodke.corroborate.inverses import partners
+from openodke.corroborate.provenance import REVIEW, contradicted_in
 
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
 ACME = Entity(key="c1", type="Company", label="Acme")
@@ -312,6 +315,136 @@ def test_the_merged_verdict_is_the_most_informative_one() -> None:
     assert merged(V.UNCHECKED, V.CONTRADICTED) is V.CONTRADICTED
     assert merged(V.UNCHECKED, V.NOT_FOUND) is V.NOT_FOUND
     assert merged(V.UNCHECKED, V.UNCHECKED) is V.UNCHECKED
+
+
+def test_a_text_that_contradicts_a_supported_claim_is_no_source_for_it() -> None:
+    """Release audit 2: a contradicting text counted as support, and raised the score.
+
+    Text a supports the claim and text b contradicts it. One fact comes out,
+    supported by a alone; b is recorded under `odke.conflict`, not counted.
+    """
+    V = GroundingVerdict
+    supported = _fact("Jane Doe", _ev("a"), verdict=V.SUPPORTED)
+    against = _fact("Jane Doe", _ev("b"), verdict=V.CONTRADICTED).model_copy(
+        update={"confidence": 0.9}
+    )
+    alone = EvidenceScorer().score(SignatureCorroborator().corroborate([supported])[0])
+    for order in ((supported, against), (against, supported)):
+        (fact,) = SignatureCorroborator().corroborate(order)
+        assert fact.verdict is V.SUPPORTED
+        assert [e.doc_id for e in fact.evidence] == ["a"]
+        assert (fact.support, [s.source for s in fact.supported_by]) == (1, ["doc:a"])
+        assert fact.confidence == 0.8  # the contradicting member's 0.9 is not this claim's
+        assert fact.qualifiers[CONFLICT]["contradicted_in"] == ["b"]
+        assert fact.qualifiers[CONFLICT]["status"] == "contradicted"
+        assert EvidenceScorer().score(fact).confidence == alone.confidence
+    # Contradicted on its own, a fact keeps its evidence, as before.
+    (refused,) = SignatureCorroborator().corroborate([against])
+    assert [e.doc_id for e in refused.evidence] == ["b"] and CONFLICT not in refused.qualifiers
+
+
+def test_the_record_of_a_contradicting_text_outlives_the_next_merge() -> None:
+    """It is not a stamp of one batch: a later source adds support, and b stays recorded."""
+    V = GroundingVerdict
+    (stored,) = SignatureCorroborator().corroborate(
+        [_fact("Jane Doe", _ev("a"), verdict=V.SUPPORTED), _fact("Jane Doe", _ev("b"),
+                                                                 verdict=V.CONTRADICTED)]
+    )  # fmt: skip
+    (again,) = SignatureCorroborator().corroborate(
+        [stored, _fact("Jane Doe", _ev("c"), verdict=V.SUPPORTED)]
+    )
+    assert [s.source for s in again.supported_by] == ["doc:a", "doc:c"]
+    assert again.qualifiers[CONFLICT]["contradicted_in"] == ["b"]
+    # The contest keeps the record beside its own decision.
+    (won, lost) = sorted(
+        SignatureCorroborator(ONTOLOGY).corroborate([again, _fact("John Roe", _ev("d"))]),
+        key=lambda f: str(f.object_value),
+    )
+    assert won.qualifiers[CONFLICT]["status"] == "won"
+    assert won.qualifiers[CONFLICT]["contradicted_in"] == ["b"]
+    assert "contradicted_in" not in lost.qualifiers[CONFLICT]
+    # A text that comes back supporting the claim is no longer recorded against it.
+    (settled,) = SignatureCorroborator().corroborate(
+        [again, _fact("Jane Doe", _ev("b"), verdict=V.SUPPORTED)]
+    )
+    assert CONFLICT not in settled.qualifiers and settled.support == 3
+
+
+def test_a_contradicting_texts_qualifiers_are_not_the_claims() -> None:
+    """Review of release audit 2: its start time and role still shaped the merged claim."""
+    V = GroundingVerdict
+    supports = _fact(
+        "Jane Doe", _ev("a"), verdict=V.SUPPORTED, qualifiers={"start_time": "2019", "role": "CEO"}
+    )
+    against = _fact(
+        "Jane Doe",
+        _ev("b", tier=SourceTier.AUTHORITATIVE),
+        verdict=V.CONTRADICTED,
+        qualifiers={"start_time": "2010", "role": "CTO"},
+        extractor="other",
+    )
+    (fact,) = SignatureCorroborator().corroborate([supports, against])
+    assert (fact.qualifiers["start_time"], fact.qualifiers["role"]) == ("2019", "CEO")
+    assert fact.extractor == supports.extractor
+
+
+def test_texts_are_left_out_one_at_a_time_not_with_the_fact_they_merged_into() -> None:
+    """Review of release audit 2: a batch fact merged from a not-found text and a
+    contradicting one was dropped whole beside a stored supported fact."""
+    V = GroundingVerdict
+    a = _fact("Jane Doe", _ev("a"), verdict=V.SUPPORTED)
+    batch = [_fact("Jane Doe", _ev("x"), verdict=V.NOT_FOUND),
+             _fact("Jane Doe", _ev("b"), verdict=V.CONTRADICTED)]  # fmt: skip
+    (merged,) = SignatureCorroborator().corroborate(batch)
+    assert merged.verdict is V.CONTRADICTED and contradicted_in(merged) == ("b",)
+    (later,) = SignatureCorroborator().corroborate([a, merged])
+    (together,) = SignatureCorroborator().corroborate([a, *batch])
+
+    def shown(fact: Fact) -> Any:
+        return sorted(e.doc_id for e in fact.evidence), contradicted_in(fact)
+
+    assert shown(later) == shown(together) == (["a", "x"], ("b",))
+
+
+def test_a_statement_that_replaced_a_derived_twin_keeps_its_source_when_it_moved() -> None:
+    """Review of #51: the re-merge took from a statement what its derived twin had lost."""
+    inverses = Ontology.from_dict(
+        {
+            "types": {"Person": {}, "Company": {}},
+            "predicates": {
+                "ceo": {"domain": ["Company"], "range": "Person"},
+                "ceo_of": {"domain": ["Person"], "range": "Company", "inverse_of": "ceo"},
+            },
+        }
+    )
+    jane = Entity(key="p:jane", type="Person", label="Jane Doe")
+    (parent,) = SignatureCorroborator(inverses).corroborate(
+        [Fact(subject=ACME, predicate="ceo", object_entity=jane, evidence=(_ev("a"),))]
+    )
+    (derived,) = partners([parent], inverses)
+
+    def stated(doc: str) -> Fact:
+        return Fact(subject=jane, predicate="ceo_of", object_entity=ACME, evidence=(_ev(doc),))
+
+    # B states it from a, over the derived twin it read; C states it from c meanwhile.
+    (b,) = SignatureCorroborator(inverses).corroborate([stated("a")])
+    (c,) = SignatureCorroborator(inverses).corroborate([stated("c")])
+    rebased = SignatureCorroborator(inverses).rebase(b, derived, c)
+    assert rebased is not None and sorted(e.doc_id for e in rebased.evidence) == ["a", "c"]
+
+
+def test_a_review_mark_survives_a_merge() -> None:
+    """A fact the gate wrote for review is a written fact; its mark merges like a qualifier."""
+    V = GroundingVerdict
+    mark = {"reason": "grounding verdict not_found", "why": "uncalibrated"}
+    marked = _fact("Jane Doe", _ev("a"), verdict=V.NOT_FOUND, qualifiers={REVIEW: mark})
+    (fact,) = SignatureCorroborator().corroborate([marked, _fact("Jane Doe", _ev("b"))])
+    assert fact.qualifiers[REVIEW] == mark and fact.support == 2
+    against = marked.model_copy(update={"verdict": V.CONTRADICTED})
+    (kept,) = SignatureCorroborator().corroborate(
+        [against, _fact("Jane Doe", _ev("c"), verdict=V.SUPPORTED)]
+    )
+    assert kept.qualifiers[REVIEW] == mark and kept.qualifiers[CONFLICT]["contradicted_in"] == ["a"]
 
 
 def test_corroborating_twice_changes_nothing() -> None:

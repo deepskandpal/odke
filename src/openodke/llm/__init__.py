@@ -21,6 +21,13 @@ install with no extra dependency. Everything else routes through litellm, which
 `openodke.llm.providers` is the table behind that: every provider openodke can
 address, the variable each reads its key from, and who serves it. `odke models`
 prints it. Keys come from the environment and are never stored or printed.
+
+`CachedClient` wraps any client so that a request it has answered before is
+answered again from the store, for nothing (`openodke.llm.cache`). A `Ledger`
+holds a run to a `Budget`, and stops it with `BudgetExceeded` before a call
+would go past it (`openodke.llm.budget`). `LimitedClient` holds every call to
+a provider to that provider's limit, shared by the whole process
+(`openodke.llm.limits`).
 """
 
 from openodke.llm.base import (
@@ -32,6 +39,9 @@ from openodke.llm.base import (
     ProviderError,
     ProviderNotInstalled,
 )
+from openodke.llm.budget import Budget, BudgetExceeded, Ledger
+from openodke.llm.cache import CachedClient, DirectoryCache, MemoryCache
+from openodke.llm.limits import PROVIDER_LIMITS, LimitedClient, ProviderLimits, set_limit
 from openodke.llm.openai_compat import DEFAULT_BASE_URLS, OpenAICompatClient
 from openodke.llm.providers import PROVIDERS, Provider, key_env_for, qualify, require_key
 from openodke.llm.registry import register, registered_providers, resolve, unregister
@@ -47,9 +57,17 @@ from openodke.llm.testing import (
 __all__ = [
     "DEFAULT_BASE_URLS",
     "PROVIDERS",
+    "PROVIDER_LIMITS",
+    "Budget",
+    "BudgetExceeded",
+    "CachedClient",
     "Cassette",
     "Completion",
+    "DirectoryCache",
     "LLMClient",
+    "Ledger",
+    "LimitedClient",
+    "MemoryCache",
     "Message",
     "MissingAPIKey",
     "ModelRoles",
@@ -57,6 +75,7 @@ __all__ = [
     "OpenAICompatClient",
     "Provider",
     "ProviderError",
+    "ProviderLimits",
     "ProviderNotInstalled",
     "RecordedClient",
     "RecordingClient",
@@ -68,5 +87,6 @@ __all__ = [
     "registered_providers",
     "require_key",
     "resolve",
+    "set_limit",
     "unregister",
 ]

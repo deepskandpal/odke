@@ -21,12 +21,15 @@ class RegistryResolver:
     With the numbers in place, two companies that share a name and not a
     number become a `DIFFERENT` link naming both numbers, rather than a
     `SIMILAR` one somebody would have to look into. Everything else is
-    `NativeResolver`'s, unchanged.
+    `NativeResolver`'s, with the batch not normalised, as by default and
+    pinned: `gold.jsonl` keys each text's facts as they were extracted, so a
+    look-alike merged (DECISIONS #43), "Corvid Analytics" into "Corvid
+    Analytics Ltd", would score as a miss.
     """
 
     def __init__(self, predicate: str = "registration_number", threshold: float = 0.9) -> None:
         self.predicate = predicate
-        self.inner = NativeResolver(threshold=threshold)
+        self.inner = NativeResolver(threshold=threshold, normalize_batch=False)
 
     def resolve(
         self, facts: Iterable[Fact], index: EntityIndex

@@ -73,7 +73,8 @@ class EvidenceScorer:
     single-source claim and every loser of a contest.
 
     `support` is populated too: it is the corroborator's count, or the fact's
-    own independent sources when no corroborator ran, whichever is larger.
+    own independent sources when no corroborator ran, whichever is larger. A
+    fact whose support list is filled keeps its count, the list's length.
     Scoring is idempotent. It always starts from the extractor's number, never
     from its own previous output.
     """
@@ -100,7 +101,13 @@ class EvidenceScorer:
         reported = unstamped(fact).confidence
         clamped = min(1.0, max(0.0, reported))
         extractor = clamped if clamped > 0.0 else self.prior
-        support = max(fact.support, len(independent_sources(fact, self.source)))
+        # A support list is the corroborator's count with its sources named; any
+        # other count is the larger of the fact's own and its evidence's.
+        support = (
+            fact.support
+            if fact.supported_by
+            else max(fact.support, len(independent_sources(fact, self.source)))
+        )
 
         conflict = 1.0
         stamp = fact.qualifiers.get(CONFLICT)

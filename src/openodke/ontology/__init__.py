@@ -15,6 +15,8 @@ then on it is handed to exactly the same code.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -132,6 +134,12 @@ class Predicate(BaseModel):
     # inferred ontology sets it from corpus support.
     importance: float = 0.5
     examples: tuple[str, ...] = ()
+    # The edge this one states the other way round: `contains` for
+    # `located_in`. Declaring it on one side is enough; loading fills in the
+    # other. A `symmetric` edge is its own inverse, like `spouse`. Either way the
+    # pipeline adds each fact's partner without asking a model (DECISIONS #28).
+    inverse_of: str | None = None
+    symmetric: bool = False
 
     @field_validator("qualifiers", mode="before")
     @classmethod
@@ -216,6 +224,25 @@ class Ontology(BaseModel):
                     for key, entry in entries.items()
                 }
         return out
+
+    @model_validator(mode="after")
+    def _complete_inverses(self) -> Ontology:
+        # An inverse holds both ways, and a schema usually says so once, as OWL
+        # files do. The other side is filled in only when nothing contradicts it:
+        # two predicates claiming one inverse, or one that already has another, is
+        # left for `validate()` to report, not settled by declaration order.
+        claims: dict[str, list[str]] = {}
+        for key, predicate in self.predicates.items():
+            if predicate.inverse_of is not None and predicate.inverse_of != key:
+                claims.setdefault(predicate.inverse_of, []).append(key)
+        for target, owners in claims.items():
+            partner = self.predicates.get(target)
+            if partner is None or len(owners) > 1 or partner.inverse_of or partner.symmetric:
+                continue
+            if not (partner.is_edge_in(self) and self.predicates[owners[0]].is_edge_in(self)):
+                continue
+            self.predicates[target] = partner.model_copy(update={"inverse_of": owners[0]})
+        return self
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any], *, strict: bool = True) -> Ontology:
@@ -394,6 +421,22 @@ class Ontology(BaseModel):
         """
         return diagnose(self)
 
+    @property
+    def fingerprint(self) -> str:
+        """The SHA-256 of the schema's content: its types and predicates, as canonical JSON.
+
+        The schema's identity: two ontologies with one fingerprint check every
+        fact alike, whatever they are called. Content only:
+        `name` and `version` are labels a person gives, and `inferred`,
+        `frozen_at` and `frozen_by` record a review. A schema relabelled or
+        frozen again keeps its fingerprint; any change to a type or a predicate
+        gives a new one. Inverses are filled in before it is taken, so
+        declaring one on one side or on both is the same schema.
+        """
+        content = self.model_dump(mode="json", include={"types", "predicates"})
+        canonical = json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
     def diff(self, new: Ontology) -> list[SchemaChange]:
         """What changed from this schema to `new`, each change marked breaking or not.
 
@@ -469,6 +512,30 @@ class Ontology(BaseModel):
         found = self.predicates.get(predicate)
         return found.identity_keys if found else ()
 
+    @property
+    def inverses(self) -> dict[str, str]:
+        """Each edge predicate that implies another fact, mapped to that fact's predicate.
+
+        A symmetric predicate maps to itself, and each side of an inverse pair to
+        the other. A pair that is not mutual, or with an end that is missing or a
+        literal property, implies nothing: a schema loaded with `strict=False`
+        derives nothing from an inverse `validate()` cannot even read as one.
+        """
+        out: dict[str, str] = {}
+        for key, predicate in self.predicates.items():
+            target = predicate.inverse_of
+            if not predicate.is_edge_in(self):
+                continue
+            if predicate.symmetric:
+                if target is None:
+                    out[key] = key
+                continue
+            if target is None or target == key or (partner := self.predicates.get(target)) is None:
+                continue
+            if partner.inverse_of == key and not partner.symmetric and partner.is_edge_in(self):
+                out[key] = target
+        return out
+
     def lineage(self, type_name: str) -> set[str]:
         """A type and all of its ancestors, cycle-safe."""
         seen: set[str] = set()
@@ -521,6 +588,19 @@ class OntologySnippet(BaseModel):
     ontology_version: str = "0"
     truncated: bool = False
 
+    @property
+    def fingerprint(self) -> str:
+        """The SHA-256 of what the model is shown: the type, its description and its predicates.
+
+        The schema slice a fact's extractor saw (#163). The ontology's name and
+        version are labels the prompt does not show, so they are left out.
+        """
+        content = self.model_dump(
+            mode="json", exclude={"ontology_name", "ontology_version", "truncated"}
+        )
+        canonical = json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
     def render(self) -> str:
         """A compact, stable textual schema. Stable order matters: an unstable
         prompt defeats provider-side prompt caching and makes runs unrepeatable.
@@ -564,6 +644,10 @@ _JSON_TYPES = {
     "boolean": "boolean",
     "date": "string",
     "datetime": "string",
+    # A number with its unit, "5 km": text, because a `number` would make a
+    # structured-output call drop the unit. The normaliser gives it one
+    # canonical unit per dimension.
+    "quantity": "string",
 }
 
 __all__ = [

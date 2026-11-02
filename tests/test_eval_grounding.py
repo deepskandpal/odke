@@ -165,3 +165,35 @@ def test_kept_treats_unchecked_as_the_pass_through_does() -> None:
     assert kept(fact)
     assert kept(fact.model_copy(update={"verdict": GroundingVerdict.UNCHECKED}))
     assert not kept(fact.model_copy(update={"verdict": GroundingVerdict.NOT_FOUND}))
+
+
+def test_facts_sharing_an_id_are_joined_by_their_document() -> None:
+    """Release audit 19: `read_neo4j` gives every fact of a relationship its id, one per evidence.
+
+    Joined on the id alone, both labels took the last row, and a grounder right
+    on both scored 0.5. A label joins the prediction citing its document.
+    """
+    from openodke import Evidence
+
+    def row(doc: str, verdict: str) -> Fact:
+        return Fact(
+            id="4:rel:7",
+            subject=Entity(key="ada", type="Person"),
+            predicate="born",
+            object_value=1815,
+            evidence=(Evidence(doc_id=doc),),
+            verdict=GroundingVerdict(verdict),
+        )
+
+    labels = [
+        GroundingLabel(
+            text="Ada was born in 1815.", fact=row("a", "unchecked"), verdict="supported"
+        ),
+        GroundingLabel(
+            text="Ada was born in 1816.", fact=row("b", "unchecked"), verdict="contradicted"
+        ),
+    ]
+    report = evaluate_grounding(labels, [row("a", "supported"), row("b", "contradicted")])
+    assert report.metrics["accuracy"] == 1.0 and report.n == 2
+    with pytest.raises(ValueError, match="share the fact id '4:rel:7' and its document"):
+        evaluate_grounding(labels, [row("a", "supported"), row("a", "contradicted")])

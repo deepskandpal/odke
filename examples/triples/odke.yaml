@@ -20,5 +20,5 @@ models:
 stages:
   extractor: {use: triples, path: triples.jsonl, extractor: hand-written}
   grounder: llm
-  validator: verdict
+  gate: verdict
   sink: {use: jsonl, directory: out}

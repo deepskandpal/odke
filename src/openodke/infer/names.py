@@ -1,5 +1,9 @@
 """Names for inferred types and predicates, and the forms they are compared in.
 
+Provisional (DECISIONS #48): ontology inference is parked (DECISIONS #24), and
+most of it is undocumented, so it may change in a minor release when it is
+picked up again, with a CHANGELOG line.
+
 Every proposer names what it finds the same way — types `PascalCase` and
 singular, predicates `snake_case` — so `people.csv`, "people such as Ada" and a
 model's `Person` arrive at one spelling before anything is merged. The merge

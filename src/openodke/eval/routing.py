@@ -2,7 +2,7 @@
 
 A router is wrong in two ways that do not cost the same. Sending marketing
 prose to the extractor wastes a model call and risks over-extraction, which
-the grounder and the validator can still catch. Skipping a chunk that states
+the grounder and the gate can still catch. Skipping a chunk that states
 facts loses them silently: no later stage sees the chunk, so no later stage
 can recover it. The report therefore leads with the skip/extract confusion
 and puts the skipped-facts count on its own line, instead of letting it

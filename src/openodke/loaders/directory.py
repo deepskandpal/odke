@@ -7,7 +7,7 @@ from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Literal
 
-from openodke.loaders.base import MissingExtraError, MissingExtraWarning
+from openodke.loaders.base import MissingExtraError, MissingExtraWarning, with_path_ids
 from openodke.loaders.docx import DocxLoader
 from openodke.loaders.html import HtmlLoader
 from openodke.loaders.pdf import PdfLoader
@@ -67,7 +67,12 @@ class DirectoryLoader:
     Markdown files from loading. `missing_extras="raise"` makes it an error.
 
     Files are visited in sorted order, so two runs over one directory produce
-    documents in the same order.
+    documents in the same order. Each document is named by its file's path,
+    relative to `relative_to` (the current directory when left out), as
+    `odke validate --texts` names them: `texts/a.txt`, or
+    `corpus/register.csv#L2` for a record. A rerun over the same files then
+    cites the same documents, so a merging store counts each source once and
+    `update=True` retracts the versions it holds.
     """
 
     def __init__(
@@ -78,6 +83,7 @@ class DirectoryLoader:
         encoding: str | None = None,
         loaders: Mapping[str, Loader] | None = None,
         missing_extras: Literal["warn", "raise"] = "warn",
+        relative_to: str | Path | None = None,
     ) -> None:
         if missing_extras not in ("warn", "raise"):
             raise ValueError(f"missing_extras must be 'warn' or 'raise', not {missing_extras!r}")
@@ -85,6 +91,7 @@ class DirectoryLoader:
         table = default_loaders(tier=tier, encoding=encoding) if loaders is None else loaders
         self.loaders = {suffix.lower(): loader for suffix, loader in table.items()}
         self.missing_extras = missing_extras
+        self.relative_to = Path(relative_to) if relative_to is not None else None
 
     def load(self, source: Source) -> Iterator[Document]:
         root = Path(source)
@@ -94,12 +101,14 @@ class DirectoryLoader:
             paths = sorted(p for p in root.glob(self.pattern) if p.is_file())
         else:
             raise FileNotFoundError(f"no such file or directory: {root}")
+        base = (self.relative_to or Path.cwd()).resolve()
         for path in paths:
             loader = self.loaders.get(path.suffix.lower())
             if loader is None:
                 continue
             try:
-                yield from loader.load(path)
+                # Named per file: a file's records are told apart by their line or row.
+                yield from with_path_ids(loader.load(path), base)
             except MissingExtraError as exc:
                 if self.missing_extras == "raise":
                     raise

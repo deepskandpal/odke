@@ -4,47 +4,52 @@
 #
 # Reading YAML needs `pip install "openodke[yaml]"`; the same keys as JSON need
 # nothing. Every path below is relative to this file, not to where you run it.
-# This one runs the end-to-end example (examples/e2e/) on recorded responses,
-# so it needs no key and no network.
+# This one checks the five hand-written triples of examples/triples/ with the
+# Validator's stages, on recorded responses, so it needs no key and no network.
 
-# The schema the extractor is held to. JSON or YAML; loaded strictly, so a
+# The schema the triples are held to. JSON or YAML; loaded strictly, so a
 # schema with errors in it stops the run before anything is spent.
-ontology: e2e/ontology.json
+ontology: triples/ontology.json
 
-# What to read. A bare path uses `stages.loader` (the directory loader when
-# that is left out); a mapping names its own loader and options. Each file's
-# path becomes its documents' id — `e2e/corpus/register.csv#L2` for a record —
-# which is what a labelled set and a provenance query refer to.
+# The source texts the triples cite. A bare path uses `stages.loader` (the
+# directory loader when that is left out); a mapping names its own loader and
+# options. Each file's path becomes its documents' id — `corpus/register.csv#L2`
+# for a record — which is what a labelled set and a provenance query refer to.
 inputs:
-  - path: e2e/corpus/register.csv
-    loader: {use: csv, tier: curated}            # tiers: curated, authoritative, community, unverified
-  - path: e2e/corpus/staff.csv
-    loader: {use: csv, tier: authoritative}
-  - path: e2e/corpus/factsheet.md
-    loader: {use: markdown, tier: authoritative, modality: semi_structured}
-  - path: e2e/corpus/notes
-    loader: {use: directory, tier: community}    # also: text, markdown, html, pdf, docx, csv, tsv, json, jsonl, parquet
+  - path: triples/texts
+    loader: {use: directory, tier: authoritative}  # tiers: curated, authoritative, community, unverified
+  # - path: corpus/register.csv                  # also: text, markdown, html, pdf, docx, csv, tsv, json, jsonl, parquet
+  #   loader: {use: csv, tier: curated}
   # - path: reports/annual.pdf                   # html, pdf, docx: extracted text, with a source map back to the file
   #   loader: {use: pdf, per_page: true}         # pdf needs openodke[pdf], docx needs openodke[docx]; html needs nothing
 
 # Directories put on sys.path, so a stage of your own (package.module:Name)
 # can live next to this file.
-pythonpath: [e2e]
+# pythonpath: [my_stages]
 
 # Which model does which job (DECISIONS #7a). A string is a model; a mapping is
 # a full ModelSpec (temperature, max_tokens, timeout, base_url, api_key_env, extra).
 # Keys never go here — a provider reads its own environment variable. temperature
 # is unset by default and then not sent at all; set it and it is sent as written.
 models:
-  extract: anthropic/claude-sonnet-5
   ground: {model: anthropic/claude-haiku-4-5-20251001, max_tokens: 256}
+  # extract: anthropic/claude-sonnet-5-5         # only for a model extractor (llm, hybrid)
   # Answer a role from recorded responses instead of a provider. Delete these
-  # two lines to call the models above.
+  # two lines to call the model above.
   replay:
-    extract: e2e/recorded/extract.json
-    ground: e2e/recorded/ground.json
+    ground: triples/recorded/ground.json
   # Count calls, tokens and USD per stage into the graph's stats.
   meter: true
+  # Answer a call asked before from this directory (relative to this file), and
+  # keep every new answer there, so a rerun costs nothing. Off unless named.
+  # cache: .odke-cache
+  # The most the run may spend: usd, calls, input_tokens, output_tokens. A call
+  # past it is refused before it is made, and the run keeps and writes what it
+  # has, then exits 3. Off unless named.
+  # budget: {usd: 1.50, calls: 2000}
+  # The most calls in flight to each provider named, across every stage and
+  # the whole process. A stage's own max_workers still applies.
+  # limits: {anthropic: 8}
 
 # The thirteen stages (DECISIONS #20). Each is a built-in's short name or
 # package.module:Name, with options as extra keys: {use: name, option: value}.
@@ -52,19 +57,25 @@ models:
 # the store does itself (DECISIONS #21).
 stages:
   # loader:       directory (the default for bare input paths)
-  chunker: {use: sentence, max_words: 120}       # or passthrough: one chunk per document
+  # chunker:      sentence, {use: sentence, max_words: 120}, for an extractor that reads text
   # router:       passthrough — or your own, to skip marketing and policy text
-  extractor:                                     # required; pattern, llm, hybrid or triples
-    use: hybrid
-    llm: {snippet_limit: 25, repairs: 1}         # options for the model path, or false
-    pattern: {}                                  # e.g. mappings: [{subject_type: ..., predicates: {...}}]
-  grounder: {use: llm, max_workers: 8}           # or span: the free check alone
+  extractor:                                     # required; triples, or a reference extractor below
+    use: triples                                 # any extractor's output, as triples rows
+    path: triples/triples.jsonl
+    extractor: hand-written                      # the extractor's name on each fact's evidence
+  # The reference extractor (DECISIONS #24), to extract instead of reading
+  # triples. It needs models.extract.
+  # extractor:
+  #   use: hybrid                                # or llm, or pattern
+  #   llm: {snippet_limit: 25, repairs: 1}       # options for the model path, or false
+  #   pattern: {}                                # e.g. mappings: [{subject_type: ..., predicates: {...}}]
+  grounder: {use: llm, max_workers: 8}           # or span: the free check alone; options: locate, widen, context
   normalizer: {use: value, person_types: [Person]}
-  resolver: e2e_stages:RegistryResolver          # a stage of the example's own; built-in: native
-  corroborator: signature                        # options: half_life_days, freshness_floor
+  resolver: native                               # options: judge (the pair judge), normalize_batch
+  corroborator: signature                        # options: half_life_days, freshness_floor, near_duplicates
   scorer: evidence                               # the default when left out; options: prior, verdict_weights
-  validator: {use: verdict, refuse_not_found: false}
-  sink: {use: jsonl, directory: e2e/out}         # or a list of sinks
+  gate: {use: verdict, refuse_not_found: false}  # was `validator` in 0.2; the old key still works
+  sink: {use: jsonl, directory: triples/out}     # or a list of sinks
   # sink:
   #   use: neo4j
   #   uri_env: NEO4J_URI                         # or uri: bolt://localhost:7687
@@ -73,10 +84,10 @@ stages:
   #   database: neo4j
   #   batch_size: 500
   # The other built-in sinks connect to nothing; odke run supplies the ontology.
-  # sink: {use: cypher_file, path: e2e/out/graph.cypher}        # a cypher-shell script; batch_size
-  # sink: {use: neo4j_admin_csv, directory: e2e/out/import}     # neo4j-admin import files; delimiter, array_delimiter
-  # sink: {use: rdf, path: e2e/out/graph.ttl}                   # openodke[rdf]; format (turtle, nt, json-ld), base, schema
-  # sink: {use: networkx, path: e2e/out/graph.json}             # openodke[networkx]; node-link JSON (without path: memory only)
+  # sink: {use: cypher_file, path: out/graph.cypher}            # a cypher-shell script; batch_size
+  # sink: {use: neo4j_admin_csv, directory: out/import}         # neo4j-admin import files; delimiter, array_delimiter
+  # sink: {use: rdf, path: out/graph.ttl}                       # openodke[rdf]; format (turtle, nt, json-ld), base, schema
+  # sink: {use: networkx, path: out/graph.json}                 # openodke[networkx]; node-link JSON (without path: memory only)
   constrainer: neo4j                             # the DDL `bootstrap` applies
   # inferrer:     passthrough only — odke run never infers (DECISIONS #8)
 
@@ -84,3 +95,42 @@ stages:
 # sink that can (neo4j). Every statement is IF NOT EXISTS, so it is safe on
 # every run.
 bootstrap: false
+
+# Add each edge's inverse or symmetric partner (DECISIONS #28). Left out, it is
+# on exactly when the ontology declares one; false turns it off.
+# inverses: false
+
+# Count what extraction left behind in each document — known entities no fact
+# names, sentences naming two of them that no fact cites, relations the extractor
+# was never shown — with no model. On by default; the report is stats.coverage.
+coverage: true
+
+# Hand those gaps back to the extractor — each uncovered sentence, then each
+# holding a missed entity, at most `windows` per document — and ground what
+# returns. Off unless named; the extractor needs a reextract method (llm, hybrid).
+# reextract: {windows: 3}
+
+# Resolve each batch against what the store already holds, without loading it
+# (DECISIONS #31): neo4j reads the neo4j sink's store through the indexes
+# bootstrap creates. A proof re-keys the incoming facts onto the stored key;
+# anything weaker is a SIMILAR link. Off unless named; brings the native
+# resolver when none is named. Options: limit, and the sink's connection keys
+# to read another store; it reads the run's tenant. Or package.module:Name.
+# store_lookup: {use: neo4j, limit: 100}
+
+# Key everything the run writes to, and reads from, the store by this tenant
+# (DECISIONS #44): two tenants' identical facts never merge, and a lookup, a
+# merge or a retraction for one never reaches another. Off unless named;
+# --tenant overrides it. Letters, digits, _, . and -.
+# tenant: acme
+
+# Where else to write the run manifest, what the run was asked and what
+# answered (DECISIONS #40). Each JSONL sink writes its own manifest.json.
+# manifest: out/manifest.json
+
+# Stream the run (DECISIONS #45): load this many documents, run them through
+# every stage and write them, then the next, so memory follows the micro-batch
+# and not the run. A fact two micro-batches state is joined by the store, not in
+# memory. Needs sinks that can take a micro-batch at a time: jsonl, neo4j,
+# networkx or your own. Off unless named; --batch-size overrides it.
+# batch_size: 500

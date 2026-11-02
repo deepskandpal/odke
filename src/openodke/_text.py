@@ -1,4 +1,5 @@
-"""Offset-keeping text helpers shared by the loaders and the pattern extractor."""
+"""Text helpers: offset-keeping ones for the loaders and the pattern extractor, and one
+that takes the password out of a URL in any message."""
 
 from __future__ import annotations
 
@@ -6,6 +7,23 @@ import re
 from collections.abc import Iterator
 
 _LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)?")
+
+REDACTED = "<redacted>"
+# `scheme://user:password@`: the password runs from the colon to the last `@` of the
+# authority, as `urlsplit` reads it, so a raw `@` in a password is taken out too.
+_USERINFO = re.compile(r"(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)(?P<user>[^/?#@:\s]*):[^/?#\s]*@")
+
+
+def without_password(text: str) -> str:
+    """`text` with the password of every URL in it replaced, the user kept.
+
+    `bolt://neo4j:<redacted>@db`. For a config value (the run manifest), and for a
+    message that quotes a URL: an error, a warning, a dry run's plan. A secret in a
+    message reaches the manifest's `failed` list, the logs and stderr (release audit
+    finding 9), so it is taken out where the message is made, and again where a
+    document's failure is put in words (`openodke._batch.reason`).
+    """
+    return _USERINFO.sub(rf"\g<scheme>\g<user>:{REDACTED}@", text)
 
 
 def iter_lines(text: str, start: int = 0, end: int | None = None) -> Iterator[tuple[int, int]]:

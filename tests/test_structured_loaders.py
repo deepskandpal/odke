@@ -167,7 +167,27 @@ def test_jsonl_skips_blank_lines_and_names_the_bad_one() -> None:
     docs = JsonlLoader().load(b'{"id": 1}\n\n{"id": 2}\r\n')
     assert [(d.metadata["line"], d.metadata["row_index"]) for d in docs] == [(1, 0), (3, 1)]
     with pytest.raises(ValueError, match="line 2"):
-        JsonlLoader().load(b'{"id": 1}\n{oops}\n')
+        list(JsonlLoader().load(b'{"id": 1}\n{oops}\n'))
+
+
+def test_a_jsonl_file_streams_a_line_at_a_time_as_its_bytes_would_load(tmp_path: Path) -> None:
+    """The loader is an iterator (#158): a file is read as its documents are asked for."""
+    data = b'\xef\xbb\xbf{"id": 1}\r\n\n{"id": 2}\r{"id": 3}\n{oops}\n'
+    path = tmp_path / "rows.jsonl"
+    path.write_bytes(data)
+    docs = JsonlLoader().load(path)
+    # Three documents come out before the bad fourth line is read.
+    read = [next(docs) for _ in range(3)]
+    with pytest.raises(ValueError, match="line 5"):
+        next(docs)
+    from_bytes = list(JsonlLoader().load(data[: data.index(b"{oops}")]))
+    assert [d.text for d in read] == [d.text for d in from_bytes]
+    assert [(d.metadata["line"], d.metadata["row_index"]) for d in read] == [
+        (1, 0),
+        (3, 1),
+        (4, 2),
+    ]
+    assert read[0].uri == path.resolve().as_uri() and read[0].metadata["row"] == {"id": 1}
 
 
 def test_records_already_in_memory() -> None:

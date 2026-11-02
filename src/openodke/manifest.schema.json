@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "openodke run manifest",
+  "description": "One run, enough to run it again (DECISIONS #40): manifest.json. manifest_version is one number; this schema describes version 1. A reader keeps the fields it knows and leaves the rest, at every level (DECISIONS #52): a JSONL sink's own keys share the file, and a later openodke may add optional fields.",
+  "type": "object",
+  "required": ["manifest_version", "command", "config_hash", "inputs", "started_at", "ended_at"],
+  "properties": {
+    "manifest_version": {"const": 1},
+    "command": {"enum": ["run", "validate", "ground"]},
+    "dry_run": {"type": "boolean"},
+    "run": {"type": ["string", "null"], "description": "The id every log event of this run carries."},
+    "config": {"type": "object", "description": "The run's config, secrets redacted, as data."},
+    "config_hash": {"type": "string", "minLength": 1},
+    "config_file": {"type": ["string", "null"]},
+    "base_dir": {"type": ["string", "null"]},
+    "models": {"type": "object", "additionalProperties": {"$ref": "#/$defs/model_use"}},
+    "prompts": {
+      "type": "object",
+      "description": "Each registered prompt key the run sent, and its text's hash.",
+      "additionalProperties": {"type": ["string", "null"]}
+    },
+    "ontology_version": {"type": ["string", "null"]},
+    "ontology_hash": {"type": ["string", "null"]},
+    "package": {"type": "object", "additionalProperties": {"type": "string"}},
+    "inputs": {"$ref": "#/$defs/inputs"},
+    "cache": {"type": ["string", "null"]},
+    "budget": {"type": ["object", "null"], "additionalProperties": {"type": "number"}},
+    "started_at": {"type": "string", "format": "date-time"},
+    "ended_at": {"type": "string", "format": "date-time"},
+    "counts": {"type": "object", "additionalProperties": {"type": "integer"}},
+    "job": {"type": "object", "additionalProperties": {"type": "integer"}},
+    "writes": {"type": "object", "additionalProperties": {"type": "object"}},
+    "spent": {"type": "object"},
+    "stopped": {"type": ["object", "null"]},
+    "failed": {"type": "object", "additionalProperties": {"type": "string"}}
+  },
+  "$defs": {
+    "model_use": {
+      "type": "object",
+      "description": "One role's model: the id the run asked for, and the ids its provider said answered.",
+      "required": ["model"],
+      "properties": {
+        "model": {"type": "string"},
+        "served": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "facts_in": {
+      "type": "object",
+      "description": "The facts a run was handed rather than extracted: how many, and their hash.",
+      "required": ["hash"],
+      "properties": {
+        "rows": {"type": "integer", "minimum": 0},
+        "hash": {"type": "string"}
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "description": "What the run read: each document's text by hash, the facts handed in, and one hash.",
+      "required": ["hash"],
+      "properties": {
+        "documents": {"type": "object", "additionalProperties": {"type": "string"}},
+        "facts": {"anyOf": [{"$ref": "#/$defs/facts_in"}, {"type": "null"}]},
+        "hash": {"type": "string"}
+      }
+    }
+  }
+}

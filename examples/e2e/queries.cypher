@@ -23,7 +23,7 @@ RETURN a.label AS company, b.label AS other, l.score AS name_similarity, l.reaso
 // 4. Cardinality: a company with more than one head office. This is the check
 //    openodke compiles from the ontology (`headquarters` is single-valued).
 MATCH (s)-[r:`headquarters`]->(o)
-WHERE r.polarity = 'asserted' AND r.valid_to IS NULL
+WHERE r.polarity = 'asserted' AND r.valid_to IS NULL AND r.retired_at IS NULL
 WITH s, collect(DISTINCT coalesce(o.key, o.value)) AS objects
 WHERE size(objects) > 1
 RETURN labels(s) AS labels, s.key AS subject, objects;

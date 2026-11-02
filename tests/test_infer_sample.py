@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
@@ -28,11 +30,15 @@ def _keys(record: SampleRecord) -> list[tuple[str, int, int]]:
     return [(c.doc_key, c.start, c.end) for c in record.chunks]
 
 
+def _random_ids(docs: Iterable[Document]) -> list[Document]:
+    return [doc.model_copy(update={"id": uuid.uuid4().hex}) for doc in docs]
+
+
 def test_the_same_corpus_and_seed_give_the_same_sample_across_loads(tmp_path: Path) -> None:
-    """Loaders draw random document ids; the sample must not depend on them."""
+    """A document's id can be anything, a random one included; the sample must not use it."""
     root = _corpus_dir(tmp_path)
-    first = sample_corpus(DirectoryLoader().load(root), words=600, seed=7)
-    second = sample_corpus(DirectoryLoader().load(root), words=600, seed=7)
+    first = sample_corpus(_random_ids(DirectoryLoader().load(root)), words=600, seed=7)
+    second = sample_corpus(_random_ids(DirectoryLoader().load(root)), words=600, seed=7)
     assert _keys(first.record) == _keys(second.record)
     assert {c.doc_id for c in first.chunks}.isdisjoint(c.doc_id for c in second.chunks)
     other = sample_corpus(DirectoryLoader().load(root), words=600, seed=8)

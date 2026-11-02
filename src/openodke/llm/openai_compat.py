@@ -12,13 +12,16 @@ older API versions — use `LiteLLMClient` instead.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Sequence
 from typing import Any
 
+from openodke._text import without_password
 from openodke.llm.base import Completion, Message, ModelSpec, ProviderError
 
 # Re-exported from the provider table, which is the one place a provider's endpoint
@@ -62,7 +65,7 @@ class OpenAICompatClient:
         payload: dict[str, Any] = {
             "model": spec.model.split("/", 1)[-1],
             "messages": [{"role": m.role, "content": m.content} for m in messages],
-            "max_tokens": spec.max_tokens,
+            _limit_key(base): spec.max_tokens,
         }
         # Left out rather than defaulted: a model that accepts only one
         # temperature rejects the key itself, not just the value (#79).
@@ -93,9 +96,31 @@ class OpenAICompatClient:
         except urllib.error.HTTPError as exc:  # pragma: no cover - network shape
             raise ProviderError(f"{provider} returned {exc.code}: {exc.read()[:400]!r}") from exc
         except urllib.error.URLError as exc:  # pragma: no cover - network shape
-            raise ProviderError(f"could not reach {provider} at {base}: {exc.reason}") from exc
+            # The URL may carry a password: never in a message (release audit finding 9).
+            where = without_password(base)
+            raise ProviderError(f"could not reach {provider} at {where}: {exc.reason}") from exc
+        except http.client.InvalidURL:
+            # `https://user:password@host/v1` with no port: http.client reads the password
+            # as the port and quotes it. urllib never sends a URL's credentials anyway.
+            raise ProviderError(
+                f"cannot call {provider} at {without_password(base)}: not a URL this client "
+                "can reach (a password in base_url is never sent; name the key's variable "
+                "with api_key_env)"
+            ) from None
 
         return _to_completion(body, spec)
+
+
+def _limit_key(base: str) -> str:
+    """The name of the output limit at `base`.
+
+    OpenAI's own API takes `max_completion_tokens` from every model, and its
+    GPT-5 and later models refuse `max_tokens` outright. The servers that copy
+    its shape (Ollama, vLLM, LM Studio, llama.cpp, OpenRouter, Together, Groq, a
+    gateway) all read `max_tokens`, and not all of them know the newer name.
+    """
+    host = urllib.parse.urlsplit(base).hostname or ""
+    return "max_completion_tokens" if host == "api.openai.com" else "max_tokens"
 
 
 def _key(spec: ModelSpec) -> str:

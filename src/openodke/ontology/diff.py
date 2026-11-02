@@ -8,10 +8,11 @@ break anything?", so every change here answers it.
 **Breaking** means something valid under the old schema may not be under the
 new one: a removed type, predicate or qualifier; a narrowed range or domain; a
 changed cardinality; a scope that drops a key; a predicate that becomes
-required; changed entity keys; or a qualifier whose identity flips, which
-re-partitions `Fact.signature` (DECISIONS #15). Widening a range to an ancestor
-type, `integer` to `number`, and every documentation change are listed too, as
-compatible.
+required; changed entity keys; a qualifier whose identity flips, which
+re-partitions `Fact.signature` (DECISIONS #15); or an inverse or symmetry taken
+away or changed, which strands the partners derived from it (DECISIONS #28).
+Widening a range to an ancestor type, `integer` to `number`, declaring a new
+inverse, and every documentation change are listed too, as compatible.
 """
 
 from __future__ import annotations
@@ -139,6 +140,7 @@ def _predicate(
             why="existing entities without a value no longer conform" if new.required else "",
         )
     yield from _qualifiers(path, old, new)
+    yield from _inverse(path, old, new)
     for field in ("label", "description", "aliases", "importance", "examples"):
         yield from _field(f"{path}.{field}", getattr(old, field), getattr(new, field))
 
@@ -173,6 +175,29 @@ def _qualifiers(path: str, old: Predicate, new: Predicate) -> Iterator[SchemaCha
                     why="fact signatures change, so existing claims split or merge",
                 )
             yield from _field(f"{qpath}.description", before.description, after.description)
+
+
+def _inverse(path: str, old: Predicate, new: Predicate) -> Iterator[SchemaChange]:
+    # Adding an inverse only adds partners on the next run. Dropping or changing
+    # one leaves the partners already stored without the rule that made them.
+    stale = "partners already derived from it no longer follow from the schema"
+    if old.inverse_of != new.inverse_of:
+        lost = old.inverse_of is not None
+        yield _changed(
+            f"{path}.inverse_of",
+            old.inverse_of,
+            new.inverse_of,
+            breaking=lost,
+            why=stale if lost else "",
+        )
+    if old.symmetric != new.symmetric:
+        yield _changed(
+            f"{path}.symmetric",
+            old.symmetric,
+            new.symmetric,
+            breaking=old.symmetric,
+            why=stale if old.symmetric else "",
+        )
 
 
 def _range(path: str, old: str, new: str, ontology: Ontology) -> SchemaChange:

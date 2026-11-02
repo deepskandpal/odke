@@ -1,0 +1,85 @@
+{
+  "card_version": "1.0",
+  "judge": "fact_equiv",
+  "prompt": "fact_equiv@1",
+  "prompts": {
+    "fact_equiv@1": "94ad0c37551aaeaefb59640bcf8b9e7e546f35ade2f7ade3017e65951eef70e7",
+    "fact_equiv.user@1": "da5dc49f2913af345d78cd1f801e2879b97b73ad8c814a9d96f4ee8020a7efcc"
+  },
+  "model": "anthropic/claude-haiku-5-5",
+  "claim_format": null,
+  "vote": "single",
+  "date": "2026-10-25",
+  "openodke": "0.2.1",
+  "labels": {
+    "name": "F",
+    "version": "sheets 01-02 (labelled 17 Oct 2026)",
+    "sha256": "4d4c2497c9d9a8351db74c5a05d4a6de00eaebdd7f8b4c2ded1382b898e0c142",
+    "split": "gate",
+    "n": 62
+  },
+  "cost_per_1000": 0.08848999999999999,
+  "grounding": null,
+  "pairs": null,
+  "equivalence": {
+    "kappa": {
+      "value": 0.7456037514654161,
+      "low": 0.5452322738386307,
+      "high": 0.9121813031161474,
+      "n": 62
+    },
+    "unsure": {
+      "k": 6,
+      "n": 62,
+      "value": 0.0967741935483871,
+      "low": 0.0451118720231939,
+      "high": 0.19548818612307417
+    },
+    "order_disagreement": {
+      "k": 6,
+      "n": 62,
+      "value": 0.0967741935483871,
+      "low": 0.0451118720231939,
+      "high": 0.19548818612307417
+    },
+    "judge_same": {
+      "k": 19,
+      "n": 62,
+      "value": 0.3064516129032258,
+      "low": 0.2058158658563416,
+      "high": 0.4296721620538671
+    },
+    "person_same": {
+      "k": 22,
+      "n": 62,
+      "value": 0.3548387096774194,
+      "low": 0.24742732851049898,
+      "high": 0.47918869242215756
+    },
+    "confusion": {
+      "same": {
+        "same": 17,
+        "different": 3,
+        "unsure": 2
+      },
+      "different": {
+        "same": 2,
+        "different": 34,
+        "unsure": 4
+      }
+    },
+    "lenient_minus_strict": null
+  },
+  "bar": {
+    "metric": "kappa_same",
+    "threshold": 0.6,
+    "value": 0.7456037514654161,
+    "met": true,
+    "note": null
+  },
+  "self_agreement": null,
+  "notes": [
+    "6 pair(s) the person left unsure were asked and are not scored",
+    "Answered with reasoning on, the model's default. Reasoning counts against max_tokens (256 for every judge here), so an answer can stop before its verdict and count as an abstention, and the cost includes it: not like for like with a model that answers without reasoning."
+  ]
+}

@@ -37,5 +37,5 @@ stages:
   resolver: e2e_stages:RegistryResolver
   corroborator: signature
   scorer: evidence
-  validator: verdict
+  gate: verdict
   sink: {use: jsonl, directory: out}

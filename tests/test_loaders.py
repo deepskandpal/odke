@@ -107,6 +107,27 @@ def test_a_directory_routes_each_file_by_its_suffix(tmp_path: Path) -> None:
         list(DirectoryLoader().load(tmp_path / "missing"))
 
 
+def test_a_directory_names_each_document_by_its_path_as_the_cli_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Release audit 7: from Python a rerun minted new ids, so a store counted reruns."""
+    (tmp_path / "texts" / "sub").mkdir(parents=True)
+    (tmp_path / "texts" / "a.txt").write_text("A.", encoding="utf-8")
+    (tmp_path / "texts" / "sub" / "b.md").write_text("B.", encoding="utf-8")
+    (tmp_path / "texts" / "people.csv").write_text("name\nAda\nGrace\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    first = [d.id for d in DirectoryLoader().load("texts")]
+    assert first == [
+        "texts/a.txt",
+        "texts/people.csv#L2",
+        "texts/people.csv#L3",
+        "texts/sub/b.md",
+    ]
+    assert [d.id for d in DirectoryLoader().load(tmp_path / "texts")] == first
+    within = DirectoryLoader(relative_to=tmp_path / "texts").load(tmp_path / "texts")
+    assert [d.id for d in within][0] == "a.txt"
+
+
 def test_every_loader_satisfies_the_protocol() -> None:
     for loader in (TextLoader(), MarkdownLoader(), DirectoryLoader()):
         assert isinstance(loader, Loader)

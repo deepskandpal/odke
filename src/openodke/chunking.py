@@ -115,6 +115,16 @@ class SentenceChunker:
             first = max(end - self.overlap, first + 1)
 
 
+def sentences(text: str) -> list[tuple[int, int]]:
+    """`(start, end)` of every sentence in `text`: the boundaries the chunker packs.
+
+    Whitespace is trimmed from both ends, and an abbreviation or an initial never
+    ends one. Whatever else needs a sentence's boundaries reads them here, so it
+    agrees with the chunker about what a sentence is.
+    """
+    return [(s.start, s.end) for s in _segment(text)]
+
+
 def _segment(text: str) -> Iterator[_Sentence]:
     """Every sentence in `text`, in order, with whitespace trimmed from both ends."""
     cursor = 0
@@ -154,4 +164,4 @@ def _is_abbreviation(text: str, sentence_start: int, match: re.Match[str], end: 
     return token.casefold() in _ABBREVIATIONS or (len(token) == 1 and token.isalpha())
 
 
-__all__ = ["SentenceChunker"]
+__all__ = ["SentenceChunker", "sentences"]

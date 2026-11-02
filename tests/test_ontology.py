@@ -147,3 +147,43 @@ def test_a_declared_scope_adds_keys_and_can_never_remove_an_identity_key() -> No
     # Judging a declared key is validate()'s job; the union takes it at its word.
     assert Predicate(name="p", cardinality_scope=("b", "a")).scope_keys == ("a", "b")
     assert Predicate.model_validate_json(partial.model_dump_json()) == partial
+
+
+# --------------------------------------------------------------------------- #
+# The fingerprint (#160, #163)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_fingerprint_is_the_content_not_the_labels_or_the_review() -> None:
+    """Relabelled, frozen or reloaded, the same schema; any change to it, a new one."""
+    ontology = _ontology()
+    fingerprint = ontology.fingerprint
+    assert len(fingerprint) == 64 and fingerprint == _ontology().fingerprint
+    assert Ontology.from_json(ontology.model_dump_json()).fingerprint == fingerprint
+    relabelled = ontology.model_copy(update={"name": "other", "version": "7"})
+    assert relabelled.fingerprint == fingerprint
+    assert ontology.freeze(by="a reviewer").fingerprint == fingerprint
+
+    narrowed = ontology.model_copy(deep=True)
+    narrowed.predicates["employer"] = narrowed.predicates["employer"].model_copy(
+        update={"range": "Person"}
+    )
+    assert narrowed.fingerprint != fingerprint
+
+
+def test_an_inverse_declared_on_one_side_is_the_schema_declared_on_both() -> None:
+    edge = {"domain": ["Place"], "range": "Place"}
+    types = {"Place": {}}
+    one = Ontology.from_dict(
+        {"types": types, "predicates": {"contains": edge, "in": {**edge, "inverse_of": "contains"}}}
+    )
+    both = Ontology.from_dict(
+        {
+            "types": types,
+            "predicates": {
+                "contains": {**edge, "inverse_of": "in"},
+                "in": {**edge, "inverse_of": "contains"},
+            },
+        }
+    )
+    assert one.fingerprint == both.fingerprint
