@@ -1,4 +1,5 @@
-# The documentation site, built from docs/ and mkdocs.yml.
+# The documentation site, built by Zensical from docs/ and mkdocs.yml
+# (DECISIONS #55).
 #
 # A pull request that touches what the site is built from builds it with
 # --strict, so a broken link, a missing page or a heading that moved fails the
@@ -14,6 +15,7 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      - "scripts/docs_extras.py"
       - "src/**"
       - "pyproject.toml"
       - "uv.lock"
@@ -22,6 +24,7 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      - "scripts/docs_extras.py"
       - "src/**"
       - "pyproject.toml"
       - "uv.lock"
@@ -55,7 +58,14 @@ jobs:
       # Only the docs group: the site renders markdown and does not import the
       # package, so it needs neither the package nor its extras to build.
       - name: Build
-        run: uv run --locked --only-group docs mkdocs build --strict
+        run: uv run --locked --only-group docs zensical build --strict
+        env:
+          UV_PYTHON: "3.12"
+
+      # Each page as Markdown at its path plus ".md", /llms.txt and
+      # /llms-full.txt, for a reader who hands the docs to a coding agent.
+      - name: Markdown pages and llms.txt
+        run: uv run --locked --only-group docs python scripts/docs_extras.py site
         env:
           UV_PYTHON: "3.12"
 

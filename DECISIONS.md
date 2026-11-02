@@ -1983,3 +1983,35 @@ lenient score stands beside the strict one, as it always did. The benchmark
 configs say `on_refusal: drop`, so their published numbers are still the gate
 refusing. The cards and the tables: [Calibration cards](docs/calibration.md),
 and the Benchmarks page's "Judge calibration".
+
+### 55. The site is built by Zensical, in its own look, and is published as Markdown too
+
+The site was MkDocs with Material for MkDocs. Material reaches end of life on
+5 May 2027 (its 9.8.0 notes, 24 Oct 2026), MkDocs itself is unmaintained, and
+`mkdocs-redirects` had already been held at 1.2.2 because 1.2.3 moved to
+ProperDocs. The maintainer also found the site's look dated (2 Nov 2026), and
+chose a free route the project hosts itself over a hosted docs platform.
+
+**Zensical builds it.** It is the successor from the team behind Material for
+MkDocs, MIT-licensed. It reads `mkdocs.yml` as it was, makes the old-URL
+redirects itself, and `--strict` still fails the build on a missing page or
+anchor. The pages stay Markdown, so `tests/test_docs_examples.py` and the
+generated tables are untouched, and the docs group holds two packages where it
+held thirteen. GitHub Pages still serves it.
+
+**The look is the site's own.** Zensical's `modern` variant, the navigation as
+four tabs, and `docs/assets/openodke.css`: one accent colour, bold headings,
+rounded tables and code. It is modelled on the documentation sites of 2026
+(Mintlify, Starlight, Fumadocs), not bought from one.
+
+**Every page is also Markdown.** `scripts/docs_extras.py` writes each page at
+its path plus `.md`, and `/llms.txt` and `/llms-full.txt` (llmstxt.org). A
+"Copy page" menu on each page copies it, or opens it in Claude or ChatGPT, so a
+reader who works with a coding agent hands it the page itself.
+
+*Cost:* Zensical is pre-1.0 (0.0.73; its 0.1 line starts 5 Nov 2026), so a
+minor version can change the output, and the bound in the docs group moves by
+hand, after a look. Its mkdocstrings support is preliminary, if the site ever
+generates an API reference. The stylesheet rides on the theme's class names, so
+a theme update can undo part of it without failing the build. The page menu
+needs JavaScript; the `.md` files do not.

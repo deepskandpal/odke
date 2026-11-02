@@ -10,11 +10,22 @@ copyright: >-
   Apache-2.0. An independent implementation of the ODKE+ architecture
   (arXiv:2509.04696); not affiliated with or endorsed by Apple Inc.
 
+# Built by Zensical (DECISIONS #55), which reads this file. The theme is its
+# `modern` variant; the site's own look (one accent colour, the page head and
+# its "Copy page" menu) is docs/assets/openodke.css and openodke.js. After the
+# build, scripts/docs_extras.py writes each page as Markdown and /llms.txt.
 theme:
   name: material
+  variant: modern
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  font:
+    text: Inter
+    code: JetBrains Mono
   features:
     - content.code.copy
     - navigation.footer
+    - navigation.tabs
     - navigation.top
     - search.highlight
     - search.suggest
@@ -22,18 +33,26 @@ theme:
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: indigo
+      primary: custom
+      accent: custom
       toggle:
-        icon: material/weather-night
+        icon: lucide/moon
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: indigo
+      primary: custom
+      accent: custom
       toggle:
-        icon: material/weather-sunny
+        icon: lucide/sun
         name: Switch to light mode
 
-# `mkdocs build --strict` turns every one of these into a failed build, so a
+extra_css:
+  - assets/openodke.css
+
+extra_javascript:
+  - assets/openodke.js
+
+# `zensical build --strict` turns every one of these into a failed build, so a
 # link to a page or a heading that no longer exists cannot ship.
 validation:
   omitted_files: warn
@@ -68,10 +87,11 @@ markdown_extensions:
           format: !!python/name:pymdownx.superfences.fence_code_format
 
 nav:
-  - Home: index.md
-  - Install: installation.md
-  - Quickstart: quickstart.md
-  - Concepts: concepts.md
+  - Get started:
+      - Home: index.md
+      - Install: installation.md
+      - Quickstart: quickstart.md
+      - Concepts: concepts.md
   - Verify:
       - "The Validator": validator.md
       - Inputs: inputs.md

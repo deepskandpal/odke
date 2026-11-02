@@ -89,15 +89,14 @@ dev = [
   # An in-memory exporter, so the spans `[otel]` emits are checked, not assumed.
   "opentelemetry-sdk>=1.24,<2",
 ]
-# The documentation site: `uv run --group docs mkdocs build --strict`. A group,
-# not an extra, so it never reaches a user's install. (The `docs` *extra* above
-# is the document readers; groups and extras are separate namespaces.)
+# The documentation site: `uv run --group docs zensical build --strict`. A
+# group, not an extra, so it never reaches a user's install. (The `docs` *extra*
+# above is the document readers; groups and extras are separate namespaces.)
+# Zensical replaced MkDocs and Material for MkDocs (DECISIONS #55); it reads
+# mkdocs.yml and makes the old-URL redirects itself. It is pre-1.0, so a minor
+# version can change its output: the bound moves by hand, after a look.
 docs = [
-  "mkdocs>=1.6,<2",
-  "mkdocs-material>=9.5,<10",
-  # Old page URLs redirect. 1.2.3 moved to ProperDocs and pulls in a second
-  # MkDocs, properdocs, so this stays on 1.2.2.
-  "mkdocs-redirects>=1.2.2,<1.2.3",
+  "zensical>=0.0.73,<0.2",
 ]
 
 [build-system]

@@ -390,6 +390,11 @@ of them and warns about none; import one by name (#233, release audit call C).
 
 ### Changed
 
+- The documentation site has a new look and is built by Zensical, which reads
+  the same `mkdocs.yml`; MkDocs and Material for MkDocs are gone from the docs
+  group (Material reaches end of life in May 2027). Every page is also
+  published as Markdown at its path plus `.md`, with `/llms.txt` and
+  `/llms-full.txt`, and a "Copy page" menu on each page (DECISIONS #55).
 - The version is 1.0.0rc1, "Development Status :: 4 - Beta" (#233, release
   audit S30).
 - The source archive holds the package and its notices alone (`src`,
