@@ -1,0 +1,217 @@
+/* openodke.dev: the site's look, on top of Zensical's modern theme.
+   A neutral page, one accent colour, bold headings, rounded surfaces. */
+
+:root,
+[data-md-color-scheme="default"] {
+  --oo-accent: #059669;
+  --oo-accent-strong: #047857;
+  --oo-accent-tint: rgb(5 150 105 / 0.08);
+  --oo-heading: #18181b;
+  --oo-text: #3f3f46;
+  --oo-muted: #71717a;
+  --oo-border: #e4e4e7;
+  --oo-surface: #fafafa;
+  --oo-surface-2: #f4f4f5;
+  --oo-bg: #ffffff;
+}
+
+[data-md-color-scheme="slate"] {
+  --oo-accent: #34d399;
+  --oo-accent-strong: #6ee7b7;
+  --oo-accent-tint: rgb(52 211 153 / 0.1);
+  --oo-heading: #fafafa;
+  --oo-text: #d4d4d8;
+  --oo-muted: #a1a1aa;
+  --oo-border: #27272a;
+  --oo-surface: #111113;
+  --oo-surface-2: #18181b;
+  --oo-bg: #09090b;
+  --md-hue: 240;
+}
+
+[data-md-color-scheme] {
+  --md-primary-fg-color: var(--oo-accent);
+  --md-primary-fg-color--light: var(--oo-accent);
+  --md-primary-fg-color--dark: var(--oo-accent-strong);
+  --md-primary-bg-color: var(--oo-bg);
+  --md-primary-bg-color--light: var(--oo-muted);
+  --md-accent-fg-color: var(--oo-accent-strong);
+  --md-accent-fg-color--transparent: var(--oo-accent-tint);
+  --md-default-bg-color: var(--oo-bg);
+  --md-default-fg-color: var(--oo-heading);
+  --md-default-fg-color--light: var(--oo-muted);
+  --md-default-fg-color--lighter: var(--oo-border);
+  --md-default-fg-color--lightest: var(--oo-surface-2);
+  --md-typeset-color: var(--oo-text);
+  --md-typeset-a-color: var(--oo-accent-strong);
+  --md-code-bg-color: var(--oo-surface);
+  --md-footer-bg-color: var(--oo-bg);
+  --md-footer-bg-color--dark: var(--oo-bg);
+  --md-footer-fg-color: var(--oo-heading);
+  --md-footer-fg-color--light: var(--oo-muted);
+  --md-footer-fg-color--lighter: var(--oo-muted);
+}
+
+body { -webkit-font-smoothing: antialiased; }
+
+/* A wider page than the theme's, so tables get room beside the two sidebars. */
+.md-grid { max-width: 68rem; }
+
+/* Header: white, a hairline below, the name always shown, search in the middle. */
+.md-header {
+  background: color-mix(in srgb, var(--oo-bg) 88%, transparent);
+  backdrop-filter: saturate(180%) blur(8px);
+  color: var(--oo-heading);
+  box-shadow: none;
+  border-bottom: 1px solid var(--oo-border);
+}
+.md-header--shadow { box-shadow: none; }
+.md-header__inner { padding-block: 0.35rem; }
+.md-header__title { flex: 0 0 auto; margin-inline: 0.1rem 0; font-weight: 700; font-size: 0.9rem; letter-spacing: -0.02em; }
+.md-header__title .md-header__ellipsis { position: static; }
+.md-header__title .md-header__topic:first-child { position: static; opacity: 1 !important; transform: none !important; visibility: visible !important; }
+.md-header__title .md-header__topic + .md-header__topic { display: none; }
+.md-header__inner > .md-header__title { order: 1; }
+.md-header__inner > .md-search { order: 2; }
+.md-header__inner > label[for="__search"] { order: 2; }
+.md-header__inner > .md-header__option { order: 3; }
+.md-header__inner > .md-header__source { order: 4; }
+.md-header__button.md-logo { padding-inline-end: 0; }
+.md-header__button.md-logo svg,
+.md-header__button.md-logo img { height: 1.4rem; width: auto; border-radius: 0.35rem; }
+@media screen and (min-width: 60em) {
+  .md-search { margin-inline: auto; }
+  .md-search__inner { width: 15rem; }
+  .md-search__form {
+    border: 1px solid var(--oo-border);
+    border-radius: 999px;
+    background: var(--oo-surface);
+    box-shadow: none;
+  }
+  .md-search__input { font-size: 0.72rem; }
+}
+.md-source { color: var(--oo-muted); }
+
+/* Tabs: plain text, an underline under the current one. */
+.md-tabs {
+  background: transparent;
+  color: var(--oo-muted);
+  border-bottom: 1px solid var(--oo-border);
+}
+.md-tabs__list { margin-inline-start: 0.6rem; }
+.md-tabs__item { height: 2.4rem; padding-inline: 0; margin-inline-end: 1.4rem; }
+.md-tabs__link {
+  margin-top: 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  opacity: 1;
+  color: var(--oo-muted);
+}
+.md-tabs__link:hover { color: var(--oo-heading); }
+.md-tabs__item--active .md-tabs__link { color: var(--oo-heading); font-weight: 600; }
+.md-tabs__item--active { box-shadow: inset 0 -2px 0 var(--oo-heading); }
+
+/* Sidebar: section labels in small bold type, the current page as a tinted pill. */
+.md-nav { font-size: 0.7rem; }
+.md-nav__title { color: var(--oo-heading); font-weight: 600; }
+.md-sidebar--primary .md-nav__link { color: var(--oo-text); border-radius: 0.5rem; padding: 0.3rem 0.6rem; margin-top: 0.1rem; }
+.md-sidebar--primary .md-nav__link:hover { color: var(--oo-heading); background: var(--oo-surface-2); }
+.md-sidebar--primary .md-nav__link--active,
+.md-sidebar--primary .md-nav__item--active > .md-nav__link--active {
+  color: var(--oo-accent-strong);
+  background: var(--oo-accent-tint);
+  font-weight: 600;
+}
+.md-sidebar--primary .md-nav__item--section > .md-nav__link { font-weight: 600; color: var(--oo-heading); background: none; }
+
+/* On this page: muted links, the current one in the accent colour with a rule beside it. */
+.md-sidebar--secondary .md-nav__title { font-size: 0.7rem; }
+.md-sidebar--secondary .md-nav__link { border-radius: 0; color: var(--oo-muted); border-inline-start: 1px solid var(--oo-border); padding-inline-start: 0.7rem; margin-top: 0; padding-block: 0.25rem; }
+.md-sidebar--secondary .md-nav__link--active,
+.md-sidebar--secondary .md-nav__link:hover { color: var(--oo-heading); }
+.md-sidebar--secondary .md-nav__link--active { border-inline-start-color: var(--oo-accent); color: var(--oo-accent-strong); }
+
+/* Type. */
+.md-typeset { font-size: 0.8rem; line-height: 1.75; color: var(--oo-text); }
+.md-typeset h1, .md-typeset h2, .md-typeset h3, .md-typeset h4 { color: var(--oo-heading); letter-spacing: -0.025em; }
+.md-typeset h1 { font-size: 1.85rem; font-weight: 700; line-height: 1.2; margin: 0 0 0.9rem; }
+.md-typeset h2 { font-size: 1.3rem; font-weight: 650; margin: 2.2rem 0 0.7rem; }
+.md-typeset h3 { font-size: 1.02rem; font-weight: 600; margin: 1.6rem 0 0.5rem; }
+.md-typeset h4 { font-size: 0.85rem; font-weight: 600; }
+.md-typeset a { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--oo-accent) 45%, transparent); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.md-typeset a:hover { text-decoration-color: var(--oo-accent); }
+.md-typeset .headerlink { text-decoration: none; color: var(--oo-muted); }
+.md-typeset hr { border-color: var(--oo-border); }
+
+/* Code. */
+.md-typeset code { border-radius: 0.375rem; font-size: 0.875em; }
+.md-typeset :not(pre) > code { background: var(--oo-surface-2); border: 1px solid var(--oo-border); padding: 0.05em 0.35em; color: var(--oo-heading); }
+.md-typeset pre { margin: 1.1em 0; }
+.md-typeset pre > code { border: 1px solid var(--oo-border); border-radius: 0.75rem; padding: 0.95rem 1.1rem; font-size: 0.75rem; line-height: 1.7; }
+.md-typeset .highlight { border-radius: 0.75rem; }
+.md-clipboard { color: var(--oo-muted); }
+
+/* Callouts: a soft tinted card with no heavy left bar. */
+.md-typeset .admonition,
+.md-typeset details {
+  border: 1px solid color-mix(in srgb, var(--oo-accent) 28%, var(--oo-border));
+  border-radius: 0.75rem;
+  background: var(--oo-accent-tint);
+  box-shadow: none;
+  font-size: 0.8rem;
+  padding: 0.2rem 1rem 0.6rem;
+}
+.md-typeset .admonition-title,
+.md-typeset summary { background: none !important; border: 0; font-weight: 600; color: var(--oo-heading); padding-inline-start: 1.8rem; }
+.md-typeset .admonition-title::before,
+.md-typeset summary::before { left: 0.2rem; background-color: var(--oo-accent); }
+
+/* Tables: a rounded frame, hairline rows. */
+.md-typeset table:not([class]) {
+  border: 1px solid var(--oo-border);
+  border-radius: 0.75rem;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  box-shadow: none;
+}
+.md-typeset table:not([class]) th { background: var(--oo-surface); color: var(--oo-heading); font-weight: 600; border-bottom: 1px solid var(--oo-border); }
+.md-typeset table:not([class]) th,
+.md-typeset table:not([class]) td { padding: 0.75em 1em; }
+.md-typeset table:not([class]) td { border-top: 1px solid var(--oo-border); }
+.md-typeset table:not([class]) tr:first-child td { border-top: 0; }
+.md-typeset table:not([class]) tbody tr:hover { background: var(--oo-surface); box-shadow: none; }
+.md-typeset table:not([class]) code { white-space: nowrap; word-break: normal; }
+
+/* The page head: an eyebrow with the section, the title, and the page menu. */
+.oo-page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.4rem; }
+.oo-page-head h1 { margin-bottom: 0.4rem; }
+.oo-eyebrow { margin: 0 0 0.35rem !important; font-size: 0.7rem; font-weight: 600; color: var(--oo-accent-strong); }
+.md-content__button { display: none; }
+.oo-actions { position: relative; flex-shrink: 0; display: inline-flex; margin-top: 0.35rem; border: 1px solid var(--oo-border); border-radius: 0.6rem; background: var(--oo-bg); }
+.oo-actions button { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.3rem 0.6rem; font-size: 0.66rem; font-weight: 500; color: var(--oo-heading); }
+.oo-actions button:hover { background: var(--oo-surface-2); }
+.oo-actions .oo-more { border-inline-start: 1px solid var(--oo-border); padding-inline: 0.4rem; }
+.oo-actions svg { width: 0.8rem; height: 0.8rem; }
+.oo-menu { display: none; position: absolute; right: 0; top: calc(100% + 0.35rem); z-index: 10; min-width: 15rem; padding: 0.3rem; background: var(--oo-bg); border: 1px solid var(--oo-border); border-radius: 0.75rem; box-shadow: 0 12px 32px rgb(0 0 0 / 0.12); }
+.oo-actions[data-open] .oo-menu { display: block; }
+.oo-menu a, .oo-menu button { all: unset; box-sizing: border-box; cursor: pointer; display: flex; gap: 0.6rem; align-items: flex-start; width: 100%; padding: 0.45rem 0.55rem; border-radius: 0.5rem; }
+.oo-menu a:hover, .oo-menu button:hover { background: var(--oo-surface-2); }
+.oo-menu strong { display: block; font-size: 0.66rem; font-weight: 600; color: var(--oo-heading); line-height: 1.3; }
+.oo-menu span { display: block; font-size: 0.6rem; color: var(--oo-muted); line-height: 1.35; }
+.oo-menu svg { margin-top: 0.1rem; flex-shrink: 0; color: var(--oo-muted); }
+@media screen and (max-width: 44.9375em) {
+  .oo-page-head { flex-direction: column; gap: 0.2rem; }
+  .oo-actions { margin-top: 0; margin-bottom: 0.6rem; }
+}
+
+/* Previous / next as two cards. */
+.md-footer { border-top: 1px solid var(--oo-border); }
+.md-footer__inner { padding-block: 1.2rem; gap: 0.8rem; }
+.md-footer__link { border: 1px solid var(--oo-border); border-radius: 0.75rem; padding: 0.7rem 0.9rem; color: var(--oo-heading); }
+.md-footer__link:hover { border-color: var(--oo-accent); opacity: 1; }
+.md-footer__direction { color: var(--oo-muted); }
+.md-footer-meta { background: var(--oo-bg); border-top: 1px solid var(--oo-border); }
+.md-copyright { color: var(--oo-muted); }

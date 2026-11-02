@@ -31,7 +31,7 @@ and [DECISIONS.md](DECISIONS.md) are the detail.
 | `tests/`, `tests/rules/` | the suite, and the six rules |
 | `bench/` | the scripts behind the published benchmark tables |
 | `docs/`, `examples/` | the site, and examples that run with no key |
-| `scripts/` | the check (`scripts/verify.sh`), recordings (`scripts/record.py`), the evidence bundle (`scripts/evidence.py`), the edit hook (`scripts/edit_hook.py`) |
+| `scripts/` | the check (`scripts/verify.sh`), recordings (`scripts/record.py`), the evidence bundle (`scripts/evidence.py`), the edit hook (`scripts/edit_hook.py`), the site's Markdown pages and llms.txt (`scripts/docs_extras.py`) |
 
 **Decisions.** [DECISIONS.md](DECISIONS.md) is append-only: each call, its
 reason and what it cost. [docs/decisions.md](docs/decisions.md) is its index,
