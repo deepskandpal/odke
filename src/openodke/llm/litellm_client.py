@@ -29,6 +29,19 @@ from openodke.llm.providers import require_key
 # from the environment and sends it wherever `api_base` points.
 _NO_KEY = "EMPTY"
 
+# litellm's own names for an endpoint. A spec can pass one through `extra`
+# instead of `base_url` (litellm documents `api_base` for proxies), and the call
+# goes there all the same.
+_ENDPOINTS = ("api_base", "base_url")
+
+
+def _endpoint(spec: ModelSpec) -> str | None:
+    """Where this call goes when it is not the provider's own endpoint: `base_url`, else `extra`."""
+    if spec.base_url:
+        return spec.base_url
+    named = [str(spec.extra[name]) for name in _ENDPOINTS if spec.extra.get(name)]
+    return named[0] if named else None
+
 
 class LiteLLMClient:
     """A thin adapter. Anything clever belongs on one side of it or the other."""
@@ -57,9 +70,15 @@ class LiteLLMClient:
         spec: ModelSpec,
         schema: dict[str, Any] | None = None,
     ) -> Completion:
-        # litellm reads the key from the environment itself; this only makes a
-        # missing one say which variable, before the request rather than after.
-        key = require_key(spec) if self._checks_key else _key(spec)
+        # The key is read for where the call goes: an endpoint in `extra`
+        # redirects it as `base_url` does, so only `api_key_env` is read for it
+        # (security audit, 5 Nov 2026). Read here, a missing key also says which
+        # variable, before the request rather than after.
+        redirect = _endpoint(spec)
+        keyed = spec
+        if redirect != spec.base_url:
+            keyed = spec.model_copy(update={"base_url": redirect})
+        key = require_key(keyed) if self._checks_key else _key(keyed)
         kwargs: dict[str, Any] = {
             "model": spec.model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
@@ -70,9 +89,9 @@ class LiteLLMClient:
         # discard a temperature the caller did mean (#79).
         if spec.temperature is not None:
             kwargs["temperature"] = spec.temperature
-        kwargs.update(spec.extra)
-        if spec.base_url:
-            kwargs["api_base"] = spec.base_url
+        kwargs.update({k: v for k, v in spec.extra.items() if k not in _ENDPOINTS})
+        if redirect:
+            kwargs["api_base"] = redirect
             # Only a key the caller named goes to an endpoint the caller chose.
             kwargs["api_key"] = key or _NO_KEY
         if schema is not None:
