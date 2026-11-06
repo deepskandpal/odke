@@ -431,7 +431,7 @@ of them and warns about none; import one by name (#233, release audit call C).
 
 - On the litellm path, an endpoint named in `extra` (`api_base` or `base_url`)
   is treated like `base_url`: it gets only the key `api_key_env` names, else
-  `EMPTY`, never the vendor's own key (security audit, 5 Nov 2026).
+  `EMPTY`, never the vendor's own key (#235).
 - Anthropic accepts the extraction schema of an ontology past a few predicates;
   much past a dozen types, use `structured: false` (#105).
 - The grounder's module docstring says the paper's grounder judges against the
