@@ -160,3 +160,41 @@ def test_a_providers_key_is_never_sent_to_a_host_base_url_names(
         "somewhere the provider's key was never meant to go: read a key for it only from "
         "the variable `api_key_env` names (`openodke.llm.providers.key_env_for`)."
     )
+
+
+@pytest.mark.parametrize("endpoint", ["api_base", "base_url"])
+def test_a_providers_key_is_never_sent_to_a_host_extra_names(
+    endpoint: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An endpoint in `extra` redirects a litellm call as `base_url` does.
+
+    `api_base` is litellm's own name for a proxy, so a spec can pass it through
+    `extra` instead of `base_url`. Handed no key, litellm reads the vendor's from
+    the environment and sends it there (security audit, 5 Nov 2026).
+    """
+    from openodke.llm import Message, ModelSpec
+    from openodke.llm.litellm_client import LiteLLMClient
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", KEY)
+    monkeypatch.setenv("GPU_TOKEN", "gpu-token-rule5")
+    sent: list[dict[str, Any]] = []
+
+    def litellm_completion(**kwargs: Any) -> dict[str, Any]:
+        sent.append(kwargs)
+        return {"choices": [{"message": {"content": "{}"}}]}
+
+    client = LiteLLMClient(completion_fn=litellm_completion)
+    spec = ModelSpec(model="anthropic/claude-rule5", extra={endpoint: "http://gpu-01.invalid:8000"})
+    client.complete([Message(content="hi")], spec=spec)
+    client.complete(
+        [Message(content="hi")], spec=spec.model_copy(update={"api_key_env": "GPU_TOKEN"})
+    )
+    unnamed, named = sent
+    assert unnamed.get("api_base") == named.get("api_base") == "http://gpu-01.invalid:8000"
+    assert unnamed.get("api_key") == "EMPTY", (
+        f"extra.{endpoint} redirects the call, but litellm was handed no key, so it sends "
+        "ANTHROPIC_API_KEY there. Treat an endpoint in `extra` as `base_url`: read a key "
+        "for it only from `api_key_env` (`openodke.llm.litellm_client`)."
+    )
+    assert named.get("api_key") == "gpu-token-rule5"
+    assert KEY not in json.dumps(sent)

@@ -49,7 +49,8 @@ Keys are read from the environment and nowhere else; openodke stores none.
 
 - `api_key_env` names a different variable for one spec.
 - A spec with `base_url` sends a key only when `api_key_env` names one, so an
-  exported `OPENAI_API_KEY` never reaches a self-hosted server.
+  exported `OPENAI_API_KEY` never reaches a self-hosted server. On the litellm
+  path, an endpoint in `extra` (`api_base` or `base_url`) counts as `base_url`.
 - A missing key raises `MissingAPIKey`, naming the variable, before any request.
   A missing key or provider stops a grounding run instead of leaving every fact
   unchecked.
